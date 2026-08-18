@@ -2,6 +2,41 @@
 
 See [README.md](README.md) for what the app does, tech stack, and setup.
 
+## Where the knowledge lives — read before analyzing or changing behaviour
+
+This file is the only one loaded automatically. Everything below is not, and this app's behaviour
+is **documented before it is coded** — the docs state intent, the code only implements it.
+Reasoning from code alone will produce confident wrong answers about this codebase.
+
+- **[docs/README.md](docs/README.md) — the doc index. Route your question through it first.**
+  40+ documents, several of them ratified authorities. Grepping the code instead is the mistake
+  this index exists to prevent.
+- **[AGENTS.md](AGENTS.md) — the engineering rulebook.** Project shape, the seven engineering
+  principles, operational rules. Read it before changing `styling-engine/` or `routes/`.
+- The three ratified maps answer most "why did it do that" questions without reading any code:
+  [engine-behaviour-map.md](docs/engine-behaviour-map.md) (gates, scores, caches, retries),
+  [feedback-and-memory-map.md](docs/feedback-and-memory-map.md) (what the user tells the app,
+  where it is stored, who reads it back, **and with what authority**),
+  [app-surface-map.md](docs/app-surface-map.md) (what the user can touch).
+
+Three habits, each of which has cost a full session when skipped:
+
+1. **Intent before implementation.** A missing gate is as likely to be a deliberate decision as a
+   bug — this codebase has both, repeatedly. Check the maps and `git log` before calling anything
+   broken, and before "fixing" something whose current shape may be load-bearing.
+2. **Claims regenerate; run the script.** The maps cite runnable verifiers
+   (`scratch/measure_feedback_surface.js`, `scratch/audit_feedback_surface_completeness.js`,
+   `scratch/feedback_surface_inventory.json`). Enumerate a surface with them rather than sampling
+   tables by guessed name — the inventory exists precisely so nothing goes unnoticed.
+3. **Two questions, not one.** When a model-in-the-loop flow misbehaves, "what did the code
+   permit?" and "what did the app rank, label, and recommend?" have different answers. A gate
+   analysis alone explains only half of any bad output.
+
+**Diagnostic scripts must isolate their database** — see [database-safety.md](docs/database-safety.md).
+Copy the live DB and set `WARDROBE_DB_PATH` before importing `db.js`. Note the trap: several
+memory/feedback readers catch their own errors and return `''`, so a script that trips the live-DB
+guard reports "no data" rather than failing. Verify the DB opened before trusting an empty result.
+
 ## Dev servers
 
 Two independent server/frontend pairs are defined in `.claude/launch.json`:

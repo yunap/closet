@@ -1,3 +1,8 @@
+// Gates, ceilings, scores and the owner-constraint hard gate live here.
+// DOCUMENTED IN: docs/engine-behaviour-map.md (gate/score behaviour) and
+// docs/feedback-and-memory-map.md (getStylistFeedbackMemory, owner_constraints, and the
+// AUTHORITY each store carries). Intent lives there, not here — read it before deciding a
+// missing gate is a bug, and amend it in the same commit as any change. See AGENTS.md.
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 export { parsePiece }
@@ -2258,6 +2263,34 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     if (pieceMatchesPieceName(piece, item)) return { tier: 'discouraged', label: 'discouraged piece' }
   }
 
+  // docs/activity-and-roster-spec.md §5.4(2) — gate parity, and deliberately the LAST word.
+  //
+  // Placed after every prohibitive check on purpose. An earlier revision returned from here before
+  // the register ceiling, and measuring the composer against a recorded live run
+  // (thread_1786908644157) showed elevated/dressy pieces losing their hard suppression for a casual
+  // hike: 45 register exclusions collapsed to 8. A soft signal must never pre-empt a hard gate.
+  //
+  // Scoped to garments the structured footwear fields cannot speak for: a shoe's fitness for a
+  // trail is carried by walk_support / heel_height / shoe_type, which hold on any instance, while a
+  // top's is carried only by how this particular user tagged it. The composer enforces its own
+  // required-tag gate separately (applyActivityTagGate); this exists for the freeform path, and by
+  // sitting here it changes ranking without changing what either path suppresses.
+  //
+  // DISCOURAGED, never prohibited: a hard gate would contradict the 2026-06-12 ratification keeping
+  // a day dress allowed for outdoor-active, and would make the roster depend on tagging density
+  // (§5.0).
+  const requiredOccasionTags = (activityProfile?.rules?.required_occasion_tags || [])
+    .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    .filter(Boolean)
+  if (requiredOccasionTags.length && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) {
+    const pieceTags = (Array.isArray(piece?.occasions) ? piece.occasions : [])
+      .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    if (!pieceTags.some(tag => requiredOccasionTags.includes(tag))) {
+      const label = `not tagged for ${activityProfile.label || activityProfile.id}`
+      return { tier: 'discouraged', label, reason: `activity profile: ${label}` }
+    }
+  }
+
   for (const mat of (mergedRules.preferred_materials || [])) {
     if (pieceMatchesMaterial(piece, mat)) return { tier: 'preferred', label: 'preferred material' }
   }
@@ -4024,6 +4057,13 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       missionCandidates.push({ key, pieces: clean, score: scored.score, missionId })
     }
     const hasRequiredCandidate = () => !requiredPieceId || missionCandidates.some(candidate => candidate.pieces.some(piece => Number(piece.id) === requiredPieceId))
+    // Append the Main piece only when a slot has not already supplied it. For an add-on Main
+    // (outerwear/accessory) the slot lists never contain it, so this is a no-op; for a top/bottom
+    // Main the slot list IS [requiredPiece], and appending blindly would duplicate the garment.
+    const withRequiredPiece = pieces => {
+      const clean = pieces.filter(Boolean)
+      return clean.some(piece => Number(piece.id) === requiredPieceId) ? clean : [...clean, requiredPiece]
+    }
     
     if (requiredGroup !== 'dress') {
       separateCandidates:
@@ -4061,21 +4101,45 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
         }
       }
     }
-    if (requiredIsAddOn && !hasRequiredCandidate()) {
-      structuralSeparate:
-      for (const top of tops) {
-        for (const bottom of bottoms) {
-          for (const shoe of shoes) {
-            addStructuralCandidate([top, bottom, shoe, requiredPiece])
-            if (hasRequiredCandidate()) break structuralSeparate
+    // Structural fallback for the Main piece. This used to be gated on `requiredIsAddOn`, so an
+    // outerwear/accessory Main fell back to structurally-valid outfits when no mission qualified,
+    // but a top/bottom/dress Main in the same situation produced NOTHING — the saved-outfit
+    // "Similar variants" path (routes/ai.js) then returned zero candidates for a perfectly
+    // ordinary garment. Gated on `!hasRequiredCandidate()`, so it is additive by construction:
+    // it can only add outfits where there were none, never replace or reorder existing ones.
+    if (requiredPieceId && !hasRequiredCandidate()) {
+      // A layer-capable top Main keeps its base top: preserve the saved two-top formula before
+      // falling back to a single-top look, so the layer is not flattened into the only top.
+      if (requiredIsLayerableTop) {
+        structuralLayeredTop:
+        for (const baseTop of baseTopsForRequiredLayer) {
+          for (const bottom of bottoms) {
+            for (const shoe of shoes) {
+              addStructuralCandidate([baseTop, bottom, shoe, requiredPiece])
+              if (hasRequiredCandidate()) break structuralLayeredTop
+            }
           }
         }
       }
-      if (!hasRequiredCandidate()) {
+      // Same role guards the mission path above uses. Without them a dress Main gets appended to a
+      // complete top+bottom+shoes look, which is not an outfit anyone can wear.
+      if (requiredGroup !== 'dress') {
+        structuralSeparate:
+        for (const top of tops) {
+          for (const bottom of bottoms) {
+            for (const shoe of shoes) {
+              if (hasRequiredCandidate()) break structuralSeparate
+              addStructuralCandidate(withRequiredPiece([top, bottom, shoe]))
+              if (hasRequiredCandidate()) break structuralSeparate
+            }
+          }
+        }
+      }
+      if (!['top', 'bottom'].includes(requiredGroup) && !hasRequiredCandidate()) {
         structuralDress:
         for (const dress of dresses) {
           for (const shoe of shoes) {
-            addStructuralCandidate([dress, shoe, requiredPiece])
+            addStructuralCandidate(withRequiredPiece([dress, shoe]))
             if (hasRequiredCandidate()) break structuralDress
           }
         }
@@ -4256,7 +4320,23 @@ export function sortByStylisticStrength(outfits = [], selectedPiece = null) {
   })
 }
 
-export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = [], occasion = 'casual') {
+// `preserveAuthoredText` keeps a model's own label/description/reason when it wrote one, and falls
+// back to the archetype template only when that text is missing, a placeholder, or generic — the
+// same predicate repairWholeWardrobeOutfit already applies further down.
+//
+// Why this option exists (2026-08-16): the whole-wardrobe and capsule paths keep the model's own
+// notes because advisor mode skips repair entirely, which is why their cards read in the model's
+// voice and end with its skipped-directions and saveable-learning lines. The selected-piece path
+// (routes/ai.js) repairs unconditionally, and repair's FIRST step called this function, which
+// overwrote `reason` before the guard written to protect it could ever run. The template is meant
+// to be the fallback, and on that path it had become the default: a live card paired a blouse and
+// a tank with a lace midi dress and described it as "the dress carries the column" — the generated
+// prose has no branch for a top alongside a dress, so it silently omitted the garment the person
+// was being told to wear.
+//
+// The post-substitution call site deliberately does NOT preserve: once a piece has been swapped,
+// the model's sentences describe an outfit that no longer exists.
+export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = [], occasion = 'casual', { preserveAuthoredText = false } = {}) {
   const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
   const archetype = wholeWardrobeArchetypeFor({ ...outfit, pieces }, candidatePieces, occasion)
   const modifier = wholeWardrobeGarmentModifier(pieces)
@@ -4264,18 +4344,34 @@ export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePi
     ? `${archetype.labelSuggestion}: ${modifier}`
     : archetype.labelSuggestion || wholeWardrobeLabelFromPieces({ ...outfit, pieces })
   const silhouetteVariant = wholeWardrobeSilhouetteFromPieces({ ...outfit, pieces })
-  const silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
+  let silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
     ? silhouetteVariant
     : archetype.silhouette
+  // docs/card-consistency-spec.md Part 2 (mechanical half). The archetype's own silhouette text is
+  // a claim about shape, and it was being copied onto outfits that contradict it: every outfit
+  // containing a dress is forced into `dress_grounded_sharp` (inferOutfitArchetype skips all other
+  // archetypes when a dress is present), so a dress carrying two extra tops was still described as
+  // a "one-piece column". Describe what is there, not what the archetype assumes.
+  if (outfitLayersTopWithDress(pieces) && /\b(one[- ]piece|column|single garment)\b/i.test(String(silhouette || ''))) {
+    const layerCount = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top').length
+    silhouette = `dress layered with ${layerCount > 1 ? `${layerCount} additional tops` : 'an additional top'}`
+  }
+  const authored = field => {
+    const value = String(outfit?.[field] || '').trim()
+    if (!value) return null
+    if (hasWholeWardrobePlaceholder(outfit) || hasGenericWholeWardrobeText(outfit)) return null
+    return value
+  }
+  const keep = (field, generated) => (preserveAuthoredText ? (authored(field) ?? generated) : generated)
   return {
     ...outfit,
     archetypeId: archetype.archetypeId,
     formulaFamily: archetype.formulaFamily,
-    label,
-    dominantDirection: archetype.direction,
-    silhouette,
-    reason: buildOutfitMechanicsReason(outfit, pieces, archetype),
-    watchFor: wholeWardrobeWatchFromPieces({ ...outfit, pieces })
+    label: keep('label', label),
+    dominantDirection: keep('dominantDirection', archetype.direction),
+    silhouette: keep('silhouette', silhouette),
+    reason: keep('reason', buildOutfitMechanicsReason(outfit, pieces, archetype)),
+    watchFor: keep('watchFor', wholeWardrobeWatchFromPieces({ ...outfit, pieces }))
   }
 }
 
@@ -4290,8 +4386,10 @@ export function hasGenericWholeWardrobeText(outfit = {}) {
 }
 
 export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual', mood = '', options = {}) {
-  const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion)
-  
+  // Nothing has been changed yet, so anything the model wrote still describes this exact outfit.
+  // Keep its words; the archetype template fills only what it left empty or generic.
+  const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion, { preserveAuthoredText: true })
+
   // Footwear gate & repair
   const occasionProfile = resolveOccasionProfile(occasion, mood)
   const activityProfile = resolveActivityProfile({
@@ -4632,6 +4730,54 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
 
   return { outfits: selected, rejected }
 }
+// docs/card-consistency-spec.md Part 1. A top worn with a dress is a legitimate styling decision
+// (owner ruling 2026-08-16) and is deliberately NOT gated — isOutfitStructurallyValid still permits
+// it. But it is an unusual enough choice that the card has to account for it: a live response
+// paired a blouse and a floral tank with a lace midi dress and explained neither.
+//
+// Structural fact only: category groups, no keywords, no text classification.
+export function outfitLayersTopWithDress(pieces = []) {
+  const groups = (Array.isArray(pieces) ? pieces : []).map(p => wardrobeCategoryGroup(p))
+  return groups.includes('dress') && groups.includes('top')
+}
+
+// Returns the tops a dress outfit's own prose never mentions. Deliberately weak: a substring match
+// on a piece name we already know is in the card, in the spirit of findZeroResultContradiction —
+// checking a known fact, not fact-checking prose. It cannot judge whether the explanation is any
+// good; that is taste, and taste belongs to the model. It only enforces that the choice was
+// accounted for. A false positive costs one retry; the miss costs an unexplained garment.
+export function unexplainedLayeredTops(outfit = {}, pieces = []) {
+  const resolved = Array.isArray(pieces) && pieces.length ? pieces : (outfit.pieces || [])
+  if (!outfitLayersTopWithDress(resolved)) return []
+  const prose = [outfit.reason, outfit.why, outfit.stylingInstructions, outfit.watchFor]
+    .filter(Boolean).join(' ').toLowerCase()
+  if (!prose.trim()) return resolved.filter(p => wardrobeCategoryGroup(p) === 'top')
+  const words = piece => String(piece?.name || '').toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean)
+  return resolved.filter(piece => {
+    if (wardrobeCategoryGroup(piece) !== 'top') return false
+    const name = String(piece?.name || '').toLowerCase().trim()
+    if (!name) return false
+    if (prose.includes(name)) return false
+    // A distinctive word counts as naming the piece — "the blouson smooths the line" is not silence
+    // about "black blouson v-neck top". But a word shared with another garment in the SAME outfit
+    // cannot distinguish it: "black blouson v-neck top" beside "black brown lace floral midi dress"
+    // both contain "black", and prose about the dress would otherwise read as prose about the top.
+    // That false negative is exactly the live case this check exists to catch.
+    const others = new Set(resolved.filter(other => Number(other?.id) !== Number(piece?.id)).flatMap(words))
+    const distinctive = words(piece).filter(word =>
+      word.length >= 4 && !GENERIC_GARMENT_WORDS.has(word) && !others.has(word))
+    return !distinctive.some(word => prose.includes(word))
+  })
+}
+
+const GENERIC_GARMENT_WORDS = new Set([
+  'top', 'tops', 'sleeve', 'sleeves', 'sleeveless', 'short', 'shorts', 'long',
+  'print', 'printed', 'color', 'colour', 'light', 'dark', 'with', 'this', 'that'
+])
+
+export const LAYERED_TOP_UNEXPLAINED_FLAG =
+  'This look layers a top with the dress and the stylist did not say why — treat the top as optional.'
+
 export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
   const groups = pieces.map(p => wardrobeCategoryGroup(p))
   const shoeCount = groups.filter(g => g === 'shoes').length
@@ -4740,6 +4886,14 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     if (seen.has(key)) {
       reject(repaired, 'duplicate formula')
       continue
+    }
+    // docs/card-consistency-spec.md Part 1, terminal case. A top with a dress is a legitimate
+    // styling choice and is never removed here — that would be code censoring the composer, which
+    // Decision B (owner, 2026-06-25) ruled against and which advisor mode exists to prevent. If the
+    // card's own words do not account for the top, the card ships with the top and says so.
+    const unexplainedTops = unexplainedLayeredTops(repaired, wholeWardrobeFullPieces(repaired, candidatePieces))
+    if (unexplainedTops.length) {
+      repaired = appendSystemFlag(repaired, 'layering', LAYERED_TOP_UNEXPLAINED_FLAG)
     }
     if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
       if (advisorMode) {
@@ -4885,6 +5039,12 @@ export function buildOutfitMechanicsReason(outfit = {}, pieces = [], archetype =
   if (dress) {
     const support = layer ? `${layer.name} adds the structure around it` : shoe ? `${shoe.name} gives the one-piece line a grounded finish` : 'the supporting pieces need to stay clean'
     sentences.push(`${dress.name} carries the column, and ${support}.`)
+    // A top alongside a dress used to be omitted from this sentence entirely: the card told the
+    // person to wear a garment the prose never mentioned, under a label ("one-piece column") that
+    // implied it was not there. Name it, and say what it is doing.
+    if (top) {
+      sentences.push(`${top.name} is worn with the dress rather than instead of it — layered over or under, it has to read as a deliberate second layer, not a spare garment.`)
+    }
   } else if (bottom) {
     const columnVerb = /\b(black|charcoal|dark|navy|denim|straight|trouser|column)\b/.test(pieceNameBlob(bottom)) ? 'creates the long base' : 'sets the lower proportion'
     const upperJob = top ? `${top.name} ${/\b(fitted|sleeveless|tank|shell|compact)\b/.test(pieceNameBlob(top)) ? 'keeps the upper half compact' : 'sets the upper shape'}` : 'the upper piece needs to stay controlled'

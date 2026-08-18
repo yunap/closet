@@ -1,7 +1,13 @@
+// Provider abstraction, the tool loop, and the turn-contract output guards.
+// DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md — every guard here exists because of a
+// specific live failure recorded there. Read it before loosening or removing one.
+// See AGENTS.md.
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
-import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
+import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration } from './tools.js'
+import { unexplainedLayeredTops } from './rules.js'
+import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
 
@@ -123,9 +129,11 @@ export function extractPieceIdsFromProse(answerText = '') {
 // want:'image' has no delivery clause on purpose: in-chat rendering does not
 // exist yet (step 2 postponed) and declare_intent's ack already instructs the
 // honest capability-gap answer.
-export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set()) {
+export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set(), { record = true } = {}) {
   const fail = (blockType, diagnostic, correctionMessage) => {
-    bumpFreeformDiagnostic(toolContext, diagnostic)
+    // `record: false` is the disclosure pass below re-running the same predicates to see what is
+    // STILL failing after its one retry. It must not double-count the diagnostics.
+    if (record) bumpFreeformDiagnostic(toolContext, diagnostic)
     return { block: true, blockType, correctionMessage }
   }
 
@@ -151,6 +159,28 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
         return fail('unverifiedCitation', 'unverifiedCitationBlocks',
           `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call view_pieces for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm each piece (photo + truth line), then answer again (or drop the unverified references).`)
       }
+    }
+  }
+
+  // docs/card-consistency-spec.md Part 1 — the internal-consistency clause. The other truth clauses
+  // ask whether the card's pieces are real and verified; this one asks whether the card's own words
+  // describe the card it is attached to. A live response proposed a blouse and a floral tank with a
+  // lace midi dress and explained neither, under a label ("one-piece column") implying no top was
+  // there — every existing clause passed it, because every piece was real, verified and delivered.
+  //
+  // Not a gate: a top with a dress stays legal (owner ruling 2026-08-16), and if the retry produces
+  // no explanation the card ships with the top and a visible flag rather than losing it —
+  // routes/ai.js owns that ending. Only the retry lives here.
+  if (!retried.has('cardProseInconsistent')) {
+    const cards = Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : []
+    for (const card of cards) {
+      if (card?.broken) continue
+      const unexplained = unexplainedLayeredTops(card, card?.pieces || [])
+      if (!unexplained.length) continue
+      const dress = (card.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
+      const names = unexplained.map(piece => piece.name).join(', ')
+      return fail('cardProseInconsistent', 'cardProseInconsistentBlocks',
+        `Your outfit "${card.label || card.title || 'this look'}" puts ${names} together with ${dress?.name || 'a dress'}, and your explanation never mentions ${unexplained.length > 1 ? 'them' : 'it'}. Wearing a top with a dress is a real styling choice and you may absolutely make it — but say what it is doing (worn over, layered under, belted, knotted) so it does not read as a stray garment. Call propose_outfit again for that outfit with a why_it_works that accounts for ${unexplained.length > 1 ? 'those pieces' : 'that piece'}, or propose it without ${unexplained.length > 1 ? 'them' : 'it'}.`)
     }
   }
 
@@ -884,6 +914,98 @@ export async function askStylistStructuredWithUsage({
 }
 
 
+// docs/activity-and-roster-spec.md Part 4. Every text block of an assistant message, not just the
+// first — a final message can carry more than one, and content[0] silently dropped the rest.
+export function collectAssistantText(content) {
+  if (typeof content === 'string') return content.trim()
+  return (Array.isArray(content) ? content : [])
+    .filter(block => block?.type === 'text')
+    .map(block => String(block.text || ''))
+    .join('\n\n')
+    .trim()
+}
+
+// The model writes its conversational prose in the SAME assistant messages as its tool calls,
+// because prompts.js explicitly asks it to ("write your conversational prose — intro, the 'why it
+// works' framing, transitions — around those calls"). The tool loop used to return only the last,
+// tool-call-free message, so all of that was discarded. A live reply (thread_1786908272853) reached
+// the owner as a bare "---" followed by notes referring to "Look 1/2/3" — labels no card carries,
+// because the looks had been described beside the propose_outfit calls and thrown away.
+// A retry REPLACES the answer, so narration written before it is superseded. Without this, a guard
+// that rejected an answer would still ship the prose that caused the rejection: the model's
+// correction lands after the original text, producing "Use piece #999." followed by "Correction: use
+// verified piece #12" in one reply — and the clause that caught it has spent its retry budget, so it
+// cannot fire again. Narration written AFTER the correction accumulates normally, which is what
+// makes this a boundary rather than a discard.
+export function supersedeNarrationOnRetry(narration = []) {
+  if (Array.isArray(narration)) narration.length = 0
+  return narration
+}
+
+export function joinAssistantNarration(narration = [], finalText = '') {
+  const closing = String(finalText || '').trim()
+  const kept = (Array.isArray(narration) ? narration : [])
+    .map(part => String(part || '').trim())
+    // Drop anything the model repeated verbatim in its closing message rather than printing twice.
+    .filter(part => part && !closing.includes(part))
+  return [...kept, closing]
+    .filter(Boolean)
+    .join('\n\n')
+    // A leading horizontal rule separated the closing notes from prose that used to be discarded.
+    // With that prose restored it is a real separator; with nothing above it, it is an orphan.
+    .replace(/^\s*-{3,}\s*\n+/, '')
+    .trim()
+}
+
+// Capsule's ending, adopted for the turn contract (owner, 2026-08-17: the capsule way is better).
+//
+// Each clause gets exactly one retry — after that `retried` suppresses it and the answer was
+// returned unchanged and unremarked, so a guard that fired and did not get fixed left the person
+// holding a flawed answer with no sign anything had happened. Capsule does the opposite: a bounded
+// attempt that cannot satisfy a rule ships as `model_repaired_with_gaps` with the unmet thing
+// stated. Same principle here — deliver, and say what is unresolved.
+//
+// Deliberately not another retry: the budget is one per clause on purpose, and spending a second
+// paid iteration to chase the same failure is the retry spiral the budget exists to prevent.
+const FREEFORM_CHECK_DISCLOSURES = {
+  zeroResultContradiction: 'One note on the above: I mentioned a piece I could not actually find in your wardrobe. Treat that suggestion as a gap rather than something you own.',
+  unverifiedCitation: 'One note: some piece IDs above were not verified against your wardrobe this turn, so check those before acting on them.',
+  cardProseInconsistent: 'One note: a look above pairs a top with a dress and I did not explain why. Treat the extra top as optional.',
+  outfitProse: 'One note: I described an outfit in text rather than proposing it as a verified card, so its pieces have not been checked against your wardrobe.',
+  cardsNotDelivered: 'One note: I was not able to turn this into verified outfit cards — what is above is advice, not a checked proposal.',
+  outfitCount: 'One note: this is fewer outfits than you asked for. Ask me to continue if you want the rest.',
+  imageNotDelivered: 'One note: I was not able to render the image for this one.',
+  destinationClarification: '',
+}
+
+// Enumerates EVERY failing clause, then discloses each one that has already spent its retry.
+//
+// applyFreeformOutputChecks short-circuits on the first failure by design — it exists to pick the
+// next correction to send. Calling it once here disclosed at most one unresolved clause, and worse,
+// a newly-introduced failure that had NOT been retried would be returned first and mask a retried
+// clause behind it, so the reply shipped with nothing said at all. Re-running with each found type
+// suppressed walks the whole list without duplicating a single predicate.
+export function discloseUnresolvedFreeformChecks(answerText, toolContext = {}, retried = new Set()) {
+  if (!retried.size || toolContext.skipFreeformOutputChecks) return answerText
+  const suppressed = new Set()
+  const failing = []
+  // Bounded by the number of clauses; the suppressed set grows every pass, so this terminates.
+  for (let pass = 0; pass < Object.keys(FREEFORM_CHECK_DISCLOSURES).length + 1; pass += 1) {
+    const recheck = applyFreeformOutputChecks(answerText, toolContext, suppressed, { record: false })
+    if (!recheck.block) break
+    failing.push(recheck.blockType)
+    suppressed.add(recheck.blockType)
+  }
+  const text = String(answerText || '').trim()
+  const notes = failing
+    .filter(blockType => retried.has(blockType))
+    .map(blockType => FREEFORM_CHECK_DISCLOSURES[blockType])
+    .filter(note => note && !text.includes(note)) // ratchet-allow: de-duplicating our own disclosure line in the model's reply, not garment matching
+  if (!notes.length) return text
+  bumpFreeformDiagnostic(toolContext, 'unresolvedCheckDisclosures', notes.length)
+  return `${text}\n\n${[...new Set(notes)].join('\n')}`.trim()
+}
+
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -923,6 +1045,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let currentMessages = [...messages]
   const savedCorrections = []
   const retriedChecks = new Set()
+  // docs/activity-and-roster-spec.md Part 4. The model writes its conversational prose — intro, the
+  // per-look framing, transitions — in the SAME assistant messages as its tool calls, because
+  // prompts.js explicitly asks it to ("write your conversational prose … around those calls"). This
+  // loop used to return only the last, tool-call-free message, so all of that was discarded: a live
+  // reply arrived as a bare "---" followed by notes referring to "Look 1/2/3", labels no card
+  // carries, because the looks themselves had been written beside the propose_outfit calls.
+  const narration = []
+  const collectText = collectAssistantText
+  const joinAnswer = finalText => joinAssistantNarration(narration, finalText)
 
   // 10 iterations: the disciplined flow (declare, search, view supports, view
   // layers, propose xN) legitimately needs 6-8; the old cap of 7 left no margin
@@ -983,6 +1114,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (!message) return { answer: '', savedCorrections }
 
       if (message.tool_calls && message.tool_calls.length) {
+        recordFreeformToolIteration(toolContext, message.tool_calls.map(tc => tc?.function?.name))
+        const interim = String(message.content || '').trim()
+        if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
         
         const toolOutputs = []
@@ -1023,7 +1157,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         }
         continue
       } else {
-        const finalText = message.content || ''
+        const finalText = joinAnswer(String(message.content || '').trim())
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = toolContext.skipFreeformOutputChecks
@@ -1031,11 +1165,12 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: finalText, savedCorrections }
+        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
       }
     } else {
       const client = new Anthropic({ apiKey: resolveAnthropicKey() })
@@ -1068,6 +1203,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 
       if (response.stop_reason === 'tool_use') {
         const toolUses = response.content.filter(block => block.type === 'tool_use')
+        recordFreeformToolIteration(toolContext, toolUses.map(tu => tu.name))
+        const interim = collectText(response.content)
+        if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: response.content })
 
         const toolResponses = []
@@ -1116,7 +1254,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         currentMessages.push(...toolResponses)
         continue
       } else {
-        const finalText = response.content?.[0]?.text || ''
+        const finalText = joinAnswer(collectText(response.content))
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = toolContext.skipFreeformOutputChecks
@@ -1124,11 +1262,12 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: finalText, savedCorrections }
+        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
       }
     }
   }

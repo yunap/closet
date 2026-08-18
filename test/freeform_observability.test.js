@@ -35,6 +35,11 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     planOutfitSetCalls: 0,
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
+    // docs/card-consistency-spec.md Part 1 — cards whose prose did not account for a top worn with
+    // a dress, sent back for one correction round.
+    cardProseInconsistentBlocks: 0,
+    // Capsule's ending: a clause that spent its retry and is still failing ships with a note.
+    unresolvedCheckDisclosures: 0,
     destinationClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
     planSlotActivityInferred: 0,
@@ -51,6 +56,8 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // String, like weatherSource: a fallback that records only its own count
     // sends the next question to a paid run instead of a query.
     capsuleRosterFailureCodes: '',
+    // Which tools ran in which iteration — the shape of a turn, not just its size.
+    toolSequence: '',
     providerIterations: 0,
     providerInputTokens: 0,
     providerOutputTokens: 0,
@@ -1066,4 +1073,155 @@ test('executeTool propose_outfit inherits toolContext.activity when this call re
   } finally {
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
   }
+})
+
+// docs/activity-and-roster-spec.md Part 4 — narration written beside tool calls must reach the user.
+// Live shape (thread_1786908272853): the model wrote each look's prose in the same assistant
+// messages as its propose_outfit calls and closed with "---\n\nA few quick notes…". Only that
+// closing message survived, so the reply began with an orphan horizontal rule and referred to
+// "Look 1/2/3" — labels no card carries.
+test('assistant text is collected from every block, not just the first', async () => {
+  const { collectAssistantText } = await import('../styling-engine/provider.js')
+
+  // The old code read content[0].text. A final message can carry more than one text block, and
+  // a tool-use message interleaves prose with tool_use blocks.
+  assert.equal(collectAssistantText([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]), 'one\n\ntwo')
+  assert.equal(collectAssistantText([
+    { type: 'text', text: 'Look 1 — Earthy Trail Ease' },
+    { type: 'tool_use', id: 'tu1', name: 'propose_outfit', input: {} },
+  ]), 'Look 1 — Earthy Trail Ease')
+  assert.equal(collectAssistantText([{ type: 'tool_use', id: 'tu1', name: 'x', input: {} }]), '')
+  assert.equal(collectAssistantText('plain string  '), 'plain string')
+  assert.equal(collectAssistantText(null), '')
+})
+
+test('narration written beside tool calls is joined ahead of the closing message', async () => {
+  const { joinAssistantNarration } = await import('../styling-engine/provider.js')
+
+  const looks = '**Look 1 — Earthy Trail Ease**\nThe striped tank and cargo capris read as one palette.'
+  const closing = '---\n\nA few quick notes:\n- Shoes: go with the sneakers.'
+
+  const joined = joinAssistantNarration([looks], closing)
+  assert.match(joined, /Earthy Trail Ease/, 'prose written beside a tool call survives')
+  assert.match(joined, /A few quick notes/, 'and so does the closing message')
+  assert.ok(joined.indexOf('Earthy Trail Ease') < joined.indexOf('A few quick notes'), 'in the order written')
+
+  // The orphan rule is the visible symptom: with nothing above it, it is not a separator.
+  assert.doesNotMatch(joinAssistantNarration([], closing), /^\s*---/)
+  // With narration restored it IS a separator and stays.
+  assert.match(joined, /---/)
+
+  // A model that repeats itself in the closing message must not be printed twice.
+  assert.equal(joinAssistantNarration(['Here are three looks.'], 'Here are three looks. Enjoy.'), 'Here are three looks. Enjoy.')
+  assert.equal(joinAssistantNarration([], ''), '')
+  assert.equal(joinAssistantNarration(['', null], 'only this'), 'only this')
+})
+
+// Capsule's ending, adopted for the turn contract (owner, 2026-08-17). Each clause gets one retry;
+// after that it was suppressed and the answer returned unchanged and unremarked, so a guard that
+// fired and did not get fixed left the person holding a flawed answer with no sign of it. Capsule
+// ships `model_repaired_with_gaps` with the unmet thing stated — same here.
+test('a clause that spent its retry and still fails ships with the gap stated', async () => {
+  const { discloseUnresolvedFreeformChecks } = await import('../styling-engine/provider.js')
+
+  // A card pairing a top with a dress whose prose never mentions the top — the cardProseInconsistent
+  // clause. Pretend it already had its one retry.
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Layered Look',
+      reason: 'The navy cotton midi dress carries the column.',
+      pieces: [
+        { id: 1, name: 'ivory silk shell', category: 'top' },
+        { id: 2, name: 'navy cotton midi dress', category: 'dress' },
+        { id: 3, name: 'tan sandals', category: 'shoes' },
+      ],
+    }],
+  }
+  const answer = 'Here is a look for tonight.'
+  const disclosed = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent']))
+  assert.match(disclosed, /Here is a look for tonight/, 'the answer is still delivered, not withheld')
+  assert.match(disclosed, /treat the extra top as optional/i, 'and it says what is unresolved')
+
+  // Not double-counted, and not appended twice.
+  assert.equal(discloseUnresolvedFreeformChecks(disclosed, toolContext, new Set(['cardProseInconsistent'])), disclosed)
+
+  // A clause that never fired gets no note; nor does a turn with nothing retried.
+  assert.equal(discloseUnresolvedFreeformChecks(answer, toolContext, new Set()), answer)
+  assert.equal(discloseUnresolvedFreeformChecks(answer, { generatedOutfits: [] }, new Set(['cardProseInconsistent'])), answer)
+
+  // The disclosure pass must not re-record diagnostics — it is a re-run of the same predicates.
+  const counted = { generatedOutfits: toolContext.generatedOutfits, freeformDiagnostics: { cardProseInconsistentBlocks: 0 } }
+  discloseUnresolvedFreeformChecks(answer, counted, new Set(['cardProseInconsistent']))
+  assert.equal(counted.freeformDiagnostics.cardProseInconsistentBlocks, 0, 'the recheck must not double-count the block')
+})
+
+// Review finding P1. narration accumulated across the whole loop, so a rejected answer's prose was
+// prepended again after the model corrected itself — shipping the text that caused the rejection
+// alongside its correction, with the clause that caught it already out of retry budget:
+//   "Use piece #999."  /  "Correction: use verified piece #12 instead."
+test('narration written before a retry does not survive the correction', async () => {
+  const { supersedeNarrationOnRetry, joinAssistantNarration } = await import('../styling-engine/provider.js')
+
+  const narration = []
+  narration.push('**Look 1** — pairing it with piece #999.')   // written beside a tool call
+  narration.push('**Look 2** — and the cream cardigan over it.')
+
+  // A guard rejects the answer; the retry replaces it.
+  supersedeNarrationOnRetry(narration)
+  assert.deepEqual(narration, [], 'the superseded attempt is dropped, in place')
+
+  // Narration written AFTER the correction still accumulates — this is a boundary, not a discard.
+  narration.push('**Look 1** — pairing it with the verified piece #12.')
+  const answer = joinAssistantNarration(narration, 'Here are the looks.')
+
+  assert.doesNotMatch(answer, /#999/, 'the superseded reference must not reappear')
+  assert.doesNotMatch(answer, /Look 2/, 'nor the prose from the rejected attempt')
+  assert.match(answer, /#12/, 'the corrected narration survives')
+  assert.match(answer, /Here are the looks/)
+
+  // Idempotent and safe on junk.
+  assert.deepEqual(supersedeNarrationOnRetry([]), [])
+  assert.doesNotThrow(() => supersedeNarrationOnRetry(undefined))
+})
+
+// Review finding P2. applyFreeformOutputChecks short-circuits on the first failure by design, so
+// disclosing from a single call surfaced at most one unresolved clause — and a newly-introduced
+// failure that had NOT been retried would be returned first and mask a retried one behind it,
+// shipping the reply with nothing said at all.
+test('every unresolved clause is disclosed, and a new failure cannot mask a retried one', async () => {
+  const { discloseUnresolvedFreeformChecks } = await import('../styling-engine/provider.js')
+
+  // A card that layers a top with a dress and never explains it (cardProseInconsistent), in a turn
+  // whose prose also cites an unverified piece id (unverifiedCitation). Both clauses fire.
+  const toolContext = {
+    zeroResultQueries: [],
+    generatedOutfits: [{
+      label: 'Layered Look',
+      reason: 'The navy cotton midi dress carries the column.',
+      pieces: [
+        { id: 1, name: 'ivory silk shell', category: 'top' },
+        { id: 2, name: 'navy cotton midi dress', category: 'dress' },
+        { id: 3, name: 'tan sandals', category: 'shoes' },
+      ],
+    }],
+  }
+  const answer = 'Try the shell with it (ID 777).'
+
+  // Both retried and still failing -> both disclosed.
+  const both = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent', 'unverifiedCitation']))
+  assert.match(both, /treat the extra top as optional/i)
+  assert.match(both, /not verified against your wardrobe/i)
+
+  // Only one retried: the other is a live failure the loop may still correct, so it is not
+  // disclosed — but it must not suppress the one that HAS spent its budget. This is the masking
+  // case: unverifiedCitation is evaluated before cardProseInconsistent.
+  const masked = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent']))
+  assert.match(masked, /treat the extra top as optional/i, 'a retried clause is disclosed even when an earlier clause also fails')
+  assert.doesNotMatch(masked, /not verified against your wardrobe/i, 'a clause with retries left is not disclosed')
+
+  // Counted once per note, and never appended twice.
+  const counted = { ...toolContext, freeformDiagnostics: { unresolvedCheckDisclosures: 0 } }
+  const first = discloseUnresolvedFreeformChecks(answer, counted, new Set(['cardProseInconsistent', 'unverifiedCitation']))
+  assert.equal(counted.freeformDiagnostics.unresolvedCheckDisclosures, 2)
+  assert.equal(discloseUnresolvedFreeformChecks(first, counted, new Set(['cardProseInconsistent', 'unverifiedCitation'])), first)
 })

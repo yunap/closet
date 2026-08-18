@@ -1,3 +1,7 @@
+// All system prompts.
+// AUTHORITY: docs/style_constitution.md is the SINGLE authority for style claims — no model may
+// add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
+// Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:

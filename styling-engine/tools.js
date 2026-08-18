@@ -1,9 +1,14 @@
+// The /ask tool schemas and their executors — search_wardrobe's roster and gating included.
+// DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md (what has already been tried, and why)
+// and docs/engine-behaviour-map.md. A tool schema change must amend the handoff in the same
+// commit: the schema text is what the model actually reads. See AGENTS.md.
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
+import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import {
@@ -174,6 +179,8 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       planOutfitSetCalls: 0,
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
+      cardProseInconsistentBlocks: 0,
+      unresolvedCheckDisclosures: 0,
       destinationClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,
       planSlotActivityInferred: 0,
@@ -188,6 +195,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
       capsuleRosterFailureCodes: '',
+      toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -201,6 +209,20 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
 // per-turn observability (freeform_generation_runs.weather_source).
+// docs/activity-and-roster-spec.md §9 / the iteration question. The run row records that a turn
+// took 6 provider iterations and made 7 tool calls, and never which call happened in which — so the
+// shape of a turn had to be inferred from the model's own prose. That is the same provenance gap
+// that hid a composer regression from 1,192 tests. One compact string, iterations separated by ';'
+// and the calls within an iteration by ',', turns "roughly this shape" into a query.
+export function recordFreeformToolIteration(toolContext, toolNames = []) {
+  if (!toolContext) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  const names = (Array.isArray(toolNames) ? toolNames : []).filter(Boolean)
+  if (!names.length) return
+  const existing = toolContext.freeformDiagnostics.toolSequence || ''
+  toolContext.freeformDiagnostics.toolSequence = existing ? `${existing};${names.join(',')}` : names.join(',')
+}
+
 export function setFreeformWeatherSource(toolContext, source) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
@@ -480,7 +502,7 @@ export const STYLIST_TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query matching against name or notes" },
-        category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"], description: "Filter by category. Use the exact singular values shown (the manifest's group headers are plural display labels; the data values are these)." },
+        category: { oneOf: [{ type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"] }, { type: "array", items: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"] } }], description: "Filter by category, or by SEVERAL AT ONCE — pass an array like ['top','bottom','shoes'] to cover a whole outfit in ONE call instead of one call per category. Every separate call is another round-trip that re-sends the whole conversation, so batch categories that share the same occasion/activity/weather. Use the exact singular values shown (the manifest's group headers are plural display labels; the data values are these)." },
         color: { type: "string", description: "Filter by color description or reads_as tag" },
         occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" },
         pattern_type: { type: "string", description: "Filter by pattern type, e.g. solid, floral, stripe, botanical, geometric, abstract, animal, graphic, plaid, other" },
@@ -490,7 +512,7 @@ export const STYLIST_TOOLS = [
         neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" },
         weather: { type: "string", description: "Established conditions (e.g. hot, highs 80-90F, cold). Ranks and flags results by weather fit; pass it whenever conditions are known." },
         location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set, weather is resolved from a live forecast for that place instead of the text-heuristic fallback — pass it whenever a concrete location is established in the conversation." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Established activity (walking/hiking). With occasion, flags pieces by profile-rule fit; pass it whenever known." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical demand of the outing. 'hiking' = trails, nature walks, woods, uneven or unpaved ground — a nature walk IS hiking even when it is gentle. 'walking' = pavement: city days, sightseeing, all-day errands on foot. 'none' = no sustained walking. With occasion, flags pieces by profile-rule fit; pass it whenever known." },
         visual: { type: "boolean", description: "When true, attach low-detail thumbnails for the top ranked matches so you can judge color, texture, print, and proportion by sight. Use before proposing or refining outfits; leave false for quick text lookups." },
         intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you compose only from wearable pieces (no need to self-reject anything). Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
       }
@@ -810,6 +832,24 @@ const CATEGORY_ALIASES = {
   accessory: 'accessory', accessories: 'accessory',
 }
 
+// docs/search-payload-spec.md §7 lever 2. Three searches that differ only by category cost three
+// full provider round-trips, and each round-trip re-reads the whole conversation AND the cached
+// prefix — the A/B on thread_1786994644421 showed prefix size is multiplied by iteration count. So
+// the fix is structural rather than a prompt asking the model to batch: accept the categories it
+// wants in one call. Prompt-only guidance has failed every time it has been tried here.
+export function normalizeCategoryFilters(value) {
+  const raw = Array.isArray(value) ? value : (value === undefined || value === null || value === '' ? [] : [value])
+  const categories = []
+  const unknown = []
+  for (const entry of raw) {
+    const { category, unknown: isUnknown } = normalizeCategoryFilter(entry)
+    if (!category) continue
+    if (isUnknown) { unknown.push(String(entry)); continue }
+    if (!categories.includes(category)) categories.push(category)
+  }
+  return { categories, unknown }
+}
+
 export function normalizeCategoryFilter(value) {
   const key = String(value || '').toLowerCase().trim()
   if (!key) return { category: null, unknown: false }
@@ -936,15 +976,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
       }
       case 'search_wardrobe': {
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
-        const { category, unknown: unknownCategory } = normalizeCategoryFilter(args.category)
-        if (unknownCategory) {
-          return [{ note: `Unknown category "${args.category}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
+        const { categories, unknown: unknownCategories } = normalizeCategoryFilters(args.category)
+        if (unknownCategories.length) {
+          return [{ note: `Unknown category "${unknownCategories.join('", "')}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
         }
         let sql = "SELECT * FROM pieces WHERE status = 'active'"
         const params = []
-        if (category) {
+        if (categories.length === 1) {
           sql += " AND category = ?"
-          params.push(category)
+          params.push(categories[0])
+        } else if (categories.length > 1) {
+          sql += ` AND category IN (${categories.map(() => '?').join(',')})`
+          params.push(...categories)
         }
         if (pattern_type) {
           sql += " AND pattern_type = ?"
@@ -973,12 +1016,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
           filtered = filtered.filter(piece => pieceHasStructuredColor(piece, color))
         }
         let fallbackNote = ''
+        let gateSupplyFallbackNote = ''
         if (occasion) {
           const beforeOccasionFilter = filtered
           const occasionFiltered = filtered.filter(p => {
             if (!pieceOccasionCompatible(p, occasion)) return false
-            const trust = wholeWardrobePieceTrustDecision(p, { occasion })
-            return trust.allowed
+            // docs/activity-and-roster-spec.md §5.4. This passed `occasion` alone, so an
+            // owner_constraints row scoped to an activity, season or weather could never apply to
+            // the roster the model composes from — only to the proposal afterwards. Both stored
+            // constraints in the development wardrobe are activity- or season-scoped.
+            const trust = wholeWardrobePieceTrustDecision(p, {
+              occasion,
+              season: args?.season || toolContext.season || '',
+              activity: activity !== undefined && activity !== null && activity !== '' ? normalizeActivity(activity) : (toolContext.activity || ''),
+              weatherProfile: weatherProfileFromContext({ weather: weatherText || toolContext.weather || '', season: args?.season || toolContext.season || '' })
+            })
+            if (trust.allowed) return true
+            // Reject HERE only for the owner's own standing decisions. Passing activity/season above
+            // also makes this call evaluate the full profile gate, and letting that reject at this
+            // stage would move profile exclusions ahead of the ruleFit pass that counts them, annotates
+            // them, and hands them back under intent:'explain' — the piece would vanish with no
+            // number, no label and no way to ask why. Profile fit is judged once, below.
+            return !trust.reasons.some(reason => /^(owner constraint |user-excluded for )/.test(String(reason)))
           })
           if (occasionFiltered.length) {
             filtered = occasionFiltered
@@ -1090,12 +1149,24 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activityProfile
           })
           const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
+          // Within a tier the order used to fall back to id, so nine shoes tied at `preferred`
+          // arrived in an order carrying no information — ballet flats indistinguishable from
+          // trail sneakers. When an activity is set, rank its own axis first: more support is
+          // better for walking and hiking. This reorders; it never removes.
+          const supportRank = { high: 0, medium: 1, low: 2 }
+          const activityFitness = piece => {
+            if (!activityProfile || wardrobeCategoryGroup(piece) !== 'shoes') return 1
+            const support = String(piece?.walk_support || '').toLowerCase()
+            return supportRank[support] ?? 1.5
+          }
           results = results
             .map(p => {
               const fit = profileRuleFit(p, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
               return { ...p, ruleFit: fit.tier, ruleFitLabel: fit.label }
             })
-            .sort((a, b) => (tierRank[a.ruleFit] ?? 1) - (tierRank[b.ruleFit] ?? 1))
+            .sort((a, b) =>
+              ((tierRank[a.ruleFit] ?? 1) - (tierRank[b.ruleFit] ?? 1)) ||
+              (activityFitness(a) - activityFitness(b)))
 
           // Compose mode (default): exclude prohibited-tier pieces entirely so the model composes
           // only from wearable pieces (matching the composer roster's discipline). Explain mode keeps
@@ -1103,15 +1174,45 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // discouraged/unknown stay in both modes — legitimate judgment calls, not hard exclusions.
           if (intent !== 'explain') {
             const beforeGate = results.length
-            results = results.filter(p => p.ruleFit !== 'prohibited')
-            gateExcludedCount = beforeGate - results.length
+            const kept = results.filter(p => p.ruleFit !== 'prohibited')
+            // docs/activity-and-roster-spec.md §5.4(2) + §5.0. Enforcement must not assume a
+            // well-tagged wardrobe: this app has per-user databases, and an instance where no
+            // garment carries an `outdoor` tag would otherwise get an empty roster and no
+            // explanation. Same shape as the occasion-filter fallback above, and as capsule's
+            // supply-gap disclosure — degrade to annotated guidance, and say why.
+            // Count what the gate found either way: the diagnostic is about what the gate judged,
+            // not about what survived, and a fallback that silently reports zero exclusions would
+            // hide exactly the case worth knowing about.
+            gateExcludedCount = beforeGate - kept.length
+            if (!kept.length && beforeGate > 0) {
+              gateSupplyFallbackNote = `No active pieces fully satisfy ${activityProfile?.label || 'this activity'}${occasion ? ` for ${occasion}` : ''}; showing the closest available pieces instead, annotated with ruleFit so you can judge and say what is missing.`
+            } else {
+              results = kept
+            }
           }
         }
         
+        // Trim only when the manifest is genuinely in the prompt to join against. Above the piece
+        // cap it is omitted and the full rows are the model's only view of a garment.
+        const trimToJudgment = toolContext?.wardrobeManifestIncluded === true
         console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
+        // Rank within each category so the per-category image budget is independent.
+        const visualRankByPiece = new Map()
+        const seenPerCategory = new Map()
+        for (const p of results) {
+          const key = wardrobeCategoryGroup(p) || p.category || 'other'
+          const rank = seenPerCategory.get(key) ?? 0
+          visualRankByPiece.set(p.id, rank)
+          seenPerCategory.set(key, rank + 1)
+        }
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
-          if (visual && index < SEARCH_WARDROBE_VISUAL_CAP) {
+          // The cap is per CATEGORY, not per call: batching three category searches into one must
+          // not hand the model a third of the photos it used to get. Visual grounding is a founding
+          // principle of this app, and quietly starving it to save a round-trip would be the wrong
+          // trade.
+          const visualRank = visualRankByPiece.get(p.id) ?? index
+          if (visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP) {
             const photoFile = p.worn_photo || p.photo || ''
             if (photoFile) {
               const filePath = path.join(userUploadsDir(), photoFile)
@@ -1128,6 +1229,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
               }
             }
           }
+          // docs/search-payload-spec.md option B. The wardrobe manifest is in the cached stable
+          // prefix and already carries this garment's stable truth — name, colours, fabric,
+          // silhouette, length, neckline, sleeve, hem, pattern, formality, occasions, shoe type,
+          // toe, heel, support, opacity, needs-base, season and trust flags. Re-sending all of it
+          // per search cost more per call than the entire 251-piece manifest (~13.8k vs ~12.5k
+          // tokens) and, unlike the manifest, was written to cache at 1.25x input every time.
+          //
+          // What a search is actually FOR is the part that cannot be cached: which pieces passed,
+          // and how they were judged for THIS occasion/activity/weather. That is what comes back.
+          // `id` is the join key into the manifest the model is already reading.
+          if (trimToJudgment) {
+            return {
+              id: p.id,
+              name: p.name,          // kept: the model cites pieces by name in its prose
+              category: p.category,  // kept: cheap, and searches are often cross-category
+              weatherFit: p.weatherFit,
+              ruleFit: p.ruleFit,
+              ruleFitLabel: p.ruleFitLabel,
+              notes: p.notes ? p.notes.slice(0, 120) : '',
+              ...(image ? { image } : {})
+            }
+          }
           return {
             id: p.id,
             name: p.name,
@@ -1141,6 +1264,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
             silhouette: p.silhouette,
             shoe_type: p.shoe_type,
             toe_shape: p.toe_shape,
+            // docs/activity-and-roster-spec.md Part 2. footwearComfortVerdict reads these to
+            // exclude pieces and they appeared in no result row, so the model could not tell a
+            // high-support trail shoe from a medium-support ballet flat and inferred grip from
+            // garment names — exactly what structured tags exist to prevent.
+            walk_support: p.walk_support,
+            heel_height: p.heel_height,
             fabric_category: p.fabric_category,
             fabric_weight: p.fabric_weight,
             visual_weight: p.visual_weight,
@@ -1161,6 +1290,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
 
         if (fallbackNote) {
           resultList.push({ note: fallbackNote })
+        }
+        if (gateSupplyFallbackNote) {
+          resultList.push({ note: gateSupplyFallbackNote })
         }
 
         if (excludedCount > 0) {
