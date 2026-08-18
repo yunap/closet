@@ -5659,3 +5659,43 @@ test('the tool sequence records which tools ran in which provider iteration', as
   recordFreeformToolIteration(toolContext, [])
   assert.equal(toolContext.freeformDiagnostics.toolSequence.split(';').length, 3, 'an empty iteration adds nothing')
 })
+
+// Review finding: the current question reached the model twice on every freeform request. The
+// client appends it to chatHistory before sending, and the server appends it AGAIN as the final
+// user turn built from `question`. Pure duplication, and repeating the latest wording verbatim
+// also overweights it against the rest of the turn's context.
+test('the question being asked is not sent twice', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const question = 'What should I wear for a nature walk?'
+
+  const payload = await buildStylistConversationPayload({
+    question,
+    conversationMode: 'new_request',
+    sessionId: 'dup-test',
+    history: [
+      { role: 'user', content: 'Earlier question about shoes.' },
+      { role: 'assistant', content: 'Earlier answer.' },
+      { role: 'user', content: question },   // what the client actually sends
+    ],
+  })
+  const userTurns = payload.messages.filter(m => m.role === 'user')
+  const asText = m => (typeof m.content === 'string' ? m.content : (m.content || []).map(c => c.text || '').join(' '))
+  const occurrences = userTurns.filter(m => asText(m).includes(question)).length
+  assert.equal(occurrences, 1, 'the question appears exactly once in the model input')
+  assert.equal(payload.messages.length, 3, 'earlier history is untouched')
+  assert.match(asText(payload.messages[0]), /Earlier question about shoes/)
+
+  // A trailing assistant turn, or an older repeat of the same wording, must NOT be dropped.
+  const keeps = await buildStylistConversationPayload({
+    question,
+    conversationMode: 'new_request',
+    sessionId: 'dup-test-2',
+    history: [
+      { role: 'user', content: question },        // genuinely asked before
+      { role: 'assistant', content: 'A previous answer.' },
+    ],
+  })
+  assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
+  assert.equal(keeps.messages[0].role, 'user')
+  assert.equal(keeps.messages[1].role, 'assistant')
+})

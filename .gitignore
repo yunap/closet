@@ -82,3 +82,7 @@ scratch/*
 !scratch/measure_roles.js
 !scratch/diagnose_capsule_shoe_roster.js
 !scratch/recall_at_cap_report.json
+
+# Offline measurement for the conversation-history budget question (read-only, needs an
+# isolated WARDROBE_DB_PATH).
+!scratch/measure_history_budget.js
