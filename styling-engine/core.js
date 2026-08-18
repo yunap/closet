@@ -1,3 +1,7 @@
+// Composition, prompt assembly, formatting and rendering pipelines.
+// DOCUMENTED IN: docs/engine-behaviour-map.md, docs/flows/ (per-flow model-call diagrams), and
+// docs/feedback-and-memory-map.md for buildStylistConversationPayload's memory blocks.
+// Amend the matching doc in the same commit. See AGENTS.md.
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
@@ -4268,14 +4272,34 @@ export async function buildStylistConversationPayload(body) {
     userContent = promptText
   }
 
+  // The client's `history` already ends with the message being asked (StylistChat appends it to
+  // chatHistory before sending), and `question` is then sent separately and appended again as the
+  // final user turn — so the current question reached the model TWICE on every freeform request.
+  // Not the largest cost, but pure duplication, and repeating the latest wording verbatim also
+  // overweights it against the rest of the turn's context.
+  //
+  // Dropped defensively on the server rather than by changing the client contract: only when the
+  // trailing entry is a user message whose text matches `question` exactly. Anything else — a
+  // genuine repeat of an earlier question, a trailing assistant turn — is left alone.
+  const priorHistory = (history || []).map(h => ({ role: h.role, content: h.content }))
+  const askedNow = String(question || '').trim()
+  const last = priorHistory[priorHistory.length - 1]
+  if (askedNow && last?.role === 'user' && typeof last.content === 'string' && last.content.trim() === askedNow) {
+    priorHistory.pop()
+  }
+
   return {
     system,
     messages: [
-      ...(history || []).map(h => ({ role: h.role, content: h.content })),
+      ...priorHistory,
       { role: 'user', content: userContent }
     ],
     maxTokens: 1500,
     automaticallySavedCorrection,
-    threadState
+    threadState,
+    // docs/search-payload-spec.md §5. search_wardrobe trims its rows to per-request judgment only
+    // when the model can actually see the manifest. Above WARDROBE_MANIFEST_MAX_PIECES the manifest
+    // is omitted entirely, and a trimmed row would then be the model's ONLY view of a garment.
+    wardrobeManifestIncluded: Boolean(wardrobeManifestText)
   }
 }

@@ -2345,7 +2345,9 @@ test('StylistChat preserves generated board image urls for critique previews', (
   assert.match(src, /value\.startsWith\('generated-boards\/'\)/)
   assert.match(src, /displayPrev = resolveUploadImageSrc\(outfitToSend\.photo\)/)
   assert.match(src, /const messageImageSrc = resolveUploadImageSrc\(m\.imagePrev\)/)
-  assert.match(src, /const pendingPhotoSrc = resolveUploadImageSrc\(pendingPhoto\)/)
+  // Intent: the pending photo goes through the URL resolver, never used raw. Tolerant of the
+  // null-guard the expression has since grown (`pendingPhoto ? resolve... : null`).
+  assert.match(src, /const pendingPhotoSrc = [^\n]*resolveUploadImageSrc\(pendingPhoto\)/)
   assert.match(src, /src: resolveUploadImageSrc\(board\.imageUrl\)/)
   assert.doesNotMatch(src, /displayPrev = `\\\/uploads\\\/\$\{outfitToSend\.photo\}`/)
   assert.doesNotMatch(src, /<img src=\{m\.imagePrev\}/)
@@ -2377,7 +2379,10 @@ test('StylistChat new-chat empty state prioritizes the freeform composer', () =>
   assert.match(src, /const suppressNextMessageScrollRef = useRef\(false\)/)
   assert.match(src, /suppressNextMessageScrollRef\.current = true/)
   assert.match(src, /if \(suppressNextMessageScrollRef\.current\)/)
-  assert.match(src, /\{messages\.length > 1 && messages\.map\(\(m, i\) =>/)
+  // Intent: the message list renders only past the greeting, so the empty state is the composer.
+  // The list is now windowed (messages.slice(visibleMessageStart)), which is why this is tolerant
+  // of the slice and of the map's parameter names.
+  assert.match(src, /\{messages\.length > 1 && messages\.slice\([^)]*\)\.map\(/)
   assert.match(src, /\{messages\.length > 1 && renderComposerDock\(\)\}/)
   assert.match(src, /messages\.length > 1 \? 'is-existing-chat' : 'is-empty-chat'/)
   assert.match(css, /\.stylist-empty-intro h2/)
@@ -2410,8 +2415,11 @@ test('StylistChat new-chat empty state prioritizes the freeform composer', () =>
   assert.match(src, /className="outfit-styling-workflow"/)
   assert.match(src, /className="outfit-styling-entry"/)
   assert.match(src, /<div className="piece-styling-eyebrow">Outfit styling<\/div>/)
-  assert.match(src, /title="Review this outfit"/)
-  assert.match(src, /title="Find similar looks"/)
+  // Intent: the outfit action is labelled for hover/assistive tech. The title is now conditional
+  // on a loading state ("Reviewing…" while in flight), so match the resting label wherever it sits.
+  assert.match(src, /title=\{[^}]*'Review this outfit'\}|title="Review this outfit"/)
+  // Same conditional-title change as "Review this outfit" above (loading state added).
+  assert.match(src, /title=\{[^}]*'Find similar looks'\}|title="Find similar looks"/)
   assert.match(src, /className="outfit-question-shell"/)
   assert.doesNotMatch(src, /accent\s+title="Critique outfit"/)
   assert.match(css, /\.outfit-styling-options[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
@@ -2453,7 +2461,9 @@ test('Primary app navigation uses full-row accessible sidebar items with shared 
   assert.match(app, /usePendingWardrobeTaskCount/)
   assert.match(inventory, /usePendingWardrobeTaskCount/)
   assert.match(hook, /window\.addEventListener\('todos-changed', refreshPendingCount\)/)
-  assert.match(css, /\.primary-nav__item\.active::before/)
+  // Intent: the active nav item is visually marked, not conveyed by text alone. The marker was a
+  // ::before bar; it is now an accent colour + tinted background + border on the item itself.
+  assert.match(css, /\.primary-nav__item\.active\s*\{[\s\S]*?background:\s*var\(--accent-light\)[\s\S]*?border-color:/)
   assert.match(css, /\.primary-nav__item:focus-visible/)
   assert.match(css, /@media \(min-width: 768px\) and \(max-width: 1040px\)/)
   assert.doesNotMatch(app, /icon:\s*'◈'|icon:\s*'✦'|icon:\s*'◇'|icon:\s*'⌾'/)
@@ -2464,16 +2474,25 @@ test('Wardrobe page keeps primary filters visible and collapses color and fabric
   const inventory = fs.readFileSync(path.join(process.cwd(), 'src/views/PieceInventory.jsx'), 'utf8')
   const pieceCard = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceCard.jsx'), 'utf8')
   const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
-  assert.match(inventory, /className="filter-row" aria-label="Wardrobe categories"/)
+  // Intent: the category filters are a labelled row, visible (not collapsed behind a menu). The
+  // className became a template literal carrying an open-menu modifier; the labelled row is intact.
+  assert.match(inventory, /className=(?:"filter-row"|\{`filter-row[^`]*`\}) aria-label="Wardrobe categories"/)
   assert.doesNotMatch(inventory, /className="wardrobe-filter-label">Category/)
   assert.match(inventory, /filterOcc \? `Occasion: \$\{occasionLabel\}` : 'Occasion'/)
   assert.match(inventory, /filterSeason \? `Season: \$\{seasonLabel\}` : 'Season'/)
-  assert.match(inventory, /filterColor \? `Color: \$\{filterColor\}` : 'Color'/)
+  // Intent: colour is one of the collapsed filter controls, carrying the current selection.
+  // The bespoke chip list + `Color: ${filterColor}` label were replaced by the shared
+  // ColorFamilyFilter (family -> exact shade), per docs/wardrobe-color-controls-spec.md.
+  // filterColor remains the exact-shade state it reads.
+  assert.match(inventory, /<ColorFamilyFilter/)
+  assert.match(inventory, /valueColor=\{filterColor\}/)
+  assert.match(inventory, /valueFamily=\{activeColorFamily\}/)
   assert.match(inventory, /filterFabric \? `Fabric: \$\{filterFabric\}` : 'Fabric'/)
   assert.match(inventory, /className="filter-menu-chevron"/)
-  assert.match(inventory, /className="wardrobe-color-list"/)
-  assert.match(inventory, /className="wardrobe-color-name"/)
-  assert.match(inventory, />Any color<\/span>/)
+  // The three assertions that used to pin the bespoke colour chip list markup
+  // (.wardrobe-color-list / .wardrobe-color-name / the "Any color" reset) now live with the
+  // shared component in test/outfitLookbook.test.js — the markup moved there wholesale.
+  assert.match(inventory, /import \{ ColorFamilyFilter \} from '\.\.\/components\/ColorSelector'/)
   assert.match(inventory, /className="wardrobe-sort-info"/)
   assert.match(inventory, /className="wardrobe-fabric-search"/)
   assert.match(inventory, /document\.addEventListener\('pointerdown', handlePointerDown\)/)
@@ -3068,7 +3087,10 @@ test('StylistChat announces stylist activity and replies to assistive tech', () 
 test('StylistChat small accessibility/product batch: post-send focus, contrast, labels, badge placement', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   // Clearing input disables the send button; refocus the textarea so focus doesn't drop to <body>.
-  assert.match(src, /setInput\(''\); setImageFile\(null\); setImagePrev\(null\)\s*\n\s*\/\/ Clearing input disables the send button[\s\S]*?textRef\.current\?\.focus\(\)/)
+  // Intent: after send, the composer is cleared AND focus is moved to the textarea so it does not
+  // drop to <body> when the send button disables. Tolerant of additional state setters on the
+  // clear line (setPendingCapsuleExpansion was added there).
+  assert.match(src, /setInput\(''\);[^\n]*setImagePrev\(null\)\s*\n\s*\/\/ Clearing input disables the send button[\s\S]*?textRef\.current\?\.focus\(\)/)
   // "Suggested additions" caption no longer uses --accent (4.48:1, marginal) — uses the
   // documented lowest-contrast readable token instead.
   assert.match(src, /Suggested additions: \{visual\.missingPieces\.join\(' \+ '\)\}<\/div>\}/)
@@ -3096,8 +3118,10 @@ test('ThreadRail mobile history drawer behaves as a dialog rather than a static 
 
 test('StylistChat selected-piece season menu keeps spring and summer separate', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
-  assert.match(src, /\{ value: 'spring', label: 'Spring' \}/)
-  assert.match(src, /\{ value: 'summer', label: 'Summer' \}/)
+  // Intent: spring and summer stay SEPARATE options (never collapsed into "Spring / summer").
+  // The options were refactored from objects to [value, label] tuples; the intent is unchanged.
+  assert.match(src, /\['spring', 'Spring'\]/)
+  assert.match(src, /\['summer', 'Summer'\]/)
   assert.doesNotMatch(src, /Spring \/ summer/)
   assert.doesNotMatch(src, /spring \/ summer/)
 })
@@ -4340,6 +4364,14 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     candidateLimit: 12
   })
   assert.ok(layeredTopMainCandidates.some(candidate => candidate.pieceIds.includes(14) && candidate.pieces.filter(piece => piece.category === 'top').length >= 2), 'layer-capable top Main should be able to preserve a two-top saved formula without being recategorized as outerwear')
+  // The structural fallback appends the Main piece to a slot combination. When the Main IS the
+  // slot (a top/bottom/dress Main, where that slot list is [requiredPiece]), appending blindly
+  // put the same garment in the outfit twice. No candidate may list a piece more than once.
+  for (const candidateSet of [layeredTopMainCandidates, requiredDressCandidates, requiredShoeCandidates]) {
+    for (const candidate of candidateSet) {
+      assert.equal(new Set(candidate.pieceIds).size, candidate.pieceIds.length, `candidate must not repeat a piece: ${candidate.pieceIds.join(', ')}`)
+    }
+  }
 })
 
 test('Visual composer occasion profile prompt block and wardrobe coverage contract tests', async () => {
@@ -5547,4 +5579,123 @@ test('freeform ask retries the model once when prose cites unverified ids', asyn
     ? correction.content.map(part => part?.text || '').join('\n')
     : String(correction?.content || '')
   assert.match(correctionText, /without verifying them this turn/)
+})
+
+// docs/search-payload-spec.md §5 — the fallback that keeps trimming safe on a wardrobe above the
+// manifest cap, where the manifest is omitted entirely and a trimmed row would be the model's ONLY
+// view of a garment.
+test('search_wardrobe trims to judgment only when the manifest is actually in the prompt', async () => {
+  const withManifest = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual' },
+    { wardrobeManifestIncluded: true, freeformDiagnostics: {} })
+  const withoutManifest = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual' },
+    { wardrobeManifestIncluded: false, freeformDiagnostics: {} })
+
+  const trimmed = withManifest.find(p => p.id)
+  const full = withoutManifest.find(p => p.id)
+  assert.ok(trimmed && full)
+
+  // Trimmed: judgment plus the join key into the manifest.
+  assert.ok('ruleFit' in trimmed && 'weatherFit' in trimmed, 'per-request judgment always survives')
+  assert.equal(trimmed.silhouette, undefined, 'stable truth is left to the cached manifest')
+  assert.equal(trimmed.fabric_category, undefined)
+  assert.equal(trimmed.occasions, undefined)
+
+  // Without a manifest to join against, the full row is the model's only view and must survive.
+  assert.ok('silhouette' in full && 'fabric_category' in full && 'occasions' in full,
+    'above the manifest cap the full row is the only description the model gets')
+
+  // Either way the roster itself is identical — this changes description, never selection.
+  assert.deepEqual(withManifest.filter(p => p.id).map(p => p.id), withoutManifest.filter(p => p.id).map(p => p.id))
+  assert.deepEqual(withManifest.filter(p => p.id).map(p => p.ruleFit), withoutManifest.filter(p => p.id).map(p => p.ruleFit))
+})
+
+// docs/search-payload-spec.md §7 lever 2 — batching categories into one call.
+// Three searches differing only by category cost three provider round-trips, and each re-reads the
+// whole conversation AND the cached prefix. Stated structurally rather than as a prompt asking the
+// model to batch, because prompt-only guidance has failed every time it has been tried here.
+test('search_wardrobe accepts several categories in one call, with the image budget per category', async () => {
+  const ctx = () => ({ wardrobeManifestIncluded: true, freeformDiagnostics: {}, retrievedPieceIds: new Set(), visuallySeenPieceIds: new Set() })
+  const args = extra => ({ occasion: 'casual', visual: true, ...extra })
+
+  const separate = []
+  for (const category of ['top', 'bottom', 'shoes']) {
+    separate.push(...(await executeTool('search_wardrobe', args({ category }), ctx())).filter(p => p.id))
+  }
+  const batched = (await executeTool('search_wardrobe', args({ category: ['top', 'bottom', 'shoes'] }), ctx())).filter(p => p.id)
+
+  assert.deepEqual(batched.map(p => p.id).sort((a, b) => a - b), separate.map(p => p.id).sort((a, b) => a - b),
+    'one batched call returns exactly what three separate calls did')
+
+  // Visual grounding is a founding principle: batching must not hand the model a third of the
+  // photos. The cap applies per category, not per call.
+  const imagesPerCategory = {}
+  for (const p of batched.filter(p => p.image)) imagesPerCategory[p.category] = (imagesPerCategory[p.category] || 0) + 1
+  const separatePerCategory = {}
+  for (const p of separate.filter(p => p.image)) separatePerCategory[p.category] = (separatePerCategory[p.category] || 0) + 1
+  assert.deepEqual(imagesPerCategory, separatePerCategory, 'each category keeps its own image budget')
+
+  // A bad value in the array is reported rather than silently widening the search.
+  const bad = await executeTool('search_wardrobe', args({ category: ['top', 'hats'] }), ctx())
+  assert.match(bad[0].note || '', /Unknown category "hats"/)
+
+  // A single string still works unchanged.
+  const single = (await executeTool('search_wardrobe', args({ category: 'shoes' }), ctx())).filter(p => p.id)
+  assert.ok(single.length && single.every(p => p.category === 'shoes'))
+})
+
+// The turn's shape, not just its size. The run row recorded 6 iterations and 7 tool calls and never
+// which call happened in which, so a turn's structure had to be inferred from the model's prose.
+test('the tool sequence records which tools ran in which provider iteration', async () => {
+  const { recordFreeformToolIteration } = await import('../styling-engine/tools.js')
+  const toolContext = {}
+  recordFreeformToolIteration(toolContext, ['declare_intent', 'search_wardrobe'])
+  recordFreeformToolIteration(toolContext, ['search_wardrobe'])
+  recordFreeformToolIteration(toolContext, ['propose_outfit', 'propose_outfit', 'propose_outfit'])
+  assert.equal(toolContext.freeformDiagnostics.toolSequence,
+    'declare_intent,search_wardrobe;search_wardrobe;propose_outfit,propose_outfit,propose_outfit')
+  // Iterations are ';'-separated and calls within one are ','-separated, so the number of provider
+  // round-trips is countable from the string alone.
+  assert.equal(toolContext.freeformDiagnostics.toolSequence.split(';').length, 3)
+  recordFreeformToolIteration(toolContext, [])
+  assert.equal(toolContext.freeformDiagnostics.toolSequence.split(';').length, 3, 'an empty iteration adds nothing')
+})
+
+// Review finding: the current question reached the model twice on every freeform request. The
+// client appends it to chatHistory before sending, and the server appends it AGAIN as the final
+// user turn built from `question`. Pure duplication, and repeating the latest wording verbatim
+// also overweights it against the rest of the turn's context.
+test('the question being asked is not sent twice', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const question = 'What should I wear for a nature walk?'
+
+  const payload = await buildStylistConversationPayload({
+    question,
+    conversationMode: 'new_request',
+    sessionId: 'dup-test',
+    history: [
+      { role: 'user', content: 'Earlier question about shoes.' },
+      { role: 'assistant', content: 'Earlier answer.' },
+      { role: 'user', content: question },   // what the client actually sends
+    ],
+  })
+  const userTurns = payload.messages.filter(m => m.role === 'user')
+  const asText = m => (typeof m.content === 'string' ? m.content : (m.content || []).map(c => c.text || '').join(' '))
+  const occurrences = userTurns.filter(m => asText(m).includes(question)).length
+  assert.equal(occurrences, 1, 'the question appears exactly once in the model input')
+  assert.equal(payload.messages.length, 3, 'earlier history is untouched')
+  assert.match(asText(payload.messages[0]), /Earlier question about shoes/)
+
+  // A trailing assistant turn, or an older repeat of the same wording, must NOT be dropped.
+  const keeps = await buildStylistConversationPayload({
+    question,
+    conversationMode: 'new_request',
+    sessionId: 'dup-test-2',
+    history: [
+      { role: 'user', content: question },        // genuinely asked before
+      { role: 'assistant', content: 'A previous answer.' },
+    ],
+  })
+  assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
+  assert.equal(keeps.messages[0].role, 'user')
+  assert.equal(keeps.messages[1].role, 'assistant')
 })

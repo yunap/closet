@@ -338,7 +338,12 @@ function manifestValue(piece, field, value) {
 
 export function buildWardrobeManifestLine(piece = {}) {
   const colors = Array.isArray(piece.colors) ? piece.colors.filter(Boolean) : []
-  const color = piece.reads_as || piece.background_color || colors.join('/')
+  // reads_as is a read of the garment, not its palette. The line used to show one OR the other, so
+  // a piece with reads_as had no colours here at all and search had to re-send them every time.
+  const readsAs = piece.reads_as || piece.background_color || ''
+  const colorList = colors.join('/')
+  const color = [readsAs, readsAs && colorList ? `colors ${colorList}` : (colorList || '')]
+    .filter(Boolean).join('; ')
   const weightField = (piece.category === 'shoes' || piece.category === 'accessory') ? 'visual_weight' : 'fabric_weight'
   const weightValue = piece[weightField]
   const fabric = piece.fabric_category
@@ -348,16 +353,32 @@ export function buildWardrobeManifestLine(piece = {}) {
     ? [piece.pattern_type, piece.pattern_scale].filter(Boolean).join('/')
     : ''
   const occasions = Array.isArray(piece.occasions) ? piece.occasions.filter(Boolean) : []
+  // The tagger stores a literal 'none' for fields that do not apply to a garment (a shoe has no
+  // neckline), and printing them wastes a token on every such piece and reads as a real value.
+  const present = value => {
+    const v = String(value ?? '').trim()
+    return v && v.toLowerCase() !== 'none' ? v : ''
+  }
+  const neckline = present(piece.neckline) ? manifestValue(piece, 'neckline', piece.neckline) : ''
+  const sleeves = [present(piece.sleeve_length), present(piece.sleeve_shape)].filter(Boolean).join('/')
 
   const attrs = [
     color,
     fabric ? `fabric ${fabric}` : '',
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
     piece.needs_base === 'yes' ? 'needs base layer' : '',
-    piece.silhouette ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
+    present(piece.silhouette) ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
     piece.shoe_type ? `shoe type ${manifestValue(piece, 'shoe_type', piece.shoe_type)}` : '',
     piece.toe_shape ? `toe ${manifestValue(piece, 'toe_shape', piece.toe_shape)}` : '',
     piece.length_hits_at ? `hits ${manifestValue(piece, 'length_hits_at', piece.length_hits_at)}` : '',
+    // docs/search-payload-spec.md option B. These five were stable garment truth that lived only in
+    // search_wardrobe's result rows, so every search re-transmitted them uncached while the rest of
+    // the same garment's facts sat in this cached line. One home for stable truth, and search is
+    // left carrying only per-request judgment.
+    neckline ? `neck ${neckline}` : '',
+    sleeves ? `sleeve ${sleeves}` : '',
+    present(piece.hem_finish) ? `hem ${manifestValue(piece, 'hem_finish', piece.hem_finish)}` : '',
+    present(piece.walk_support) ? `support ${manifestValue(piece, 'walk_support', piece.walk_support)}` : '',
     pattern ? `pattern ${pattern}` : '',
     piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',
     piece.heel_height ? `heel ${manifestValue(piece, 'heel_height', piece.heel_height)}` : '',

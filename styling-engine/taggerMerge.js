@@ -155,7 +155,15 @@ function anchorAttrs(piece = {}) {
   return attrs.length ? ` (${attrs.slice(0, 2).join('; ')})` : ''
 }
 
-export function buildAnchorBlock({ pieces = [], fields = [], perValue = 3 } = {}) {
+// Total ceiling across all buckets combined, not just per-bucket. A scalar enum field like
+// `formality` (4 possible values) can never exceed `4 * perValue` anchors on its own, so this cap
+// was invisible until an array-valued field like `occasions` was considered for anchoring: the
+// bucket key is the joined string of the whole array (see below), so the number of buckets scales
+// with the number of distinct value COMBINATIONS observed, not with the field's own vocabulary
+// size — unbounded as more pieces get hand-corrected. See docs/tagger-audit-findings.md Q5.
+const DEFAULT_MAX_ANCHORS = 24
+
+export function buildAnchorBlock({ pieces = [], fields = [], perValue = 3, maxAnchors = DEFAULT_MAX_ANCHORS } = {}) {
   const wantedFields = fields.map(field => String(field || '').trim()).filter(Boolean)
   if (!wantedFields.length) return { text: '', anchors: [] }
 
@@ -185,9 +193,25 @@ export function buildAnchorBlock({ pieces = [], fields = [], perValue = 3 } = {}
     }
   }
 
-  const anchors = [...buckets.values()].flatMap(bucket => bucket
-    .sort((a, b) => String(b.sortValue || '').localeCompare(String(a.sortValue || '')) || Number(b.id) - Number(a.id))
-    .slice(0, perValue))
+  // Sort each bucket's own items by recency (most-recently-corrected first), same as before.
+  const sortedBuckets = [...buckets.values()].map(bucket => (
+    bucket.sort((a, b) => String(b.sortValue || '').localeCompare(String(a.sortValue || '')) || Number(b.id) - Number(a.id))
+  ))
+
+  // Then order the BUCKETS themselves by their freshest item, so truncation (if the total ceiling
+  // is hit) drops the least-recently-corrected values first rather than depending on Map
+  // iteration order (insertion order from the piece scan above — not a meaningful ordering, and
+  // the same arbitrariness already flagged for which anchors get an illustrating thumbnail).
+  sortedBuckets.sort((a, b) => (
+    String(b[0]?.sortValue || '').localeCompare(String(a[0]?.sortValue || ''))
+  ))
+
+  const anchors = []
+  for (const bucket of sortedBuckets) {
+    if (anchors.length >= maxAnchors) break
+    const room = maxAnchors - anchors.length
+    anchors.push(...bucket.slice(0, perValue).slice(0, room))
+  }
   if (!anchors.length) return { text: '', anchors: [] }
 
   const rows = anchors.map(anchor => (

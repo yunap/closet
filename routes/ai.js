@@ -370,11 +370,14 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     ...input,
     ...(await prepareImageForClaude(input.path))
   })))
-  const content = []
-  for (const input of prepared) {
-    content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
-    content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
-  }
+  // Stable prefix first: the fully static instructions (~5,290 tok), then the wardrobe-calibration
+  // anchors (wardrobe-state-dependent, but stable across an entire tagging session/import batch).
+  // Anthropic prompt caching only helps a contiguous prefix from position 0, so this must come
+  // before any per-piece content (photo, ground-truth overrides) — previously the photo was
+  // pushed first, which meant nothing in this call was ever cacheable no matter what carried
+  // cache_control. See docs/tagger-audit-findings.md Q5.
+  const content = [{ type: 'text', text: prompts.TAG_PIECE_PROMPT }]
+
   const anchorBlock = buildAnchorBlock({
     pieces: db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece),
     fields: ['formality', 'fabric_weight']
@@ -386,6 +389,16 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
       { type: 'text', text: `${thumb.label}: ${thumb.guidance}` },
       { type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } }
     ]))
+  }
+
+  // Mark the end of the stable prefix: everything above must stay byte-identical across calls in
+  // the same session for a cache hit; everything below is per-piece and always volatile.
+  // toAnthropicContentBlocks (provider.js) preserves cache_control on text/image blocks verbatim.
+  content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } }
+
+  for (const input of prepared) {
+    content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
+    content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
   }
 
   // Inject Ground Truth context from user overrides on the existing piece
@@ -406,7 +419,6 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     }
   }
 
-  content.push({ type: 'text', text: prompts.TAG_PIECE_PROMPT })
   const payload = {
     // Cache structure belongs to the provider request, not the frozen semantic
     // prompt constant guarded by prompt_equivalence.test.js.
@@ -422,7 +434,23 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     }]
   }
 
+  // Latency + cache-hit logging: no instrumentation existed for tag calls before this (unlike
+  // outfit generation's generation_runs / freeform_generation_runs tables) despite this being one
+  // of the largest, slowest call shapes in the app (~7-10k input tokens, up to 2500 output, full
+  // stylist model, one or two images). Console-only for now, not persisted — this answers "is it
+  // actually slow, and is the caching fix from this session actually landing" without a schema
+  // change; promote to a real table if it turns out to be worth tracking over time.
+  const tagCallStartedAt = Date.now()
   const { text: raw, usage } = await askStylistWithUsage(payload)
+  const tagCallMs = Date.now() - tagCallStartedAt
+  const cacheReadTokens = usage?.cacheReadInputTokens || 0
+  const cacheCreationTokens = usage?.cacheCreationInputTokens || 0
+  const cacheStatus = cacheReadTokens > 0
+    ? `HIT (${cacheReadTokens} tok read from cache)`
+    : cacheCreationTokens > 0
+      ? `MISS, wrote ${cacheCreationTokens} tok to cache`
+      : 'no cache activity reported'
+  console.log(`[Tag Piece] provider call took ${tagCallMs}ms — input ${usage?.inputTokens ?? '?'} tok, output ${usage?.outputTokens ?? '?'} tok, cache: ${cacheStatus}`)
   if (onUsage && usage) onUsage(usage)
   console.log('[Tag Piece] RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
   let tags
@@ -539,8 +567,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -550,6 +578,8 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.proposeValidationFails) || 0,
       Number(diagnostics.outfitProseWithoutToolCall) || 0,
       Number(diagnostics.zeroResultContradictionBlocks) || 0,
+      Number(diagnostics.cardProseInconsistentBlocks) || 0,
+      String(diagnostics.toolSequence || ''),
       Number(diagnostics.destinationClarificationRetries) || 0,
       Number(diagnostics.planSlotEnvironmentInferred) || 0,
       Number(diagnostics.planSlotActivityInferred) || 0,
@@ -871,6 +901,10 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
       "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
       "category": "top|bottom|dress|outerwear|shoes|accessory",
+      "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|glasses|gloves|other|null (accessory only; null/omit for non-accessories)",
+      "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",
+      "jewelry_type": "necklace|earrings|bracelet|ring|pin|null (only when accessory_subtype is jewelry; null/omit otherwise)",
+      "necklace_length": "choker|short|long|null (only when jewelry_type is necklace; null/omit otherwise)",
       "background_color": "base color of the garment, e.g. black, navy, cream, white",
       "colors": ["${colorTaggerInstruction()}"],
       "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
@@ -887,6 +921,9 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "silhouette": "Valid values depend on category — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed|a_line|pencil|full|slip|straight|pleated|wrap.",
       "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only). Never 'heel' — heel_height covers that. 'slip_on' is a closure-free shoe (no laces/buckle/zip) that isn't a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
       "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only)",
+      "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; null/omit for shoes/accessory). This photo IS a worn photo — judge fit and drape directly from how the garment sits on the body here, the same authority a dedicated worn photo would carry.",
+      "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only; null/omit for non-tops). Judge from the garment's own cut, fit, and design intent as shown in this worn photo: fitted or semi-fitted through the body -> tucks_anywhere; loose/relaxed fit that would need a belt or structured waistband to sit cleanly -> tucks_with_structure; peplum/tunic length, or a hem/silhouette clearly meant to be seen rather than tucked away -> wear_over_only. Whether the garment happens to be tucked or untucked in this specific photo is evidence, not the whole answer — an untucked top in this photo can still tuck cleanly if its cut supports it.",
+      "waistband_type": "structured_high_waist|structured_mid_waist|structured_low_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
       "fabric_category": "Valid values depend on category — top/bottom/dress/outerwear -> jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|organza|lace|crochet|jacquard|wool|cashmere|boucle|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other; shoes -> leather|suede|nubuck|patent|canvas|mesh|woven|synthetic|textile|rubber|other; accessory -> leather|suede|metal|stone|straw|canvas|synthetic|textile|rubber|wood|ceramic|glass|horn|shell|resin|pearl|crystal|enamel|other. Never use the clothing list for a shoe or accessory piece.",
       "fabric_weight": "ultralight|light|medium|heavy|null (top/bottom/dress/outerwear only; null/omit for shoes/accessory — use visual_weight instead)",
       "visual_weight": "delicate|slim|medium|chunky|null (shoes/accessory only; null/omit for clothing — this is NOT fabric weight, it is visual scale/heft, e.g. a substantial shoe is chunky, a fine chain necklace is delicate)",
@@ -3669,6 +3706,7 @@ router.post('/ask', async (req, res) => {
     })
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
+    toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [

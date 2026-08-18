@@ -1,3 +1,7 @@
+// Activity profiles (walking / hiking) and the footwear comfort gate.
+// DOCUMENTED IN: docs/engine-behaviour-map.md and docs/occasion_profiles_ratification.md
+// (ratified — register ceilings and occasion rules; not a draft despite its history).
+// Activity is a STRUCTURED axis: only the resolved enum reaches these gates, never request prose.
 import { pieceMatchesFootwear, pieceOccasionScore, pieceMatchesMaterial, wardrobeCategoryGroup } from './attributes.js'
 import { resolveOccasionProfile } from './occasions.js'
 
@@ -39,8 +43,10 @@ export const ACTIVITY_PROFILES = [
   {
     id: "hiking",
     label: "Hiking / Outdoor active",
-    keywords: ["hike", "hiking", "trail"],
-    moodKeywords: ["hike", "hiking", "trail"],
+    // "nature walk" is a hike — owner ruling 2026-08-17: "it's not climbing a mountain hike, but
+    // it's a hike". These phrases must be matched before walking's bare "walk" claims them.
+    keywords: ["hike", "hiking", "trail", "nature walk", "trail walk", "trailhead", "hiking trail", "woods walk"],
+    moodKeywords: ["hike", "hiking", "trail", "nature walk", "trail walk"],
     vibe: "practical, comfortable, highly durable, movement-focused",
     rules: {
       required_occasion_tags: ["outdoor", "outdoor active", "hiking"],
@@ -76,29 +82,41 @@ function hasAffirmedActivityKeyword(text, keyword) {
   return false
 }
 
+// docs/activity-and-roster-spec.md Part 1. The model declares the activity, and it declared
+// `walking` for a nature walk while its own prose said "if the trail has any rocky or uneven
+// sections" — it understood the terrain, and only the structured value reaches the gates. This used
+// to return immediately on a supplied activity, so no later signal could correct it.
+//
+// Escalation is ONE-DIRECTIONAL by design: request text may lift none/walking → hiking, and may
+// never lower hiking → walking. The failure is asymmetric. Treating a city walk as a hike costs
+// comfortable shoes nobody needed; treating a hike as a city walk costs grip on a trail.
+// hasAffirmedActivityKeyword's negation handling means "just a gentle stroll, no hiking" does not
+// escalate.
 export function resolveActivityProfile({ activity = '', occasion = '', mood = '', request = '' } = {}) {
   const normActivity = String(activity || '').toLowerCase().trim()
-  if (normActivity === 'walking') {
-    return ACTIVITY_PROFILES.find(p => p.id === 'walking')
-  }
+  const hikeProfile = ACTIVITY_PROFILES.find(p => p.id === 'hiking')
+  const walkProfile = ACTIVITY_PROFILES.find(p => p.id === 'walking')
+  // NOT mood: it is the vibe/aesthetic axis ("Do NOT put activity here; use the activity
+  // parameter"), and test/footwear_comfort.test.js pins that mood:'lots of walking' must not
+  // resolve a comfort constraint.
+  const haystack = `${occasion} ${request}`.toLowerCase()
+  const textSaysHiking = () => (hikeProfile.keywords || []).some(keyword =>
+    hasAffirmedActivityKeyword(haystack, keyword) // ratchet-allow: intent parsing, not garment text matching
+  )
+
   if (normActivity === 'hiking' || normActivity === 'outdoor active' || normActivity === 'outdoor_active') {
-    return ACTIVITY_PROFILES.find(p => p.id === 'hiking')
+    return hikeProfile
+  }
+  if (normActivity === 'walking') {
+    // Escalate only; never de-escalate.
+    return textSaysHiking() ? hikeProfile : walkProfile
   }
 
   if (normActivity === 'none' || !normActivity) {
-    const haystack = `${occasion} ${request}`.toLowerCase()
-    
     // Hiking matches first (more restrictive than walking)
-    const hikeProfile = ACTIVITY_PROFILES.find(p => p.id === 'hiking')
-    const hikeKeywords = hikeProfile.keywords || []
-    const matchedHike = hikeKeywords.some(keyword =>
-      hasAffirmedActivityKeyword(haystack, keyword) // ratchet-allow: intent parsing, not garment text matching
-    )
-    if (matchedHike) return hikeProfile
+    if (textSaysHiking()) return hikeProfile
 
-    const walkProfile = ACTIVITY_PROFILES.find(p => p.id === 'walking')
-    const walkKeywords = walkProfile.keywords || []
-    const matchedWalk = walkKeywords.some(keyword =>
+    const matchedWalk = (walkProfile.keywords || []).some(keyword =>
       hasAffirmedActivityKeyword(haystack, keyword) // ratchet-allow: intent parsing, not garment text matching
     )
     if (matchedWalk) return walkProfile

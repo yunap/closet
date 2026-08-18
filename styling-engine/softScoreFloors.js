@@ -71,9 +71,16 @@ function refinedFabric(piece = {}) {
   const fabric = norm(piece.fabric_category)
   if (SOFT_SCORE_CONFIG.refinedFabrics.includes(fabric)) return true
   if (fabric !== 'synthetic') return false
+  // stretch must be EXPLICITLY known and non-stretchy — an unset value must not silently pass
+  // the same test as stretch: "none". This was backwards from this schema's own conservative-
+  // default convention for absent values elsewhere (needs_base's stated "conservative default:
+  // null, not 'no'"). Traced 2026-08-16 while auditing why stretch's low consumer count never
+  // discriminated on this wardrobe — not live (no known piece currently gets a wrong answer from
+  // it), but a real gap: a genuinely stretchy synthetic piece that was never tagged for stretch
+  // would have incorrectly passed the "not stretchy" floor.
   return ['ultralight', 'light'].includes(norm(piece.fabric_weight)) &&
     ['drapes', ''].includes(norm(piece.fit_on_body)) &&
-    ['none', 'minimal', ''].includes(norm(piece.stretch))
+    ['none', 'minimal'].includes(norm(piece.stretch))
 }
 
 function dressyColor(piece = {}) {

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently \"node server.js\" \"vite\"",
     "build": "vite build",
-    "test": "node scratch/check_style_claims.js && node scratch/check_text_matching_ratchet.js && node --test --test-concurrency=1",
+    "test": "node scratch/check_style_claims.js && node scratch/check_docs_health.js && node scratch/check_text_matching_ratchet.js && node --test --test-concurrency=1",
     "test:capsule:offline": "node scratch/diagnose_capsule_scenario_matrix.js",
     "test:capsule:summer-replay": "node scratch/replay_summer_capsule_live_2026_07_28.js",
     "test:capsule:lifestyle-audit": "node scratch/audit_summer_capsule_lifestyle.js",

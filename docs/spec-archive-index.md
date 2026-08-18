@@ -1,11 +1,18 @@
-# Spec archive — historical design specs held outside the repo
+# Spec archive — historical design specs
 
-Written 2026-07-30.
+Written 2026-07-30. **Amended 2026-08-16: the specs now live in the repo at
+[`docs/specs/`](specs/), copied from `~/Downloads/spec_*.md`.** This file remains the *rationale* —
+the authority order and the method below are the owner ruling that governs them.
+[`docs/specs/README.md`](specs/README.md) is the operational front page for the archive itself.
+
+The move raises a risk this file was written to prevent: previously the specs were invisible to
+search, so they could not mislead; now they are greppable and will surface in future sessions. The
+mitigation is that **every spec file carries a banner declaring it historical and its `Status:`
+line untrustworthy**, enforced by `npm test` — because a search hit opens the file, not this page.
 
 ## What this archive is — and is not
 
-35 specs sit in **`~/Downloads/spec_*.md`**, outside the repository and so outside every search a
-session runs.
+35 specs, now at **[`docs/specs/`](specs/)**.
 
 **They are historical.** The app has been redesigned several times since most of them were written
 — the legacy pre-compose stack was deleted, de-Yunafication landed, the whole thing became a

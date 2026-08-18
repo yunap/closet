@@ -123,6 +123,28 @@ history: the disciplined flow — declare, search, view supports, view layers, p
 legitimately needs 6–8, and *"the old cap of 7 left no margin for a single corrective bounce and
 live turns died with zero cards."* So 10 is a deliberate margin, raised after live failures.
 
+**[by design, 2026-08-18] The disclosure pass enumerates EVERY clause, and narration does not
+survive a retry.** Two correctness bugs in the first cut of the above, both found in review:
+
+- `applyFreeformOutputChecks` short-circuits on the first failure — that is its job, since it exists
+  to pick the next correction to send. Disclosing from a single call therefore surfaced at most one
+  unresolved clause, and a newly-introduced failure that had *not* been retried would be returned
+  first and mask a retried one behind it, shipping the reply with nothing said at all. The pass now
+  re-runs with each found type suppressed, walking the whole list without duplicating a predicate.
+- The narration accumulator spanned the whole loop, so a rejected answer's prose was prepended again
+  after the model corrected itself — *"Use piece #999."* followed by *"Correction: use verified piece
+  #12"* in one reply, with the clause that caught it already out of budget.
+  `supersedeNarrationOnRetry` clears it at the correction boundary; narration written afterwards
+  accumulates normally, so this is a boundary rather than a discard.
+
+**[by design, 2026-08-17] A guard that spends its retry and still fails now says so.** Each clause
+gets exactly one retry; after that `retriedChecks` suppressed it and the answer was returned
+unchanged and unremarked, so a fired-but-unfixed guard left the person holding a flawed answer with
+no sign of it. The turn contract now adopts capsule's ending — deliver, and state the unmet thing,
+the way a bounded capsule ships as `model_repaired_with_gaps`. Not a second retry: the one-per-clause
+budget exists to prevent that spiral. `discloseUnresolvedFreeformChecks` re-runs the same predicates
+without recording diagnostics; counted as `unresolvedCheckDisclosures`.
+
 **[by design] Output guards retry up to 6 times, one retry per guard.** `applyFreeformOutputChecks`
 inspects the finished answer; if it violates a guard, the model is re-prompted with a correction
 message. `retriedChecks` ensures each distinct guard only triggers one retry, so the loop cannot
@@ -886,6 +908,228 @@ it runs **before** the piece gate in `propose_outfit`. Diversity, dedup and repa
 the next section. None of those are piece-eligibility questions, which is why they are not here.
 
 ---
+
+## The shape of a turn, and how many round-trips it takes
+
+**Added 2026-08-17.**
+
+**[by design] `tool_sequence` records which tools ran in which provider iteration.** Iterations are
+`;`-separated, the calls within one `,`-separated, so a turn's structure is a query rather than an
+inference. Before it, `freeform_generation_runs` recorded that a turn took 6 iterations and made 7
+tool calls and never which call sat where — the shape had to be read out of the model's own prose.
+Same provenance gap that hid a composer regression from 1,192 passing tests.
+
+**[by design] `search_wardrobe` accepts several categories in one call.** Three searches differing
+only by category cost three round-trips, and each one re-reads the entire conversation *and* the
+cached prefix — the `thread_1786994644421` A/B established that prefix size is multiplied by
+iteration count, so a round-trip is not cheap merely because the prompt is cached. Verified: one
+batched call returns exactly what three separate calls did, 117 pieces, same tokens.
+
+Stated structurally rather than as prompt guidance asking the model to batch, because prompt-only
+instruction has failed every time it has been tried here (capsule criterion 8; freeform specs 3, 7
+and 11).
+
+**[by design] The image budget is per CATEGORY, not per call.** `SEARCH_WARDROBE_VISUAL_CAP` applied
+per call, so collapsing three searches into one would have handed the model a third of the photos it
+used to get. Visual grounding is a founding principle of this app and starving it to save a
+round-trip would be the wrong trade; the cap now ranks within each category. Measured identical:
+shoes 4, tops 16, bottoms 16, both ways.
+
+## What a search result carries — judgment, not a re-description
+
+**Added 2026-08-17.** [search-payload-spec.md](search-payload-spec.md).
+
+**[by design] The wardrobe manifest is the one home for stable garment truth.** It sits in the
+cached stable prefix and is paid for once per turn. `search_wardrobe` used to re-transmit most of the
+same facts per call: one tops search measured **~13,764 tokens against the entire 251-piece
+manifest's ~12,506** — and unlike the manifest it was written to cache at 1.25× input every time,
+then re-read by every later iteration.
+
+**[by design] A search result now returns only what cannot be cached** — which pieces passed, and how
+they were judged for *this* occasion/activity/weather (`ruleFit`, `ruleFitLabel`, `weatherFit`), plus
+`id`/`name`/`category` as the join key, `notes` (the one free-text field the manifest lacks), and the
+thumbnail. Measured on `thread_1786954464459`'s three searches: **25,747 → 9,613 tokens, −63%**,
+roster identity unchanged.
+
+**[by design] Trimming is conditional on the manifest actually being in the prompt.** Above
+`WARDROBE_MANIFEST_MAX_PIECES` (400) the manifest is omitted, and a trimmed row would then be the
+model's only view of a garment; `wardrobeManifestIncluded` carries that fact from the payload builder
+to the tool. Pinned by a test.
+
+**The invariant that keeps this safe:** no field may be absent from *both* surfaces. A field in
+neither is invisible to the model, and the failure is silent — worse composition, no error.
+`test/wardrobeAiContext.test.js` asserts the union covers every stable field for a fully-populated
+piece, and fails loudly if either side drops one.
+
+**Live-verified 2026-08-17** (`thread_1786954464459` → `thread_1786994644421`, identical prompt):
+cache creation 71,611 → 58,723, cost **$0.380 → $0.325 (−14.6%)**, iterations unchanged at 6, and the
+model still names the right trail shoe unprompted from `walk_support` now that it arrives via the
+manifest. **Note the multiplier this exposed:** anything added to the cached prefix is re-read on
+every iteration, so the manifest's +3,557 tokens cost ~21,300 reads across six of them and ate a
+third of the saving. Prefix size × iteration count is the real term.
+
+**Two incidental fixes.** The manifest printed the tagger's literal `'none'` for inapplicable fields
+(`silhouette none` on every shoe), and it showed `reads_as` **or** the colour list but never both, so
+most pieces had no palette in the manifest at all. Both corrected; the manifest grew 12,506 → 16,063
+tokens, a cache read costing ~$0.001 per iteration against ~16,100 tokens removed from cache writes.
+
+## Activity — how it is resolved, and what it can do to a roster
+
+**Added 2026-08-17.** [activity-and-roster-spec.md](activity-and-roster-spec.md).
+
+**[by design] The declared activity is no longer final; request text may escalate it — one way.**
+`resolveActivityProfile` used to return immediately on a supplied activity, so a model that declared
+`walking` for a nature walk could not be corrected, even though its own reply discussed the trail.
+Text may now lift `none`/`walking` → `hiking` and may **never** lower `hiking` → `walking`; an
+explicit denial ("no hiking", "just a stroll") blocks escalation. The asymmetry is deliberate:
+treating a city walk as a hike costs comfortable shoes nobody needed, treating a hike as a city walk
+costs grip on a trail. `mood` is NOT scanned — it is the vibe axis, and a test pins that.
+
+**[by design] A nature walk is a hike — and that ruling changed CLASSIFICATION only.** Owner ruling
+2026-08-17: *"not climbing a mountain, but a hike."* One profile rather than a third enum value,
+since another value would add exactly the classification choice the bug came from. **The hiking
+profile's own rules are unchanged**: a revision that relaxed `excluded_walk_support` to `['low']`
+shipped and was reverted the same day on the owner's correction — *"walk_support: medium is correct
+and makes it eligible for outdoor social or museum with lots of walking, NOT a hike"*, and *"nothing
+should have changed for the definition of hiking."* Verified by re-running the composer against the
+recorded `suppressedReasonCounts` of `thread_1786908644157`: 150 suppressed, all seventeen counts
+matching.
+
+**[latent inconsistency] Hiking's footwear name-lists are unreachable.** `discouraged_footwear`
+(sandals, mules) and `prohibited_footwear` (heels, wedges, flip-flops) sit behind
+`if (isShoe && !activityProfile)` — skipped precisely when an activity IS set. Nothing depends on it
+today because `excluded_walk_support: ['low','medium']` catches those shoes anyway. It bites only if
+that floor is ever relaxed: measured on an instance with no owner constraints, relaxing it alone
+scored strap sandals `neutral` for a hike. See activity-and-roster-spec.md §5.3a.
+
+**[by design] Activity can now promote, not only remove.** `search_wardrobe` returns `walk_support`
+and `heel_height` — the gate read them to exclude and showed them to nobody, so the model inferred
+grip from garment names. Within a tier, shoes now order by support when an activity is set; nine
+shoes used to tie at `preferred` in id order, ballet flats indistinguishable from trail sneakers.
+Ordering never removes.
+
+**[by design] The tag discouragement is the LAST check in `profileRuleFit`, after every hard gate.**
+A soft signal must never pre-empt a hard one. An earlier revision returned from it before the
+register ceiling, and measuring the composer against the recorded live run `thread_1786908644157`
+showed elevated/dressy pieces losing their suppression for a casual hike — 45 register exclusions
+collapsing to 8, admitting 20 pieces that should not have been in the roster. Caught only because
+that run's `suppressedReasonCounts` was on record to compare against; the freeform tests were green
+throughout. Pinned by a test that passes a `registerCeiling` explicitly.
+
+**[by design] `required_occasion_tags` reaches the freeform path as a DISCOURAGEMENT.** Enforced only
+in the composer before, so a correct hike gated the shoes and left city-only tops untouched. It is
+deliberately not a hard gate: that would contradict the 2026-06-12 ratification keeping a day dress
+allowed for outdoor-active, and would make the roster depend on how well one user tagged their
+wardrobe. Untagged garments still appear, ranked below tagged ones and labelled.
+
+**[by design] Owner constraints reach the roster, not only the proposal.** `search_wardrobe`'s
+occasion filter passed `occasion` alone, so an `owner_constraints` row scoped to activity, season or
+weather could never apply to what the model composes from. It now receives all four — but rejects at
+that stage **only** for the owner's own standing decisions. Letting the full profile gate reject
+there would move exclusions ahead of the pass that counts, labels and re-exposes them under
+`intent:'explain'`, and a piece would vanish with no number and no way to ask why.
+
+## A card must describe the card — the consistency clause
+
+**Added 2026-08-16.** [card-consistency-spec.md](card-consistency-spec.md) Part 1. The turn
+contract's clauses ask whether a card's pieces are real (*truth*), whether context is settled
+(*context*), and whether cards arrived (*delivery*). None asks whether the card's **own words
+describe the card**, so an internally inconsistent card passed every one of them.
+
+**[by design] A top worn with a dress is legal and is never removed.** Owner ruling 2026-08-16: a
+styling decision, not a hard ban. `isOutfitStructurallyValid` is unchanged — with a dress present it
+still rejects only a bottom, a second dress, or a second pair of shoes.
+
+**[by design] What is enforced is that the card accounts for it.** `outfitLayersTopWithDress` is a
+category-group fact; `unexplainedLayeredTops` then checks whether the card's own prose names the
+top. Deliberately weak — a substring match against a name already known to be in the card, in the
+spirit of `findZeroResultContradiction`: checking a known fact, not fact-checking prose. It cannot
+judge whether an explanation is *good*; that is taste, and taste stays with the model.
+
+A word shared with another garment in the same outfit does not count as naming the piece. "black
+blouson v-neck top" beside "black brown lace floral midi dress" share *black*, so prose about the
+dress would otherwise read as prose about the top — the exact false negative of the live case.
+
+**[by design] Freeform retries once; the card ships either way.** `cardProseInconsistent` is a
+fourth turn-contract clause in the truth family, using the existing per-`blockType` retry budget,
+counted as `card_prose_inconsistent_blocks`. If the retry produces no explanation the top is
+**kept** and the card carries a visible flag. It is never silently dropped: capsule ships
+`model_repaired_with_gaps` with the gap stated, advisor mode exists so code does not censor composer
+output, and Decision B (2026-06-25) ruled against filtering results down.
+
+**[by design] The archetype no longer asserts a shape it did not check.** Because every dress outfit
+is forced into `dress_grounded_sharp`, its "one-piece column" silhouette was being stamped onto
+outfits carrying extra tops; that text is now replaced with what the pieces actually are. The
+remaining half — giving the dress family more than one archetype so the label discriminates and the
+`avoidRoles` penalty can bite — is styling content and **needs owner sign-off** (spec §5.2).
+
+## Who writes the words on a card — the model, or the archetype template
+
+**Amended 2026-08-16.** Two producers can author a card's `label`, `dominantDirection`,
+`silhouette`, `reason` and `watchFor`: the composing model, or the archetype template
+(`rewriteWholeWardrobeOutfitWithArchetype` → `buildOutfitMechanicsReason`).
+
+**[by design] The model's own notes are preferred, and the template is the fallback.** The
+whole-wardrobe and capsule paths get this for free: advisor mode sets `shouldRepair = !advisorMode`,
+so repair never runs and the model's text is untouched. That is why those cards read in the model's
+voice, keep its creative labels, and close with its `*Skipped directions:*` and
+`**Saveable learning:**` lines.
+
+**[bug, fixed 2026-08-16] The selected-piece path threw that away.** `routes/ai.js` repairs
+unconditionally, and `repairWholeWardrobeOutfit`'s **first** step called the archetype rewriter,
+which overwrote `reason` and `label` unconditionally — before the guard 100 lines below it
+(`hasWholeWardrobePlaceholder || hasGenericWholeWardrobeText || !reason`) that exists to preserve
+authored text could ever apply. That guard was dead code on this path, so the template was the
+default rather than the fallback. Two visible consequences:
+
+- Distinct model outfits collapsed into one name. A live response returned two different cards
+  both labelled *"Grounded Dress Edit: standard wear"*.
+- The prose omitted a garment the card contained. `buildOutfitMechanicsReason` had no branch for a
+  top alongside a dress, so a card pairing a blouse with a lace midi dress described only the dress
+  and the layer — the person was told to wear a piece the explanation never mentioned.
+
+`rewriteWholeWardrobeOutfitWithArchetype` now takes `preserveAuthoredText`. The entry call passes
+it (nothing has changed yet, so the model's words still describe this outfit); the call **after a
+footwear substitution** deliberately does not, because the model's sentences then describe an
+outfit that no longer exists. The template also names a top when a dress is present.
+
+**[by design] Any outfit containing a dress is labelled `dress_grounded_sharp` ("Grounded Dress
+Edit").** `inferOutfitArchetype` skips every other archetype when a dress is present, so this is
+the only label a dress outfit can receive — it is not selected on fit. Its `avoidRoles:
+['extra_pattern']` scores −12 but cannot disqualify, since no competing archetype survives. Worth
+knowing before reading such a label as a judgment about the outfit. **[owner check wanted]**
+
+## Candidate generation with a Main piece — the structural fallback
+
+**Amended 2026-08-16.** `buildWholeWardrobeCandidateOutfits` (`rules.js`) composes candidates per
+Outfit Mission. When the caller pins a Main piece (`requiredPieceId` / `mainPieceId` — saved-outfit
+"Similar variants" does, via `routes/ai.js`), every candidate must contain it, and a mission that
+does not qualify for the resulting combination yields nothing.
+
+**[by design] A Main piece that no mission can place falls back to structural candidates.**
+`addStructuralCandidate` skips mission qualification and the `-18` score floor, so the person still
+gets outfits built around the garment they picked.
+
+**[bug, fixed 2026-08-16] That fallback used to run only for an add-on Main.** It was gated on
+`requiredIsAddOn` (outerwear/accessory). A top, bottom or dress Main in the same situation produced
+**zero candidates** — the missions rejected every combination and nothing caught it. Live shape: a
+saved two-top outfit asking for Similar variants returned nothing, and its layer-capable top could
+not keep its base top. The gate is now `requiredPieceId && !hasRequiredCandidate()`, with the same
+role guards the mission path uses (no dress appended onto a complete top+bottom+shoes look), and a
+layer-capable top Main tries the two-top formula before falling back to a single-top look.
+
+**[by design] The Main piece is appended only when a slot has not already supplied it.**
+For an add-on the slot lists never contain it; for a top/bottom/dress Main the slot list *is*
+`[requiredPiece]`, and appending unconditionally put the same garment in the outfit twice.
+`withRequiredPiece` is that check. Covered by a no-repeated-piece assertion in
+`test/aiEndpointContracts.test.js`.
+
+**Measured effect on the live wardrobe (30 scenarios: 5 occasions × {no Main, 5 Main pieces}):**
+28 identical, including **every** no-Main scenario — the default whole-wardrobe path is untouched.
+Two changed, both with a Main whose `color_anchor` mission previously starved: `casual` gained one
+candidate and removed none; `outdoor` stayed at its cap of 60, gaining the intended `color_anchor`
+candidate and displacing two lower-ranked tail entries (adding to a capped list evicts the tail,
+and the cross-mission `seenKeys` dedupe then admits a combination it had previously suppressed).
 
 ## After the gate — the outfit-level pass
 

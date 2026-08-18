@@ -1,3 +1,7 @@
+// All system prompts.
+// AUTHORITY: docs/style_constitution.md is the SINGLE authority for style claims — no model may
+// add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
+// Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
@@ -753,9 +757,9 @@ Conflict resolution and context-insulation rules:
 2. Insulate style identity and occasion potential from TRY-ON context. A polished shell photographed at home with shorts is still a polished shell; home setting, shorts, bare legs, or casual styling must not drag its lanes or occasion confidence toward casual.
 3. Use real-wear context only as positive occasion evidence when present. Absence of real_context is neutral; it must not penalize city, smart-casual, or evening potential.
 4. Never infer fit, drape, or length from a photo that is not fit_visible. A hanger-only or cropped/seated/non-fit-visible image must leave fit fields empty/default or low-confidence.
-5. Color authority goes to the best-lit, closest, least-shadowed garment view. If photos disagree materially on color, lower "colors" and "background_color" confidence and explain in cross_photo_agreement_note; do not blindly prefer worn or hanger.
+5. Color authority goes to the best-lit, closest, least-shadowed garment view. If photos disagree materially on color, lower "colors" and "background_color" confidence; do not blindly prefer worn or hanger.
 6. When photos conflict within one authority domain, lower the affected field's confidence rather than silently picking.
-7. Always emit a brief cross-photo agreement note in the JSON where photos disagreed on any field, and emit '_confidence' for every field.
+7. Emit '_confidence' for every field.
 
 === PHYSICAL PROPERTY FRAMEWORK (VOLUME vs. STRUCTURE) ===
 Evaluate the garment's visual structure and weight along these two axes:
@@ -926,7 +930,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "bareness": "normal|high (high if sleeveless, tank, short shorts, or mini skirt/dress)",
     "style_notes": {
       "best_use": "stylist role description based on design weight (e.g. 'standalone structural top to highlight clipboard geometry', 'soft supporting layer', 'texture-contrast focus piece'). Avoid generic 'casual wear' or 'daily casual' phrases.",
-      "risk": "styling or aesthetic risk (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
+      "risk": "an INTRINSIC styling or aesthetic risk — true of this garment worn alone, not conditional on what it's paired with (e.g. 'shows every crease after sitting', 'reads busy up close despite reading solid from a distance', 'hem curls after washing'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint. Do NOT phrase this as pairing-conditional ('if not paired with X', 'competes with Y') — a risk that only exists in combination with another piece belongs in pairing_requirements (e.g. 'needs structured bottom to avoid reading shapeless') or do_not_pair_rules (e.g. 'avoid another loud pattern'), not here."
     },
     "garment_intelligence": {
       "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
@@ -987,10 +991,9 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "needs_base": "high|medium|low"
   },
   "photo_properties": {
-    "HANGER PHOTO": { "fit_visible": false, "real_context": false, "notes": "short reason" },
-    "WORN PHOTO": { "fit_visible": true, "real_context": false, "notes": "home try-on; fit-visible but not occasion evidence" }
-  },
-  "cross_photo_agreement_note": "detailed notes explaining conflict resolutions, or empty string if no conflicts"
+    "HANGER PHOTO": { "fit_visible": false, "real_context": false },
+    "WORN PHOTO": { "fit_visible": true, "real_context": false }
+  }
 }`
 
 // ── Dedicated EDITORIAL_NEW_PIECES prompt ───────────────────────────────────

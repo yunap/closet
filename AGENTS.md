@@ -85,6 +85,53 @@ grounding, generic safe solutions.
    run it against `docs/engine-behaviour-map.md`'s inventory of weights, gates, and caches. Full
    derivation and case studies: `docs/panel-stage1-findings.md` → C3.
 
+## Documentation Rules
+
+This app documents behaviour before coding it, so the docs are load-bearing: a session that reads
+a stale map reaches a confident wrong answer and acts on it. Read `docs/README.md` first — it
+routes a question to the doc that answers it.
+
+- **Amend the matching doc in the same commit as the code.** Not "later", not a follow-up issue.
+  The trigger is mechanical:
+
+  | You changed | Amend, same commit |
+  |---|---|
+  | a gate, ceiling, score, cache or retry loop in `styling-engine/` | `docs/engine-behaviour-map.md` |
+  | a feedback writer/reader, a store, or a store's authority | `docs/feedback-and-memory-map.md` **and** `scratch/feedback_surface_inventory.json` |
+  | a route, tab, dialog or mode-split | `docs/app-surface-map.md` |
+  | the model-call sequence of a flow | that flow's `docs/flows/*.md` |
+  | a tool schema or prompt block used by `/ask` | `docs/freeform-rearchitecture-handoff.md` |
+
+  Amendments stay **inline and dated**, as the existing ones do — the history of a decision is
+  usually more useful than its current state. Precedent for why this is a rule: the
+  owner-constraint gate "shipped with item 12 and had never been recorded here" (engine map's own
+  words), and it is exactly the gate a later debugging session then missed.
+
+- **Cite code by file and function name, never line number.** Line numbers rot silently — every
+  reader citation in the feedback map's §4 had drifted ~100 lines while still looking
+  authoritative. `npm test` warns when a cited function name no longer exists.
+
+- **Never delete a doc — leave a tombstone.** Three lines naming what replaced it and when.
+  References live outside this repo (agent memories, PRs, notes) and a rename cannot fix them.
+  `docs/garment-memory-and-feedback-audit.md` was deleted on supersession and pointed at nothing
+  for nine days.
+
+- **A doc claim that cites a script must cite a *tracked* one.** `scratch/*` is gitignored with an
+  allowlist; a claim backed by an untracked script cannot be reproduced from a clean checkout.
+  Enforced by `npm test`.
+
+- **`docs/specs/` is a historical archive, not an authority.** Authority order (owner ruling,
+  2026-07-30): the code > ratified docs > the archive. Those specs span several generations of a
+  repeatedly-redesigned app and their own `Status:` lines are frozen at authoring time — spec 29,
+  32 and 33 all read "Proposed. Not implemented." and all shipped. A decision made from fresh
+  evidence stands; *"an old spec decided otherwise" is an unverified claim, not a finding.*
+  Every archived spec carries a banner saying so, enforced by `npm test`.
+
+- `npm test` runs `scratch/check_docs_health.js`: broken repo-relative links, dangling `docs/*.md`
+  references and missing spec banners are **errors**; missing status headers, stale function
+  citations and untracked cited scripts are **ratcheted warnings** against
+  `scratch/docs_health_baseline.json` — the count may only go down.
+
 ## Operational Rules
 
 - **Mandatory UI expert panel.** Before materially redesigning a user-facing page or component,

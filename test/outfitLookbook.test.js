@@ -5,6 +5,7 @@ import fs from 'node:fs'
 const source = fs.readFileSync(new URL('../src/views/OutfitLookbook.jsx', import.meta.url), 'utf8')
 const stylistSource = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
 const css = fs.readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
+const colorSelectorSource = fs.readFileSync(new URL('../src/components/ColorSelector.jsx', import.meta.url), 'utf8')
 
 test('OutfitLookbook exposes indoor season in filters and edit form', () => {
   assert.match(source, /value:\s*'indoor',\s*label:\s*'🏠 Indoor \/ Any Weather'/)
@@ -55,8 +56,15 @@ test('Piece selector supports marking a linked outfit piece as Main', () => {
   assert.match(source, /\{isMain \? 'Main piece' : 'Make main'\}/)
   assert.match(source, /main_piece_id: mainPieceId/)
   assert.match(source, /className="modal-sheet outfit-piece-selector"/)
-  assert.match(source, /className="outfit-piece-colors"/)
-  assert.match(source, />\s*Any color\s*<\/button>/)
+  // Intent: the Link-pieces modal can filter the roster by colour. The flat exact-shade chip list
+  // (.outfit-piece-colors) was replaced by the shared ColorFamilyFilter implementing the ratified
+  // family -> exact-shade model in docs/wardrobe-color-controls-spec.md. Colour filtering is kept;
+  // only the markup changed.
+  assert.match(source, /<ColorFamilyFilter/)
+  assert.match(source, /import \{ ColorFamilyFilter \} from '\.\.\/components\/ColorSelector'/)
+  // The "Any color" reset moved into the shared ColorSelector with the redesign, so assert it
+  // where it now lives rather than in the consumer.
+  assert.match(colorSelectorSource, /Any color/)
   assert.match(css, /\.outfit-linked-selection \.outfit-selector-grid/)
 })
 

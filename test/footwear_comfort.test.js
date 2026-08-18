@@ -391,3 +391,64 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
     globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
   }
 })
+
+// docs/activity-and-roster-spec.md Part 1 — the activity must be able to become 'hiking'.
+// Live case (thread_1786908272853): the model declared `walking` for a nature walk while its own
+// prose said "if the trail has any rocky or uneven sections", and only the structured value reaches
+// the gates. resolveActivityProfile used to return immediately on a supplied activity, so nothing
+// downstream could correct it.
+test('a nature walk escalates to hiking, and escalation is one-directional', async () => {
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+  const id = opts => resolveActivityProfile(opts)?.id ?? null
+
+  // Owner ruling 2026-08-17: "it's not climbing a mountain hike, but it's a hike."
+  assert.equal(id({ activity: 'none', request: 'nature walk today at San Anselmo, CA' }), 'hiking')
+  // The declared activity no longer ends the question — text may escalate it.
+  assert.equal(id({ activity: 'walking', request: 'nature walk today at San Anselmo, CA' }), 'hiking')
+  assert.equal(id({ activity: 'walking', request: 'a walk on the trail' }), 'hiking')
+
+  // ONE-DIRECTIONAL: text may lift walking -> hiking, never lower hiking -> walking. The failure is
+  // asymmetric — treating a city walk as a hike costs comfortable shoes nobody needed; treating a
+  // hike as a city walk costs grip on a trail.
+  assert.equal(id({ activity: 'hiking', request: 'a gentle walk around the city' }), 'hiking')
+  assert.equal(id({ activity: 'walking', request: 'a walk around the city' }), 'walking')
+
+  // An explicit denial blocks escalation (hasAffirmedActivityKeyword's negation handling).
+  assert.equal(id({ activity: 'walking', request: 'just a gentle stroll on a paved path, no hiking' }), 'walking')
+
+  // mood is the vibe axis, not an activity channel — unchanged.
+  assert.equal(id({ activity: 'none', mood: 'lots of walking' }), null)
+  assert.equal(id({ activity: 'none', request: 'dinner downtown' }), null)
+})
+
+// §5.4(2) + §5.0 — this app has per-user databases, so a rule may not assume a well-tagged wardrobe.
+test('an activity tag requirement discourages rather than starves', async () => {
+  const { profileRuleFit, getMergedProfileRules } = await import('../styling-engine/rules.js')
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+  const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+  const op = resolveOccasionProfile('casual', '')
+  const ap = resolveActivityProfile({ activity: 'hiking' })
+  const merged = getMergedProfileRules(op, ap)
+  const fit = piece => profileRuleFit(piece, merged, { weatherProfile: {}, occasionProfile: op, activityProfile: ap })
+
+  const outdoorTop = { category: 'top', name: 'graphic tee', occasions: ['casual', 'outdoor'], formality: 'everyday' }
+  // Cotton, not silk: hiking discourages silk on MATERIAL grounds, which reaches the piece first
+  // and is the better reason. This fixture has to isolate the tag rule.
+  const cityTop = { category: 'top', name: 'cotton city shell', occasions: ['city'], formality: 'everyday', fabric_category: 'cotton' }
+
+  // Discouraged, NOT prohibited: a hard gate here would contradict the 2026-06-12 ratification that
+  // a day dress stays allowed for outdoor-active, and would make the roster depend on how
+  // thoroughly this particular user tagged their wardrobe.
+  assert.notEqual(fit(outdoorTop).tier, 'discouraged')
+  // The tag rule is the LAST word: it must not pre-empt a hard gate. An earlier revision returned
+  // from it before the register ceiling and silently un-suppressed 45 elevated pieces in the
+  // composer — measured against a recorded live run.
+  const elevatedUntagged = { category: 'top', name: 'cotton blouse', occasions: ['city'], formality: 'dressy', fabric_category: 'cotton' }
+  const withCeiling = profileRuleFit(elevatedUntagged, merged,
+    { weatherProfile: {}, occasionProfile: op, activityProfile: ap, registerCeiling: 'everyday' })
+  assert.equal(withCeiling.tier, 'prohibited', 'the register ceiling still wins over the tag discouragement')
+  assert.match(withCeiling.label, /exceeds everyday ceiling/)
+  assert.equal(fit(cityTop).tier, 'discouraged')
+  assert.match(fit(cityTop).label, /not tagged for/)
+  assert.notEqual(fit(cityTop).tier, 'prohibited', 'an untagged wardrobe must not be starved of tops')
+})

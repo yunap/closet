@@ -283,3 +283,81 @@ test('manifest groups by category with counts in deterministic id order', () => 
   const teeIndex = topSection.indexOf('#9 blue tee')
   assert.ok(shirtIndex !== -1 && teeIndex !== -1 && shirtIndex < teeIndex, 'pieces sorted by id within group')
 })
+
+// docs/search-payload-spec.md §4 "the constraint neither option may break" + §6.3.
+//
+// search_wardrobe now returns per-request judgment only (id, name, category, ruleFit, weatherFit,
+// notes, image) and leaves stable garment truth to the cached manifest line. That is only safe
+// while the two surfaces together still cover everything the model can see, because a field in
+// NEITHER is invisible — and the failure mode is silent: worse composition, no error.
+//
+// This test is the guard. If someone drops a field from the manifest line, or trims another one
+// out of the search row, it fails here rather than in a wardrobe six weeks later.
+test('every stable garment field stays visible in either the manifest or the search row', () => {
+  const piece = {
+    id: 42,
+    name: 'test garment',
+    category: 'top',
+    reads_as: 'soft drape',
+    colors: ['cream', 'navy'],
+    occasions: ['casual', 'outdoor'],
+    pattern_type: 'stripe',
+    pattern_scale: 'medium',
+    pattern_complexity: 'medium',
+    silhouette: 'relaxed',
+    shoe_type: 'sneaker',
+    toe_shape: 'almond',
+    walk_support: 'high',
+    heel_height: 'flat',
+    fabric_category: 'cotton',
+    fabric_weight: 'light',
+    opacity: 'sheer',
+    needs_base: 'yes',
+    neckline: 'scoop',
+    sleeve_length: 'long',
+    sleeve_shape: 'straight',
+    length_hits_at: 'hip',
+    hem_finish: 'straight_loose',
+    season: 'warm',
+    formality: 'everyday',
+  }
+  const line = buildWardrobeManifestLine(piece)
+
+  // Carried by the trimmed search row itself — per-request judgment plus the join key.
+  const inSearchRow = new Set(['id', 'name', 'category', 'ruleFit', 'ruleFitLabel', 'weatherFit', 'notes'])
+
+  // Everything else must be findable in the manifest line. The expected token is asserted, not just
+  // the value, so a field that happens to share a substring with another cannot mask a loss.
+  const inManifest = {
+    reads_as: 'soft drape',
+    colors: 'colors cream/navy',
+    fabric_category: 'fabric cotton',
+    fabric_weight: 'cotton/light',
+    silhouette: 'silhouette relaxed',
+    length_hits_at: 'hits hip',
+    neckline: 'neck scoop',
+    sleeve_length: 'sleeve long',
+    sleeve_shape: 'long/straight',
+    hem_finish: 'hem straight_loose',
+    walk_support: 'support high',
+    shoe_type: 'shoe type sneaker',
+    toe_shape: 'toe almond',
+    heel_height: 'heel flat',
+    opacity: 'opacity sheer',
+    needs_base: 'needs base layer',
+    pattern_type: 'pattern stripe',
+    pattern_scale: 'stripe/medium',
+    formality: 'formality everyday',
+    occasions: 'occ casual+outdoor',
+    season: 'season warm',
+  }
+  for (const [field, token] of Object.entries(inManifest)) {
+    assert.ok(line.includes(token),
+      `${field} is not in the search row, so the manifest must carry it — expected "${token}" in:\n  ${line}`)
+  }
+
+  // And nothing is claimed by both lists, which would mean the split is not actually a split.
+  for (const field of Object.keys(inManifest)) {
+    assert.ok(!inSearchRow.has(field), `${field} is listed as both manifest-carried and search-carried`)
+  }
+})

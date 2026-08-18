@@ -841,12 +841,22 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
         fd.append('season', piece.season || 'year-round')
         fd.append('notes', piece.notes_suggestion || '')
         fd.append('status', 'active')
+        if (piece.fiber_content !== undefined) fd.append('fiber_content', JSON.stringify(piece.fiber_content || []))
 
-        // Include extracted visual attributes
+        // Include extracted visual attributes. Kept in sync with the /extract-pieces schema
+        // (routes/ai.js) by hand — same documented drift risk as the tagger schema itself; a
+        // field the endpoint asks for but this list omits is computed, paid for, and silently
+        // dropped before the piece is ever created (found 2026-08-15: opacity, stretch,
+        // needs_base, fiber_content, formality, heel_height, walk_support were already being
+        // dropped this way before the accessory/bottom/jewelry/necklace/fit_on_body/
+        // tuck_behavior/waistband_type fields existed in the schema at all).
         ;[
           'background_color', 'pattern_type', 'pattern_scale', 'pattern_complexity',
           'reads_as', 'hem_finish', 'neckline', 'sleeve_length', 'sleeve_shape', 'length_hits_at',
-          'silhouette', 'shoe_type', 'toe_shape', 'fabric_category', 'fabric_weight', 'visual_weight'
+          'silhouette', 'shoe_type', 'toe_shape', 'fabric_category', 'fabric_weight', 'visual_weight',
+          'accessory_subtype', 'bottom_subtype', 'jewelry_type', 'necklace_length',
+          'fit_on_body', 'tuck_behavior', 'waistband_type',
+          'opacity', 'stretch', 'needs_base', 'formality', 'heel_height', 'walk_support'
         ].forEach(key => {
           if (piece[key] !== undefined && piece[key] !== null) {
             fd.append(key, piece[key])

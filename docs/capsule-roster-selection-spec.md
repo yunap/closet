@@ -375,8 +375,12 @@ paths 1–3. The implementation would be:
    complementary, triadic relationships) could give this structure; it has not been researched for
    this codebase yet. The feature is **not buildable without that research**, because bench
    pre-filtering on family alone would exclude burgundy even if burgundy-and-yellow is a valid
-   pairing. A future research document (`docs/capsule-color-harmony-rules.md`) is the correct
-   prerequisite, not a spec-level assumption.
+   pairing. Colour-harmony research is the correct prerequisite, not a spec-level assumption. It
+   would belong alongside [capsule-palette-rules.md](capsule-palette-rules.md) (neutrals, palette
+   constants) and [color-taxonomy-rules.md](color-taxonomy-rules.md) (families and naming) —
+   **and as of 2026-08-16 it is still not written: neither of those documents covers analogous,
+   complementary or triadic relationships.** This section previously named a
+   `capsule-color-harmony-rules.md` that has never existed.
 
 **One design constraint that survives from the original section.** Palette must remain an
 *instruction to the selector*, not a deterministic filter over the pool — for the reasons the
@@ -623,7 +627,9 @@ The same caution applies to `docs/tagger-cost-spec.md`, which is priced entirely
    1, 2, and 3 are the wrong framing for an existing wardrobe.** The research-grounded replacement
    (accent connectivity as a composition instruction, colour-family breadth pressure, colour-story
    routing for large wardrobes) is documented in §7. Colour-story routing depends on colour harmony
-   research not yet conducted; see `docs/capsule-color-harmony-rules.md` (to be written).
+   research not yet conducted — still open as of 2026-08-16, and not covered by
+   [capsule-palette-rules.md](capsule-palette-rules.md) or
+   [color-taxonomy-rules.md](color-taxonomy-rules.md) despite their names (see §7's note).
 4. **What happens to `capsuleVersatilityScore` long-term?** This spec keeps it as the bench ranking.
    If a model roster consistently beats it, the score's remaining job is ordering, not selection —
    worth revisiting only with evidence.
