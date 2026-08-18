@@ -18,6 +18,68 @@ at `6f94f6f` (PR #188).
 > this file remain the authority on **owner rulings**; the index is the authority on **what is done
 > and what is next**.
 
+## 2026-08-16 → 08-18 — the nature-walk session: owner rulings, and what shipped
+
+A live freeform turn proposed sandals and a sheer cardigan for a nature walk
+(`thread_1786908272853`), while the Visual Composer produced correct trail outfits from the same
+wardrobe six minutes later (`thread_1786908644157`). Diagnosing the gap ran into the docs being
+unfindable, which is where the session actually started. 18 commits; `npm test` 1,197 green.
+
+### Owner rulings — read before overturning any of these
+
+- **A nature walk is a hike.** *"Not climbing a mountain, but a hike."* **CLASSIFICATION only.** A
+  follow-up correction was needed after this was over-read: *"nothing should have changed for the
+  definition of hiking."* The hiking profile is byte-identical to its prior state, verified against
+  the recorded `suppressedReasonCounts` of `thread_1786908644157` — 150 suppressed, all seventeen
+  reason counts matching. A relaxation of `excluded_walk_support` shipped and was reverted the same
+  day. `walk_support: medium` is correct for ballet flats and slip-ons and means *outdoor social or
+  museum walking, not a hike*.
+- **A separate top with a dress is a styling decision, not a hard ban** — but the stylist's
+  reasoning must be visible. Disclosure, never a gate; the top is never silently dropped.
+- **The capsule ending is the right one for the turn contract.** A clause that spends its one retry
+  and still fails now ships with the gap stated, rather than returning unchanged and unremarked.
+- **Do not change the activity profiles.** *"They have been worked on and tested."* The ordering fix
+  made the proposed `preferred_footwear`/`preferred_materials` change unnecessary; withdrawn.
+- **Do not ask the owner to author archetypes.** *"I know nothing about archetypes."* Withdrawn; the
+  remaining part is code-only.
+- **Every rule must hold for a wardrobe nobody has seen.** *"Mine is not the only wardrobe this app
+  is for."* A measurement on the owner's wardrobe is evidence of feasibility, never of safety — see
+  `docs/activity-and-roster-spec.md` §5.0.
+- **Garment truth is fixed in the data, not by loosening a gate.** The owner retagged `990397`
+  (`heel_height` low → flat) rather than have hiking's heel rule relaxed.
+
+### What shipped
+
+Four bugs the owner did not report, found while diagnosing the one they did: the tool loop discarded
+prose the model wrote beside its tool calls (which is why that reply began with a bare `---`); the
+archetype template overwrote the model's own labels and reasons on the selected-piece path; the
+Main-piece structural fallback only ever worked for outerwear and accessories; and a card could
+contradict its own words with nothing to catch it.
+
+The reported bug itself: a nature walk now resolves to `hiking`, the roster surfaces `walk_support`
+and ranks on it, owner constraints reach the roster, and required tags discourage rather than gate.
+Verified live in `thread_1786954464459` — the model named the right trail shoe unprompted.
+
+Then cost: the search payload was re-sending garment truth the cached manifest already carried
+(one tops search cost more than the entire 251-piece manifest). Trimmed, live-verified at
+**$0.380 → $0.325**. The floor was then measured honestly — freeform's ~41k prefix is re-read every
+iteration, so its floor is **~$0.21, not the builder's $0.097**, correcting an overclaim made
+earlier in the same session.
+
+### Docs infrastructure, because the session began by failing to find things
+
+`docs/README.md` (the index that did not exist), a `CLAUDE.md` routing block, `AGENTS.md`
+Documentation Rules with a same-commit amendment trigger table, the 35 historical specs moved
+in-repo under banners declaring them non-authoritative, and `scratch/check_docs_health.js` wired into
+`npm test` — broken links and dangling references are errors, staleness is a ratchet.
+
+### Open
+
+`docs/card-consistency-spec.md` §4.5 (reconcile a capsule card's title after auto-completion),
+freeform per-turn provenance beyond the new `tool_sequence`, and whether the ~41k prefix — 16k
+manifest, 8k tool schemas — should be reduced. **That last one is a product decision, not an
+optimisation, and needs an owner ruling.**
+
 ## 2026-07-30 — capsule constants given sources, and three research documents
 
 The capsule mechanics were sound; the **numbers were invented in code**, each with a plausible
