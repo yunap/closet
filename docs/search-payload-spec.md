@@ -181,3 +181,43 @@ the 80:1 stated in §9 before this was measured.
 **The lesson for the remaining levers:** anything added to the cached prefix is paid for once per
 *iteration*, not once per turn. That makes iteration count a multiplier on prefix size, which is an
 argument for lever 2 (batching) that §7 did not make.
+
+
+## 11. The floor, measured — and a correction to what this spec implied
+
+**Measured 2026-08-18**, after the live A/B, because the numbers quoted across this work were
+measuring different things and one of them was an overclaim.
+
+```
+system prompt   ~33,071 tokens   (including the ~16k wardrobe manifest)
+tool schemas     ~7,920 tokens
+total prefix    ~40,991 tokens   — re-read on EVERY provider iteration
+```
+
+The $0.325 turn breaks down as **cache creation $0.220 (68%)**, cache read $0.076 (23%), output
+$0.028 (9%). Writing that prefix once is ~$0.154 of it.
+
+Modelled against iteration count (the 6-iteration figure reproduces the measured turn, so the model
+is sound):
+
+| iterations | modelled cost | |
+|---|---|---|
+| 6 | ~$0.354 | today |
+| 4 | ~$0.281 | what batching buys, if the model takes it |
+| 3 | ~$0.247 | the floor for this turn shape |
+| 2 | ~$0.215 | full pre-resolve (lever 3) |
+
+**The correction.** §7 and the activity spec's §9 both pointed at the builder's $0.097 as lever 3's
+target. That was wrong. The builder is cheap because it carries a ~20k prompt with **no manifest and
+no tool schemas** and makes one call — not merely because it makes one call. Freeform's floor as
+architected is **~$0.21**. The entire tool loop is worth about $0.11; the prefix is ~$0.15 and is
+paid regardless.
+
+**So the next real lever is prefix size, not round-trips** — and 24k of the 41k is the manifest
+(16k) and the tool schemas (8k). Both are product decisions rather than optimisations: the manifest
+is what lets the stylist know the whole wardrobe and is the index the verification contract checks
+citations against. **Owner ruling required before either is touched.**
+
+Note the irony this spec created: option B deliberately grew the prefix by ~3.5k to remove more from
+tool results. Still the right trade — measured net −14.6% — but it moved cost into the one term that
+is multiplied by iteration count.

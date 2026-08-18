@@ -304,5 +304,11 @@ The four `search_wardrobe` calls were the model *discovering* things the app alr
 server-side and hand the model one workbench, as `plan_outfit_set` already does for multi-slot — would
 remove most of the discovery entirely, without relocating a single taste decision into code.
 
+**Corrected 2026-08-18.** This section pointed at the builder's $0.097 as the target. That was an
+overclaim: the builder is cheap because its prompt is ~20k with no manifest and no tool schemas, not
+merely because it makes one call. Freeform carries a ~41k prefix that is re-read every iteration, so
+its floor as architected is **~$0.21** — the whole tool loop is worth ~$0.11 and the prefix ~$0.15.
+Measurement and the per-iteration model: [search-payload-spec.md](search-payload-spec.md) §11.
+
 That is a separate spec and a separate decision. It is recorded here because the same work improves
 both, and because capping iterations would treat the symptom rather than the cause.
