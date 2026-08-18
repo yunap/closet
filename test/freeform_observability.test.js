@@ -1154,3 +1154,74 @@ test('a clause that spent its retry and still fails ships with the gap stated', 
   discloseUnresolvedFreeformChecks(answer, counted, new Set(['cardProseInconsistent']))
   assert.equal(counted.freeformDiagnostics.cardProseInconsistentBlocks, 0, 'the recheck must not double-count the block')
 })
+
+// Review finding P1. narration accumulated across the whole loop, so a rejected answer's prose was
+// prepended again after the model corrected itself — shipping the text that caused the rejection
+// alongside its correction, with the clause that caught it already out of retry budget:
+//   "Use piece #999."  /  "Correction: use verified piece #12 instead."
+test('narration written before a retry does not survive the correction', async () => {
+  const { supersedeNarrationOnRetry, joinAssistantNarration } = await import('../styling-engine/provider.js')
+
+  const narration = []
+  narration.push('**Look 1** — pairing it with piece #999.')   // written beside a tool call
+  narration.push('**Look 2** — and the cream cardigan over it.')
+
+  // A guard rejects the answer; the retry replaces it.
+  supersedeNarrationOnRetry(narration)
+  assert.deepEqual(narration, [], 'the superseded attempt is dropped, in place')
+
+  // Narration written AFTER the correction still accumulates — this is a boundary, not a discard.
+  narration.push('**Look 1** — pairing it with the verified piece #12.')
+  const answer = joinAssistantNarration(narration, 'Here are the looks.')
+
+  assert.doesNotMatch(answer, /#999/, 'the superseded reference must not reappear')
+  assert.doesNotMatch(answer, /Look 2/, 'nor the prose from the rejected attempt')
+  assert.match(answer, /#12/, 'the corrected narration survives')
+  assert.match(answer, /Here are the looks/)
+
+  // Idempotent and safe on junk.
+  assert.deepEqual(supersedeNarrationOnRetry([]), [])
+  assert.doesNotThrow(() => supersedeNarrationOnRetry(undefined))
+})
+
+// Review finding P2. applyFreeformOutputChecks short-circuits on the first failure by design, so
+// disclosing from a single call surfaced at most one unresolved clause — and a newly-introduced
+// failure that had NOT been retried would be returned first and mask a retried one behind it,
+// shipping the reply with nothing said at all.
+test('every unresolved clause is disclosed, and a new failure cannot mask a retried one', async () => {
+  const { discloseUnresolvedFreeformChecks } = await import('../styling-engine/provider.js')
+
+  // A card that layers a top with a dress and never explains it (cardProseInconsistent), in a turn
+  // whose prose also cites an unverified piece id (unverifiedCitation). Both clauses fire.
+  const toolContext = {
+    zeroResultQueries: [],
+    generatedOutfits: [{
+      label: 'Layered Look',
+      reason: 'The navy cotton midi dress carries the column.',
+      pieces: [
+        { id: 1, name: 'ivory silk shell', category: 'top' },
+        { id: 2, name: 'navy cotton midi dress', category: 'dress' },
+        { id: 3, name: 'tan sandals', category: 'shoes' },
+      ],
+    }],
+  }
+  const answer = 'Try the shell with it (ID 777).'
+
+  // Both retried and still failing -> both disclosed.
+  const both = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent', 'unverifiedCitation']))
+  assert.match(both, /treat the extra top as optional/i)
+  assert.match(both, /not verified against your wardrobe/i)
+
+  // Only one retried: the other is a live failure the loop may still correct, so it is not
+  // disclosed — but it must not suppress the one that HAS spent its budget. This is the masking
+  // case: unverifiedCitation is evaluated before cardProseInconsistent.
+  const masked = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent']))
+  assert.match(masked, /treat the extra top as optional/i, 'a retried clause is disclosed even when an earlier clause also fails')
+  assert.doesNotMatch(masked, /not verified against your wardrobe/i, 'a clause with retries left is not disclosed')
+
+  // Counted once per note, and never appended twice.
+  const counted = { ...toolContext, freeformDiagnostics: { unresolvedCheckDisclosures: 0 } }
+  const first = discloseUnresolvedFreeformChecks(answer, counted, new Set(['cardProseInconsistent', 'unverifiedCitation']))
+  assert.equal(counted.freeformDiagnostics.unresolvedCheckDisclosures, 2)
+  assert.equal(discloseUnresolvedFreeformChecks(first, counted, new Set(['cardProseInconsistent', 'unverifiedCitation'])), first)
+})

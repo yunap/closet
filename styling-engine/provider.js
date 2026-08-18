@@ -931,6 +931,17 @@ export function collectAssistantText(content) {
 // tool-call-free message, so all of that was discarded. A live reply (thread_1786908272853) reached
 // the owner as a bare "---" followed by notes referring to "Look 1/2/3" — labels no card carries,
 // because the looks had been described beside the propose_outfit calls and thrown away.
+// A retry REPLACES the answer, so narration written before it is superseded. Without this, a guard
+// that rejected an answer would still ship the prose that caused the rejection: the model's
+// correction lands after the original text, producing "Use piece #999." followed by "Correction: use
+// verified piece #12" in one reply — and the clause that caught it has spent its retry budget, so it
+// cannot fire again. Narration written AFTER the correction accumulates normally, which is what
+// makes this a boundary rather than a discard.
+export function supersedeNarrationOnRetry(narration = []) {
+  if (Array.isArray(narration)) narration.length = 0
+  return narration
+}
+
 export function joinAssistantNarration(narration = [], finalText = '') {
   const closing = String(finalText || '').trim()
   const kept = (Array.isArray(narration) ? narration : [])
@@ -967,17 +978,32 @@ const FREEFORM_CHECK_DISCLOSURES = {
   destinationClarification: '',
 }
 
-// Runs the same clause predicates once more, without recording diagnostics, and appends a short
-// disclosure when something that already spent its retry is still failing.
+// Enumerates EVERY failing clause, then discloses each one that has already spent its retry.
+//
+// applyFreeformOutputChecks short-circuits on the first failure by design — it exists to pick the
+// next correction to send. Calling it once here disclosed at most one unresolved clause, and worse,
+// a newly-introduced failure that had NOT been retried would be returned first and mask a retried
+// clause behind it, so the reply shipped with nothing said at all. Re-running with each found type
+// suppressed walks the whole list without duplicating a single predicate.
 export function discloseUnresolvedFreeformChecks(answerText, toolContext = {}, retried = new Set()) {
   if (!retried.size || toolContext.skipFreeformOutputChecks) return answerText
-  const recheck = applyFreeformOutputChecks(answerText, toolContext, new Set(), { record: false })
-  if (!recheck.block || !retried.has(recheck.blockType)) return answerText
-  const note = FREEFORM_CHECK_DISCLOSURES[recheck.blockType]
-  if (!note) return answerText
-  if (String(answerText || '').includes(note)) return answerText
-  bumpFreeformDiagnostic(toolContext, 'unresolvedCheckDisclosures')
-  return `${String(answerText || '').trim()}\n\n${note}`.trim()
+  const suppressed = new Set()
+  const failing = []
+  // Bounded by the number of clauses; the suppressed set grows every pass, so this terminates.
+  for (let pass = 0; pass < Object.keys(FREEFORM_CHECK_DISCLOSURES).length + 1; pass += 1) {
+    const recheck = applyFreeformOutputChecks(answerText, toolContext, suppressed, { record: false })
+    if (!recheck.block) break
+    failing.push(recheck.blockType)
+    suppressed.add(recheck.blockType)
+  }
+  const text = String(answerText || '').trim()
+  const notes = failing
+    .filter(blockType => retried.has(blockType))
+    .map(blockType => FREEFORM_CHECK_DISCLOSURES[blockType])
+    .filter(note => note && !text.includes(note)) // ratchet-allow: de-duplicating our own disclosure line in the model's reply, not garment matching
+  if (!notes.length) return text
+  bumpFreeformDiagnostic(toolContext, 'unresolvedCheckDisclosures', notes.length)
+  return `${text}\n\n${[...new Set(notes)].join('\n')}`.trim()
 }
 
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
@@ -1139,6 +1165,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
@@ -1235,6 +1262,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue

@@ -123,6 +123,20 @@ history: the disciplined flow — declare, search, view supports, view layers, p
 legitimately needs 6–8, and *"the old cap of 7 left no margin for a single corrective bounce and
 live turns died with zero cards."* So 10 is a deliberate margin, raised after live failures.
 
+**[by design, 2026-08-18] The disclosure pass enumerates EVERY clause, and narration does not
+survive a retry.** Two correctness bugs in the first cut of the above, both found in review:
+
+- `applyFreeformOutputChecks` short-circuits on the first failure — that is its job, since it exists
+  to pick the next correction to send. Disclosing from a single call therefore surfaced at most one
+  unresolved clause, and a newly-introduced failure that had *not* been retried would be returned
+  first and mask a retried one behind it, shipping the reply with nothing said at all. The pass now
+  re-runs with each found type suppressed, walking the whole list without duplicating a predicate.
+- The narration accumulator spanned the whole loop, so a rejected answer's prose was prepended again
+  after the model corrected itself — *"Use piece #999."* followed by *"Correction: use verified piece
+  #12"* in one reply, with the clause that caught it already out of budget.
+  `supersedeNarrationOnRetry` clears it at the correction boundary; narration written afterwards
+  accumulates normally, so this is a boundary rather than a discard.
+
 **[by design, 2026-08-17] A guard that spends its retry and still fails now says so.** Each clause
 gets exactly one retry; after that `retriedChecks` suppressed it and the answer was returned
 unchanged and unremarked, so a fired-but-unfixed guard left the person holding a flawed answer with
