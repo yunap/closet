@@ -209,12 +209,14 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // An atomic capsule attempt deliberately degrades to accepted cards + honest
   // gaps after one composition call. Re-entering the generic delivery retries
   // here would undo that cost boundary and restart search/propose/replan.
-  const boundedCapsuleCompleted = Boolean(toolContext?.capsuleAtomicAttempted)
+  const boundedCompositionCompleted = Boolean(
+    toolContext?.capsuleAtomicAttempted || toolContext?.atomicMultiLookCompleted
+  )
   // Declared cards, delivered none, and didn't ask the user anything: the
   // turn's contract is unmet. An answer containing a question is treated as the
   // model's own clarification judgment and passes.
   const askedAQuestion = String(answerText || '').includes('?')
-  if (!boundedCapsuleCompleted && !retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
+  if (!boundedCompositionCompleted && !retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
     return fail('cardsNotDelivered', 'cardsNotDeliveredBlocks',
       "You declared want:'cards' but finished the turn with zero verified outfit cards and no clarifying question. Either compose now — search_wardrobe, then propose_outfit — or, if the wardrobe genuinely cannot satisfy the request, call declare_intent({ want: 'text' }) and explain the gap plainly.")
   }
@@ -226,7 +228,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     return fail('imageNotDelivered', 'imageNotDeliveredBlocks',
       "You declared want:'image' but never called render_preview. Call render_preview({ outfit_index }) for a card produced this turn, or render_preview({ piece_ids }) with IDs from a verified card — or ask the user which look to render.")
   }
-  if (!boundedCapsuleCompleted && !retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
+  if (!boundedCompositionCompleted && !retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
     const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0
     const missingCount = requestedOutfitCount - readyCards
     return fail('outfitCount', 'outfitCountBlocks', alreadySearched
@@ -240,7 +242,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // cards before the loop starts — narrating those back is fine, hence the
   // preseeded exemption.)
   const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
-  if (!boundedCapsuleCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
+  if (!boundedCompositionCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
       (looksLikeUnproposedOutfitProse(answerText) || (!declaredIntent && looksLikeOutfitRequest(toolContext?.question)))) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
@@ -250,6 +252,43 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
       `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`)
   }
   return { block: false }
+}
+
+export function boundedAtomicMultiLookFinalAnswer(answerText = '', toolContext = {}) {
+  const text = String(answerText || '').trim()
+  if (!toolContext?.atomicMultiLookCompleted) return text
+  const requested = Number(toolContext?.atomicMultiLookRequestedCount) || 0
+  const ready = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
+    : 0
+  if (!requested || ready >= requested) return text
+  const note = `${ready} of ${requested} requested ${requested === 1 ? 'outfit' : 'outfits'} ${ready === 1 ? 'is' : 'are'} ready; the remaining ${requested - ready} could not be validated from this wardrobe in the bounded composition pass.`
+  return `${text}\n\n${note}`.trim()
+}
+
+export function boundedAtomicMultiLookResponse(toolContext = {}) {
+  const ready = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
+    : 0
+  const requested = Number(toolContext?.atomicMultiLookRequestedCount) || ready
+  const temperature = String(toolContext?.boundedWeatherSummary || '').trim()
+  const location = String(toolContext?.boundedLocation || '').trim()
+  const context = [temperature, location].filter(Boolean).join(' in ')
+  const unavailableWeather = Boolean(toolContext?.boundedWeatherUnavailable)
+  const directionPhrase = ready === 1
+    ? 'this direction'
+    : (ready === 2 ? 'these two directions' : `these ${ready} directions`)
+  const base = ready
+    ? unavailableWeather
+      ? `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
+      : context
+      ? ready === 1 ? `For ${context}, I’d start with ${directionPhrase}.` : `For ${context}, I’d compare ${directionPhrase}.`
+      : ready === 1 ? "I’d start with this direction." : `I’d compare ${directionPhrase}.`
+    : 'I could not validate a complete outfit from the available wardrobe for this request.'
+  return boundedAtomicMultiLookFinalAnswer(base, {
+    ...toolContext,
+    atomicMultiLookRequestedCount: requested
+  })
 }
 
 export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
@@ -623,12 +662,37 @@ export function extractToolResultImages(result) {
 export function stylistToolsForTurn(toolContext = {}) {
   if (toolContext?.capsuleAtomicCompleted) return []
   if (toolContext?.slotSwapCompleted) return []
+  // docs/freeform-bounded-execution-spec.md phase 1. The visual composer already returned the
+  // complete bounded batch; the outer model gets one prose-only closing turn and cannot restart
+  // search or rebuild the same cards serially.
+  if (toolContext?.atomicMultiLookCompleted) return []
   const allowedNames = Array.isArray(toolContext?.allowedToolNames)
     ? new Set(toolContext.allowedToolNames)
     : null
-  return allowedNames
+  const tools = allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
+  if (process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK !== 'true' || toolContext?.turnMode !== 'new_request') {
+    return tools
+  }
+  // The bounded batch call is itself the cards declaration. Reinforce that exception in the tool
+  // descriptions the controller actually sees; otherwise declare_intent's general "call first"
+  // wording can win over the narrower system instruction and preserve an unnecessary paid turn.
+  return tools.map(tool => {
+    if (tool.name === 'declare_intent') {
+      return {
+        ...tool,
+        description: `${tool.description} BOUNDED EXCEPTION: for fresh options sharing one occasion, activity, and weather context, do not call this tool; call generate_outfits directly. An ordinary new 'what should I wear?' request defaults to 2 options.`
+      }
+    }
+    if (tool.name === 'generate_outfits') {
+      return {
+        ...tool,
+        description: `${tool.description} When the bounded multi-look exception applies, this call also declares the cards contract, so do not call declare_intent or search_wardrobe first.`
+      }
+    }
+    return tool
+  })
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
@@ -913,6 +977,47 @@ export async function askStylistStructuredWithUsage({
   }
 }
 
+export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date'],
+  properties: {
+    profile: { type: 'string', enum: ['bounded_multi', 'full_stylist'] },
+    occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
+    activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
+    season: { type: 'string' },
+    mood: { type: 'string' },
+    mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
+    limit: { type: 'integer', minimum: 0, maximum: 5 },
+    location: { type: 'string' },
+    date: { type: 'string' }
+  }
+}
+
+const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one NEW wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
+
+Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
+
+Choose full_stylist for: one/best/pick-one; text advice or explanation; critique; photo or existing-outfit discussion; styling a named/selected garment; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous requests; or anything needing clarification.
+
+Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
+
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.`
+
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles' } = {}) {
+  return askStylistStructuredWithUsage({
+    system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nRequest: ${String(question || '').trim()}`
+    }],
+    schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
+    name: 'freeform_execution_route',
+    description: 'Choose the bounded multi-look path only when its narrow contract is fully satisfied.',
+    maxTokens: 350
+  })
+}
+
 
 // docs/activity-and-roster-spec.md Part 4. Every text block of an assistant message, not just the
 // first — a final message can carry more than one, and content[0] silently dropped the rest.
@@ -1037,7 +1142,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (retryResponse == null) break
       answerStr = typeof retryResponse === 'string' ? retryResponse : JSON.stringify(retryResponse)
     }
-    return { answer: answerStr, savedCorrections: [] }
+    return { answer: boundedAtomicMultiLookFinalAnswer(answerStr, toolContext), savedCorrections: [] }
   }
 
   assertProviderKey()
@@ -1140,6 +1245,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
             content: toolContent
           })
         }
+        if (toolContext.atomicMultiLookCompleted) {
+          return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
+        }
         currentMessages.push(...toolOutputs)
 
         if (collectedImages.length > 0) {
@@ -1170,7 +1278,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
+        const disclosed = discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks)
+        return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
       }
     } else {
       const client = new Anthropic({ apiKey: resolveAnthropicKey() })
@@ -1251,6 +1360,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
             ]
           })
         }
+        if (toolContext.atomicMultiLookCompleted) {
+          return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
+        }
         currentMessages.push(...toolResponses)
         continue
       } else {
@@ -1267,7 +1379,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
+        const disclosed = discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks)
+        return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
       }
     }
   }

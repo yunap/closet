@@ -67,6 +67,7 @@ table:
 | User action | Endpoint / path | What is saved |
 | ----------- | --------------- | ------------- |
 | Visual Composer "Use my wardrobe" / "Create outfits" | `POST /generate-wardrobe-outfits-visual` | Garment IDs and formula families from returned whole-wardrobe cards |
+| Freeform stylist bounded outfit options | `POST /ask` → bounded `generate_outfits` → shared whole-wardrobe composer | Garment IDs and formula families from returned freeform cards |
 | Lookbook saved outfit "Similar" wardrobe variants, plus adjacent follow-up variants | `POST /generate-saved-outfit-variants` | Garment IDs and formula families from the returned variant cards |
 
 The shared implementation is `generateWholeWardrobeOutfitsVisualInternal`; any
@@ -93,18 +94,22 @@ write this recent garment-ID memory.
 
 ## What Reset Clears
 
-The **Reset recent memory** button appears in both Visual Composer entry panels
-and calls `resetWholeWardrobeSessionMemory` in `StylistChat.jsx`. That sends:
+The **Include all pieces again** action appears in a Stylist header popover beside Weather whenever
+the count is non-zero and the active flow consults rotation memory: Visual Composer,
+saved-outfit formula/adjacent variants, or a bounded whole-wardrobe freeform result. It stays
+available on a blank new Stylist chat so memory can be reset before its execution profile is known,
+then hides if that chat resolves to text advice/critique or selected-piece styling. The action calls
+`resetWholeWardrobeSessionMemory` in `StylistChat.jsx`, which sends:
 
 ```http
 DELETE /api/ai/whole-wardrobe-session-memory
 ```
 
-The route deletes every row in `whole_wardrobe_sessions` and returns
-`clearedCount`. The UI reports either `Cleared N recent result sets.` or
-`Recent outfit memory is already clear.`
+The route deletes every row in `whole_wardrobe_sessions` and returns `clearedCount`. The UI
+announces that all pieces are eligible again. A failed reset remains visible in the open popover
+so the user can retry.
 
-Next to the button, the UI also shows a count like `12 items resting`. That count
+The header trigger shows a count like `12 recently used pieces`. That count
 comes from:
 
 ```http

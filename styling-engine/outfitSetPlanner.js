@@ -920,7 +920,8 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // forecast is fetched from slot.location + slot.date (or the plan date_range),
 // which is what catches microclimates like a cool coast day on a hot inland
 // trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
-// location/date is available or the fetch fails. The returned `label` is what
+// location/date is available. A failed named-location fetch remains explicitly
+// unavailable rather than becoming a seasonal estimate. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
 async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
@@ -952,6 +953,8 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   if (slot.statedWeather === 'indoor') {
     const transitLabel = profile.weatherSource === 'live'
       ? `${descriptor} (live forecast${slot.location ? `, ${slot.location}` : ''})`
+      : profile.weatherSource === 'unavailable'
+        ? `forecast unavailable${targetLocation ? ` for ${targetLocation}` : ''}; temperature unknown`
       : `${isGenericSeason(slot.transitSeason) ? descriptor : (slot.transitSeason || descriptor)} (estimated)`
     return {
       // Extreme heat must constrain the base because a heavy main cannot be
@@ -966,6 +969,12 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   if (profile.weatherSource === 'live') {
     const where = slot.location ? `, ${slot.location}` : ''
     return { profile, label: `${descriptor} (live forecast${where})` }
+  }
+  if (profile.weatherSource === 'unavailable') {
+    return {
+      profile,
+      label: `forecast unavailable${targetLocation ? ` for ${targetLocation}` : ''}; temperature unknown`
+    }
   }
   // Heuristic: prefer the user's own weather phrasing when they gave one, since
   // it is more informative than the coarse hot/cold/mild descriptor. Either way

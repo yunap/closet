@@ -19,7 +19,7 @@ const { app } = await import('../server.js')
 const runtime = await import('../styling-engine/promptRuntime.js')
 const { DEFAULT_CONSTITUTION, DEFAULT_PROFILE } = await import('../styling-engine/prompts.js')
 
-const server = app.listen(0)
+const server = app.listen(0, '127.0.0.1')
 await once(server, 'listening')
 const baseUrl = `http://127.0.0.1:${server.address().port}`
 

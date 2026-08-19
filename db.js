@@ -278,6 +278,8 @@ function initDb(dbPath) {
       propose_validation_fails INTEGER DEFAULT 0,
       outfit_prose_without_tool_count INTEGER DEFAULT 0,
       zero_result_contradiction_blocks INTEGER DEFAULT 0,
+      atomic_multi_look_calls INTEGER DEFAULT 0,
+      execution_router_calls INTEGER DEFAULT 0,
       destination_clarification_retries INTEGER DEFAULT 0,
       plan_slot_environment_inferred INTEGER DEFAULT 0,
       plan_slot_activity_inferred INTEGER DEFAULT 0,
@@ -751,6 +753,12 @@ function initDb(dbPath) {
     // docs/card-consistency-spec.md Part 1 — cards whose own prose did not account for a top worn
     // with a dress, and were sent back for one correction round.
     'card_prose_inconsistent_blocks INTEGER DEFAULT 0',
+    // docs/freeform-bounded-execution-spec.md — same-context 2–5 look requests delegated to the
+    // existing one-call visual composer instead of serial search/propose iterations.
+    'atomic_multi_look_calls INTEGER DEFAULT 0',
+    // Small model-owned new-request classifier that can bypass the full wardrobe-manifest
+    // controller when the narrow bounded multi-look contract is satisfied.
+    'execution_router_calls INTEGER DEFAULT 0',
     // Which tools ran in which provider iteration, ';'-separated per iteration. Without it a turn's
     // shape can only be inferred from the model's prose.
     'tool_sequence TEXT DEFAULT \'\''

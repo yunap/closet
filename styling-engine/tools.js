@@ -180,6 +180,8 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
       cardProseInconsistentBlocks: 0,
+      atomicMultiLookCalls: 0,
+      executionRouterCalls: 0,
       unresolvedCheckDisclosures: 0,
       destinationClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,
@@ -205,6 +207,40 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
     }
   }
   toolContext.freeformDiagnostics[field] = (toolContext.freeformDiagnostics[field] || 0) + amount
+}
+
+export function freeformAtomicMultilookEnabled() {
+  return String(process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK || '').toLowerCase() === 'true'
+}
+
+export function freeformAdaptiveVisualsEnabled() {
+  return String(process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS || '').toLowerCase() === 'true'
+}
+
+export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId } = {}) {
+  const requestedCount = Math.max(1, Math.min(5, Number(limit) || 2))
+  const eligible = freeformAtomicMultilookEnabled() &&
+    toolContext.turnMode === 'new_request' && !pieceId && requestedCount >= 2 &&
+    !toolContext.declaredIntent
+  if (!eligible) return false
+  toolContext.declaredIntent = {
+    want: 'cards',
+    outfitCount: requestedCount,
+    turnMode: 'new_request'
+  }
+  return true
+}
+
+// Nested bounded composers make a real provider call outside askStylistWithTools. Before this
+// helper, generate_outfits returned that usage in its own debug payload but the parent freeform row
+// omitted it — making the proposed cost path look cheaper by exactly its largest call.
+export function recordNestedFreeformUsage(toolContext, usage = null) {
+  if (!toolContext || !usage) return
+  bumpFreeformDiagnostic(toolContext, 'providerIterations')
+  bumpFreeformDiagnostic(toolContext, 'providerInputTokens', Number(usage.inputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerCacheReadInputTokens', Number(usage.cacheReadInputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerCacheCreationInputTokens', Number(usage.cacheCreationInputTokens) || 0)
 }
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
@@ -663,16 +699,18 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose fresh visual outfit card options from the saved wardrobe. Use only when the user explicitly asks the system to generate/compose fresh cards from scratch, not for ordinary text styling advice or to show an outfit already discussed.",
+    description: "Compose fresh visual outfit card options from the saved wardrobe. Use only when the user asks to be styled with fresh cards, not for ordinary text advice or to show an outfit already discussed. An ordinary new 'what should I wear?' request defaults to 2 options; explicit 'one/best/pick one' or a stated count overrides that default.",
     input_schema: {
       type: "object",
       properties: {
         occasion: { type: "string", enum: OCCASION_VALUES, description: "The occasion. Pick the closest allowed value; do not invent. casual/gallery/concert/travel are intentionally permissive." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
+        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it so the bounded composer uses live weather rather than a seasonal guess." },
+        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it." },
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
-        limit: { type: "integer", description: "Maximum number of outfits to generate (1 to 5, default 5)." },
+        limit: { type: "integer", description: "Number of outfits to generate (1 to 5). Default to 2 for an ordinary new 'what should I wear?' request. Honor an explicit count; use 1 when the user asks for one best look or says to pick one." },
         piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
       },
       required: ["occasion", "season"]
@@ -961,9 +999,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
+          const boundedBatchContract = freeformAtomicMultilookEnabled() &&
+            (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
+            outfitCount >= 2
+            ? `For 2–5 fresh outfits sharing one occasion, activity, and weather context, call generate_outfits exactly once with limit:${outfitCount}; its returned cards are complete and must not be rebuilt with search_wardrobe or propose_outfit. `
+            : ''
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: for a SINGLE outfit or a small fixed set, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -2545,7 +2588,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
       }
       case 'generate_outfits': {
-        // Declared-intent gate (step 4): same contract as propose_outfit.
+        const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
+        const boundedDefaultCount = freeformAtomicMultilookEnabled() &&
+          toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
+        const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
+        // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
+        // removes a paid declare_intent round trip while leaving the general composing contract intact.
+        declareBoundedMultiLookIntent(toolContext, { limit: requestedFromCall, pieceId: piece_id })
+        // Declared-intent gate (step 4): same contract as propose_outfit outside the bounded path.
         if (toolContext.declaredIntent?.want !== 'cards') {
           bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
           return {
@@ -2553,13 +2603,45 @@ async function executeToolInternal(name, args, toolContext = {}) {
             message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> }) first, then call generate_outfits again."
           }
         }
-        const { occasion, season, mood, mission, limit, piece_id, activity } = args
+        const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
+        const requestedCount = Math.max(1, Math.min(5, Number(limit) || declaredCount || 5))
+        const boundedMultiLook = freeformAtomicMultilookEnabled() &&
+          (toolContext.declaredIntent?.turnMode === 'new_request' ||
+            (!toolContext.declaredIntent?.turnMode && toolContext.turnMode === 'new_request')) &&
+          !piece_id && requestedCount >= 2 &&
+          !(Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.some(outfit => !outfit?.broken))
         const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
         const intent = normalizeStylingIntent({ occasion, season, mood, mission })
         const resolvedActivity = (activity !== undefined && activity !== null && activity !== '')
           ? normalizeActivity(activity)
           : (toolContext.activity || 'none')
-        const resolvedSeason = toolContext.weather ? `${intent.season}; ${toolContext.weather}` : intent.season
+        let resolvedSeason = toolContext.weather ? `${intent.season}; ${toolContext.weather}` : intent.season
+        if (boundedMultiLook) {
+          const safeModelLocation = looksLikeTimezoneIdentifier(location) ? '' : (location || '')
+          const resolvedWeather = await resolveStatedOrLiveWeather({
+            statedWeather: toolContext.weather || '',
+            date: date ? new Date(date) : (toolContext.currentDate ? new Date(toolContext.currentDate) : new Date()),
+            location: safeModelLocation || toolContext.location || '',
+            mood: intent.mood,
+            fallbackSeason: intent.season
+          })
+          toolContext.weatherProfile = resolvedWeather
+          setFreeformWeatherSource(toolContext, resolvedWeather.weatherSource)
+          const forecastTemperature = Number.isFinite(Number(resolvedWeather.highF))
+            ? `forecast high ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? `, low ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
+            : ''
+          const physicalWeather = resolvedWeather.isExtremeHeat
+            ? 'extreme hot weather'
+            : (resolvedWeather.isHot ? 'hot weather' : (resolvedWeather.isCold ? 'cold weather' : 'mild weather'))
+          resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
+            ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
+            : `${intent.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
+          toolContext.boundedWeatherSummary = Number.isFinite(Number(resolvedWeather.highF))
+            ? `a forecast high of ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? ` and low of ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
+            : ''
+          toolContext.boundedLocation = safeModelLocation || toolContext.location || ''
+          toolContext.boundedWeatherUnavailable = resolvedWeather.weatherSource === 'unavailable'
+        }
         
         toolContext.occasion = intent.occasion
         toolContext.season = resolvedSeason
@@ -2588,18 +2670,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
             season: resolvedSeason,
             mood: intent.mood,
             mission: intent.mission,
-            limit: limit || 5,
+            limit: requestedCount,
             explorationMode: 'moderate',
             question: toolContext.question || '',
-            activity: resolvedActivity
+            activity: resolvedActivity,
+            resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
+            adaptiveVisualDetail: boundedMultiLook && freeformAdaptiveVisualsEnabled()
           })
         }
         
         if (result && result.structuredOutfits) {
+          recordNestedFreeformUsage(toolContext, result?.debug?.composerUsage)
           toolContext.generatedOutfits = result.structuredOutfits
+          if (boundedMultiLook) {
+            toolContext.atomicMultiLookCompleted = true
+            toolContext.atomicMultiLookRequestedCount = requestedCount
+            toolContext.source = 'atomic_multi_look'
+            toolContext.sourceLocked = true
+            bumpFreeformDiagnostic(toolContext, 'atomicMultiLookCalls')
+          }
           return {
             status: "success",
-            message: `Successfully generated ${result.structuredOutfits.length} outfits.`,
+            message: `Successfully generated ${result.structuredOutfits.length} outfits.${boundedMultiLook ? ' This bounded batch is the complete card result for the turn; present it and do not search, regenerate, or call propose_outfit.' : ''}`,
             outfit_summaries: result.structuredOutfits.map(o => ({
               label: o.label,
               dominantDirection: o.dominantDirection,

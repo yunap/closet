@@ -159,11 +159,48 @@ finishes in one call. A semantically phrased request for another owned garment c
 continue without any client keyword classifier; verification can consume the third and final call.
 The aggregate telemetry reports all iterations and tokens as one critique response.
 
+**[flagged, 2026-08-18] Same-context multi-look requests can use one bounded visual-composer
+call.** With `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true`, a model-declared new request for 2–5 fresh
+looks sharing one occasion, activity and weather context routes through `generate_outfits` once.
+The existing whole-wardrobe visual composer retains photograph-based aesthetic judgment and all
+deterministic gates. After it returns, the provider loop ends immediately; deterministic code
+writes the short introduction and any validation shortfall, and `applyFreeformOutputChecks` does
+not reopen the generic card-count retry. One-look requests,
+existing-card revisions and multi-context plans retain their existing paths. The nested composer's
+usage is accumulated into the parent freeform diagnostics, so cost comparisons include the largest
+call rather than only the outer loop. See `docs/freeform-bounded-execution-spec.md`.
+
+**[corrected after live evidence, 2026-08-18] The bounded tool result is the terminal paid step.**
+The first live run generated three valid hiking cards but then made a tool-free full-prefix closing
+call, creating 32,745 cache tokens and raising total cost from the $0.3247 baseline to $0.3840.
+`askStylistWithTools` now returns deterministic introduction/shortfall prose immediately after the
+bounded composer succeeds. `generate_outfits` also resolves a supplied location and date before
+roster construction and records whether weather was live, stated, or heuristic.
+
+**[tightened after second live evidence, 2026-08-18] Bounded composition no longer buys a separate
+intent declaration, and internal deliberation cannot become card advice.** For an eligible flagged
+request, calling `generate_outfits` directly establishes `want:"cards"` and the requested count;
+all other composing paths retain the declaration gate. The visual composer still reads recent-piece
+memory as a soft diversity signal—repetition remains legal when it is best or necessary. Before
+delivery, `sanitizeWholeWardrobeOutfitProse` withholds a reason that exposes rebuilding/checking or
+cites IDs outside its final card, adds a visible resolution note, and records the issue in composer
+debug without making another provider call. This follows `thread_1787079261414`, whose first card
+contained the composer’s discarded alternatives while its actual IDs remained valid.
+
+**[owner ruling after third live run, 2026-08-18] Ordinary “what should I wear?” means two
+options.** `thread_1787089704692` searched first and only then invoked the bounded composer for two
+looks, producing three paid iterations and about $0.3376. Under the flag, the controller and tool
+schema now direct this ordinary request straight to `generate_outfits` with a default of two. An
+explicit one/best/pick-one request keeps the targeted one-card path, and an explicit count wins.
+The same run leaked recent-memory justification through `watchFor`; local prose integrity now
+checks `reason`, `watchFor`, and `stylingInstructions` independently.
+
 **Consequence:** a single user turn can be several model calls — tool iterations plus guard
 retries. **Instrumented 2026-07-28:** every tool-loop iteration now accumulates input, output,
 cache-read, and cache-creation tokens in the turn's `freeformDiagnostics`; `/ask` returns them in
 its existing debug payload and `freeform_generation_runs` persists them. This makes a four-call
 capsule turn distinguishable from a nine-call retry spiral without another live reproduction.
+Nested calls made by `generate_outfits` are included in the same totals as of 2026-08-18.
 
 **[by design] Capsule “Show another” does not enter either retry loop.** New capsule cards persist
 their bounded roster and normalized use-case slot. The explicit expansion action sends that state
@@ -935,6 +972,113 @@ used to get. Visual grounding is a founding principle of this app and starving i
 round-trip would be the wrong trade; the cap now ranks within each category. Measured identical:
 shoes 4, tops 16, bottoms 16, both ways.
 
+**[flagged, 2026-08-18] The small execution router removes the full-prefix controller from a narrow
+same-context batch.** Under both `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` and
+`WARDROBE_FREEFORM_EXECUTION_ROUTER=true`, an eligible fresh request is
+classified from only its sentence, date and timezone. A `bounded_multi` decision invokes the
+existing visual composer directly; all other decisions or failures fall through to the general
+tool loop. The router cannot inspect or rank garments. Photographs, garment truth, memory, weather
+physics and Style Constitution guidance remain in the nested composition call. Its decision and
+cost are observable through `execution_router_calls`, aggregate provider usage, and
+`tool_sequence`. The flag-off path is unchanged. See `routeFreeformExecutionProfile`
+(`styling-engine/provider.js`) and `/ask` (`routes/ai.js`).
+
+**[owner-ratified correction, 2026-08-18] Live numeric weather outranks router season language.**
+When bounded freeform has resolved a live forecast, `generateWholeWardrobeOutfitsVisualInternal`
+uses that profile directly for hard hot/cold gates. The season string remains in the visual brief
+but cannot reclassify 78°F as hot merely because it contains `summer`. Without a live profile, the
+existing text/calendar heuristic is unchanged. This was measured on `thread_1787096409835` after
+`summer` incorrectly removed 59 insulating pieces plus 20 fiber matches from a 78°F roster.
+
+**[direct Visual Composer correction, 2026-08-19] "Current season" means current local weather.**
+The direct `/generate-wardrobe-outfits-visual` route now reads the saved home location and resolves
+today's live numeric forecast before roster gates run. An explicit seasonal or extreme-weather
+selection remains an authored hypothetical and bypasses the live lookup, preserving the brief.
+See `resolveDirectVisualComposerWeather` and the `/generate-wardrobe-outfits-visual` route
+(`routes/ai.js`).
+
+**[forecast-failure correction, 2026-08-19] A named place is never converted from unknown weather
+to guessed heat.** `getCurrentWeatherProfile` and `getWeatherProfileForPlan` return a neutral,
+observable `weatherSource:"unavailable"` profile when a real location lookup fails. Hard hot/cold
+gates remain off; `resolveWholeWardrobeWeatherProfile` preserves that neutral result instead of
+re-parsing router season text. Bounded freeform removes the calendar label from the composer weather
+brief and visibly says the forecast could not be verified. Requests without a location still use
+the existing text/calendar heuristic. This follows `thread_1787098654251`, where failed Berkeley
+weather became `summer; hot weather` and wrongly removed 79 weather-related candidates.
+
+**[forecast-failure integration correction, 2026-08-19] Neutral failure is global and disclosure
+must match it.** `resolveSlotWeather` now labels failed named-place plan forecasts as unavailable
+with unknown temperature, including indoor-transit slots. It no longer emits “winter (estimated)”
+while applying neutral gates. The neutral policy remains deliberate: a calendar season cannot
+reliably substitute for the climate of an unresolved place.
+
+**[bounded-state correction, 2026-08-19] The direct router writes cross-turn authority before its
+early response.** `/ask` calls `saveStylistConversationState` with
+`boundedConversationStateFromToolContext`: normalized `established` context plus the generated
+`current_outfit_set`. Every frontend `/ask` branch supplies its actual thread ID. The router still
+does not build the large controller payload merely to persist state.
+
+**[bounded-router correction, 2026-08-19] Social company does not define event register, and
+location does not imply activity.** The compact router now maps a generic restaurant dinner,
+including dinner with friends, to city smart casual; explicit dinner dates, nights out and dressy
+dinners map to evening; only explicitly casual/low-key events map to casual. Walking is emitted only
+when the request actually includes walking rather than merely naming a destination. This follows
+`thread_1787099389227`, where `casual + walking` removed 48 elevated and 11 dressy pieces before the
+composer saw a Berkeley dinner request.
+
+**[whole-wardrobe evidence correction, 2026-08-19] Wear mechanics reach visual composition but are
+not narrated back as garment facts.** `composerPieceLineSuffix` now places `tuck_behavior`,
+`hem_finish`, `waistband_type`, `opacity`, and the explicit `needs_base` value beside the photograph and existing fabric/read
+facts. The model must silently honor settled mechanics. `styling_instructions` remains conditional:
+it records a useful action or chosen relationship, not an owner's already-known fixed garment truth.
+
+**[garment-truth correction, 2026-08-19] Visual lace does not override stored opacity.** After
+`thread_1787103886848` called an opaque, independently wearable lace top sheer and invented a nude
+camisole, the shared composer contract made `opacity` and both `needs_base` values authoritative.
+An opaque `needs_base:no` garment cannot acquire an unverified underlayer from visual inference.
+
+**[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
+global; comparison pressure is not universal.** Evidence labels, the explicit
+`styling_instructions` renderer contract, and prose integrity apply wherever
+`generateWholeWardrobeOutfitsVisualInternal` is used. Multi-option freeform, direct Visual Composer,
+and adjacent saved-outfit exploration receive comparison guidance. Formula-similar saved-outfit
+variants pass `comparisonSetGuidance:false`, because manufacturing a new formula would violate that
+flow's purpose.
+
+**[weather-judgment clarification, 2026-08-19] A daily range is interpreted at the requested time.**
+The shared composer is told to style evening/early-morning requests toward the relevant cooler end
+of a numeric forecast and include a removable transition layer when the wardrobe supports one.
+Indoor context governs the base but not arrival/departure. This is model guidance inside the mild
+band, not a new score, cap, filter, or cold threshold. It follows `thread_1787101448245`, whose
+70°F/55°F indoor-dinner first card had no layer.
+
+**[weather-adequacy correction, 2026-08-19] A named layer must actually cover the cooler transit.**
+After `thread_1787103270104` called a sleeveless vest over a light top sufficient at 55°F, the
+shared composer contract was made falsifiable: at roughly that temperature it must choose
+sleeve-bearing outerwear, combine an actually warm long-sleeved base with an adequate layer, or
+state the wardrobe gap. This remains model judgment rather than a new deterministic cold gate.
+
+**[card-consistency correction, 2026-08-19] Silhouette nouns must match the garments shown.**
+`sanitizeWholeWardrobeOutfitProse` compares model
+silhouette language with structured `bottom_kind`; if it calls a skirt trousers (or pants a skirt),
+only the false silhouette field is withheld while a correct reason remains. A phrase such as
+“boxy top over structured wide-leg trouser” already communicates the garment relationship to the
+owner, but the image generator treats `stylingInstructions` as its authoritative mechanics field.
+The composer contract therefore requires the model to state that relationship explicitly in
+`styling_instructions` as well. **[owner correction, 2026-08-19]** Application code does not infer
+renderer instructions from silhouette prose: `normalizeWholeWardrobeOutfitObject` transports only
+the model's explicit field. Silhouette validation remains an independent card-integrity check and
+does not rewrite explicit renderer instructions. This follows `thread_1787100432612`.
+
+**[flagged experiment, 2026-08-18] Bounded adaptive visual detail.** With
+`WARDROBE_FREEFORM_ADAPTIVE_VISUALS=true`, bounded freeform uses the existing
+`pieceVisualDetailPolicy`: complex/expressive/textured garments at 800px and plain garments at
+448px, rather than forcing every image to 768px. No roster item or photograph is removed. The
+corrected Larkspur roster measured 40/40 and 28.7% fewer aggregate pixels. Other visual-composer
+flows and flag-off behavior retain 768px. On corrected live thread `thread_1787097967248`, this
+reduced cache creation from 43,682 to 32,398 tokens while returning two valid cards; the total turn
+estimated to ~$0.146, about 55% below the original ~$0.324 baseline.
+
 ## What a search result carries — judgment, not a re-description
 
 **Added 2026-08-17.** [search-payload-spec.md](search-payload-spec.md).
@@ -1292,6 +1436,20 @@ Recency also lands here, clamped: `−min(piecePenalty, 40) − min(formulaPenal
 mode preserves the model's own order. Then `normalizeWholeWardrobeStrengths` labels positionally —
 index 0 is `signature`, 1–2 `strong`, the rest `usable`. **Those labels are positions, not
 judgements**, which is worth knowing before reading "signature" as an engine verdict.
+
+**[expanded 2026-08-18] Multi-option comparison quality stays model-judged.** The visual composer
+receives a volatile-tail contract asking for different formulas or silhouettes when the eligible
+roster supports them; repeated activity-safe shoes remain legal. The advisor path intentionally
+keeps `applyDiversity:false`, so the deterministic diversity selector does not replace a visually
+judged card. `finalSelection.uniqueFormulaCount`, `uniqueSilhouetteCount`, and
+`comparisonSetCollapsed` make a same-formula + same-silhouette result measurable for live review.
+The collapsed flag describes the set; it neither rejects a card nor triggers another paid call.
+
+**[expanded 2026-08-18] Live weather has two layers of authority.** `isHot`/`isCold` remain the
+stable physical-gate contract. `highF`/`lowF` now travel alongside those booleans so the visual
+stylist can judge sleeves, optional layers, and lived comfort inside the broad mild band. Bounded
+freeform composition includes the numeric range in its volatile request tail and its deterministic
+introduction; no additional provider call is made.
 
 ---
 

@@ -787,9 +787,9 @@ question.
 line, rather than collapsing to the empty "Ask anything" hero. The clicked action re-labels itself
 (*Reviewing…*, *Finding similar looks…*). **Back to chat** stays enabled as an escape hatch.
 
-**[by design] The panel footer is a memory control, and it is the only one in the app that shows
-its own state and offers a reset.** It reads *"Skipping N recently used pieces · **Include them
-again**"*. Whole-wardrobe generation keeps a **session recency memory** so repeated asks do not
+**[revised, 2026-08-18] Rotation memory is disclosed in the Stylist header beside Weather, not in
+the panel footer.** It reads *"N recently used pieces"* and opens an explanation plus **Include all
+pieces again**. Whole-wardrobe generation keeps a **session recency memory** so repeated asks do not
 return the same garments; that memory both **penalises** recently used pieces in scoring and
 **reorders** the roster (`sessionInfluence.pieceRecency`, `styling-engine/rules.js`, `:2967`).
 
@@ -810,6 +810,22 @@ This matters for two reasons:
 
 > **Stores.** Panel state is component-level; the resulting brief becomes the first user message
 > and `queryOptions` on the reply. `StylistChat.jsx`.
+
+**[revised, 2026-08-18] The header disclosure is capability-scoped.** Bounded freeform outfit
+options use the shared whole-wardrobe composer and write the same `whole_wardrobe_sessions` memory,
+so their result view shows the control. Visual Composer and saved-outfit formula/adjacent variants
+also show it. A blank new Stylist chat shows it as a preflight control because the user's first ask
+may enter the bounded whole-wardrobe flow and they must be able to reset before that call. Once a
+chat resolves to ordinary advice or critique, selected-piece styling, or another unaffected flow,
+the control disappears. Empty memory never shows it. The popover says recent pieces are
+*deprioritized*, not excluded, and reuses the same reset action.
+The count refreshes after a bounded freeform result (`debug.atomicMultiLookCalls`) and whenever the
+active chat changes, so a zero count read before generation cannot remain stale after navigating.
+
+**[reset completion correction, 2026-08-19]** Resetting makes the count-zero control disappear, so
+focus cannot truthfully return to that trigger. The app now announces completion with a visible
+toast plus the live-region text and returns keyboard focus to the chat composer—not the unrelated
+Weather control.
 
 ---
 

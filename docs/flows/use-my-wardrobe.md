@@ -54,6 +54,24 @@ Two things worth knowing at this altitude:
   locally-generated real outfits (only when the model produced *zero* valid ones)
   or pads the remaining slots with diagnostic "needs review" cards.
 
+> **Weather-location correction, 2026-08-19:** the Visual Composer header exposed the saved
+> weather location, but `POST /generate-wardrobe-outfits-visual` did not read it; "Current season"
+> therefore used only the season/request text heuristic. The endpoint now resolves today's live
+> forecast from the saved home location and passes the exact numeric profile into composition.
+> Explicit Spring/Summer/Fall/Winter/Very hot/Very cold selections remain hypothetical briefs and
+> deliberately do not fetch or get overridden by today's local weather. See
+> `resolveDirectVisualComposerWeather` and the `/generate-wardrobe-outfits-visual` route
+> (`routes/ai.js`).
+
+> **Shared-composer scope, 2026-08-19:** garment wear facts and explicit renderer
+> `styling_instructions` apply here as well as bounded freeform. The composer judges the relevant
+> part of a numeric range: an evening request near a cooler low should include a removable
+> arrival/departure layer when the roster supports one, even when dinner itself is indoors.
+> Image labels also carry authoritative `opacity` and explicit `needs_base` values; visual texture
+> cannot make an opaque, independently wearable garment sheer or introduce an unverified base.
+> Multi-option Visual Composer runs receive comparison-set variety guidance. Saved-outfit
+> formula-similar variants explicitly disable it; adjacent exploration retains it.
+
 ### Stage map
 
 | Stage | What happens                        | Where                                                             |

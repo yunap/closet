@@ -736,6 +736,7 @@ export default function StylistChat({
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [recentMemoryItemCount, setRecentMemoryItemCount] = useState(0)
   const [recentMemoryConfirmation, setRecentMemoryConfirmation] = useState('')
+  const [rotationMemoryOpen, setRotationMemoryOpen] = useState(false)
   const [homeLocation, setHomeLocation] = useState('')
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
@@ -768,6 +769,8 @@ export default function StylistChat({
   const wardrobeBuilderFirstFieldRef = useRef(null)
   const homeLocationButtonRef = useRef(null)
   const homeLocationPopoverRef = useRef(null)
+  const rotationMemoryButtonRef = useRef(null)
+  const rotationMemoryPopoverRef = useRef(null)
   const recentMemoryConfirmTimeoutRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
@@ -1510,7 +1513,8 @@ export default function StylistChat({
   useEffect(() => {
     clearLoadingTimers()
     setLoadingStatus('')
-  }, [currentThreadId])
+    refreshWholeWardrobeSessionMemory()
+  }, [currentThreadId, refreshWholeWardrobeSessionMemory])
 
   const refreshSavedBoards = useCallback(async () => {
     try {
@@ -4655,6 +4659,9 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Could not reset recent outfit memory')
       setRecentMemoryItemCount(Number(data.itemCount || 0))
       setRecentMemoryConfirmation('Recently used pieces are included again.')
+      triggerToast('Recently used pieces are included again.')
+      setRotationMemoryOpen(false)
+      requestAnimationFrame(() => textRef.current?.focus())
       recentMemoryConfirmTimeoutRef.current = setTimeout(() => setRecentMemoryConfirmation(''), 2500)
     } catch (err) {
       setRecentMemoryStatus(`Reset failed: ${err.message}`)
@@ -4707,6 +4714,29 @@ export default function StylistChat({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [homeLocationOpen])
+
+  const closeRotationMemoryPopover = () => {
+    setRotationMemoryOpen(false)
+    requestAnimationFrame(() => rotationMemoryButtonRef.current?.focus())
+  }
+
+  useEffect(() => {
+    if (!rotationMemoryOpen) return
+    const handlePointerDown = (e) => {
+      if (rotationMemoryPopoverRef.current?.contains(e.target)) return
+      if (rotationMemoryButtonRef.current?.contains(e.target)) return
+      closeRotationMemoryPopover()
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') closeRotationMemoryPopover()
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [rotationMemoryOpen])
 
 
   const send = async (overrides = {}) => {
@@ -5239,6 +5269,7 @@ export default function StylistChat({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: q || 'Continue discussing this generated outfit.',
+            sessionId: targetThreadId,
             pieces,
             history: historySnapshot,
             conversationMode,
@@ -5309,6 +5340,7 @@ export default function StylistChat({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: q || 'Continue evaluating this outfit.',
+            sessionId: targetThreadId,
             pieces,
             history: historySnapshot,
             conversationMode,
@@ -5385,6 +5417,7 @@ export default function StylistChat({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: q,
+            sessionId: targetThreadId,
             pieces,
             history: historySnapshot,
             generatedContext,
@@ -5464,7 +5497,7 @@ export default function StylistChat({
           activity: effectiveGenerateActivity,
         } : null)
       }
-      if (replyWholeWardrobe) {
+      if (replyWholeWardrobe || Number(replyDebug?.atomicMultiLookCalls) > 0) {
         refreshWholeWardrobeSessionMemory()
       }
 
@@ -5566,32 +5599,55 @@ export default function StylistChat({
   const pending = pendingPiece || pendingOutfit
   const pendingPhoto = pendingPiece ? (pendingPiece.worn_photo || pendingPiece.photo) : pendingOutfit?.photo
   const pendingConfidence = pendingOutfit ? getOutfitConfidenceMode(pendingOutfit) : null
+  const latestAssistantMessage = [...messages].reverse().find(message => message.role === 'assistant')
+  const latestResultUsesRotationMemory = Boolean(
+    latestAssistantMessage?.wholeWardrobe ||
+    Number(latestAssistantMessage?.debug?.atomicMultiLookCalls) > 0 ||
+    ['formula', 'adjacent'].includes(latestAssistantMessage?.savedOutfitVariantMode)
+  )
+  const isUnresolvedNewChat = messages.length === 1 && !activeContext && !pendingPiece && !pendingOutfit
+  const activeFlowUsesRotationMemory = Boolean(
+    isUnresolvedNewChat ||
+    wardrobeBuilderOpen ||
+    pendingOutfitAction === 'similar' ||
+    ['formula', 'adjacent'].includes(pendingOutfit?.variantMode) ||
+    latestResultUsesRotationMemory
+  )
 
-  const RecentMemoryControls = () => {
-    if (!recentMemoryItemCount) {
-      if (!recentMemoryConfirmation) return null
-      return (
-        <div style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)' }}>{recentMemoryConfirmation}</div>
-      )
-    }
+  const RotationMemoryControl = () => {
+    if (!activeFlowUsesRotationMemory || !recentMemoryItemCount) return null
+    const pieceLabel = recentMemoryItemCount === 1 ? 'piece' : 'pieces'
     return (
-      <div
-        className="wardrobe-builder-memory"
-        title="Recently shown wardrobe items are temporarily de-prioritized so new generated outfits do not repeat them too soon."
-        style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)' }}
-      >
-        <HistoryClockIcon />
-        <span>
-          Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
+      <div className="stylist-rotation-memory">
+        <button
+          ref={rotationMemoryButtonRef}
+          type="button"
+          className="stylist-header-context-button"
+          onClick={() => setRotationMemoryOpen(open => !open)}
+          aria-expanded={rotationMemoryOpen}
+          aria-controls="rotation-memory-popover"
+          aria-label={`${recentMemoryItemCount} recently used ${pieceLabel}. Manage outfit variety.`}
+        >
+          <HistoryClockIcon />
+          <span className="stylist-rotation-memory-full">{recentMemoryItemCount} recently used {pieceLabel}</span>
+          <span className="stylist-rotation-memory-compact" aria-hidden="true">{recentMemoryItemCount}</span>
+          <span aria-hidden="true" className={rotationMemoryOpen ? 'stylist-context-caret is-open' : 'stylist-context-caret'}>▾</span>
+        </button>
+        {rotationMemoryOpen && (
+          <div ref={rotationMemoryPopoverRef} id="rotation-memory-popover" className="stylist-rotation-memory-popover" role="dialog" aria-label="Recently used pieces">
+            <strong>Recently used pieces</strong>
+            <p>Recent pieces are deprioritized in whole-wardrobe suggestions to add variety. They may still appear when they’re the best fit.</p>
           <button
+            type="button"
+            className="stylist-rotation-reset-button"
             onClick={resetWholeWardrobeSessionMemory}
             disabled={recentMemoryResetting || loading}
-            title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
-            style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
           >
-            {recentMemoryResetting ? 'Including...' : 'Include them again'}
+              {recentMemoryResetting ? 'Including all pieces…' : 'Include all pieces again'}
           </button>
-        </span>
+            {recentMemoryStatus && <div className="stylist-rotation-memory-error" role="alert">{recentMemoryStatus}</div>}
+          </div>
+        )}
       </div>
     )
   }
@@ -5640,19 +5696,9 @@ export default function StylistChat({
       }
       sectionLabel="Shape the brief"
       footer={
-        <>
-          <div style={{ display: 'grid', gap: 4 }}>
-            <RecentMemoryControls />
-            {recentMemoryStatus && (
-              <div style={{ fontSize: 12, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-muted)' }}>
-                {recentMemoryStatus}
-              </div>
-            )}
-          </div>
-          <button onClick={generateWholeWardrobeOutfits} disabled={loading} className="piece-styling-primary-action">
+        <button onClick={generateWholeWardrobeOutfits} disabled={loading} className="piece-styling-primary-action">
             {loading ? 'Generating...' : 'Create my outfits'} <span aria-hidden="true">→</span>
-          </button>
-        </>
+        </button>
       }
     >
       <fieldset disabled={loading} style={{ border: 'none', margin: 0, padding: 0 }}>
@@ -5864,7 +5910,7 @@ export default function StylistChat({
                 {chatHistory.length > 0 && !activeContext ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div className="stylist-header-contexts">
               <button 
                 className="history-mobile-btn" 
                 onClick={() => setMobileDrawerOpen(true)}
@@ -5872,6 +5918,7 @@ export default function StylistChat({
               >
                 🕒 History
               </button>
+              <RotationMemoryControl />
               <div style={{ position: 'relative' }}>
                 <button
                   ref={homeLocationButtonRef}
@@ -5920,6 +5967,7 @@ export default function StylistChat({
                 )}
               </div>
             </div>
+            <span className="sr-only" role="status" aria-live="polite">{recentMemoryConfirmation}</span>
           </div>
         </div>
 

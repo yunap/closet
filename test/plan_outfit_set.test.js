@@ -591,6 +591,24 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
   assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
 })
 
+test('plan slot weather discloses a failed named-location forecast instead of labeling neutral gates as a seasonal estimate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'neutral weather top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'neutral weather pants', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'neutral weather shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Dinner', occasion: 'city', count: 1, location: 'Reykjavik, Iceland' }])
+  slots[0].season = 'winter'
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'December dinner trip',
+    dateRange: { start: '2026-12-10', end: '2026-12-10' },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  })
+  assert.equal(workbench.slots[0].weather_used, 'forecast unavailable for Reykjavik, Iceland; temperature unknown')
+  assert.doesNotMatch(workbench.slots[0].weather_used, /winter|estimated/)
+})
+
 test('an indoor slot in extreme heat keeps transit heat and permits only light AC coverage', async () => {
   db.prepare('DELETE FROM pieces').run()
   const lightTop = insertPiece({ category: 'top', name: 'breathable museum top', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
