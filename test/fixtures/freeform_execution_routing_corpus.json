@@ -1,0 +1,157 @@
+[
+  {
+    "id": "ordinary-two-look",
+    "class": "composition",
+    "request": "What should I wear to a casual dinner downtown?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "bounded_multi"
+  },
+  {
+    "id": "explicit-three-look",
+    "class": "composition",
+    "request": "Give me three outfits for an outdoor art fair on Saturday.",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "bounded_multi"
+  },
+  {
+    "id": "single-look",
+    "class": "composition",
+    "request": "Give me one best outfit for dinner.",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "explain-current-card",
+    "class": "followup_explanation",
+    "request": "Why did you choose the shoes in the second option?",
+    "context": "verified current outfit set: 2 card(s); verified garment subjects available: 7",
+    "expectedProfile": "existing_card_explanation"
+  },
+  {
+    "id": "compare-current-cards",
+    "class": "followup_explanation",
+    "request": "Which of those two options is warmer?",
+    "context": "verified current outfit set: 2 card(s); verified garment subjects available: 8",
+    "expectedProfile": "existing_card_explanation"
+  },
+  {
+    "id": "explain-without-cards",
+    "class": "ambiguous",
+    "request": "Why did you choose the second one?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "exact-garment-mechanics",
+    "class": "garment_fact",
+    "request": "Can my white scoop neck sleeveless top be tucked?",
+    "context": "no current outfit set; exact active garment name resolved: 1; saved garment photographs available: 1 resolved subject(s)",
+    "expectedProfile": "garment_fact"
+  },
+  {
+    "id": "active-garment-warmth",
+    "class": "garment_fact",
+    "request": "Is this jacket warm enough for 55 degrees?",
+    "context": "no current outfit set; verified garment subjects available: 1; active piece: wool jacket",
+    "expectedProfile": "garment_fact"
+  },
+  {
+    "id": "visual-fit-critique",
+    "class": "photo_or_critique",
+    "request": "Does this dress fit me correctly through the shoulders?",
+    "context": "no current outfit set; verified garment subjects available: 1; active piece: navy dress",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "general-definition",
+    "class": "general_advice",
+    "request": "What does smart casual mean?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "general_advice"
+  },
+  {
+    "id": "general-color-principle",
+    "class": "general_advice",
+    "request": "What colors generally work with olive?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "general_advice"
+  },
+  {
+    "id": "owned-color-selection",
+    "class": "discovery",
+    "request": "Which of my tops works best with olive pants?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "exact-inventory",
+    "class": "inventory",
+    "request": "How many tops, bottoms, dresses, shoes, outerwear pieces, and accessories do I have?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "wardrobe_inventory"
+  },
+  {
+    "id": "coverage-judgment",
+    "class": "discovery",
+    "request": "Do I have enough lightweight jackets for a cool rainy week?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist",
+    "note": "Coverage is a product capability without a bounded execution architecture. The qualified_coverage profile was removed; coverage questions route to the full stylist until they are rebuilt on shared batched discovery. See docs/freeform-batched-discovery-spec.md."
+  },
+  {
+    "id": "garment-pairing",
+    "class": "discovery",
+    "request": "Style my black abstract print short tee into an outfit.",
+    "context": "no current outfit set; exact active garment name resolved: 1",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "swap-current-card",
+    "class": "correction_or_revision",
+    "request": "Replace the shoes in the first option with something less sporty.",
+    "context": "verified current outfit set: 2 card(s); verified garment subjects available: 7",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "owner-correction",
+    "class": "correction_or_revision",
+    "request": "That fabric tag is wrong; this top is viscose and modal.",
+    "context": "no current outfit set; verified garment subjects available: 1; active piece: white scoop neck sleeveless top",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "uploaded-photo",
+    "class": "photo_or_critique",
+    "request": "What do you think of this outfit photo?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "trip-plan",
+    "class": "plan",
+    "request": "Plan outfits for my four-day trip with hiking, dinner, and a museum day.",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "capsule",
+    "class": "plan",
+    "request": "Build a ten-piece work capsule for autumn.",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "ambiguous-owned-name",
+    "class": "ambiguous",
+    "request": "Can my black top be tucked?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "full_stylist"
+  },
+  {
+    "id": "nature-walk",
+    "class": "composition",
+    "request": "On Wednesday I am going on a nature walk in San Anselmo. What should I wear?",
+    "context": "no current outfit set; no verified garment subject",
+    "expectedProfile": "bounded_multi"
+  }
+]

@@ -209,18 +209,9 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
   toolContext.freeformDiagnostics[field] = (toolContext.freeformDiagnostics[field] || 0) + amount
 }
 
-export function freeformAtomicMultilookEnabled() {
-  return String(process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK || '').toLowerCase() === 'true'
-}
-
-export function freeformAdaptiveVisualsEnabled() {
-  return String(process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS || '').toLowerCase() === 'true'
-}
-
 export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId } = {}) {
   const requestedCount = Math.max(1, Math.min(5, Number(limit) || 2))
-  const eligible = freeformAtomicMultilookEnabled() &&
-    toolContext.turnMode === 'new_request' && !pieceId && requestedCount >= 2 &&
+  const eligible = toolContext.turnMode === 'new_request' && !pieceId && requestedCount >= 2 &&
     !toolContext.declaredIntent
   if (!eligible) return false
   toolContext.declaredIntent = {
@@ -556,7 +547,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "view_pieces",
-    description: "Look at specific wardrobe pieces by ID: returns each piece's photo thumbnail plus a compact truth line. This is the cheap, preferred way to satisfy the verification contract — it verifies (and visually verifies) the exact IDs you intend to recommend, including layer/base pieces. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
+    description: "Look at specific wardrobe pieces by ID: returns each piece's photo thumbnail plus a compact truth line. This is the cheap, preferred way to satisfy the verification contract — it verifies (and visually verifies) the exact IDs you intend to recommend, including layer/base pieces. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
     input_schema: {
       type: "object",
       properties: {
@@ -999,8 +990,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
-          const boundedBatchContract = freeformAtomicMultilookEnabled() &&
-            (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
+          const boundedBatchContract = (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
             outfitCount >= 2
             ? `For 2–5 fresh outfits sharing one occasion, activity, and weather context, call generate_outfits exactly once with limit:${outfitCount}; its returned cards are complete and must not be rebuilt with search_wardrobe or propose_outfit. `
             : ''
@@ -1323,6 +1313,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             sleeve_shape: p.sleeve_shape,
             length_hits_at: p.length_hits_at,
             hem_finish: p.hem_finish,
+            tuck_behavior: p.tuck_behavior,
             weatherFit: p.weatherFit,
             ruleFit: p.ruleFit,
             ruleFitLabel: p.ruleFitLabel,
@@ -1717,6 +1708,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             id: parsed.id,
             name: parsed.name,
             truth: buildWardrobeManifestLine(parsed),
+            evidence_note: 'Photos support visible drape, bulk, texture and behavior—not exact fiber composition. A shown configuration proves feasibility only; judge its visible result separately and do not rank an unseen alternative.',
             ...(image ? { image } : { note: 'no photo on file — tags are the only truth for this piece' })
           })
         }
@@ -2589,8 +2581,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
       }
       case 'generate_outfits': {
         const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
-        const boundedDefaultCount = freeformAtomicMultilookEnabled() &&
-          toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
+        const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
         // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
         // removes a paid declare_intent round trip while leaving the general composing contract intact.
@@ -2605,8 +2596,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
         const requestedCount = Math.max(1, Math.min(5, Number(limit) || declaredCount || 5))
-        const boundedMultiLook = freeformAtomicMultilookEnabled() &&
-          (toolContext.declaredIntent?.turnMode === 'new_request' ||
+        const boundedMultiLook = (toolContext.declaredIntent?.turnMode === 'new_request' ||
             (!toolContext.declaredIntent?.turnMode && toolContext.turnMode === 'new_request')) &&
           !piece_id && requestedCount >= 2 &&
           !(Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.some(outfit => !outfit?.broken))
@@ -2675,7 +2665,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             question: toolContext.question || '',
             activity: resolvedActivity,
             resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
-            adaptiveVisualDetail: boundedMultiLook && freeformAdaptiveVisualsEnabled()
+            adaptiveVisualDetail: boundedMultiLook
           })
         }
         

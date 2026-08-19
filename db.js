@@ -302,6 +302,9 @@ function initDb(dbPath) {
       provider_cache_read_input_tokens INTEGER DEFAULT 0,
       provider_cache_creation_input_tokens INTEGER DEFAULT 0,
       weather_source          TEXT DEFAULT '',
+      history_messages_received INTEGER DEFAULT 0,
+      history_messages_included INTEGER DEFAULT 0,
+      history_chars_removed   INTEGER DEFAULT 0,
       created_at              TEXT DEFAULT (datetime('now'))
     );
 
@@ -750,6 +753,11 @@ function initDb(dbPath) {
     'provider_output_tokens INTEGER DEFAULT 0',
     'provider_cache_read_input_tokens INTEGER DEFAULT 0',
     'provider_cache_creation_input_tokens INTEGER DEFAULT 0',
+    // Full-stylist history bounding is observable without copying conversation text into the
+    // diagnostic table. Counts show whether the flag actually removed meaningful payload.
+    'history_messages_received INTEGER DEFAULT 0',
+    'history_messages_included INTEGER DEFAULT 0',
+    'history_chars_removed INTEGER DEFAULT 0',
     // docs/card-consistency-spec.md Part 1 — cards whose own prose did not account for a top worn
     // with a dress, and were sent back for one correction round.
     'card_prose_inconsistent_blocks INTEGER DEFAULT 0',
@@ -759,6 +767,8 @@ function initDb(dbPath) {
     // Small model-owned new-request classifier that can bypass the full wardrobe-manifest
     // controller when the narrow bounded multi-look contract is satisfied.
     'execution_router_calls INTEGER DEFAULT 0',
+    // Anthropic tool-search experiment: count-only observability for whether schemas were deferred,
+    // whether the server search ran, and whether compatibility fallback restored the full catalog.
     // Which tools ran in which provider iteration, ';'-separated per iteration. Without it a turn's
     // shape can only be inferred from the model's prose.
     'tool_sequence TEXT DEFAULT \'\''

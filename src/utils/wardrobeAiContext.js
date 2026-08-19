@@ -378,6 +378,7 @@ export function buildWardrobeManifestLine(piece = {}) {
     neckline ? `neck ${neckline}` : '',
     sleeves ? `sleeve ${sleeves}` : '',
     present(piece.hem_finish) ? `hem ${manifestValue(piece, 'hem_finish', piece.hem_finish)}` : '',
+    present(piece.tuck_behavior) ? `tuck ${manifestValue(piece, 'tuck_behavior', piece.tuck_behavior)}` : '',
     present(piece.walk_support) ? `support ${manifestValue(piece, 'walk_support', piece.walk_support)}` : '',
     pattern ? `pattern ${pattern}` : '',
     piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',

@@ -10,6 +10,9 @@ import path from 'node:path'
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-api-keys-'))
 process.env.NODE_ENV = 'test'
+// Dedicated key-resolution contract: this test calls assertProviderKey directly but never a
+// provider request function. Ordinary tests must not set this escape hatch.
+process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK = 'true'
 process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')

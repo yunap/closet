@@ -515,6 +515,15 @@ export function estimateAiUsageCost(usage = null) {
 }
 
 export function assertProviderKey() {
+  // Test fixtures use takeTestAiResponse before reaching this boundary. If a test accidentally
+  // misses its mock, never fall through to a real operator/BYOK credential merely because dotenv
+  // loaded one. An explicit opt-in exists for a deliberately commissioned provider integration
+  // test; the ordinary suite never sets it.
+  if (process.env.NODE_ENV === 'test' && process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK !== 'true') {
+    const err = new Error('Provider network calls are disabled under NODE_ENV=test.')
+    err.code = 'no_api_key'
+    throw err
+  }
   if (AI_PROVIDER === 'openai' && !resolveOpenAiKey()) {
     const err = new Error(noKeyErrorMessage('openai'))
     err.code = 'no_api_key'
@@ -672,7 +681,7 @@ export function stylistToolsForTurn(toolContext = {}) {
   const tools = allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
-  if (process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK !== 'true' || toolContext?.turnMode !== 'new_request') {
+  if (toolContext?.turnMode !== 'new_request') {
     return tools
   }
   // The bounded batch call is itself the cards declaration. Reinforce that exception in the tool
@@ -980,9 +989,9 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date'],
+  required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
   properties: {
-    profile: { type: 'string', enum: ['bounded_multi', 'full_stylist'] },
+    profile: { type: 'string', enum: ['bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
     season: { type: 'string' },
@@ -990,30 +999,39 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
     limit: { type: 'integer', minimum: 0, maximum: 5 },
     location: { type: 'string' },
-    date: { type: 'string' }
+    date: { type: 'string' },
+    subject: { type: 'string' },
   }
 }
 
-const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one NEW wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
+const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
 
 Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
 
-Choose full_stylist for: one/best/pick-one; text advice or explanation; critique; photo or existing-outfit discussion; styling a named/selected garment; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous requests; or anything needing clarification.
+Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
+
+Choose garment_fact only when compact context says an active/verified garment subject exists and the user asks about that garment's construction, wear mechanics, warmth, suitability, or a comparison among supplied subjects. When compact context also says saved garment photographs are available, use garment_fact for judging the visibly shown result of a wear-mechanics configuration such as a tuck; the saved photos will be supplied to the answer model. Do not use it to build an outfit or discover other pieces.
+
+Choose general_advice only for general styling education that does not claim to inspect, select, compare, or discuss the user's owned garments: definitions, broad principles, and non-wardrobe-specific technique. "My", "mine", "this blouse", a named owned piece, or a request for what to wear is not general_advice.
+
+Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
+
+Choose full_stylist for: one/best/pick-one; broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
 Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.`
 
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles' } = {}) {
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '' } = {}) {
   return askStylistStructuredWithUsage({
     system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
     messages: [{
       role: 'user',
-      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nRequest: ${String(question || '').trim()}`
+      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nCompact context available: ${String(contextSummary || 'none').trim()}\nRequest: ${String(question || '').trim()}`
     }],
     schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
     name: 'freeform_execution_route',
-    description: 'Choose the bounded multi-look path only when its narrow contract is fully satisfied.',
+    description: 'Choose one narrow execution profile only when its contract and supplied compact context are sufficient.',
     maxTokens: 350
   })
 }
@@ -1294,9 +1312,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         max_tokens: maxTokens,
         system: systemToAnthropicBlocks(system),
         messages: formattedMessages,
-        ...(availableTools.length
-          ? { tools: availableTools }
-          : {})
+        ...(availableTools.length ? { tools: availableTools } : {})
       })
       const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
       recordToolLoopUsage(toolContext, usage)

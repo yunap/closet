@@ -318,6 +318,7 @@ test('every stable garment field stays visible in either the manifest or the sea
     sleeve_shape: 'straight',
     length_hits_at: 'hip',
     hem_finish: 'straight_loose',
+    tuck_behavior: 'tucks_anywhere',
     season: 'warm',
     formality: 'everyday',
   }
@@ -339,6 +340,7 @@ test('every stable garment field stays visible in either the manifest or the sea
     sleeve_length: 'sleeve long',
     sleeve_shape: 'long/straight',
     hem_finish: 'hem straight_loose',
+    tuck_behavior: 'tuck tucks_anywhere',
     walk_support: 'support high',
     shoe_type: 'shoe type sneaker',
     toe_shape: 'toe almond',

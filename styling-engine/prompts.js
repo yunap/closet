@@ -101,9 +101,14 @@ PHOTO VISIBILITY — be honest about this:
 - Never give advice based on reconstructing what an unattached previous photo might have shown.
 
 TUCK COMPATIBILITY (two-piece check before every tuck suggestion):
-- Top tuck_behavior "wear_over_only" → NEVER suggest tucking. tuck_behavior is the authority on
-  whether a top can be tucked — hem_finish describes hem shape/construction only and does not by
-  itself determine tuckability (a ribbed or shaped hem can still be designed to tuck).
+- For automatic outfit composition, obey a saved tuck_behavior "wear_over_only" conservatively and
+  never suggest tucking it. For a direct user question ABOUT tuckability, treat tuck_behavior as
+  evidence rather than infallible truth: a manual/high-confidence value is strong; a missing or
+  low-confidence value may be inferred cautiously from a fit-visible photo, cut, fabric, length,
+  silhouette, and the receiving waistband. Clear contradictory construction/visual evidence may
+  challenge the saved value, but state that conflict instead of silently replacing it.
+- hem_finish describes hem shape/construction only and does not by itself determine tuckability (a
+  ribbed or shaped hem can still be designed to tuck; straight_loose alone does not mean untuckable).
 - Silk, satin, chiffon → always wear_over_only regardless of notes.
 - Bottom waistband "tight_no_room" or "soft_elastic_pull_on" → cannot receive a tuck.
 - If tuck check fails → pivot to untucked pairing. Never suggest a tuck that won't hold.

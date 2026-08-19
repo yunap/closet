@@ -48,6 +48,7 @@ import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutra
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
+  garmentKind,
   pieceMatchesMaterial,
   pieceMatchesFootwear,
   pieceVisualDetailPolicy
@@ -58,7 +59,7 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { getCurrentWeatherProfile } from '../styling-engine/weather.js'
+import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -571,8 +572,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -608,7 +609,10 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.providerOutputTokens) || 0,
       Number(diagnostics.providerCacheReadInputTokens) || 0,
       Number(diagnostics.providerCacheCreationInputTokens) || 0,
-      diagnostics.weatherSource || ''
+      diagnostics.weatherSource || '',
+      Number(diagnostics.historyMessagesReceived) || 0,
+      Number(diagnostics.historyMessagesIncluded) || 0,
+      Number(diagnostics.historyCharsRemoved) || 0
     )
   } catch (err) {
     console.warn('Failed to persist freeform generation run:', err.message)
@@ -622,6 +626,11 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     label: outfit?.label || outfit?.title || `Outfit ${index + 1}`,
     ...(outfit?.occasion ? { occasion: outfit.occasion } : {}),
     ...(outfit?.activity ? { activity: outfit.activity } : {}),
+    ...(outfit?.dominantDirection ? { direction: outfit.dominantDirection } : {}),
+    ...(outfit?.silhouette ? { silhouette: outfit.silhouette } : {}),
+    ...(outfit?.reason ? { reason: outfit.reason } : {}),
+    ...(outfit?.stylingInstructions ? { styling_instructions: outfit.stylingInstructions } : {}),
+    ...(outfit?.watchFor ? { watch_for: outfit.watchFor } : {}),
     piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
@@ -640,8 +649,174 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
   }
   return {
     established,
+    ...(serializeWeatherProfile(toolContext?.weatherProfile) ? { weather_profile: serializeWeatherProfile(toolContext.weatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {})
   }
+}
+
+export function compactFreeformAnswerSystem(profile = 'general_advice') {
+  const profileContract = profile === 'existing_card_explanation'
+    ? 'Explain or compare only the supplied verified outfit cards. Do not change pieces, invent alternatives, or claim to see photographs.'
+    : profile === 'garment_fact'
+      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
+      : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
+  return `You are a concise personal stylist answering one bounded text question. ${profileContract}
+
+RATIFIED STYLE CONSTITUTION:
+${prompts.BODY_CONTRACT}
+${prompts.PROVEN_FORMULAS}
+${prompts.AESTHETIC_GRAVITY}
+${prompts.LANE_NEUTRALITY}
+${prompts.WORKING_STYLE}`
+}
+
+export function compactFreeformPieceFacts(piece = {}) {
+  return {
+    id: Number(piece.id),
+    name: piece.name,
+    category: piece.category,
+    colors: piece.colors,
+    fabric_category: piece.fabric_category,
+    fabric_weight: piece.fabric_weight,
+    opacity: piece.opacity,
+    needs_base: piece.needs_base,
+    tuck_behavior: piece.tuck_behavior,
+    hem_finish: piece.hem_finish,
+    sleeve_length: piece.sleeve_length,
+    length_hits_at: piece.length_hits_at,
+    silhouette: piece.silhouette,
+    waistband_type: piece.waistband_type,
+    formality: piece.formality,
+    heel_height: piece.heel_height,
+    walk_support: piece.walk_support,
+    occasions: piece.occasions,
+    reads_as: piece.reads_as,
+    styling_rules_learned: piece.styling_rules_learned,
+    field_confidence: piece.style_profile_json?._confidence || {},
+  }
+}
+
+export function exactNamedPieceIdsFromQuestion(question = '', pieces = []) {
+  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const request = normalize(question)
+  const matches = (Array.isArray(pieces) ? pieces : [])
+    .filter(piece => {
+      const name = normalize(piece?.name)
+      return name.length >= 6 && request.includes(name)
+    })
+  return matches.length === 1 ? [Number(matches[0].id)].filter(Boolean) : []
+}
+
+// This is request-shape routing, not garment-semantic inference. It stays deliberately narrow:
+// exact identity and saved visual evidence must already exist, while pairing, outfit-building,
+// general fit critique, and ambiguous references remain with the full stylist.
+export function isSavedPhotoWearMechanicsQuestion(question = '', { exactSubjectCount = 0, savedPhotoCount = 0 } = {}) {
+  if (Number(exactSubjectCount) !== 1 || Number(savedPhotoCount) < 1) return false
+  return /\b(?:tuck(?:ed|ing)?|untuck(?:ed|ing)?|half[- ]?tuck(?:ed|ing)?|french[- ]?tuck(?:ed|ing)?)\b/i.test(String(question || ''))
+}
+
+export function compactFreeformContext({ body = {}, state = {}, namedPieceIds = [] } = {}) {
+  const bodyOutfits = Array.isArray(body.generatedOutfits) ? body.generatedOutfits : []
+  const stateOutfits = Array.isArray(state.current_outfit_set) ? state.current_outfit_set : []
+  // Server state is the verified authority. The browser echo remains a legacy fallback for
+  // pre-bounded threads that have not yet written current_outfit_set.
+  const outfits = stateOutfits.length ? stateOutfits : bodyOutfits
+  const activePieceId = Number(body?.activeContext?.type === 'piece' ? body.activeContext.id : body?.pieceId)
+  const pieceIds = [...new Set([
+    ...(Number.isFinite(activePieceId) && activePieceId > 0 ? [activePieceId] : []),
+    ...(Array.isArray(body.pieceIds) ? body.pieceIds : []),
+    ...(Array.isArray(namedPieceIds) ? namedPieceIds : []),
+    ...outfits.flatMap(outfit => Array.isArray(outfit?.pieceIds)
+      ? outfit.pieceIds
+      : (Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])),
+  ].map(Number).filter(Boolean))].slice(0, 16)
+  return { outfits: outfits.slice(0, 8), pieceIds }
+}
+
+export function compactProfileHasContext(profile, context = {}) {
+  if (profile === 'existing_card_explanation') return Boolean(context.outfits?.length)
+  if (profile === 'garment_fact') return Boolean(context.pieceIds?.length)
+  return profile === 'general_advice'
+}
+
+// Whether a turn can reach ANY compact profile, decided before the router is paid for. A fresh
+// request can reach all of them; a verified current outfit set can reach existing_card_explanation;
+// a resolved garment subject can reach garment_fact. compactFreeformContext already folds
+// activeContext, body pieceIds, exact named pieces and current-card pieces into pieceIds, so the
+// subject test covers every route to one.
+//
+// Known accepted miss: general_advice and wardrobe_inventory need no context at all, so a follow-up
+// in a thread that never produced a card or a subject falls through to the full stylist. That is a
+// deliberate trade rather than an oversight — general education is always answerable, so no turn is
+// provably compact-ineligible and any narrowing is a heuristic. Measure before widening: rows with
+// execution_router_calls = 0 AND search_calls = 0 are turns the full stylist answered without ever
+// touching the wardrobe, which is the proxy for a missed compact turn.
+export function compactRouterTurnHasContext(conversationMode = 'new_request', context = {}) {
+  if (String(conversationMode || 'new_request') === 'new_request') return true
+  return Boolean(context.outfits?.length) || Boolean(context.pieceIds?.length)
+}
+
+export function formatWardrobeInventoryAnswer(counts = {}) {
+  const ordered = [
+    ['top', 'Tops'],
+    ['bottom', 'Bottoms'],
+    ['dress', 'Dresses'],
+    ['shoes', 'Shoes'],
+    ['outerwear', 'Outerwear'],
+    ['accessory', 'Accessories'],
+    ['other', 'Other'],
+  ]
+  const rows = ordered
+    .filter(([key]) => Number(counts[key]) > 0)
+    .map(([key, label]) => `| ${label} | ${Number(counts[key])} |`)
+  const total = Object.values(counts).reduce((sum, value) => sum + (Number(value) || 0), 0)
+  return [
+    'Here’s your active wardrobe breakdown:',
+    '',
+    '| Category | Count |',
+    '|---|---:|',
+    ...rows,
+    `| **Total** | **${total}** |`,
+  ].join('\n')
+}
+
+export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {} } = {}) {
+  return [
+    `Question: ${question}`,
+    profile === 'existing_card_explanation' && context.outfits?.length ? `Verified current cards:\n${JSON.stringify(context.outfits)}` : '',
+    profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
+    profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
+  ].filter(Boolean).join('\n\n')
+}
+
+export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = userUploadsDir(), maxImages = 4 } = {}) {
+  const blocks = []
+  const seenFiles = new Set()
+  const boundedLimit = Math.max(0, Math.min(4, Number(maxImages) || 0))
+  for (const piece of Array.isArray(pieces) ? pieces : []) {
+    for (const [label, photoFile] of [['worn photo', piece?.worn_photo], ['hanger photo', piece?.photo]]) {
+      if (blocks.filter(block => block.type === 'image').length >= boundedLimit) return blocks
+      if (!photoFile || seenFiles.has(photoFile)) continue
+      if (path.basename(photoFile) !== photoFile) continue
+      const filePath = path.join(uploadsDir, photoFile)
+      if (!fs.existsSync(filePath)) continue
+      try {
+        const thumb = await prepareWardrobeThumb(
+          filePath,
+          `compact-garment-fact:${piece.id}:${label}:${photoFile}`,
+          { maxPx: 640 }
+        )
+        blocks.push(
+          { type: 'text', text: `Saved ${label} for ${piece.name || `piece ${piece.id}`}:` },
+          { type: 'image', detail: 'low', source: { type: 'base64', ...thumb } }
+        )
+        seenFiles.add(photoFile)
+      } catch (err) {
+        console.warn(`Failed to prepare compact garment evidence for piece ${piece?.id}:`, err.message)
+      }
+    }
+  }
+  return blocks
 }
 
 function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasionProfile = null, activityProfile = null } = {}) {
@@ -3710,11 +3885,6 @@ router.post('/repair-capsule-look', async (req, res) => {
   }
 })
 
-function freeformExecutionRouterEnabled() {
-  return String(process.env.WARDROBE_FREEFORM_EXECUTION_ROUTER || '').toLowerCase() === 'true' &&
-    String(process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK || '').toLowerCase() === 'true'
-}
-
 router.post('/ask', async (req, res) => {
   // Hoisted so the catch below can still record what this turn spent and
   // learned. A turn that throws part-way has usually already made paid provider
@@ -3807,11 +3977,27 @@ router.post('/ask', async (req, res) => {
     if (modelCapsuleRosterEnabled()) {
       toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
     }
-    const routerEligible = freeformExecutionRouterEnabled()
-      && String(req.body.conversationMode || 'new_request') === 'new_request'
+    const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
+    const activePieceIdentities = db.prepare("SELECT id, name, photo, worn_photo FROM pieces WHERE status = 'active'").all()
+    const exactNamedPieceIds = exactNamedPieceIdsFromQuestion(currentQuestion, activePieceIdentities)
+    const compactContext = compactFreeformContext({ body: req.body, state: compactState, namedPieceIds: exactNamedPieceIds })
+    const compactPieceIdSet = new Set(compactContext.pieceIds.map(Number))
+    const compactSavedPhotoCount = activePieceIdentities.filter(piece =>
+      compactPieceIdSet.has(Number(piece.id)) && (piece.photo || piece.worn_photo)
+    ).length
+    const boundedRouterEligible = String(req.body.conversationMode || 'new_request') === 'new_request'
       && !req.body.activeContext
-      && !req.body.outfit
       && !(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)
+    // Without this, enabling compact answers bought a router call on every text turn — including
+    // corrections and follow-ups that cannot reach a compact profile at all and pay the router on
+    // top of the full loop. See compactRouterTurnHasContext for the rule and its accepted miss.
+    const compactTurnHasContext = compactRouterTurnHasContext(req.body.conversationMode, compactContext)
+    const compactRouterEligible = compactTurnHasContext
+    if (!compactTurnHasContext) {
+      bumpFreeformDiagnostic(toolContext, 'compactRouterSkippedNoContext')
+    }
+    const routerEligible = (boundedRouterEligible || compactRouterEligible)
+      && !req.body.outfit
       && !req.body.image
       && !req.body.imageData
     if (routerEligible) {
@@ -3819,13 +4005,104 @@ router.post('/ask', async (req, res) => {
         const routed = await routeFreeformExecutionProfile({
           question: currentQuestion,
           currentDate: req.body.currentDate || '',
-          timezone: req.body.timezone || 'America/Los_Angeles'
+          timezone: req.body.timezone || 'America/Los_Angeles',
+          contextSummary: [
+            compactContext.outfits.length ? `verified current outfit set: ${compactContext.outfits.length} card(s)` : 'no current outfit set',
+            compactContext.pieceIds.length ? `${exactNamedPieceIds.length ? 'exact active garment name resolved' : 'verified garment subjects available'}: ${compactContext.pieceIds.length}` : 'no verified garment subject',
+            compactSavedPhotoCount ? `saved garment photographs available: ${compactSavedPhotoCount} resolved subject(s)` : 'no saved garment photographs for resolved subjects',
+            req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : ''
+          ].filter(Boolean).join('; ')
         })
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
         recordFreeformToolIteration(toolContext, ['execution_router'])
         const routedLimit = Number(routed.value?.limit) || 0
-        if (routed.value?.profile === 'bounded_multi' && routedLimit >= 2 && routedLimit <= 5) {
+        const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
+          exactSubjectCount: exactNamedPieceIds.length,
+          savedPhotoCount: compactSavedPhotoCount
+        })
+          ? 'garment_fact'
+          : routed.value?.profile
+        if (compactProfile === 'wardrobe_inventory') {
+          const categoryRows = db.prepare("SELECT category, COUNT(*) AS count FROM pieces WHERE status = 'active' GROUP BY category").all()
+          const categoryCounts = Object.fromEntries(categoryRows.map(row => [String(row.category || 'other'), Number(row.count) || 0]))
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.executionProfile = compactProfile
+          recordFreeformToolIteration(toolContext, ['compact_wardrobe_inventory'])
+          const freeformDiagnostics = toolContext.freeformDiagnostics
+          persistFreeformGenerationRun({
+            sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
+            diagnostics: freeformDiagnostics, turnFailed: false
+          })
+          return res.json({
+            answer: formatWardrobeInventoryAnswer(categoryCounts),
+            savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
+            structuredOutfits: [], structuredOutfitsSource: null,
+            structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
+            structuredOutfitsMood: null, structuredOutfitsMission: null,
+            structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
+          })
+        }
+        if (['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile)) {
+          const profileHasContext = compactProfileHasContext(compactProfile, compactContext)
+          if (profileHasContext) {
+            const compactPieces = compactContext.pieceIds.length
+              ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${compactContext.pieceIds.map(() => '?').join(',')})`).all(...compactContext.pieceIds).map(parsePiece)
+              : []
+            // Every requested verified id must resolve. A deleted/resting/ambiguous subject falls
+            // through to the full stylist rather than letting the compact model fill the gap.
+            const pieceScopeComplete = compactProfile !== 'garment_fact' || compactPieces.length === compactContext.pieceIds.length
+            if (pieceScopeComplete) {
+              const answerText = compactFreeformAnswerMessage({
+                profile: compactProfile, question: currentQuestion, context: compactContext,
+                pieces: compactPieces, state: compactState
+              })
+              const activeVisualPieceId = Number(req.body?.activeContext?.type === 'piece'
+                ? req.body.activeContext.id
+                : req.body?.pieceId)
+              const preferredVisualIds = exactNamedPieceIds.length
+                ? new Set(exactNamedPieceIds)
+                : (Number.isFinite(activeVisualPieceId) && activeVisualPieceId > 0
+                    ? new Set([activeVisualPieceId])
+                    : null)
+              const visualPieces = preferredVisualIds
+                ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
+                : compactPieces
+              const visualEvidence = compactProfile === 'garment_fact'
+                ? await compactGarmentVisualEvidence(visualPieces)
+                : []
+              const answerCall = await askStylistWithUsage({
+                system: compactFreeformAnswerSystem(compactProfile),
+                messages: [{
+                  role: 'user',
+                  content: visualEvidence.length
+                    ? [{ type: 'text', text: answerText }, ...visualEvidence]
+                    : answerText
+                }],
+                maxTokens: 700
+              })
+              recordToolLoopUsage(toolContext, answerCall.usage)
+              recordFreeformToolIteration(toolContext, [`compact_${compactProfile}`])
+              toolContext.freeformDiagnostics ||= {}
+              toolContext.freeformDiagnostics.executionProfile = compactProfile
+              toolContext.freeformDiagnostics.compactVisualImages = visualEvidence.filter(block => block.type === 'image').length
+              const freeformDiagnostics = toolContext.freeformDiagnostics || {}
+              persistFreeformGenerationRun({
+                sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
+                diagnostics: freeformDiagnostics, turnFailed: false
+              })
+              return res.json({
+                answer: answerCall.text,
+                savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
+                structuredOutfits: [], structuredOutfitsSource: null,
+                structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
+                structuredOutfitsMood: null, structuredOutfitsMission: null,
+                structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
+              })
+            }
+          }
+        }
+        if (String(req.body.conversationMode || 'new_request') === 'new_request' && routed.value?.profile === 'bounded_multi' && routedLimit >= 2 && routedLimit <= 5) {
           toolContext.turnMode = 'new_request'
           recordFreeformToolIteration(toolContext, ['generate_outfits'])
           await executeTool('generate_outfits', {
@@ -3869,6 +4146,16 @@ router.post('/ask', async (req, res) => {
         }
       } catch (routerError) {
         if (routerError?.usage) recordToolLoopUsage(toolContext, routerError.usage)
+        // This narrow route exists specifically to avoid a full-manifest retry. A compact visual
+        // serialization/provider failure does not mean the full stylist is needed, so surface it
+        // instead of silently converting a failed cheap call into the most expensive path.
+        if (isSavedPhotoWearMechanicsQuestion(currentQuestion, {
+          exactSubjectCount: exactNamedPieceIds.length,
+          savedPhotoCount: compactSavedPhotoCount
+        })) {
+          console.error('[Freeform Compact Garment Fact] Refusing expensive full-stylist fallback:', routerError.message)
+          throw routerError
+        }
         console.warn('[Freeform Execution Router] Falling back to full stylist:', routerError.message)
       }
     }
@@ -3881,7 +4168,13 @@ router.post('/ask', async (req, res) => {
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
     toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
+    // freeformDiagnostics is created lazily by bumpFreeformDiagnostic, and every other
+    // initializer sits inside a compact-profile branch. With the router flags off nothing has
+    // bumped a counter yet, so this is the first touch on the default path.
+    toolContext.freeformDiagnostics ||= {}
+    Object.assign(toolContext.freeformDiagnostics, payload.historyDiagnostics || {})
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
+    toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [

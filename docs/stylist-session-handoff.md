@@ -1,6 +1,6 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-08-19. Active work is on `codex/freeform-atomic-multilook`.
+**Last updated:** 2026-08-19. Active work is on `codex/freeform-rearchitect-followup`.
 
 > **Historical design specs live outside this repo.** 35 of them in `~/Downloads/spec_*.md`
 > ([index](spec-archive-index.md)). They predate several redesigns, so treat them as provenance
@@ -18,6 +18,265 @@
 > and what is next**.
 
 ## 2026-08-18 → 08-19 — bounded freeform architecture extension
+
+### Consolidated handoff — 2026-08-19
+
+This branch is no longer merely an atomic multi-look experiment. It now contains the complete
+follow-up architecture requested by the owner: cheaper bounded paths for questions that do not need
+the general agent, bounded inputs for the cases that still do, and measured live evidence for the
+first four rollout classes. The authoritative implementation details are split across
+`docs/freeform-bounded-execution-spec.md`, `docs/freeform-followup-profiles-spec.md`,
+`docs/freeform-tiered-discovery-spec.md`, `docs/freeform-deferred-tools-spec.md`,
+`docs/freeform-prompt-ownership.md`, and `docs/freeform-measured-rollout.md`. This entry records the
+session arc, rulings and traps so it can be understood without replaying the chat.
+
+#### Owner decisions
+
+- Proceed with the freeform rearchitecture. This expands the wardrobe-aware philosophy; it does not
+  replace it with canned flows. The model continues to own intent and styling judgment, while code
+  owns scope, identifiers, weather physics, evidence authority and bounded failure.
+- Ordinary same-context “what should I wear?” requests should return two options. Explicit counts
+  from two through five win. Options are more flexible than one forced answer and worth the bounded
+  composer cost.
+- Recently shown/resting visual-composer memory applies only to flows that actually consume it. The
+  UI discloses skipped pieces in the header and offers **Include all pieces again**. The owner can
+  restore all, not a subset. Do not require users to open an old chat merely to restore pieces.
+- Do not run the paid UI expert panel until the owner explicitly says the work is ready for review.
+- Generic dinner with friends maps to city/smart-casual. A named destination does not imply walking,
+  but real transit on foot still matters; people do not teleport to dinner.
+- Visual Composer should use the saved location for current-weather requests. Explicit hypothetical
+  seasons/temperatures still win over live local weather.
+- The model must explicitly state useful wear mechanics in `styling_instructions`; the image
+  generator consumes those instructions. Do not reconstruct them later with application regexes.
+- Garment truth should be used, not recited as database language. Tags are evidence, not infallible;
+  photographs may correct weak/missing visible facts. Photos do not establish exact fiber content.
+- Honest body-aware styling judgment is wanted. The stylist may directly say a tuck fights the
+  wearer’s proportions; it should not become euphemistic. It must not invent a hidden cause or turn
+  one photographed interaction into a universal body rule.
+- A broad database category is not a garment kind. “Lightweight jackets” must not audit sheer
+  cardigans merely because both are stored as `outerwear`.
+- Do not anticipate every possible coverage question with more rain/weight/etc. branches. Coverage
+  must be a generic constraint-and-evidence system. Every rule must scale to an unseen wardrobe and
+  unanticipated qualifier.
+
+#### Architecture implemented
+
+1. **Atomic same-context multi-look execution.** The small execution router resolves occasion,
+   activity, date/location and count, then invokes the existing photograph-grounded composer once.
+   Deterministic code closes the turn. Hybrid `propose_outfit`/`generate_outfits` card loss is
+   guarded. Count-aware introductions, partial validation and truthful weather-unavailable language
+   are permanent tests.
+2. **Memory disclosure and restore.** Affected freeform/composer surfaces expose recently skipped
+   counts and a restore-all action in the header, beside weather. It is absent from flows that do not
+   consume visual-composer memory. Focus returns to the chat textarea and a visible toast confirms
+   restoration.
+3. **Weather physics and follow-up state.** Live/stated weather is persisted as normalized physics
+   separately from display-season prose. Follow-ups no longer re-hot a mild day because the string
+   contains “summer.” Direct Visual Composer current-weather requests read the saved location.
+4. **Compact answer profiles.** Exact inventory counts return from code after one router call.
+   General education, verified-card explanation and exact garment facts each use one bounded answer
+   call and return before the full manifest/tool loop. Missing identity or context falls through
+   conservatively. (Qualified coverage was a fourth such profile; it was removed 2026-08-19 — see
+   item 10.)
+5. **Saved-photo garment facts.** Exact named subjects receive a bounded worn-then-hanger visual
+   supplement (maximum four images). The path distinguishes feasibility from styling quality,
+   forbids fiber guesses, speaks naturally instead of exposing fields/confidence enums, and fails
+   visibly rather than silently buying a full-stylist fallback. Exact named saved-photo tuck/untuck
+   questions have one deliberately narrow deterministic route because the live model twice ignored
+   the correct profile.
+6. **Bounded conversation history.** Browser prose is limited to four recent exchanges/eight
+   messages, 12,000 total characters and 3,500 per message. Server-owned cards, established context,
+   normalized weather and durable feedback remain authoritative outside the prose window.
+7. **Prompt/tool ownership.** Tool-local mechanics live in tool descriptions; one volatile turn
+   directive owns mode behavior; only irreducible cross-tool relationships remain in the controller.
+   The stable cached constitution/profile prefix was deliberately preserved.
+8. **Deferred tools.** The Anthropic full-stylist experiment keeps five core tools eager and defers
+   nine through server-side BM25 search. Compatibility failures retry once with the original full
+   catalog. OpenAI Chat Completions is unchanged. This flag has offline proof but still lacks a
+   decisive paid sparse-discovery comparison.
+9. **Tiered wardrobe discovery.** Every active ID/name/category and brief visual identity remains in
+   the full-stylist discovery index; detailed garment truth is retrieved on demand. The measured
+   wardrobe block fell from 57,817 to 15,941 characters (−72.4%) while retaining all 251 identities.
+   Recently shown memory cannot remove an identity. Sparse/uncertain retrieval must broaden before
+   declaring a gap.
+10. **Generic qualified coverage — REMOVED 2026-08-19, never default-on.** The profile was deleted
+    from the router enum, schema and prompt, along with its execution branch, coverage-only helpers
+    and their tests. Coverage questions route to `full_stylist` until they are rebuilt as a use case
+    of shared batched discovery; the acceptance cases this arc paid to learn are preserved in
+    `docs/freeform-batched-discovery-spec.md`. Five versions each moved the same problem rather than
+    solving it, and a generic coverage pipeline was becoming a second stylist architecture. Keeping
+    it behind another flag would have cost 42.7% of the router schema and 26.6% of the router prompt
+    on every request for an architecture already decided against. The description below is
+    historical.
+
+    The router emitted a garment category/kind, arbitrary
+    `{dimension,target,observability}` constraints, usage context and explicit minimum quantity.
+    Code supplies the complete matching-kind census plus at most eight relevance-ranked saved
+    images. The structured judge classifies primary, plausible-but-unverified, backups with missed
+    dimensions, and unknowns. Evidence is tied to each dimension. Visual/inference-only support
+    cannot verify latent performance; an unrelated strong fact cannot launder it. Duration alone
+    defaults to one reusable item unless simultaneous use, rotation, drying, maintenance or backup
+    is explicitly required. Code rejects IDs outside the census, renders saved names, strips IDs and
+    internal fields, computes the headline, bounds reasons and caps total output.
+11. **Test hermeticity and observability.** Provider entry points fail closed under `NODE_ENV=test`
+    unless a commissioned integration test explicitly opts in. Generation rows record profile,
+    tool sequence, provider usage, cache tokens, bounded-history reductions, deferred-tool counters,
+    census size and compact visual count. Offline routing fixtures now cover all profiles and
+    conservative fallbacks.
+
+#### Live rollout record
+
+- `thread_1787097967248`: corrected atomic two-look weather path, about **$0.146** versus the
+  original **~$0.324** floor. Two valid cards; no open tool loop.
+- `thread_1787119133701`: compact general advice achieved two calls/zero cache but failed quality by
+  making conventional smart-casual signals sound mandatory and denigrating casual dress.
+- `thread_1787119607911`: corrected general advice passed at 2,638 input / 525 output, zero cache.
+- `thread_1787103886848`: existing-card warmth comparison passed at two calls, 4,965 input / 522
+  output, zero cache. The owner corrected the reviewer: the jacket-and-pants look really was warmer.
+- `thread_1787120404670`: saved-photo tuck question fell to the full stylist, guessed cotton blend
+  and equated feasibility with quality (three calls, ~25k cache creation).
+- `thread_1787121042557`: model-only routing instruction failed again; full tool loop and
+  “cotton-feel” guess. This motivated the narrow deterministic saved-photo mechanics route.
+- `thread_1787121699956`: compact routing succeeded, but the Anthropic image block omitted required
+  `source.type:"base64"`; the broad catch silently purchased the full stylist. Serialization and
+  fail-closed cost behavior were fixed.
+- `thread_1787121983218`: saved-photo path finally passed: two calls, 4,124 input / 510 output, zero
+  cache, two saved images. Judgment was direct, but it invented a partial tuck; unseen alternatives
+  now begin with the simplest adjacent comparison.
+- `thread_1787122233484`: first coverage audit used one search as exhaustive, mixed heavy outerwear
+  into “lightweight,” inferred weather performance from material and cost four calls with ~32k cache
+  creation/~48k read.
+- `thread_1787123008051`: first bounded coverage run passed two calls/no cache but exposed IDs,
+  database enums, self-correction and an over-literal `light` tag interpretation.
+- `thread_1787123410990`: garment-kind scoping removed cardigans and reduced the census to 17, but
+  the model promoted the olive utility jacket to confirmed rain shell and again invented a
+  one-jacket-per-day requirement.
+- `thread_1787123957953`: structured generic coverage still promoted visible utility details into
+  latent rain performance, leaked IDs through model-written reasons and multiplied need by duration.
+  This motivated the current code-enforced observability/evidence/minimum/sanitization contract.
+
+#### Garment-specific clarifications from the owner (data, never code branches)
+
+- The white scoop-neck sleeveless top’s stored fiber was wrong; it is lined viscose/modal. A photo
+  cannot distinguish that exact composition. The shown full tuck is possible but not necessarily
+  its best presentation.
+- Black leather zip jacket `207` has actually been worn successfully in rain. Brown leather coat
+  `996765` is a late-fall/winter coat that can tolerate very light rain, but it is not lightweight.
+  Do not attach `207`’s owner fact to `996765`. These facts were discussed in this coding session;
+  they were not written into garment metadata by this branch.
+
+#### Flags used for the full experiment — ALL REMOVED 2026-08-19
+
+Every flag below is gone from the code; this architecture is now unconditional. The list is kept
+because the live threads recorded above were run with exactly this configuration. Setting any of
+these env vars today does nothing.
+
+```text
+WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true
+WARDROBE_FREEFORM_EXECUTION_ROUTER=true
+WARDROBE_FREEFORM_ADAPTIVE_VISUALS=true
+WARDROBE_FREEFORM_COMPACT_ANSWERS=true
+WARDROBE_FREEFORM_BOUNDED_HISTORY=true
+WARDROBE_FREEFORM_TIERED_DISCOVERY=true
+WARDROBE_FREEFORM_DEFERRED_TOOLS=true
+```
+
+Restart the backend after every code change; refreshing Vite is insufficient. Several “failed
+fixes” were actually old backend processes, and one paid call was wasted that way.
+
+#### Verification and exact next step
+
+The latest dimension-specific coverage enforcement passed 117/117 directly relevant tests. The
+broader offline set passed 181/181 immediately before that final tightening; docs health has zero
+errors (ratcheted historical warnings remain), style claims are green, and the text-matching ratchet
+is green. Full `npm test` cannot bind its loopback servers inside the Codex sandbox; before commit,
+run it outside this sandbox with provider keys disabled as the suite already expects.
+
+**No coverage live call is pending.** The previously planned fresh-chat coverage validation
+(“Do I have enough lightweight jackets for a cool rainy week?”) is cancelled: the profile it would
+have validated no longer exists, and rollout row 4 is closed as abandoned rather than passed.
+
+The next paid call is **rollout row 5's missing OFF arm** — the deliberately sparse discovery request
+run with `WARDROBE_FREEFORM_TIERED_DISCOVERY` and `WARDROBE_FREEFORM_DEFERRED_TOOLS` off. Only the ON
+arm was ever run (`thread_1787128902650`, nine iterations), so tiered discovery currently has no
+measured baseline and its default-on decision is unsupported in either direction. Do not rerun
+already-passed general-advice/card/tuck rows merely for wording polish.
+
+### Earlier 2026-08-19 progress log — superseded by the consolidated handoff above
+
+The first five least-effort follow-ups are specified in
+`docs/freeform-followup-profiles-spec.md`. The implementation is additive behind
+the compact-answer path (flag removed 2026-08-19; now unconditional).
+It adds a fail-closed provider boundary for tests, persists resolved weather physics independently
+from display-season prose, and introduces one-call/no-tool profiles for explaining verified cards,
+answering scoped garment questions, and general styling education. Missing or ambiguous context
+falls through to the full stylist. No paid live call has been made for this follow-up arc; offline
+scope, fallback, prompt-constitution, docs-health, and text-matching checks come first.
+
+Item 6 is also implemented (flag removed 2026-08-19; now unconditional): the full tool loop keeps
+four recent exchanges within deterministic message and character caps. Structured current cards,
+established context, resolved weather physics and durable memory remain outside the prose window;
+generation runs store only reduction counts. Items 7–10—prompt ownership, deferred tools, bounded
+discovery and measured rollout—are specified but deliberately remain separate phases.
+
+Item 7's first safe pass is implemented and mapped in `docs/freeform-prompt-ownership.md`: one
+volatile mode directive, tool-local mechanics owned by tool descriptions, and only cross-tool
+selection retained in the controller. The cached stable prefix was not edited; deeper deletion there
+waits for separate cache and quality evidence. Items 9–10 remain separate from that deeper audit.
+
+Item 8 is now an offline-only Anthropic experiment behind
+`WARDROBE_FREEFORM_DEFERRED_TOOLS=true`: five eager tools, nine deferred through BM25 server tool
+search, compatibility fallback to the full catalog, and count-only diagnostics. The OpenAI Chat
+Completions path is unchanged. The catalog is only ~7.3k rough schema tokens, so default-on requires
+owner-approved live proof that savings exceed search latency without a missed tool.
+
+Item 9 is owner-ratified and implemented behind `WARDROBE_FREEFORM_TIERED_DISCOVERY=true`.
+Omniscience now means every active garment remains discoverable by exact identity; it no longer
+requires shipping every garment's full construction and suitability record on every full-stylist
+turn. A current-wardrobe copy measured 57,817 → 15,941 characters for the wardrobe block (−72.4%)
+while retaining all 251 identities. Named-piece, composition, coverage and sparse/uncertain needs
+expand through view/details, search and coverage tools respectively. The discovery flag does not set
+`wardrobeManifestIncluded`, so detailed search truth cannot be trimmed accidentally. No live paid
+validation has run; use `docs/freeform-tiered-discovery-spec.md` for the four-case acceptance set.
+
+Item 10 now has a 22-row offline routing corpus and permanent hermetic test covering every profile
+and the conservative full-stylist boundaries for corrections, photos, plans, discovery and
+ambiguity. This verifies wiring, not live model semantics. `docs/freeform-measured-rollout.md`
+defines the remaining five-row owner-approved matrix, per-flag pass thresholds, reuse of valid prior
+comparisons, and stop-on-first-failure rule.
+
+The first live rollout row, `thread_1787119133701`, passed cost/routing but stopped the matrix on
+quality. Smart-casual guidance made optional signals mandatory and described casual as shapeless
+errand wear. Owner accepted the correction: general advice must offer multiple valid pathways,
+separate tendencies from requirements, make signals whole-outfit-dependent, and avoid status-loaded
+or denigrating comparisons.
+Corrected live run `thread_1787119607911` passed: two calls, 2,638 input / 525 output, zero cache or
+wardrobe access, with tailoring described as one route and the other signals kept optional and
+context-dependent. Do not repeat this row merely to remove ordinary stylistic preference in prose.
+
+The saved-photo row `thread_1787120404670` failed routing and evidence boundaries. Exact named
+“look good tucked” still fell to full `view_pieces` (three calls, ~25k cache creation) because the
+router did not know saved photos existed. The answer guessed cotton-blend, but no stored fiber fact
+existed; owner clarified that photos cannot reliably distinguish cotton from lined viscose/modal.
+The router now sees only a saved-photo subject count, and both compact/fallback sight contracts
+forbid exact fiber inference while separating visible feasibility from visible styling quality.
+
+First live validation amended two boundaries. Exact inventory counts now complete locally after the
+model router (`thread_1787116792230`: one provider iteration, zero cache read/write). Exact named
+garments can seed compact fact routing. For tuckability and analogous direct facts, saved tags are
+strong evidence according to confidence, not infallible truth: missing/low values may be inferred
+from the complete construction evidence and clear contradictions may be disclosed. Hem shape alone
+cannot decide. Automatic composition still obeys saved safety fields conservatively. This ruling
+followed `thread_1787116925244`, where omitted tuck truth caused a false untucked-only answer.
+
+`thread_1787117753981` added the complementary ruling: compact garment advice must not become blind
+obedience to incomplete/mistagged data. The white scoop-neck sleeveless top has saved hanger and worn
+photos; the worn photo visibly shows a clean full tuck, while its fabric tag was wrong and tuck
+behavior absent. Resolved garment-fact calls now receive those saved images within a four-image
+ceiling, prefer visible demonstrated behavior over weak/missing tags, and never ask for a photo the
+wardrobe already holds. Owner clarification: demonstrated behavior proves feasibility only. The
+model must judge the visible styling result separately and cannot say an unseen alternative would
+look better. Automatic composition still treats safety metadata conservatively.
 
 The owner approved the capsule-style bounded direction for ordinary same-context “what should I
 wear?” requests. A compact model-owned router calls one photograph-grounded whole-wardrobe

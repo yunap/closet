@@ -160,7 +160,7 @@ continue without any client keyword classifier; verification can consume the thi
 The aggregate telemetry reports all iterations and tokens as one critique response.
 
 **[flagged, 2026-08-18] Same-context multi-look requests can use one bounded visual-composer
-call.** With `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true`, a model-declared new request for 2–5 fresh
+call.** A model-declared new request for 2–5 fresh
 looks sharing one occasion, activity and weather context routes through `generate_outfits` once.
 The existing whole-wardrobe visual composer retains photograph-based aesthetic judgment and all
 deterministic gates. After it returns, the provider loop ends immediately; deterministic code
@@ -973,8 +973,7 @@ round-trip would be the wrong trade; the cap now ranks within each category. Mea
 shoes 4, tops 16, bottoms 16, both ways.
 
 **[flagged, 2026-08-18] The small execution router removes the full-prefix controller from a narrow
-same-context batch.** Under both `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` and
-`WARDROBE_FREEFORM_EXECUTION_ROUTER=true`, an eligible fresh request is
+same-context batch.** An eligible fresh request is
 classified from only its sentence, date and timezone. A `bounded_multi` decision invokes the
 existing visual composer directly; all other decisions or failures fall through to the general
 tool loop. The router cannot inspect or rank garments. Photographs, garment truth, memory, weather
@@ -983,12 +982,52 @@ cost are observable through `execution_router_calls`, aggregate provider usage, 
 `tool_sequence`. The flag-off path is unchanged. See `routeFreeformExecutionProfile`
 (`styling-engine/provider.js`) and `/ask` (`routes/ai.js`).
 
+**[flagged, 2026-08-19] Compact text profiles avoid the wardrobe-wide controller when no
+composition is requested.** The small router also has
+three conservative outcomes: explain verified current cards, answer from verified structured
+garment facts, or give wardrobe-independent general styling education. Each outcome gets one
+bounded no-tools answer call and returns before `buildStylistConversationPayload`; general advice
+receives no wardrobe/thread context at all. Requests to compose, revise, render, discover pieces,
+or resolve ambiguous identity remain on the full stylist path. Usage is included in the parent
+diagnostics and `tool_sequence` names the selected compact profile.
+
+**[flagged, 2026-08-19] Full-stylist prose history is bounded independently from structured
+state.** Bounded history is unconditional:
+`boundFreeformConversationHistory` retains the newest four exchanges, at most eight messages,
+12,000 total characters and 3,500 per message. It runs after duplicate-current-question removal.
+Current cards, established context, resolved weather, feedback memory and the wardrobe manifest
+are assembled separately and are not evicted. Oversized messages retain their beginning and end
+around an omission marker; there is no paid summary call. `freeform_generation_runs` records
+received/included message counts and removed characters without copying conversation text.
+
+**[amended 2026-08-19] Tool-local contracts have one prompt owner.**
+`freeformToolRoutingInstruction` replaces the volatile controller's duplicate mode and schema prose.
+`buildStylistConversationDirective` now supplies the one mode directive; individual `STYLIST_TOOLS`
+descriptions own local eligibility, arguments and mechanical output; the controller retains only
+cross-tool selection boundaries. The stable cached prefix is unchanged. Ownership and deferred
+stable-prefix questions are recorded in `docs/freeform-prompt-ownership.md`.
+
+**[flagged, 2026-08-19] Anthropic can defer the long-tail tool catalog.**
+`anthropicDeferredToolPlan` activates only for a supported Claude model, Anthropic provider, the
+`WARDROBE_FREEFORM_DEFERRED_TOOLS=true` flag and at least ten currently available tools. It leaves
+intent, search, view, correction storage and proposal eager; nine long-tail schemas load through
+Anthropic BM25 tool search. OpenAI and unsupported/small catalogs are no-ops. Compatibility 400s
+retry once with the original full catalog. Run diagnostics count mode iterations, server searches,
+fallbacks and initially hidden schema characters. Full rationale and acceptance matrix:
+`docs/freeform-deferred-tools-spec.md`.
+
 **[owner-ratified correction, 2026-08-18] Live numeric weather outranks router season language.**
 When bounded freeform has resolved a live forecast, `generateWholeWardrobeOutfitsVisualInternal`
 uses that profile directly for hard hot/cold gates. The season string remains in the visual brief
 but cannot reclassify 78°F as hot merely because it contains `summer`. Without a live profile, the
 existing text/calendar heuristic is unchanged. This was measured on `thread_1787096409835` after
 `summer` incorrectly removed 59 insulating pieces plus 20 fiber matches from a 78°F roster.
+
+**[follow-up correction, 2026-08-19] Resolved weather physics is thread state, not a display
+string.** `serializeWeatherProfile` stores source, numeric high/low, and hot/cold/extreme booleans
+in `stylist_conversation_state.weather_profile`; `restoreWeatherProfile` supplies them to the next
+tool context. Explicit weather in the new turn clears/supersedes the stored profile. Otherwise a
+composite label containing `summer` cannot re-hot a live 78°F/56°F profile.
 
 **[direct Visual Composer correction, 2026-08-19] "Current season" means current local weather.**
 The direct `/generate-wardrobe-outfits-visual` route now reads the saved home location and resolves
@@ -1071,7 +1110,7 @@ the model's explicit field. Silhouette validation remains an independent card-in
 does not rewrite explicit renderer instructions. This follows `thread_1787100432612`.
 
 **[flagged experiment, 2026-08-18] Bounded adaptive visual detail.** With
-`WARDROBE_FREEFORM_ADAPTIVE_VISUALS=true`, bounded freeform uses the existing
+bounded freeform uses the existing
 `pieceVisualDetailPolicy`: complex/expressive/textured garments at 800px and plain garments at
 448px, rather than forcing every image to 768px. No roster item or photograph is removed. The
 corrected Larkspur roster measured 40/40 and 28.7% fewer aggregate pixels. Other visual-composer
@@ -1099,6 +1138,52 @@ roster identity unchanged.
 `WARDROBE_MANIFEST_MAX_PIECES` (400) the manifest is omitted, and a trimmed row would then be the
 model's only view of a garment; `wardrobeManifestIncluded` carries that fact from the payload builder
 to the tool. Pinned by a test.
+
+**[flagged experiment, owner-ratified 2026-08-19] Identity omniscience may replace full-truth
+omniscience.** With `WARDROBE_FREEFORM_TIERED_DISCOVERY=true`, every active ID, exact name, category
+and brief visual read remains in a deterministic discovery index, while construction/fit/suitability
+truth is retrieved only when needed. This is not a shortlist and recently-shown memory cannot remove
+an identity. `wardrobeManifestIncluded` is deliberately false and
+`wardrobeDiscoveryIndexIncluded` true, so `search_wardrobe` returns full stable truth rather than the
+trimmed judgment row. Broad category counts come directly from exact index headings; qualified
+counts expand through `wardrobe_coverage`; known-piece questions through view/details; composition
+and sparse uncertainty through database search. See
+[freeform-tiered-discovery-spec.md](freeform-tiered-discovery-spec.md).
+
+**[owner amendment 2026-08-19] Direct tuckability answers use an evidence hierarchy.** Automatic
+composition continues to obey the saved `tuck_behavior` conservatively. In conversation, a
+manual/high-confidence tag is strong evidence, not an unchallengeable fact; missing/low tags permit
+inference from the full construction evidence, and a visible contradiction may be explained. A hem
+shape alone cannot decide. `view_pieces`, untrimmed search rows and compact garment facts now expose
+the field (plus confidence in compact facts), closing the omission found in
+`thread_1787116925244`.
+
+**[owner amendment 2026-08-19] Resolved garment mechanics may use bounded saved sight.** Tags can
+be absent or mistagged while the wardrobe already contains direct evidence. For compact
+`garment_fact` turns, `compactGarmentVisualEvidence` supplies only the resolved subjects' worn then
+hanger photographs, capped at four 640px low-detail images. Clearly visible worn behavior outranks
+a weak/missing tag for feasibility only. The shown result is judged separately; possibility does
+not imply preference, and an unseen alternative cannot be ranked. It does not change the conservative metadata authority used by automatic
+composition. The call records `compactVisualImages` and never loads a wardrobe-wide visual roster.
+
+**[rollout contract 2026-08-19] Routing coverage is a tracked corpus.**
+`test/fixtures/freeform_execution_routing_corpus.json` exercises every execution profile and the
+full-stylist fallback classes through `routeFreeformExecutionProfile`. The provider is hermetically
+mocked, so this proves schema/context wiring rather than live semantic accuracy; default-on still
+requires the bounded live matrix in `docs/freeform-measured-rollout.md`.
+
+**[live correction 2026-08-19] Compact education cannot turn signals into dress-code gates.**
+`compactFreeformAnswerSystem` requires multiple valid pathways and labels structure, fabric, finish,
+cohesion, accessories and footwear as optional whole-outfit signals. It distinguishes tendencies
+from requirements and cannot characterize casual dress as careless/shapeless errand wear or use
+status-loaded accessory contrasts. This corrects `thread_1787119133701` without changing routing.
+
+**[live correction 2026-08-19] Saved sight is a routable capability, not fiber truth.** For resolved
+garment subjects, `/ask` tells `routeFreeformExecutionProfile` only how many have saved photos. This
+allows a visibly shown wear-mechanics judgment to use bounded `garment_fact`; names and image data
+remain outside the router. `compactFreeformAnswerSystem` and the `view_pieces` tool contract both
+limit photographs to visible drape, bulk, texture and behavior. They cannot establish exact fiber
+composition, and a feasible shown configuration is not automatically a successful styling choice.
 
 **The invariant that keeps this safe:** no field may be absent from *both* surfaces. A field in
 neither is invisible to the model, and the failure is silent — worse composition, no error.

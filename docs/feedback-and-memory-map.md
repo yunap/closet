@@ -277,6 +277,10 @@ surface is deferred, but its bounded storage, routing and undo contract is execu
   loop and the freeform conversation pipeline.
   Holds the established occasion, weather, activity, location, active outfit and current outfit set
   used on follow-up turns.
+- **[amended 2026-08-19]** Resolved weather is also stored as a normalized `weather_profile`
+  (`source`, numeric high/low, and hot/cold/extreme booleans), separately from display-season prose.
+  A new explicit weather statement supersedes it; otherwise follow-up gates restore these physical
+  facts instead of reparsing a composite string such as `summer; mild; 78/56`.
 - **Authority** — **thread-only.** Nothing here is durable preference, and it must not be read as
   taste.
 - **[cleaned up 2026-08-09]** The two identical readers and the unused `tools.js` writer were
