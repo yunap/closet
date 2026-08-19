@@ -17,6 +17,35 @@ const FETCH_TIMEOUT_MS = 4000
 const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
 const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
 
+export function serializeWeatherProfile(profile = null) {
+  if (!profile || typeof profile !== 'object') return null
+  const source = String(profile.weatherSource || profile.source || '').trim()
+  const high = Number(profile.highF ?? profile.high_f)
+  const low = Number(profile.lowF ?? profile.low_f)
+  if (!source && !Number.isFinite(high) && !Number.isFinite(low)) return null
+  return {
+    source: source || 'unknown',
+    ...(Number.isFinite(high) ? { high_f: high } : {}),
+    ...(Number.isFinite(low) ? { low_f: low } : {}),
+    is_hot: Boolean(profile.isHot ?? profile.is_hot),
+    is_cold: Boolean(profile.isCold ?? profile.is_cold),
+    is_extreme_heat: Boolean(profile.isExtremeHeat ?? profile.is_extreme_heat),
+  }
+}
+
+export function restoreWeatherProfile(value = null) {
+  const stored = serializeWeatherProfile(value)
+  if (!stored) return null
+  return {
+    weatherSource: stored.source,
+    ...(Number.isFinite(stored.high_f) ? { highF: stored.high_f } : {}),
+    ...(Number.isFinite(stored.low_f) ? { lowF: stored.low_f } : {}),
+    isHot: stored.is_hot,
+    isCold: stored.is_cold,
+    isExtremeHeat: stored.is_extreme_heat,
+  }
+}
+
 function defaultFetch(url) {
   return fetch(url)
 }
