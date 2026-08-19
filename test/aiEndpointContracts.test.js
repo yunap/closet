@@ -1872,11 +1872,20 @@ test('freeform ask grounds date and correction mode for conversational follow-up
   const latestUserMessage = lastCall.messages.at(-1)
   assert.match(lastCall.system, /Today is Monday, June 1, 2026/)
   assert.match(lastCall.system, /Current turn mode: correction/)
-  assert.match(lastCall.system, /The user is correcting or challenging a detail/)
+  // Slice 7 folded the four unconditional mode reminders into one Turn directive. This asserts the
+  // correction contract itself — address it, fix the specific point, don't regenerate prior output —
+  // rather than the pre-dedup sentence that carried it.
+  assert.match(lastCall.system, /challenging or correcting a previous response/)
+  assert.match(lastCall.system, /update the specific mistaken point/)
+  assert.match(lastCall.system, /without regenerating prior lists\/outfits unless requested/)
   assert.match(lastCall.system, /User is correcting a previous seasonal assumption/)
+  // The date is grounded in the volatile system half (asserted above), NOT repeated in the user
+  // message. Repeating it made the sent representation differ from the one browser history replays
+  // next turn, which broke the message-array cache prefix at index 0 on every follow-up.
   assert.equal(typeof latestUserMessage.content, 'string')
-  assert.match(latestUserMessage.content, /Today is Monday, June 1, 2026/)
+  assert.doesNotMatch(latestUserMessage.content, /Today is Monday, June 1, 2026/)
   assert.match(latestUserMessage.content, /today is June 1st/)
+  assert.equal(latestUserMessage.content, 'today is June 1st', 'the user turn is exactly what history will replay')
 })
 
 test('freeform ask infers correction mode from latest user message', async () => {
@@ -2076,7 +2085,9 @@ test('freeform ask broad request triggers clarifying question instruction', asyn
   assert.match(lastCall.system, /ask exactly one clear clarifying question/i)
   assert.match(lastCall.system, /do not recommend garments, and do not suggest outfits/)
   assert.match(lastCall.system, /TRAVEL WEATHER BLOCKER/)
-  assert.match(lastCall.system, /weather\/forecast context is missing/)
+  // Same condition, stated by the surviving TRAVEL WEATHER BLOCKER rather than the pre-dedup mode
+  // sentence. The three assertions above already carry the contract; this one names the trigger.
+  assert.match(lastCall.system, /travel\/packing request without weather or forecast context/)
 })
 
 test('freeform ask does not precompose destination-only multi-day trips before activity scope is confirmed', async () => {
@@ -5745,35 +5756,28 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages[1].role, 'assistant')
 })
 
-test('bounded multi-look routing is feature flagged in the freeform controller prompt', async () => {
+test('bounded multi-look routing is unconditional in the freeform controller prompt', async () => {
+  // Default-on since 2026-08-19; the WARDROBE_FREEFORM_ATOMIC_MULTILOOK flag is gone. Setting it is
+  // a no-op, asserted here so a stale env var can never be read as switching this off.
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
-  const previous = process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
-  try {
-    delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
-    const legacy = await buildStylistConversationPayload({
-      question: 'Give me three outfits for one dinner.',
-      conversationMode: 'new_request',
-      sessionId: 'atomic-prompt-off'
-    })
-    assert.doesNotMatch(String(legacy.system), /BOUNDED MULTI-LOOK EXECUTION/)
-
-    process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = 'true'
+  {
     const bounded = await buildStylistConversationPayload({
       question: 'Give me three outfits for one dinner.',
       conversationMode: 'new_request',
-      sessionId: 'atomic-prompt-on'
+      sessionId: 'atomic-prompt-default'
     })
-    assert.match(String(bounded.system), /call generate_outfits directly and exactly once/)
-    assert.match(String(bounded.system), /ordinary "what should I wear\?" request defaults to limit:2/)
-    assert.match(String(bounded.system), /do NOT call declare_intent/)
+    assert.match(String(bounded.system), /BOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY/)
+    assert.match(String(bounded.system), /fresh 2–5 option requests sharing one occasion, activity, and weather context/)
+    assert.match(String(bounded.system), /dynamically amended declare_intent\/generate_outfits exception/)
     assert.match(String(bounded.system), /Never flatten distinct contexts/)
 
     const boundedTools = stylistToolsForTurn({ turnMode: 'new_request' })
     assert.match(boundedTools.find(tool => tool.name === 'declare_intent').description, /do not call this tool/)
     assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /also declares the cards contract/)
     assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /do not call declare_intent or search_wardrobe first/)
-  } finally {
-    if (previous === undefined) delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
-    else process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = previous
+
+    // The exception is still scoped to new requests, not the whole app.
+    const followupTools = stylistToolsForTurn({ turnMode: 'followup' })
+    assert.doesNotMatch(followupTools.find(tool => tool.name === 'declare_intent').description, /do not call this tool/)
   }
 })

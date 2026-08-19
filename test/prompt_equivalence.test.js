@@ -42,12 +42,21 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     // 2026-08-18: one deliberate post-refactor composer instruction prevents its private roster
     // comparison from leaking into user-facing card prose. Keep the frozen pre-refactor fixture
     // intact and spell out the sole accepted delta so this remains a byte-level ratchet.
-    const expected = key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM'
+    let expected = key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM'
       ? snapshot[key].replace(
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n',
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
         )
       : snapshot[key]
+    // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a
+    // tag is missing, low-confidence, or visibly contradicted. Automatic composition remains
+    // conservative, and hem shape alone still cannot decide. Keep this deliberate delta explicit.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        '- Top tuck_behavior "wear_over_only" → NEVER suggest tucking. tuck_behavior is the authority on\n  whether a top can be tucked — hem_finish describes hem shape/construction only and does not by\n  itself determine tuckability (a ribbed or shaped hem can still be designed to tuck).',
+        '- For automatic outfit composition, obey a saved tuck_behavior "wear_over_only" conservatively and\n  never suggest tucking it. For a direct user question ABOUT tuckability, treat tuck_behavior as\n  evidence rather than infallible truth: a manual/high-confidence value is strong; a missing or\n  low-confidence value may be inferred cautiously from a fit-visible photo, cut, fabric, length,\n  silhouette, and the receiving waistband. Clear contradictory construction/visual evidence may\n  challenge the saved value, but state that conflict instead of silently replacing it.\n- hem_finish describes hem shape/construction only and does not by itself determine tuckability (a\n  ribbed or shaped hem can still be designed to tuck; straight_loose alone does not mean untuckable).'
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

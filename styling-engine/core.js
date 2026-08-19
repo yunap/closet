@@ -11,8 +11,57 @@ import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
+import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
 export { getStylistConversationState, saveStylistConversationState }
+
+const FREEFORM_HISTORY_MAX_MESSAGES = 8
+const FREEFORM_HISTORY_MAX_CHARS = 12000
+const FREEFORM_HISTORY_MAX_MESSAGE_CHARS = 3500
+
+function truncateFreeformHistoryContent(content, maxChars = FREEFORM_HISTORY_MAX_MESSAGE_CHARS) {
+  const text = typeof content === 'string' ? content : JSON.stringify(content ?? '')
+  if (text.length <= maxChars) return text
+  const marker = '\n[Earlier detail omitted from bounded history]\n'
+  if (maxChars <= marker.length + 2) return text.slice(-Math.max(0, maxChars))
+  const available = Math.max(0, maxChars - marker.length)
+  const head = Math.ceil(available / 2)
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (available - head))}`
+}
+
+export function boundFreeformConversationHistory(history = [], {
+  maxMessages = FREEFORM_HISTORY_MAX_MESSAGES,
+  maxChars = FREEFORM_HISTORY_MAX_CHARS,
+  maxMessageChars = FREEFORM_HISTORY_MAX_MESSAGE_CHARS,
+} = {}) {
+  const received = (Array.isArray(history) ? history : [])
+    .filter(message => message?.role === 'user' || message?.role === 'assistant')
+    .map(message => ({ role: message.role, content: message.content }))
+  const receivedChars = received.reduce((sum, message) => sum + String(message.content ?? '').length, 0)
+  let candidates = received.slice(-Math.max(1, maxMessages))
+  while (candidates.length > 1 && candidates[0]?.role !== 'user') candidates.shift()
+
+  const keptNewestFirst = []
+  let usedChars = 0
+  for (const message of [...candidates].reverse()) {
+    const remaining = Math.max(0, maxChars - usedChars)
+    if (!remaining) break
+    const content = truncateFreeformHistoryContent(message.content, Math.min(maxMessageChars, remaining))
+    keptNewestFirst.push({ role: message.role, content })
+    usedChars += content.length
+  }
+  const messages = keptNewestFirst.reverse()
+  while (messages.length > 1 && messages[0]?.role !== 'user') messages.shift()
+  const includedChars = messages.reduce((sum, message) => sum + String(message.content ?? '').length, 0)
+  return {
+    messages,
+    diagnostics: {
+      historyMessagesReceived: received.length,
+      historyMessagesIncluded: messages.length,
+      historyCharsRemoved: Math.max(0, receivedChars - includedChars),
+    }
+  }
+}
 
 import {
   prompts,
@@ -3785,8 +3834,16 @@ export function buildStylistConversationDirective(mode) {
     case 'followup':
       return 'The user is asking a follow-up question. Answer it directly and naturally. Do not restart the full evaluation flow.'
     default:
-      return 'The user has a new request. Answer them directly and naturally. Ask one clarifying question if required context is missing.'
+      // "exactly one" and the placeholder-list prohibition are the pre-dedup contract, restored
+      // verbatim: slice 7 consolidated the mode reminders to remove repetition, not to relax what
+      // they required, and neither clause survives anywhere else in the prompt.
+      return 'The user has a new request. Answer them directly and naturally. If required context is missing, ask exactly one clear clarifying question; do not generate a placeholder list.'
   }
+}
+
+export function freeformToolRoutingInstruction() {
+  const ownerLine = 'TOOL ROUTING OWNERSHIP: each tool description owns its eligibility, required arguments, and mechanical output contract. Follow declare_intent, suggest_slot_swaps, render_preview, generate_outfits, and plan_outfit_set as written instead of restating their schemas here.'
+  return `${ownerLine}\nBOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY: apply the dynamically amended declare_intent/generate_outfits exception only to fresh 2–5 option requests sharing one occasion, activity, and weather context. One/best requests stay on the verified serial path; multi-context schedules and capsules use plan_outfit_set; existing-card revisions use suggest_slot_swaps. Never flatten distinct contexts to qualify.`
 }
 
 export const STYLIST_CONVERSATION_MODES = new Set([
@@ -3809,7 +3866,6 @@ function isGeneratedSetCoverageAudit(question = '') {
 }
 
 export async function buildStylistConversationPayload(body) {
-  const atomicMultiLookEnabled = String(process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK || '').toLowerCase() === 'true'
   const {
     question,
     pieces,
@@ -3851,6 +3907,9 @@ export async function buildStylistConversationPayload(body) {
   const restoredEstablished = restoredState.established && typeof restoredState.established === 'object'
     ? restoredState.established
     : {}
+  const restoredWeatherProfile = requestedConversationMode !== 'new_request'
+    ? restoreWeatherProfile(restoredState.weather_profile)
+    : null
   const effectiveOccasion = occasion || restoredEstablished.occasion || ''
   const effectiveActivity = activity || restoredEstablished.activity || ''
   const effectiveSeason = season || restoredEstablished.season || ''
@@ -3863,11 +3922,15 @@ export async function buildStylistConversationPayload(body) {
   // Weather precedence: explicit body value, then this turn's text, then the
   // established value from thread state, then (last resort) a coarse guess from
   // season/mood words — so a restored "hot, highs 85F" beats a "warm"-season guess.
-  const turnWeather = weather || extractWeatherContext([
-    question || '',
+  const explicitTurnWeather = weather || extractWeatherContext(question || '')
+  const contextualTurnWeather = extractWeatherContext([
     threadContextText,
     generatedOutfitContextText
   ].join('\n'))
+  const turnWeather = explicitTurnWeather || contextualTurnWeather
+  // A new explicit weather statement owns this turn. Otherwise retain resolved numeric physics
+  // separately from display season text so "summer; mild; 78/56" cannot be reparsed as hot.
+  const effectiveWeatherProfile = explicitTurnWeather ? null : restoredWeatherProfile
   const extractedWeather = turnWeather
     || restoredEstablished.weather
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
@@ -3986,6 +4049,11 @@ export async function buildStylistConversationPayload(body) {
     label: o?.label || o?.title || `Outfit ${index + 1}`,
     ...(o?.occasion ? { occasion: o.occasion } : {}),
     ...(o?.activity ? { activity: o.activity } : {}),
+    ...(o?.dominantDirection ? { direction: o.dominantDirection } : {}),
+    ...(o?.silhouette ? { silhouette: o.silhouette } : {}),
+    ...(o?.reason ? { reason: o.reason } : {}),
+    ...(o?.stylingInstructions ? { styling_instructions: o.stylingInstructions } : {}),
+    ...(o?.watchFor ? { watch_for: o.watchFor } : {}),
     piece_ids: (Array.isArray(o?.pieceIds) && o.pieceIds.length
       ? o.pieceIds
       : (Array.isArray(o?.pieces) ? o.pieces.map(piece => piece?.id) : [])
@@ -4001,6 +4069,7 @@ export async function buildStylistConversationPayload(body) {
   const threadState = {
     turn_mode: conversationMode,
     established: establishedStylingContext,
+    ...(effectiveWeatherProfile ? { weather_profile: serializeWeatherProfile(effectiveWeatherProfile) } : {}),
     ...(travelOrPackingRequest ? {
       travel: {
         missing_weather: missingTravelWeather,
@@ -4032,6 +4101,7 @@ export async function buildStylistConversationPayload(body) {
       visible_image_inventory: attachedImageInventory,
     } : {}),
     established: establishedStylingContext,
+    ...(effectiveWeatherProfile ? { weather_profile: serializeWeatherProfile(effectiveWeatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
   }, sessionId)
 
@@ -4092,26 +4162,6 @@ export async function buildStylistConversationPayload(body) {
       'Never guess or assume a piece exists without querying the database via tools first.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
     ].join('\n')
-
-  let modeDirectiveText = ''
-  switch (conversationMode) {
-    case 'correction':
-      modeDirectiveText = 'The user is correcting or challenging a detail. Acknowledge and adjust to the correction gracefully, update the mistaken point, and give a concise adjustment. Do not defend a contradiction.'
-      break
-    case 'explanation':
-      modeDirectiveText = 'The user is asking for styling explanation or context details. Explain your styling rationale in a friendly, conversational manner using listed garment details.'
-      break
-    case 'preference_reaction':
-      modeDirectiveText = 'The user is providing taste feedback. Accept the preference, adapt your style rules, and keep it brief.'
-      break
-    case 'followup':
-      modeDirectiveText = 'The user is asking a follow-up question. Answer it directly and conversationally without restarting evaluation templates.'
-      break
-    default:
-      modeDirectiveText = missingTravelWeather
-        ? 'The user has a travel or packing request, but weather/forecast context is missing. Ask exactly one clear clarifying question for the expected weather before suggesting outfits or calling wardrobe search tools. Timing/season alone is not enough for trip packing.'
-        : 'The user has a new request. Respond directly. If details like destination or timing/season are completely missing, ask exactly one clear clarifying question; do not generate a placeholder list. Do not ask "when" if a timing or date is already provided.'
-  }
 
   const feedbackMemoryParts = []
   const deliveredFeedbackContexts = []
@@ -4200,19 +4250,13 @@ export async function buildStylistConversationPayload(body) {
     '',
     'CONVERSATION CONTROLLER:',
     `Current turn mode: ${conversationMode}.`,
-    `Mode instructions: ${modeDirectiveText}`,
     `Turn directive: ${conversationDirective}`,
     'FIT CONCERNS: when the user states a fit problem (baggy, loose waist, clingy, riding up), address it head-on in prose FIRST — belting, tucking, proportion balancing, silhouette pairing — then compose cards that implement the advice. Do not ignore the stated concern and just assemble an outfit.',
     'INDOOR TRANSIT WEATHER: indoor describes a climate-controlled destination, not a weather escape hatch. In a multi-outfit plan, the outside forecast still governs the base outfit and transit. During extreme heat, build a breathable hot-weather base and use only an optional light layer for AC; never solve AC with a heavy main garment. Indoor suppresses direct-sun and outdoor-activity styling, not temperature itself.',
-    'INTENT DECLARATION (mechanically enforced): before composing or answering substantively, call declare_intent with what this turn should produce — want:"text" (advice/critique prose), "cards" (composed outfit cards), or "image" (a rendered outfit image), plus outfit_count when the user asked for a specific number. propose_outfit and generate_outfits are blocked until cards intent is declared. If the user asks for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps once against THREAD STATE\'s current_outfit_set instead of calling propose_outfit once per alternative. If the user wants a rendered image, declare want:"image" and call render_preview (outfit_index for a card produced this turn, or piece_ids from a verified card such as THREAD STATE\'s current outfit set).',
-    atomicMultiLookEnabled ? 'BOUNDED MULTI-LOOK EXECUTION (supersedes the default declaration and serial instructions only for this case): for a new request for fresh outfit options that all share one occasion, activity, and weather context, do NOT call declare_intent or search_wardrobe; call generate_outfits directly and exactly once. An ordinary "what should I wear?" request defaults to limit:2. If the user states a count, honor it; if they explicitly ask for one best outfit or say pick one, use the one-outfit search_wardrobe + propose_outfit path. That bounded tool call is the cards declaration. When the user names a place, pass location; when the user names a day or relative date, resolve it against CURRENT DATE / SEASON and pass date as YYYY-MM-DD. Do not promise a live forecast in narration; the tool records whether weather resolved live. Do not rebuild its cards with propose_outfit. Multi-context schedules and capsules still declare intent and use plan_outfit_set; revisions to existing cards still use suggest_slot_swaps. Never flatten distinct contexts merely to qualify for this path.' : '',
+    freeformToolRoutingInstruction(),
     extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
     `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${prompts.PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
-    'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
-    'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
-    'If mode is explanation, explain how the previous recommendation was made using the available context.',
-    'If mode is preference_reaction, adapt the next advice to the stated preference and keep it concise.',
     'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version. For trip or multi-outfit plans, if the user asks to revise, add, check variety, or show/render the outfits, update or use the Current outfit set instead of treating the latest suggestion as a standalone note.',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
@@ -4252,11 +4296,16 @@ export async function buildStylistConversationPayload(body) {
     ].join('\n') : ''
   ].filter(Boolean).join('\n')
 
+  // Cross-turn cache prefix: this text becomes a history message on the NEXT turn, where the browser
+  // replays it as the user's bare question. Anything added here that history will not replay makes
+  // the two representations differ, and Anthropic matches cache on exact prefix — so a difference at
+  // message 0 invalidates the whole message array on every subsequent turn. The date is therefore
+  // deliberately NOT repeated here: it already sits in the volatile system half above, with its
+  // usage instruction, which is where the model reads it from. The "Attached:" lines stay because
+  // they only appear on image turns, which carry base64 blocks history never replays anyway.
   const promptText = [
     generatedOutfitReferenceSheet ? 'Attached: current generated outfit garment-reference sheet.' : '',
     outfitImageContent ? 'Attached: images for the outfit under discussion.' : '',
-    `Today is ${resolvedCurrentDateLabel} (${timezone || 'America/Los_Angeles'}).`,
-    '',
     question
   ].filter(Boolean).join('\n')
 
@@ -4289,19 +4338,21 @@ export async function buildStylistConversationPayload(body) {
   if (askedNow && last?.role === 'user' && typeof last.content === 'string' && last.content.trim() === askedNow) {
     priorHistory.pop()
   }
+  const boundedHistory = boundFreeformConversationHistory(priorHistory)
 
   return {
     system,
     messages: [
-      ...priorHistory,
+      ...boundedHistory.messages,
       { role: 'user', content: userContent }
     ],
     maxTokens: 1500,
     automaticallySavedCorrection,
     threadState,
+    historyDiagnostics: boundedHistory.diagnostics,
     // docs/search-payload-spec.md §5. search_wardrobe trims its rows to per-request judgment only
-    // when the model can actually see the manifest. Above WARDROBE_MANIFEST_MAX_PIECES the manifest
-    // is omitted entirely, and a trimmed row would then be the model's ONLY view of a garment.
+    // when the model can actually see the full-truth manifest. The tiered discovery index does not
+    // qualify: it owns identity only, so search must return the missing stable truth.
     wardrobeManifestIncluded: Boolean(wardrobeManifestText)
   }
 }
