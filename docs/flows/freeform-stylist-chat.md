@@ -69,10 +69,9 @@ CONTROLLER" directive in the system prompt.
 > is the rollback path if a regression surfaces; see
 > docs/freeform-rearchitecture-handoff.md's spec 14 entry.
 
-There is no deterministic keyword pre-routing layer. Normally `POST /api/ai/ask` builds
-`toolContext` and goes straight to Layer 2. **Flagged 2026-08-18:** with
-both `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` and
-`WARDROBE_FREEFORM_EXECUTION_ROUTER=true`, a fresh request with no active piece, outfit or image
+There is no general deterministic keyword pre-routing layer; the sole narrow saved-photo wear-
+mechanics correction is recorded below. Normally `POST /api/ai/ask` builds `toolContext` and goes
+straight to Layer 2. **Default behaviour since 2026-08-19 (flags removed):** a fresh request with no active piece, outfit or image
 first reaches a compact model-owned execution router. It sees only the request, date and timezone.
 It may directly select the narrow same-context 2–5-look profile; every other classification,
 failure or incomplete bounded composition falls through to Layer 2 unchanged. The direct profile
@@ -92,6 +91,70 @@ the turn. This prevents a hybrid tool sequence from replacing an earlier `propos
 arrival/departure coverage; around 55°F, a sleeveless vest over a light or short-sleeved base is not
 narrated as sufficient warmth.
 
+**[default since 2026-08-19] Compact answer profiles.** The same model-owned router can finish exact inventory,
+verified-card explanation, resolved garment-fact, or wardrobe-independent education turns before
+the full tool loop. Garment-fact answers rehydrate only the resolved pieces and, through
+`compactGarmentVisualEvidence`, attach their saved worn/hanger images with a four-image ceiling.
+This lets direct visible garment behavior correct missing or weak tags without loading a wardrobe
+roster. The response debug payload reports `compactVisualImages`; unresolved identity, composition,
+or discovery still falls through to Layer 2.
+
+**[corrected 2026-08-19]** The router receives a presence-only count when resolved subjects have
+saved photos. It may therefore send a question about the visibly shown result of a tuck or analogous
+wear mechanic to `garment_fact`; it still receives neither garment identity nor image data itself.
+Broad critique and visual-fit questions without saved evidence remain in Layer 2. Regardless of
+profile, photographs establish visible behavior but not exact fiber composition, and feasibility is
+not automatic styling approval.
+
+**[corrected again 2026-08-19]** `thread_1787121042557` showed that model-only selection still sent
+the exact saved-photo tuck question into Layer 2. After exact-name resolution and confirmation that
+the one subject has a saved photograph, tuck/untuck request shapes now deterministically select
+`garment_fact`. This narrow exception does not interpret garment semantics or cover pairing and
+broad fit critique. Its answer directly judges the visible garment-and-body interaction when the
+photo supports that judgment. It may recommend an unseen alternative as likely stronger, but must
+not call it proven, invent a hidden cause, diagnose the wearer’s body, or generalize a body rule.
+When proposing an unseen alternative, it tests the simplest adjacent configuration first (for a
+full tuck, fully untucked) rather than inventing a partial or elaborate tuck without evidence.
+Compact saved images use Anthropic-compatible base64 source blocks. Unlike ordinary ambiguous
+router failures, a failure inside this deterministic narrow route is returned as an error rather
+than silently launching the full-manifest stylist and multiplying the cost.
+
+**[HISTORICAL — removed 2026-08-19, never default-on] Qualified coverage.** The profile below is
+**no longer in the code**. It was removed from the router enum, schema and prompt, and its execution
+branch and helpers were deleted. Coverage questions now route to `full_stylist` until they are
+rebuilt as a use case of shared batched discovery — see
+[freeform-batched-discovery-spec.md](../freeform-batched-discovery-spec.md), which carries the
+acceptance cases this arc paid to learn. The description is kept because the evidence contract it
+describes is inherited, not discarded. It never ran for a user: `WARDROBE_FREEFORM_COMPACT_ANSWERS`
+was default-off throughout.
+
+A router result with generic category and constraint
+dimensions bypasses the tool loop. Code supplies every active piece of the requested kind as a
+compact text census. A first bounded judge selects candidates without photographs; when an
+observable or mixed constraint materially benefits from sight, a second bounded judge receives only
+that candidate set plus at most four saved images. Material alone does not prove weather protection.
+The router also supplies garment kind: ordinary “jackets” maps to the centralized jacket/coat family,
+so cardigans sharing the outerwear storage category are not audited. Practical weight is judged from
+tags plus available photographs; user-facing prose never exposes database fields or IDs.
+The router represents arbitrary qualifiers as semantic dimension/target pairs plus usage context.
+The bounded answer is a required structured classification (primary, plausible, backup, unknown),
+then code validates IDs against the census and renders garment names. Future questions reuse this
+evidence contract instead of adding a new application branch for every property.
+Constraints mark whether their target is observable, latent or mixed; result rows declare evidence
+basis. Code downgrades visual-only claims about latent performance, uses the router’s explicit
+minimum (duration alone defaults to one), sanitizes model strings, and bounds final output length.
+Evidence basis is dimension-specific, preventing a strong fact for one qualifier from laundering a
+weak inference for another.
+
+**[final status, 2026-08-19 — architecture abandoned]** Five versions each moved the same problem
+rather than solving it. In `thread_1787128659041` the staged path improved contextual recall but
+still dropped deserving unpictured candidates before refinement, cost 19,384 input / 2,867 output
+across three calls, and rendered truncated evidence machinery — more expensive than the single-judge
+path it replaced. The decision was not another revision: an arbitrary coverage question combines
+physical fact, owner experience, wrong metadata, visual judgment, contextual styling judgment and
+quantity requirements, which is the whole stylist problem. Building a generic coverage pipeline was
+becoming a second stylist architecture, so coverage becomes a use case of batched discovery instead.
+
 ## Layer 2 — Model tool loop
 
 Model-driven, up to 7 iterations (`askStylistWithTools`,
@@ -108,8 +171,7 @@ Model-driven, up to 7 iterations (`askStylistWithTools`,
 | `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
 | `store_user_correction` | persist a taste correction |
 
-**[flagged, 2026-08-18] Bounded same-context batches.** When
-`WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true`, a new request for 2–5 fresh looks that share one
+**[default since 2026-08-19] Bounded same-context batches.** A new request for 2–5 fresh looks that share one
 occasion, activity and weather context uses `generate_outfits` once. That tool invokes the existing
 photograph-aware whole-wardrobe composer and returns the complete batch as the terminal paid step;
 deterministic code supplies the short introduction and any shortfall disclosure. Named location
@@ -182,9 +244,28 @@ stateDiagram-v2
 - **Entry:** `POST /api/ai/ask` (`routes/ai.js`). The turn's `conversationMode`
   is classified client-side by `classifyChatTurn` and passed in the body.
 - **Optional execution router:** `routeFreeformExecutionProfile` (`styling-engine/provider.js`)
-  makes one compact structured call before `buildStylistConversationPayload` only under the Phase
-  2 flag and eligibility boundary. A successful `bounded_multi` result calls `generate_outfits`
+  makes one compact structured call before `buildStylistConversationPayload`, within its eligibility
+  boundary (fresh request, verified card set, or resolved garment subject). A successful `bounded_multi` result calls `generate_outfits`
   directly and returns; otherwise the full path below remains authoritative.
+- **Compact text profiles (default since 2026-08-19):** the same router may select an existing-card explanation,
+  verified garment-fact answer, or wardrobe-independent general styling answer. Each receives one
+  no-tools answer call and returns before the manifest is assembled. Card and garment paths receive
+  only their verified IDs/facts; general advice receives no wardrobe or thread payload. Missing or
+  ambiguous context falls through to the full path.
+- **Bounded full-stylist history (default since 2026-08-19):** only prior conversation prose is capped: four recent
+  exchanges/eight messages, 12,000 characters total and 3,500 per message. Structured thread
+  state, current verified cards, durable feedback memory and the wardrobe manifest remain on their
+  existing authoritative paths. The duplicate current question is removed before bounding; no
+  summarization call is added. Run diagnostics store only counts and characters removed.
+- **Prompt/tool ownership (2026-08-19):** `freeformToolRoutingInstruction` keeps only relationships
+  spanning several tools. Each `STYLIST_TOOLS` description owns its own eligibility, arguments and
+  mechanical result; `buildStylistConversationDirective` is the single volatile owner of the turn's
+  mode behavior. The stable cached Style Constitution/profile/manifest prefix is unchanged. See
+  `docs/freeform-prompt-ownership.md`.
+- **Deferred tools — REMOVED 2026-08-19.** The Anthropic BM25 tool-search experiment is gone from the
+  code. It reduced visible schema size without touching the cost driver, and its provider-specific
+  machinery would have constrained batched discovery. See `docs/freeform-deferred-tools-spec.md`
+  (historical) and `docs/freeform-batched-discovery-spec.md`.
 - **No pre-route (spec 14):** the handler builds `toolContext` directly from
   the request body and goes straight to the model — planning turns rely
   entirely on the model calling `plan_outfit_set` itself.
@@ -197,6 +278,9 @@ stateDiagram-v2
   results back and continue; a plain text answer exits — unless a Layer-3 guard
   blocks it, which pushes a correction message and re-runs the model once per
   guard type.
+- **Resolved weather survives follow-ups as physics, not prose.** Thread state stores a normalized
+  `weather_profile` separately from human-facing season/weather strings. A new explicit weather
+  statement wins; otherwise the restored booleans and numeric range own gates.
 - **`propose_outfit` vs `generate_outfits`:** `propose_outfit` renders a card from
   *verified* piece IDs (the model must `search_wardrobe` first); `generate_outfits`
   composes fresh cards from scratch. The `outfitProse` guard exists to force the
@@ -217,6 +301,37 @@ stateDiagram-v2
 ---
 
 # Proposed architecture — from router to stylist
+
+> **2026-08-19 cost amendment — HISTORICAL, implementation removed.** The tiered index is no longer
+> in the code; its principle is inherited by batched discovery. It described two separable levels of
+> “knows the wardrobe”: the full stylist receiving every
+> active piece's exact ID/name/category and brief visual identity, but retrieves full garment truth
+> only when the turn needs it. Exact piece questions expand through view/details, composition through
+> search, broad category counts through index headings, and qualified coverage through
+> `wardrobe_coverage`; sparse or uncertain lookups broaden
+> before declaring a gap. This expands rather than reverses the philosophy below: the model retains
+> whole-closet identity awareness and open-ended judgment, while code supplies detailed truth on
+> demand. The index is not a shortlist, and recently-shown memory cannot hide a piece. See
+> [freeform-tiered-discovery-spec.md](../freeform-tiered-discovery-spec.md).
+>
+> **Exact-count fast completion, 2026-08-19.** The model router may
+> classify an exact active inventory count/breakdown as `wardrobe_inventory`; code reads category
+> counts and returns immediately. This removes the full-stylist and `declare_intent` calls observed
+> in `thread_1787116405571`. “Enough?”, gap, qualification and styling questions are not eligible.
+
+> **Router eligibility, 2026-08-19.** The compact router runs only when the turn carries context a
+> compact profile can use: a fresh request, a verified current outfit set, or a resolved garment
+> subject. Corrections and follow-ups carrying none of those go straight to the full stylist rather
+> than paying a router call before it. Accepted miss: general advice and inventory counts need no
+> context, so those questions asked mid-thread in a card-less, subject-less conversation fall
+> through. Measured before widening, not argued — see the handoff.
+
+> **Sparse-composition live status, 2026-08-19.** `thread_1787128902650` confirmed that tiered
+> discovery can broaden a failed anchor lookup and preserve a strong wardrobe-aware result, but the
+> sequential loop took nine provider iterations and five searches (60,532 cache creation / 212,147
+> cache read). The next step batches broadened anchor and support-category retrieval before one
+> composition submission. Search narration must not reach the final answer, and explicit wear
+> mechanics must be present in the accepted card's `stylingInstructions`.
 
 > **Status: in progress (2026-07).** Migration steps shipped so far: **1** —
 > wardrobe manifest + structured thread state (#37); **3** — retrieval rule:
