@@ -4895,7 +4895,7 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
   assert.equal(countCheck.blockType, 'outfitCount')
   assert.match(countCheck.correctionMessage, /requested 3 outfit ideas/)
 
-  // A declared text turn suppresses the outfit-request phrasing fallback.
+  // A declared text turn answers in prose without penalty.
   const textContext = {
     question: 'outfit ideas?',
     declaredIntent: { want: 'text', outfitCount: null, turnMode: null },
@@ -4903,7 +4903,23 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
     freeformDiagnostics: { proposeCalls: 0, searchCalls: 1 }
   }
   const textCheck = applyFreeformOutputChecks('Start from texture: pair rough with smooth.', textContext)
-  assert.equal(textCheck.block, false, 'declaration wins over the phrasing regex')
+  assert.equal(textCheck.block, false)
+
+  // And so does an UNDECLARED one. declare_intent is required by the operations that consume it,
+  // not by every turn, so absent declaration is the normal state of a prose answer. The guard used
+  // to read a missing declaration plus outfit-ish phrasing as a skipped ceremony, which would now
+  // fire on exactly the conversational turns that no longer need to declare -- spending a retry to
+  // save a round-trip.
+  const undeclaredContext = { ...textContext, declaredIntent: null }
+  const undeclaredCheck = applyFreeformOutputChecks('Start from texture: pair rough with smooth.', undeclaredContext)
+  assert.equal(undeclaredCheck.block, false, 'an undeclared prose answer is not blocked by question phrasing alone')
+
+  // The real failure is still caught, from the answer rather than the question: prose that lays out
+  // an outfit the model never proposed is blocked whether or not the turn declared anything.
+  const proseOutfit = 'Quiet Column\n\nTop: Ivory Silk Shell\nBottom: Wide Black Trousers\nShoes: Tan Leather Loafers\n\nThe shell keeps it soft.'
+  const undeclaredProseCards = applyFreeformOutputChecks(proseOutfit, undeclaredContext)
+  assert.equal(undeclaredProseCards.block, true, 'an outfit written as prose is still caught without a declaration')
+  assert.equal(undeclaredProseCards.blockType, 'outfitProse')
 })
 
 test('turn contract blocks a declared cards turn that delivered zero cards', () => {

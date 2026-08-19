@@ -511,7 +511,7 @@ function pieceHasStructuredColor(piece = {}, requestedColor = '') {
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
-    description: "Declare what this turn should produce, BEFORE composing or answering substantively. Call it first each turn (re-call to update if the goal changes mid-turn). propose_outfit and generate_outfits are blocked until the turn's intent is declared as want:'cards'. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
+    description: "Declare what this turn should produce, when a later operation needs that contract. Required before propose_outfit, generate_outfits or render_preview, which are blocked until the turn declares want:'cards' or want:'image'. NOT required to answer in prose: an explanation, comparison, critique, garment question or recalled detail needs no declaration, and declaring want:'text' merely to answer costs a whole extra model round-trip for nothing. Re-call to update if the goal changes mid-turn. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
     input_schema: {
       type: "object",
       properties: {

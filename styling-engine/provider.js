@@ -242,8 +242,15 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // cards before the loop starts — narrating those back is fine, hence the
   // preseeded exemption.)
   const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
+  // The ANSWER is the evidence here, not the question. There used to be a second clause --
+  // `!declaredIntent && looksLikeOutfitRequest(question)` -- which read a missing declaration as a
+  // skipped ceremony. That only worked while declare_intent was mandatory on every turn. It is now
+  // required solely before propose_outfit/generate_outfits/render_preview, so absent declaration is
+  // the normal state of an ordinary prose answer, and the old clause would have fired on exactly
+  // the conversational turns this change makes cheap -- spending a retry to save a round-trip.
+  // Prose that actually describes an unproposed outfit is still caught, by inspecting the prose.
   if (!boundedCompositionCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
-      (looksLikeUnproposedOutfitProse(answerText) || (!declaredIntent && looksLikeOutfitRequest(toolContext?.question)))) {
+      looksLikeUnproposedOutfitProse(answerText)) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
       ? ` You already referenced these exact piece IDs: ${priorIds.join(', ')} — reuse exactly these IDs and roles, do not substitute or invent different pieces.`

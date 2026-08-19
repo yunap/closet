@@ -291,7 +291,11 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.match(bounded, /existing-card revisions use suggest_slot_swaps/)
 
   const tool = name => STYLIST_TOOLS.find(candidate => candidate.name === name)
-  assert.match(tool('declare_intent').description, /Call it first each turn/)
+  // The declaration is required by the operations that consume it, not by every turn: a prose
+  // answer needs none, and declaring want:'text' merely to answer buys a second round-trip for
+  // nothing (measured at $0.0134 against a ~$0.04 follow-up).
+  assert.match(tool('declare_intent').description, /Required before propose_outfit, generate_outfits or render_preview/)
+  assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
   assert.match(tool('suggest_slot_swaps').description, /alternatives to ONE slot/)
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)

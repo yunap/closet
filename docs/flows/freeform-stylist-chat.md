@@ -91,6 +91,20 @@ the turn. This prevents a hybrid tool sequence from replacing an earlier `propos
 arrival/departure coverage; around 55°F, a sleeveless vest over a light or short-sleeved base is not
 narrated as sufficient warmth.
 
+**[amended 2026-08-19] Declaration is required by its consumers, not by every turn.** `declare_intent`
+is required before `propose_outfit`, `generate_outfits` or `render_preview`, which stay blocked until
+the turn declares `cards` or `image`. It is **not** required to answer in prose: an explanation,
+comparison, critique, garment question or recalled detail needs no declaration. Declaring
+`want:'text'` merely to answer bought a whole extra provider round-trip — measured at $0.0134 against
+a follow-up turn that costs about $0.04, and observed twice on turns that produced no cards at all.
+
+The delivery guard was adjusted with it. Its second clause read a missing declaration plus
+outfit-ish question phrasing as a skipped ceremony; with declaration optional, absent declaration is
+the normal state of a prose answer, so that clause would have fired on exactly the conversational
+turns this makes cheap — spending a retry to save a round-trip. Prose that actually lays out an
+unproposed outfit is still caught, from the answer rather than the question. No new prose detector
+was added.
+
 **[default since 2026-08-19] Compact answer profiles.** The same model-owned router can finish exact inventory,
 verified-card explanation, resolved garment-fact, or wardrobe-independent education turns before
 the full tool loop. Garment-fact answers rehydrate only the resolved pieces and, through
@@ -337,7 +351,9 @@ stateDiagram-v2
 > wardrobe manifest + structured thread state (#37); **3** — retrieval rule:
 > pieces must be verified this turn, layers visually seen (#38); **4** —
 > model-declared intent via a `declare_intent` tool, with the guards' phrasing
-> regexes demoted to undeclared-turn fallbacks (#39); **5** — the guards
+> regexes demoted to undeclared-turn fallbacks (#39) — **amended 2026-08-19: the
+> undeclared-turn phrasing fallback is removed, because declaration is no longer
+> required on every turn (see "Declaration is required by its consumers" below)**; **5** — the guards
 > collapsed into one turn-contract validator with three clauses (truth /
 > context / delivery) and a single per-clause retry budget; delivery is checked
 > against the declared want (`cardsNotDelivered`), and the legacy travel
