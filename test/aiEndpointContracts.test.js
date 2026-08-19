@@ -2071,6 +2071,32 @@ test('freeform ask outfit follow-up handles image presence and attaches images',
   assert.match(latestUserMessage.content.at(-1).text, /Attached: images for the outfit under discussion/)
 })
 
+// The other half of the attribution guard in freeform_observability.test.js. That one enumerates the
+// call sites in source; this one proves a real request actually lands an attributed row, so a route
+// that stops forwarding sessionId fails here even if every call site still looks correct.
+test('a freeform turn writes a run row attributed to its own thread', async () => {
+  db.prepare('DELETE FROM freeform_generation_runs').run()
+  const sessionId = `thread_attribution_${Date.now()}`
+  const json = await postJson('/api/ai/ask', {
+    question: 'What should I wear to a gallery opening?',
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+    sessionId,
+  })
+  assert.ok(json.answer, 'the turn should complete')
+
+  const rows = db.prepare('SELECT * FROM freeform_generation_runs').all()
+  assert.equal(rows.length, 1, 'exactly one run row for one turn')
+  assert.equal(rows[0].session_id, sessionId, 'the row must carry the real thread ID, not an empty default')
+  assert.equal(rows[0].turn_failed, 0)
+
+  // Unattributed rows are the failure this guards: they cannot be grouped into conversations, which
+  // is what made a month of recorded cost telemetry unusable for per-thread analysis.
+  const unattributed = db.prepare("SELECT COUNT(*) AS n FROM freeform_generation_runs WHERE session_id = '' OR session_id IS NULL").get()
+  assert.equal(unattributed.n, 0)
+})
+
 test('freeform ask broad request triggers clarifying question instruction', async () => {
   const json = await postJson('/api/ai/ask', {
     question: 'suggest packing outfits for Portland',

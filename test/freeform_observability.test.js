@@ -1048,6 +1048,41 @@ test('a completed turn is distinguishable from a failed one in the same table', 
   assert.equal(row.turn_failed, 0, 'default is a completed turn, so existing rows keep their meaning')
 })
 
+// Attribution guard. 112 of the first 127 recorded rows had an empty session_id, so a month of cost
+// telemetry could not be grouped into conversations at all — which is how three wrong cost
+// hypotheses survived as long as they did. The bounded early-return path was the last offender; it
+// was fixed 2026-08-19 and every row since carries a real thread ID. The risk now is a SIXTH early
+// return being added that forgets, so this enumerates the call sites rather than trusting review.
+test('every freeform run row is attributed to its thread, on success and on failure', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const marker = 'persistFreeformGenerationRun({'
+  const sites = []
+  for (let at = routeSrc.indexOf(marker); at !== -1; at = routeSrc.indexOf(marker, at + 1)) {
+    // Skip the function's own declaration; only its call sites carry a sessionId argument.
+    if (/function\s*$/.test(routeSrc.slice(Math.max(0, at - 20), at))) continue
+    // Bound each window at the NEXT call site. A fixed-width slice bleeds into the following call
+    // and lets a site that omits sessionId entirely pass on its neighbour's line — verified by
+    // injecting exactly that regression.
+    const next = routeSrc.indexOf(marker, at + 1)
+    sites.push(routeSrc.slice(at, next === -1 ? at + 260 : Math.min(next, at + 260)))
+  }
+  assert.ok(sites.length >= 5, `expected every persist call site to be found, got ${sites.length}`)
+  sites.forEach((site, index) => {
+    assert.match(site, /sessionId: req\.body\.sessionId/,
+      `persistFreeformGenerationRun call site ${index + 1} must pass the request's real thread ID`)
+  })
+  // A literal or invented id would satisfy the pattern above only by being written deliberately;
+  // this catches the likelier slip of dropping the field and letting the '' default stand.
+  sites.forEach((site, index) => {
+    assert.doesNotMatch(site, /sessionId: ''/,
+      `persistFreeformGenerationRun call site ${index + 1} must not persist an unattributed row`)
+  })
+  // The catch block is one of those sites: a turn that died still has to say which thread it died in.
+  const catchBlock = routeSrc.slice(routeSrc.indexOf('if (diagnosticsContext) {'))
+  assert.match(catchBlock.slice(0, 300), /sessionId: req\.body\.sessionId/)
+  assert.match(catchBlock.slice(0, 300), /turnFailed: true/)
+})
+
 // The route must actually reach that path. Source-asserted because forcing the
 // provider to throw mid-turn from here would exercise the mock, not the wiring.
 test('the /ask route records diagnostics from its catch block, not only on success', () => {
