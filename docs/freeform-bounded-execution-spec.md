@@ -1,6 +1,6 @@
 # Freeform bounded execution profiles
 
-**Status:** active — phase 1 implementation on `codex/freeform-atomic-multilook`, 2026-08-18
+**Status:** phase 1 implemented and live-tested; follow-up profiles on `codex/freeform-rearchitect-followup`, 2026-08-19
 **Authority:** expands `freeform-rearchitecture-handoff.md`; it does not supersede model-owned intent
 
 ## Problem
@@ -77,7 +77,7 @@ is supplied, or when the user asked for explanation rather than cards.
    model gets one closing turn and cannot restart search or rebuild the cards.
 5. A shortfall ships as accepted cards plus visible needs-review cards/gap language. It does not
    reopen the general outfit-count retry loop.
-6. Keep the behavior behind `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` until offline contracts and a
+6. ~~Keep the behavior behind a flag~~ — **default-on since 2026-08-19, flag removed.** Originally gated until offline contracts and a
    paid live A/B are accepted.
 7. The tool result ends the paid loop. Deterministic code writes the short card introduction and
    shortfall language; there is no full-prefix closing model call after validated cards exist.
@@ -154,7 +154,7 @@ not telemetry (the rejected line was “wardrobe-verified outfits for this reque
 
 ## Phase 2 — small model-owned execution router (flagged, 2026-08-18)
 
-With the Phase 1 flag still enabled, `WARDROBE_FREEFORM_EXECUTION_ROUTER=true` adds one compact
+The execution router (default-on since 2026-08-19, flag removed) adds one compact
 structured model call before the full
 payload is assembled, only for a new request with no active piece/outfit/image context. The router
 sees the user's sentence, current date and timezone—no wardrobe manifest, photographs, Style
@@ -188,7 +188,7 @@ context and the existing heuristic remains the fallback when live weather is abs
 
 ## Phase 3 experiment — adaptive visual evidence (flagged, 2026-08-18)
 
-`WARDROBE_FREEFORM_ADAPTIVE_VISUALS=true` applies only to a bounded whole-wardrobe batch. Instead of
+Adaptive visuals (default-on since 2026-08-19, flag removed) apply only to a bounded whole-wardrobe batch. Instead of
 flattening every garment photo to 768px, it uses the app's existing structured visual-detail policy:
 complex pattern, expressive-role and textured pieces receive 800px; plain pieces receive 448px.
 Roster membership, garment truth, photographs and model remain identical. Every other composer
@@ -297,8 +297,12 @@ through the bounded composer.
 
 ## Later phases, separately measured
 
-- bounded conversation history after reviewing the exact exchanges removed;
+- bounded conversation history — implementation began 2026-08-19 behind
+  bounded history (default-on since 2026-08-19, flag removed); it retains four recent exchanges while structured thread
+  state carries current cards and resolved context (see `docs/freeform-followup-profiles-spec.md`);
 - prompt/tool-schema deduplication with byte-level ownership of each instruction;
-- smaller execution profiles for existing-card explanations and text-only answers;
+- smaller execution profiles for existing-card explanations and text-only answers — implementation
+  began 2026-08-19 and is default-on (flag removed); the authoritative contract is
+  `docs/freeform-followup-profiles-spec.md`;
 - provider-native deferred tool loading if it reduces total cache cost;
 - a smaller discovery manifest only after an owner ruling on wardrobe omniscience.
