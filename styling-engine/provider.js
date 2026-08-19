@@ -515,6 +515,15 @@ export function estimateAiUsageCost(usage = null) {
 }
 
 export function assertProviderKey() {
+  // Test fixtures use takeTestAiResponse before reaching this boundary. If a test accidentally
+  // misses its mock, never fall through to a real operator/BYOK credential merely because dotenv
+  // loaded one. An explicit opt-in exists for a deliberately commissioned provider integration
+  // test; the ordinary suite never sets it.
+  if (process.env.NODE_ENV === 'test' && process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK !== 'true') {
+    const err = new Error('Provider network calls are disabled under NODE_ENV=test.')
+    err.code = 'no_api_key'
+    throw err
+  }
   if (AI_PROVIDER === 'openai' && !resolveOpenAiKey()) {
     const err = new Error(noKeyErrorMessage('openai'))
     err.code = 'no_api_key'

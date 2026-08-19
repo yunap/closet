@@ -91,3 +91,18 @@ test('no test file references the real data/users/ multiuser directory directly'
   assert.deepStrictEqual(offenders, [],
     `These test files reference data/users/ without routing through a tmp WARDROBE_USERS_DIR: ${offenders.join(', ')}`)
 })
+
+test('provider entry points fail closed under NODE_ENV=test unless a commissioned integration test opts in', () => {
+  const providerSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/provider.js'), 'utf8')
+  assert.match(providerSrc, /NODE_ENV === 'test'/)
+  assert.match(providerSrc, /WARDROBE_ALLOW_TEST_PROVIDER_NETWORK !== 'true'/)
+  assert.match(providerSrc, /Provider network calls are disabled under NODE_ENV=test/)
+  const packageJson = fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')
+  assert.doesNotMatch(packageJson, /WARDROBE_ALLOW_TEST_PROVIDER_NETWORK=true/,
+    'the ordinary npm test command must never opt into provider network calls')
+  const optIns = fs.readdirSync(path.join(process.cwd(), 'test'))
+    .filter(file => file.endsWith('.test.js'))
+    .filter(file => file !== 'hermeticity_guard.test.js')
+    .filter(file => fs.readFileSync(path.join(process.cwd(), 'test', file), 'utf8').includes("process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK = 'true'"))
+  assert.deepStrictEqual(optIns, ['api_keys.test.js'], 'only the dedicated direct key-resolution contract may use the test provider escape hatch')
+})
