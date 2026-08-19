@@ -27,7 +27,7 @@ let seeded
 let aiCalls = []
 
 before(async () => {
-  server = app.listen(0)
+  server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
   baseUrl = `http://127.0.0.1:${server.address().port}`
 })
@@ -872,7 +872,23 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.equal(Object.hasOwn(json.debug, 'composerUsage'), true)
   assert.equal(json.debug.finalSelection.mode, 'advisor')
   assert.equal(json.debug.finalSelection.applyDiversity, false)
+  assert.equal(typeof json.debug.finalSelection.uniqueFormulaCount, 'number')
+  assert.equal(typeof json.debug.finalSelection.uniqueSilhouetteCount, 'number')
+  assert.equal(typeof json.debug.finalSelection.comparisonSetCollapsed, 'boolean')
   assert.equal(json.debug.sessionMemory.recentSessionCount, 0)
+
+  const composerCall = aiCalls.find(c => c.system.includes('personal stylist. You are looking at photos'))
+  const composerRequestText = composerCall.messages[0].content
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.match(composerRequestText, /COMPARISON SET CONTRACT:/)
+  assert.match(composerRequestText, /meaningfully different outfit formulas or clearly different silhouettes/)
+  assert.match(composerRequestText, /Activity-safe footwear may repeat/)
+  assert.match(composerRequestText, /TIME-OF-DAY WEATHER:/)
+  assert.match(composerRequestText, /Opacity and needs_base are authoritative/)
+  assert.match(composerRequestText, /sleeveless vest over a light or short-sleeved base handles the outdoor chill/)
+  assert.match(composerRequestText, /indoor destination.*does not erase arrival and departure weather/i)
 
   // Verify that rotation sessions are saved
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
@@ -1359,6 +1375,11 @@ test('saved outfit formula variants use gated wardrobe cards and preserve Main p
   assert.ok(composerCall)
   assert.match(composerCall.system, /Formula-similar mode: use only shown wardrobe pieces/)
   assert.match(composerCall.system, new RegExp(`MUST include Main piece ID ${seeded.shoe}`))
+  const composerRequestText = composerCall.messages[0].content
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.doesNotMatch(composerRequestText, /COMPARISON SET CONTRACT:/, 'formula-similar variants preserve their source formula instead of receiving cross-formula diversity pressure')
 })
 
 test('saved outfit formula variants pin Main even when warm weather suppresses it', async () => {
@@ -2285,6 +2306,30 @@ test('StylistChat enables rough preview for rendered freeform outfit cards', () 
   assert.match(src, /const isTextOnlyPreviewSet = Boolean\(outfits\[0\]\?\.previewOnly\)/)
   assert.match(src, /const canGenerateComparison = !isTextOnlyPreviewSet && outfits\.length >= 2/)
   assert.match(src, /Preview all looks/)
+})
+
+test('affected Stylist flows expose shared rotation memory in the header and can reset it', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  const dockStart = src.indexOf('const renderComposerDock')
+  const dockEnd = src.indexOf('const latestAssistantIndex', dockStart)
+  const dock = src.slice(dockStart, dockEnd)
+  assert.doesNotMatch(dock, /RotationMemoryControl/)
+  assert.match(src, /const activeFlowUsesRotationMemory = Boolean\(/)
+  assert.match(src, /const isUnresolvedNewChat = messages\.length === 1 && !activeContext && !pendingPiece && !pendingOutfit/)
+  assert.match(src, /isUnresolvedNewChat \|\|/)
+  assert.match(src, /wardrobeBuilderOpen \|\|/)
+  assert.match(src, /pendingOutfitAction === 'similar'/)
+  assert.match(src, /latestResultUsesRotationMemory/)
+  assert.match(src, /<RotationMemoryControl \/>/)
+  assert.match(src, /if \(!activeFlowUsesRotationMemory \|\| !recentMemoryItemCount\) return null/)
+  assert.match(src, /fetch\('\/api\/ai\/whole-wardrobe-session-memory', \{ method: 'DELETE' \}\)/)
+  assert.match(src, /recent pieces are deprioritized/i)
+  assert.match(src, /Include all pieces again/)
+  assert.match(src, /triggerToast\('Recently used pieces are included again\.'\)/)
+  assert.match(src, /requestAnimationFrame\(\(\) => textRef\.current\?\.focus\(\)\)/)
+  assert.match(src, /replyWholeWardrobe \|\| Number\(replyDebug\?\.atomicMultiLookCalls\) > 0/)
+  assert.match(src, /\[currentThreadId, refreshWholeWardrobeSessionMemory\]/)
+  assert.ok((src.match(/sessionId: targetThreadId/g) || []).length >= 3, 'every freeform /ask branch identifies its thread to server-side state')
 })
 
 test('StylistChat uses outfit sketch instead of color balance on ideal direction cards', () => {
@@ -5698,4 +5743,37 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
   assert.equal(keeps.messages[0].role, 'user')
   assert.equal(keeps.messages[1].role, 'assistant')
+})
+
+test('bounded multi-look routing is feature flagged in the freeform controller prompt', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const previous = process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+  try {
+    delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+    const legacy = await buildStylistConversationPayload({
+      question: 'Give me three outfits for one dinner.',
+      conversationMode: 'new_request',
+      sessionId: 'atomic-prompt-off'
+    })
+    assert.doesNotMatch(String(legacy.system), /BOUNDED MULTI-LOOK EXECUTION/)
+
+    process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = 'true'
+    const bounded = await buildStylistConversationPayload({
+      question: 'Give me three outfits for one dinner.',
+      conversationMode: 'new_request',
+      sessionId: 'atomic-prompt-on'
+    })
+    assert.match(String(bounded.system), /call generate_outfits directly and exactly once/)
+    assert.match(String(bounded.system), /ordinary "what should I wear\?" request defaults to limit:2/)
+    assert.match(String(bounded.system), /do NOT call declare_intent/)
+    assert.match(String(bounded.system), /Never flatten distinct contexts/)
+
+    const boundedTools = stylistToolsForTurn({ turnMode: 'new_request' })
+    assert.match(boundedTools.find(tool => tool.name === 'declare_intent').description, /do not call this tool/)
+    assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /also declares the cards contract/)
+    assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /do not call declare_intent or search_wardrobe first/)
+  } finally {
+    if (previous === undefined) delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+    else process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = previous
+  }
 })

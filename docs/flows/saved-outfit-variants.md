@@ -46,6 +46,14 @@ Three takeaways for a PM:
   `PHOTO_PRESERVING_VISUALS` flag on (or no OpenAI key) it falls back to a local
   photo collage with *no model* — same trick as the piece-concept boards.
 
+> **Wardrobe-card variant path, clarified 2026-08-19.** The Stylist also exposes
+> `POST /generate-saved-outfit-variants`, which uses the shared whole-wardrobe text composer to
+> return three wardrobe cards before any optional image render. Its `formula` mode preserves the
+> source formula and therefore passes `comparisonSetGuidance:false`; the generic comparison-set
+> instruction must not pressure it into changing formulas. `adjacent` mode deliberately explores a
+> nearby formula/silhouette/grounding strategy and retains comparison guidance. Both modes keep the
+> saved Main piece and use only shown wardrobe pieces.
+
 ### Stage map
 
 | Stage | What happens | Where |

@@ -69,9 +69,28 @@ CONTROLLER" directive in the system prompt.
 > is the rollback path if a regression surfaces; see
 > docs/freeform-rearchitecture-handoff.md's spec 14 entry.
 
-There is no more app pre-routing layer. `POST /api/ai/ask` builds `toolContext`
-directly and goes straight to Layer 2 — the model decides whether and how to
-plan from Layer 2's `plan_outfit_set` tool.
+There is no deterministic keyword pre-routing layer. Normally `POST /api/ai/ask` builds
+`toolContext` and goes straight to Layer 2. **Flagged 2026-08-18:** with
+both `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` and
+`WARDROBE_FREEFORM_EXECUTION_ROUTER=true`, a fresh request with no active piece, outfit or image
+first reaches a compact model-owned execution router. It sees only the request, date and timezone.
+It may directly select the narrow same-context 2–5-look profile; every other classification,
+failure or incomplete bounded composition falls through to Layer 2 unchanged. The direct profile
+does not assemble the wardrobe-manifest controller payload; the existing nested visual composer
+still receives its photograph roster and Style Constitution. See
+`docs/freeform-bounded-execution-spec.md` Phase 2.
+
+**[corrected 2026-08-19]** Successful direct routing is an early model-call return, not an early
+state return. Before responding, `/ask` persists normalized established context and the generated
+`current_outfit_set` through `boundedConversationStateFromToolContext` and
+`saveStylistConversationState`. The browser sends the actual chat thread ID on every `/ask` branch,
+so server recovery and follow-up meaning do not rely on a client echo.
+
+The direct bounded profile is also ineligible after any valid card has already been created during
+the turn. This prevents a hybrid tool sequence from replacing an earlier `propose_outfit` card when
+`generate_outfits` writes its batch. Shared time-of-day guidance requires physically adequate
+arrival/departure coverage; around 55°F, a sleeveless vest over a light or short-sleeved base is not
+narrated as sufficient warmth.
 
 ## Layer 2 — Model tool loop
 
@@ -89,6 +108,24 @@ Model-driven, up to 7 iterations (`askStylistWithTools`,
 | `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
 | `store_user_correction` | persist a taste correction |
 
+**[flagged, 2026-08-18] Bounded same-context batches.** When
+`WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true`, a new request for 2–5 fresh looks that share one
+occasion, activity and weather context uses `generate_outfits` once. That tool invokes the existing
+photograph-aware whole-wardrobe composer and returns the complete batch as the terminal paid step;
+deterministic code supplies the short introduction and any shortfall disclosure. Named location
+and resolved date are used for weather before roster construction, with the source recorded. The
+nested call's token usage is added to the parent turn. A
+validation shortfall is disclosed after that pass rather than reopening the serial
+search/`propose_outfit` loop. One-look, multi-context, selected-piece and revision flows are not
+changed. See `docs/freeform-bounded-execution-spec.md`.
+
+The bounded tool call itself declares the card contract, so this profile does not call
+`declare_intent` first. An ordinary new “what should I wear?” defaults to two options and enters
+this path directly; an explicit one/best/pick-one request retains targeted search plus one card,
+and an explicit count wins. Composer `reason`, `watchFor`, and `stylingInstructions` are locally
+checked against their final IDs; deliberation or discarded-ID prose is withheld without another
+paid iteration.
+
 ## Layer 3 — Output guards
 
 Deterministic post-checks on the model's final text. Each can force **one** retry
@@ -102,6 +139,13 @@ with a correction message before you see anything (`applyFreeformOutputChecks`,
 | `outfitProse` | model wrote an outfit as prose | redo via `propose_outfit` tool |
 | `outfitCount` | wrong number of outfits | retry with the right count |
 | `zeroResultContradiction` | recommended pieces despite a zero-result search | retry honestly |
+
+The `outfitCount` retry is intentionally bypassed after a bounded capsule or bounded same-context
+batch has completed; those flows deliver accepted cards plus explicit gap language within their
+one-composition-call budget.
+
+The bounded introduction is deterministic and count-aware: one direction, two directions, or the
+actual numeric count. Its shortfall sentence agrees grammatically with the number of ready cards.
 
 **Cross-cutting inputs** that drive all four layers: `activeContext.type` (piece /
 outfit / whole-wardrobe), the conversation mode, whether the thread already holds
@@ -137,6 +181,10 @@ stateDiagram-v2
 
 - **Entry:** `POST /api/ai/ask` (`routes/ai.js`). The turn's `conversationMode`
   is classified client-side by `classifyChatTurn` and passed in the body.
+- **Optional execution router:** `routeFreeformExecutionProfile` (`styling-engine/provider.js`)
+  makes one compact structured call before `buildStylistConversationPayload` only under the Phase
+  2 flag and eligibility boundary. A successful `bounded_multi` result calls `generate_outfits`
+  directly and returns; otherwise the full path below remains authoritative.
 - **No pre-route (spec 14):** the handler builds `toolContext` directly from
   the request body and goes straight to the model — planning turns rely
   entirely on the model calling `plan_outfit_set` itself.

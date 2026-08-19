@@ -21,7 +21,7 @@ process.env.ANTHROPIC_API_KEY = ''
 const { app } = await import('../server.js')
 const { createInvite } = await import('../lib/systemDb.js')
 
-const server = app.listen(0)
+const server = app.listen(0, '127.0.0.1')
 await once(server, 'listening')
 const baseUrl = `http://127.0.0.1:${server.address().port}`
 

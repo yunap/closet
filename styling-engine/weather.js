@@ -92,9 +92,10 @@ function classify(highs, lows, { exclusive = true } = {}) {
   const minLow = Math.min(...lows)
   const isHot = maxHigh >= HOT_F
   const isCold = minLow <= COLD_F
+  const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
-  if (!exclusive) return { isHot, isCold, ...extreme }
-  return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme }
+  if (!exclusive) return { isHot, isCold, ...extreme, ...observedRange }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme, ...observedRange }
 }
 
 async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive }) {
@@ -109,6 +110,17 @@ function heuristic({ mood, season, currentDate, seasonIsCalendarOnly }) {
   return { ...weatherProfileFromContext({ mood, season, currentDate, seasonIsCalendarOnly }), weatherSource: 'heuristic' }
 }
 
+function unavailable(reason = 'forecast_unavailable') {
+  return {
+    isHot: false,
+    isCold: false,
+    isRainy: false,
+    isWetExposure: false,
+    weatherSource: 'unavailable',
+    weatherFailure: reason
+  }
+}
+
 // Skip live resolution entirely under `node --test` unless a test explicitly injects its own
 // fetchImpl (used to exercise the live path deterministically without real network calls). This
 // guarantees the automated suite never depends on network access, matching the existing
@@ -121,9 +133,9 @@ export async function getCurrentWeatherProfile({ date = new Date(), location = '
   if (!location || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: date })
   try {
     const live = await resolveLive({ startDate: date, endDate: date, location, fetchImpl, exclusive: true })
-    return live || heuristic({ mood, season, currentDate: date })
+    return live || unavailable('location_or_forecast_not_found')
   } catch {
-    return heuristic({ mood, season, currentDate: date })
+    return unavailable('weather_request_failed')
   }
 }
 
@@ -132,9 +144,9 @@ export async function getWeatherProfileForPlan({ dateRange = {}, location = '', 
   if (!location || !start || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
   try {
     const live = await resolveLive({ startDate: start, endDate: end || start, location, fetchImpl, exclusive: false })
-    return live || heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
+    return live || unavailable('location_or_forecast_not_found')
   } catch {
-    return heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
+    return unavailable('weather_request_failed')
   }
 }
 

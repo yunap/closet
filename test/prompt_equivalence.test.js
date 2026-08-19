@@ -39,7 +39,16 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
   const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
   for (const key of ASSEMBLED_KEYS) {
     assert.ok(typeof snapshot[key] === 'string', `snapshot missing ${key}`)
-    assert.strictEqual(built[key], snapshot[key], `byte drift in ${key}`)
+    // 2026-08-18: one deliberate post-refactor composer instruction prevents its private roster
+    // comparison from leaking into user-facing card prose. Keep the frozen pre-refactor fixture
+    // intact and spell out the sole accepted delta so this remains a byte-level ratchet.
+    const expected = key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM'
+      ? snapshot[key].replace(
+          '- Respect the rotation warnings and any rejected-pairing memory provided.\n',
+          '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
+        )
+      : snapshot[key]
+    assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })
 

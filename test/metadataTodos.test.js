@@ -13,7 +13,7 @@ process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
 const { app, db } = await import('../server.js')
 
-const server = app.listen(0)
+const server = app.listen(0, '127.0.0.1')
 await once(server, 'listening')
 const baseUrl = `http://127.0.0.1:${server.address().port}`
 

@@ -7118,17 +7118,113 @@ img { display: block; max-width: 100%; }
   line-height: 1.4;
 }
 
-.wardrobe-builder-memory {
+.stylist-header-contexts {
   display: flex;
+  gap: 6px;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.wardrobe-builder-memory > svg {
-  width: 18px;
-  height: 18px;
+.stylist-rotation-memory {
+  position: relative;
+}
+
+.stylist-header-context-button {
+  min-height: 44px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-control);
+  cursor: pointer;
+}
+
+.stylist-header-context-button:hover,
+.stylist-header-context-button:focus-visible,
+.stylist-header-context-button[aria-expanded="true"] {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.stylist-header-context-button > svg {
+  width: 15px;
+  height: 15px;
   flex: 0 0 auto;
-  color: color-mix(in srgb, var(--accent) 72%, var(--text-muted));
+}
+
+.stylist-rotation-memory-compact {
+  display: none;
+}
+
+.stylist-context-caret {
+  font-size: 12px;
+  transition: transform 0.15s;
+}
+
+.stylist-context-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.stylist-rotation-memory-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(320px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  display: grid;
+  gap: 9px;
+  font-size: var(--type-control);
+}
+
+.stylist-rotation-memory-popover p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.stylist-rotation-reset-button {
+  min-height: 38px;
+  justify-self: start;
+  padding: 7px 11px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--type-control);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stylist-rotation-reset-button:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.stylist-rotation-memory-error {
+  color: #a64b4b;
+  font-size: var(--type-caption);
+  line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+  .stylist-rotation-memory-full {
+    display: none;
+  }
+
+  .stylist-rotation-memory-compact {
+    display: inline;
+  }
 }
 
 .style-direction-tooltip .info-tooltip-trigger.size-sm {

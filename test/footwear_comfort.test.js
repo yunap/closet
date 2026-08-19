@@ -392,6 +392,42 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
   }
 })
 
+test('bounded whole-wardrobe execution honors live weather and adaptive image sizing end to end', async () => {
+  // Force one garment into the complex branch; the remaining photographed fixtures stay plain.
+  db.prepare('UPDATE pieces SET formality = ?').run('everyday')
+  db.prepare('UPDATE pieces SET pattern_complexity = ? WHERE id = ?').run('loud', seeded.top)
+  const liveWeather = {
+    isHot: false,
+    isCold: false,
+    highF: 78,
+    lowF: 56,
+    weatherSource: 'live'
+  }
+
+  const result = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'casual',
+    season: 'summer; mild weather; forecast high 78°F, low 56°F',
+    mood: 'relaxed',
+    activity: 'walking',
+    question: 'Outdoor farmers market in Larkspur',
+    limit: 2,
+    resolvedWeatherProfile: liveWeather,
+    adaptiveVisualDetail: true
+  })
+
+  assert.deepEqual(result.debug.weatherProfile, liveWeather)
+  assert.equal(result.debug.weatherProfile.isHot, false, 'summer text must not override live 78°F physics')
+  assert.equal(result.debug.adaptiveVisualDetail, true)
+  assert.equal(result.debug.thumbPx, null)
+  assert.ok((result.debug.imageSizeCounts['800'] || 0) >= 1, 'complex photographed pieces should receive 800px evidence')
+  assert.ok((result.debug.imageSizeCounts['448'] || 0) >= 1, 'plain photographed pieces should receive 448px evidence')
+  assert.equal(result.debug.imageSizeCounts['768'] || 0, 0, 'adaptive bounded execution must not silently use the fixed 768px path')
+  assert.equal(
+    Object.values(result.debug.imageSizeCounts).reduce((sum, count) => sum + count, 0),
+    result.debug.shownPieceCount
+  )
+})
+
 // docs/activity-and-roster-spec.md Part 1 — the activity must be able to become 'hiking'.
 // Live case (thread_1786908272853): the model declared `walking` for a nature walk while its own
 // prose said "if the trail has any rocky or uneven sections", and only the structured value reaches

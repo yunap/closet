@@ -2254,3 +2254,13 @@ the updated/added unit tests instead, since reproducing it live would need an un
 model rejection). Items 5's map extension and 6's mechanical fixes were verified by code reading
 and the full test suite, not live-clicked individually (no user-facing flow isolates them from
 data already covered above).
+
+## 2026-08-18 — rotation-memory disclosure direction
+
+Owner agreed to move the recent-piece disclosure from beneath the Stylist composer into the
+header beside Weather and to show it only on flows affected by `whole_wardrobe_sessions` memory.
+A direction-review panel (product design, UX/accessibility, and fashion-product) agreed on these
+details: say *recently used* rather than *resting*; explain that pieces are deprioritized but may
+still win; provide **Include all pieces again** in a keyboard-dismissable popover; hide the control
+for ordinary advice/critique, selected-piece styling, unrelated chats, and a zero count. The
+implemented screen still requires owner visual review before this placement is called ratified.
