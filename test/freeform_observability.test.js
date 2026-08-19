@@ -15,9 +15,9 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather } = await import('../styling-engine/tools.js')
-const { persistFreeformGenerationRun } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, freeformToolLoopFallbackAnswer, recordToolLoopUsage } = await import('../styling-engine/provider.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, freeformAdaptiveVisualsEnabled, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix } = await import('../routes/ai.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -38,6 +38,8 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // docs/card-consistency-spec.md Part 1 — cards whose prose did not account for a top worn with
     // a dress, sent back for one correction round.
     cardProseInconsistentBlocks: 0,
+    atomicMultiLookCalls: 0,
+    executionRouterCalls: 0,
     // Capsule's ending: a clause that spent its retry and is still failing ships with a note.
     unresolvedCheckDisclosures: 0,
     destinationClarificationRetries: 0,
@@ -65,6 +67,60 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     providerCacheCreationInputTokens: 0,
     weatherSource: ''
   })
+})
+
+test('whole-wardrobe composer labels expose authoritative opacity and explicit base-layer status', () => {
+  assert.equal(
+    composerPieceLineSuffix({ fabric_category: 'lace', opacity: 'opaque', needs_base: 'no', tuck_behavior: 'wear_over_only' }),
+    '; fabric: lace; opacity: opaque; tuck_behavior: wear_over_only; needs_base: no'
+  )
+  assert.equal(composerPieceLineSuffix({ opacity: 'sheer', needs_base: 'yes' }), '; opacity: sheer; needs_base: yes')
+})
+
+test('small execution router owns intent without receiving wardrobe context', async () => {
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return {
+      profile: 'bounded_multi',
+      occasion: 'outdoor_daytime_social',
+      activity: 'walking',
+      season: 'warm',
+      mood: 'creative outdoor afternoon',
+      mission: 'mix',
+      limit: 2,
+      location: 'Sausalito, CA',
+      date: '2026-08-22'
+    }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({
+      question: 'On Saturday I am walking around an outdoor art fair in Sausalito. What should I wear?',
+      currentDate: '2026-08-18',
+      timezone: 'America/Los_Angeles'
+    })
+    assert.equal(routed.value.profile, 'bounded_multi')
+    assert.equal(routed.value.limit, 2)
+    assert.equal(routed.value.activity, 'walking')
+    assert.match(captured.system, /Choose bounded_multi ONLY/)
+    assert.match(captured.system, /dinner with friends.*occasion:city/s)
+    assert.match(captured.system, /attending dinner there, does not establish walking/)
+    assert.doesNotMatch(captured.system, /WARDROBE MANIFEST|STYLE CONSTITUTION/)
+    assert.doesNotMatch(JSON.stringify(captured.messages), /piece ID|garment|wardrobe manifest/i)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
+test('whole-wardrobe composer receives wear mechanics but is told not to recite fixed garment truth', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /tuck_behavior: \$\{piece\.tuck_behavior\}/)
+  assert.match(routeSrc, /hem_finish: \$\{piece\.hem_finish\}/)
+  assert.match(routeSrc, /waistband_type: \$\{piece\.waistband_type\}/)
+  assert.match(routeSrc, /opacity: \$\{piece\.opacity\}/)
+  assert.match(routeSrc, /needs_base: \$\{piece\.needs_base\}/)
+  assert.match(routeSrc, /Opacity and needs_base are authoritative/)
+  assert.match(routeSrc, /Do not repeat a fixed fact the owner already knows/)
 })
 
 test('recordToolLoopUsage aggregates every paid provider iteration into turn diagnostics', () => {
@@ -505,6 +561,8 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       planOutfitSetCalls: 0,
       outfitProseWithoutToolCall: 1,
       zeroResultContradictionBlocks: 1,
+      atomicMultiLookCalls: 1,
+      executionRouterCalls: 1,
       destinationClarificationRetries: 1,
       planSlotEnvironmentInferred: 2,
       planSlotActivityInferred: 3,
@@ -523,6 +581,8 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.propose_validation_fails, 1)
   assert.equal(row.outfit_prose_without_tool_count, 1)
   assert.equal(row.zero_result_contradiction_blocks, 1)
+  assert.equal(row.atomic_multi_look_calls, 1)
+  assert.equal(row.execution_router_calls, 1)
   assert.equal(row.destination_clarification_retries, 1)
   assert.equal(row.plan_slot_environment_inferred, 2)
   assert.equal(row.plan_slot_activity_inferred, 3)
@@ -577,6 +637,20 @@ test('the /ask route records diagnostics from its catch block, not only on succe
   assert.match(routeSrc, /diagnosticsContext = toolContext/)
   // And the catch persists it, flagged.
   assert.match(routeSrc, /catch \(err\) \{[\s\S]{0,900}persistFreeformGenerationRun\(\{[\s\S]{0,300}turnFailed: true/)
+})
+
+test('the flagged execution router bypasses the full manifest controller only after bounded composition succeeds', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /WARDROBE_FREEFORM_EXECUTION_ROUTER/)
+  assert.match(routeSrc, /routed\.value\?\.profile === 'bounded_multi'/)
+  assert.match(routeSrc, /if \(toolContext\.atomicMultiLookCompleted\) \{[\s\S]{0,1200}return res\.json/)
+  const routerBlock = routeSrc.slice(
+    routeSrc.indexOf('if (routerEligible)'),
+    routeSrc.indexOf('const payload = await buildStylistConversationPayload')
+  )
+  assert.doesNotMatch(routerBlock, /buildStylistConversationPayload|askStylistWithTools/)
+  assert.match(routerBlock, /saveStylistConversationState\([\s\S]*boundedConversationStateFromToolContext/)
+  assert.match(routeSrc, /catch \(routerError\) \{[\s\S]{0,500}Falling back to full stylist/)
 })
 
 test('persistFreeformGenerationRun stores aggregate provider usage for cost audits', () => {
@@ -728,6 +802,270 @@ test('applyFreeformOutputChecks retries when concrete requested outfit count is 
 
   const alreadyRetried = applyFreeformOutputChecks("Here's one outfit.", toolContext, new Set(['outfitCount']))
   assert.equal(alreadyRetried.block, false)
+})
+
+test('bounded multi-look ends after one composer pass and discloses a validation shortfall', () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: 'new_request' },
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 3,
+    generatedOutfits: [{ label: 'Ready' }, { label: 'Rejected', broken: true }],
+    freeformDiagnostics: {}
+  }
+  assert.deepEqual(applyFreeformOutputChecks('Here is the validated set.', toolContext), { block: false })
+  assert.deepEqual(stylistToolsForTurn(toolContext), [])
+  assert.match(boundedAtomicMultiLookFinalAnswer('Here is the validated set.', toolContext), /1 of 3 requested outfits is ready/)
+  assert.match(boundedAtomicMultiLookResponse(toolContext), /I’d start with this direction/)
+})
+
+test('bounded multi-look introduction uses exact live weather context without machinery language', () => {
+  const answer = boundedAtomicMultiLookResponse({
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 2,
+    boundedWeatherSummary: 'a forecast high of 69°F and low of 55°F',
+    boundedLocation: 'Sausalito, CA',
+    generatedOutfits: [{ label: 'One' }, { label: 'Two' }]
+  })
+  assert.equal(answer, 'For a forecast high of 69°F and low of 55°F in Sausalito, CA, I’d compare these two directions.')
+  assert.doesNotMatch(answer, /wardrobe-verified|for this request/i)
+})
+
+test('bounded multi-look introduction names the actual number of ready directions', () => {
+  const answer = boundedAtomicMultiLookResponse({
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 4,
+    boundedWeatherSummary: 'a forecast high of 72°F and low of 58°F',
+    boundedLocation: 'Oakland, CA',
+    generatedOutfits: [{ label: 'One' }, { label: 'Two' }, { label: 'Three' }, { label: 'Four' }]
+  })
+  assert.equal(answer, 'For a forecast high of 72°F and low of 58°F in Oakland, CA, I’d compare these 4 directions.')
+})
+
+test('bounded multi-look introduction starts rather than compares when weather context has one ready card', () => {
+  const answer = boundedAtomicMultiLookResponse({
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 2,
+    boundedWeatherSummary: 'a forecast high of 70°F and low of 55°F',
+    boundedLocation: 'San Francisco, CA',
+    generatedOutfits: [{ label: 'One' }]
+  })
+  assert.match(answer, /I’d start with this direction\./)
+  assert.doesNotMatch(answer, /compare this direction/)
+})
+
+test('bounded router state preserves the generated set and established context for server-side follow-ups', () => {
+  const state = boundedConversationStateFromToolContext({
+    occasion: 'city',
+    activity: 'none',
+    season: 'mild weather',
+    mood: 'relaxed social',
+    mission: 'mix',
+    boundedLocation: 'San Francisco, CA',
+    boundedWeatherSummary: 'a forecast high of 70°F and low of 55°F',
+    generatedOutfits: [{
+      label: 'Layered dinner',
+      pieceIds: [11, 12, 13],
+      pieces: [{ id: 11, name: 'top' }, { id: 12, name: 'trousers' }, { id: 13, name: 'flats' }]
+    }]
+  })
+  assert.deepEqual(state.current_outfit_set, [{
+    index: 1,
+    label: 'Layered dinner',
+    piece_ids: [11, 12, 13],
+    pieces: ['top', 'trousers', 'flats']
+  }])
+  assert.equal(state.established.location, 'San Francisco, CA')
+  assert.equal(state.established.weather, 'a forecast high of 70°F and low of 55°F')
+})
+
+test('bounded multi-look discloses unavailable destination weather instead of claiming a season temperature', () => {
+  const answer = boundedAtomicMultiLookResponse({
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 2,
+    boundedLocation: 'Berkeley, CA',
+    boundedWeatherUnavailable: true,
+    generatedOutfits: [{ label: 'One' }, { label: 'Two' }]
+  })
+  assert.equal(answer, 'I couldn’t verify the forecast for Berkeley, CA, so these options avoid assuming hot or cold weather; check the temperature before choosing.')
+  assert.doesNotMatch(answer, /summer|warm night|hot weather/i)
+})
+
+test('live numeric weather owns hard gates even when the execution router supplies summer', () => {
+  const live = {
+    isHot: false,
+    isCold: false,
+    highF: 78,
+    lowF: 56,
+    weatherSource: 'live'
+  }
+  assert.deepEqual(resolveWholeWardrobeWeatherProfile({
+    mood: 'relaxed',
+    stylingRequest: 'outdoor farmers market',
+    season: 'summer; mild weather; forecast high 78°F, low 56°F',
+    resolvedWeatherProfile: live
+  }), live)
+
+  assert.equal(resolveWholeWardrobeWeatherProfile({
+    season: 'summer; mild weather; forecast high 78°F, low 56°F'
+  }).isHot, true, 'without a resolved live profile the existing text fallback remains unchanged')
+})
+
+test('unavailable named-place weather remains neutral through whole-wardrobe composition', () => {
+  const unavailable = {
+    isHot: false,
+    isCold: false,
+    isRainy: false,
+    isWetExposure: false,
+    weatherSource: 'unavailable',
+    weatherFailure: 'weather_request_failed'
+  }
+  assert.deepEqual(resolveWholeWardrobeWeatherProfile({
+    season: 'summer; hot weather',
+    resolvedWeatherProfile: unavailable
+  }), unavailable)
+})
+
+test('direct Visual Composer resolves live weather only for Current season', async () => {
+  const calls = []
+  const fetchImpl = async (url) => {
+    calls.push(url)
+    if (url.includes('geocoding-api')) {
+      return { ok: true, json: async () => ({ results: [{ latitude: 37.9, longitude: -122.1 }] }) }
+    }
+    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [69], temperature_2m_min: [55] } }) }
+  }
+
+  const current = await resolveDirectVisualComposerWeather({
+    season: 'current season',
+    location: 'Walnut Creek, CA',
+    date: '2026-08-19',
+    fetchImpl
+  })
+  assert.deepEqual(current, {
+    isHot: false,
+    isCold: false,
+    highF: 69,
+    lowF: 55,
+    weatherSource: 'live'
+  })
+  assert.equal(calls.length, 2)
+
+  const hypothetical = await resolveDirectVisualComposerWeather({
+    season: 'winter',
+    location: 'Walnut Creek, CA',
+    date: '2026-08-19',
+    fetchImpl
+  })
+  assert.equal(hypothetical, null)
+  assert.equal(calls.length, 2, 'an explicit seasonal brief must not fetch or be overridden by today\'s weather')
+})
+
+test('direct Visual Composer endpoint wires saved location weather into whole-wardrobe composition', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const routeStart = routeSrc.indexOf("router.post('/generate-wardrobe-outfits-visual'")
+  const routeEnd = routeSrc.indexOf('// ── AI Visual Rendering & Boards', routeStart)
+  const routeBlock = routeSrc.slice(routeStart, routeEnd)
+  assert.match(routeBlock, /location: input\.location \|\| getHomeLocation\(\)/)
+  assert.match(routeBlock, /generateWholeWardrobeOutfitsVisualInternal\(\{ \.\.\.input, resolvedWeatherProfile \}\)/)
+})
+
+test('bounded composer schema accepts location and resolved date for weather', () => {
+  const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.input_schema
+  assert.equal(schema?.properties?.location?.type, 'string')
+  assert.match(schema?.properties?.date?.description || '', /YYYY-MM-DD/)
+})
+
+test('bounded generate call declares its own cards contract only inside the flagged narrow profile', () => {
+  const previous = process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+  try {
+    process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = 'true'
+    const bounded = { turnMode: 'new_request' }
+    assert.equal(declareBoundedMultiLookIntent(bounded, { limit: 3 }), true)
+    assert.deepEqual(bounded.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request' })
+
+    const ordinaryWhatToWear = { turnMode: 'new_request' }
+    assert.equal(declareBoundedMultiLookIntent(ordinaryWhatToWear), true)
+    assert.deepEqual(ordinaryWhatToWear.declaredIntent, { want: 'cards', outfitCount: 2, turnMode: 'new_request' })
+
+    for (const [context, call] of [
+      [{ turnMode: 'followup' }, { limit: 3 }],
+      [{ turnMode: 'new_request' }, { limit: 1 }],
+      [{ turnMode: 'new_request' }, { limit: 3, pieceId: 42 }],
+      [{ turnMode: 'new_request', declaredIntent: { want: 'text' } }, { limit: 3 }],
+    ]) {
+      assert.equal(declareBoundedMultiLookIntent(context, call), false)
+      assert.notDeepEqual(context.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request' })
+    }
+
+    delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+    const flagOff = { turnMode: 'new_request' }
+    assert.equal(declareBoundedMultiLookIntent(flagOff, { limit: 3 }), false)
+    assert.equal(flagOff.declaredIntent, undefined)
+  } finally {
+    if (previous === undefined) delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+    else process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = previous
+  }
+})
+
+test('adaptive visual evidence is separately flagged and defaults off', () => {
+  const previous = process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS
+  try {
+    delete process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS
+    assert.equal(freeformAdaptiveVisualsEnabled(), false)
+    process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS = 'true'
+    assert.equal(freeformAdaptiveVisualsEnabled(), true)
+    const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+    const toolsSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
+    assert.match(toolsSrc, /generatedOutfits\.some\(outfit => !outfit\?\.broken\)/, 'bounded generation must not overwrite an earlier valid card in a hybrid turn')
+    assert.match(routeSrc, /pieceVisualDetailPolicy\(p, \{ allowLow: adaptiveVisualDetail \}\)/)
+    assert.match(routeSrc, /imageSizeCounts/)
+    const wholeWardrobeCall = toolsSrc.slice(
+      toolsSrc.indexOf('result = await generateWholeWardrobeOutfitsVisualInternal({'),
+      toolsSrc.indexOf('\n          })', toolsSrc.indexOf('result = await generateWholeWardrobeOutfitsVisualInternal({'))
+    )
+    const selectedPieceCall = toolsSrc.slice(
+      toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'),
+      toolsSrc.indexOf('\n          })', toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'))
+    )
+    assert.match(wholeWardrobeCall, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
+    assert.match(wholeWardrobeCall, /adaptiveVisualDetail: boundedMultiLook && freeformAdaptiveVisualsEnabled\(\)/)
+    assert.doesNotMatch(selectedPieceCall, /adaptiveVisualDetail|resolvedWeatherProfile/)
+  } finally {
+    if (previous === undefined) delete process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS
+    else process.env.WARDROBE_FREEFORM_ADAPTIVE_VISUALS = previous
+  }
+})
+
+test('nested composer usage is included in the parent freeform diagnostics', () => {
+  const toolContext = {}
+  recordNestedFreeformUsage(toolContext, {
+    inputTokens: 1200,
+    outputTokens: 340,
+    cacheReadInputTokens: 900,
+    cacheCreationInputTokens: 50
+  })
+  assert.equal(toolContext.freeformDiagnostics.providerIterations, 1)
+  assert.equal(toolContext.freeformDiagnostics.providerInputTokens, 1200)
+  assert.equal(toolContext.freeformDiagnostics.providerOutputTokens, 340)
+  assert.equal(toolContext.freeformDiagnostics.providerCacheReadInputTokens, 900)
+  assert.equal(toolContext.freeformDiagnostics.providerCacheCreationInputTokens, 50)
+})
+
+test('bounded batch contract uses the server-resolved new-request mode when declaration omits it', async () => {
+  const previous = process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+  process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = 'true'
+  try {
+    const toolContext = { turnMode: 'new_request' }
+    const result = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, toolContext)
+    assert.match(result.message, /call generate_outfits exactly once with limit:3/)
+    assert.equal(toolContext.declaredIntent.turnMode, null)
+
+    const followup = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, { turnMode: 'followup' })
+    assert.doesNotMatch(followup.message, /call generate_outfits exactly once/)
+  } finally {
+    if (previous === undefined) delete process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK
+    else process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK = previous
+  }
 })
 
 test('freeformToolLoopFallbackAnswer reports requested-count shortfall instead of generic success', () => {

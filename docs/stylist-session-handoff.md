@@ -1,7 +1,6 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-30. Branch `stylist-docs-staleness-fixes`, reset to `origin/main`
-at `6f94f6f` (PR #188).
+**Last updated:** 2026-08-19. Active work is on `codex/freeform-atomic-multilook`.
 
 > **Historical design specs live outside this repo.** 35 of them in `~/Downloads/spec_*.md`
 > ([index](spec-archive-index.md)). They predate several redesigns, so treat them as provenance
@@ -17,6 +16,34 @@ at `6f94f6f` (PR #188).
 > the live-run findings that exist nowhere else, and carries the sequenced plan. The entries in
 > this file remain the authority on **owner rulings**; the index is the authority on **what is done
 > and what is next**.
+
+## 2026-08-18 → 08-19 — bounded freeform architecture extension
+
+The owner approved the capsule-style bounded direction for ordinary same-context “what should I
+wear?” requests. A compact model-owned router calls one photograph-grounded whole-wardrobe
+composer, then deterministic code ends the paid loop. Corrected live run `thread_1787097967248`
+measured about $0.146 versus the original ~$0.324 floor while retaining two valid cards.
+
+Owner rulings from this arc:
+
+- ordinary “what should I wear?” returns two options; an explicit count wins;
+- recent visual-composer memory applies to affected freeform flows, but is disclosed in the header
+  with **Include all pieces again**;
+- generic dinner with friends is city/smart-casual, not casual; a destination does not imply walking;
+- Visual Composer “Current season” uses its saved home location and live weather;
+- wear mechanics reach the visual composer, and the model explicitly states useful garment
+  relationships in `styling_instructions` because the image generator reads that field;
+  application code does not infer renderer instructions from silhouette prose;
+- fixed garment truth is obeyed silently, not narrated back to its owner;
+- a mild daily range is interpreted at the requested time. Indoor dinner may have a light base, but
+  a 55°F evening still needs a plausible arrival/departure layer when available.
+
+The 2026-08-19 architecture review fixed count-aware introductions, bounded server-state
+persistence, truthful unavailable-weather plan labels, a sanitizer false positive on legitimate
+“must use” instructions, reset focus/visible confirmation, and comparison-guidance leakage into
+formula-similar variants. Direct Visual Composer live weather and global shared-composer wear
+mechanics are intentional owner-approved extensions. Full measurements and thread evidence live in
+`docs/freeform-bounded-execution-spec.md`.
 
 ## 2026-08-16 → 08-18 — the nature-walk session: owner rulings, and what shipped
 

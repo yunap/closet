@@ -33,6 +33,8 @@ test('getCurrentWeatherProfile resolves live weather via geocode + forecast and 
   assert.equal(profile.weatherSource, 'live')
   assert.equal(profile.isHot, true)
   assert.equal(profile.isCold, false)
+  assert.equal(profile.highF, 88)
+  assert.equal(profile.lowF, 62)
 })
 
 test('getCurrentWeatherProfile classifies cold correctly', async () => {
@@ -43,6 +45,16 @@ test('getCurrentWeatherProfile classifies cold correctly', async () => {
   assert.equal(profile.isHot, false)
 })
 
+test('getCurrentWeatherProfile preserves a mild forecast range for downstream styling judgment', async () => {
+  const fetchImpl = makeMockFetch({ highs: [69], lows: [55] })
+  const profile = await getCurrentWeatherProfile({ date: new Date('2026-08-22'), location: 'Sausalito, CA', fetchImpl })
+  assert.equal(profile.weatherSource, 'live')
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, false)
+  assert.equal(profile.highF, 69)
+  assert.equal(profile.lowF, 55)
+})
+
 test('getCurrentWeatherProfile falls back to the heuristic when no location is given', async () => {
   const fetchImpl = makeMockFetch()
   const profile = await getCurrentWeatherProfile({ season: 'highs 90F', fetchImpl })
@@ -51,11 +63,13 @@ test('getCurrentWeatherProfile falls back to the heuristic when no location is g
   assert.equal(fetchImpl.callCount(), 0, 'no network call should be attempted without a location')
 })
 
-test('getCurrentWeatherProfile falls back to the heuristic when geocoding finds nothing, without throwing', async () => {
+test('getCurrentWeatherProfile stays neutral and observable when a named location cannot be resolved', async () => {
   const fetchImpl = makeMockFetch({ geocodeResults: [] })
   const profile = await getCurrentWeatherProfile({ season: 'cold', location: 'Nowhereville', fetchImpl })
-  assert.equal(profile.weatherSource, 'heuristic')
-  assert.equal(profile.isCold, true)
+  assert.equal(profile.weatherSource, 'unavailable')
+  assert.equal(profile.weatherFailure, 'location_or_forecast_not_found')
+  assert.equal(profile.isCold, false)
+  assert.equal(profile.isHot, false)
 })
 
 // 2026-07-10: confirmed live against the real Open-Meteo API that "Walnut Creek, CA" (a completely
@@ -79,21 +93,23 @@ test('getCurrentWeatherProfile retries geocoding with just the city when a "City
   assert.equal(calls, 3, 'two geocode attempts (full string, then city-only) plus one forecast call')
 })
 
-test('getCurrentWeatherProfile falls back to the heuristic when the fetch throws, without throwing', async () => {
+test('getCurrentWeatherProfile stays neutral and observable when a named-location request throws', async () => {
   const fetchImpl = async () => { throw new Error('network down') }
   const profile = await getCurrentWeatherProfile({ season: 'hot', location: 'Portland, OR', fetchImpl })
-  assert.equal(profile.weatherSource, 'heuristic')
-  assert.equal(profile.isHot, true)
+  assert.equal(profile.weatherSource, 'unavailable')
+  assert.equal(profile.weatherFailure, 'weather_request_failed')
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, false)
 })
 
-test('getCurrentWeatherProfile falls back to the heuristic when the forecast response is not ok', async () => {
+test('getCurrentWeatherProfile stays neutral when the named-location forecast response is not ok', async () => {
   const fetchImpl = async (url) => {
     if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 1, longitude: 1 }] }) }
     return { ok: false }
   }
   const profile = await getCurrentWeatherProfile({ season: 'cold', location: 'Portland, OR', fetchImpl })
-  assert.equal(profile.weatherSource, 'heuristic')
-  assert.equal(profile.isCold, true)
+  assert.equal(profile.weatherSource, 'unavailable')
+  assert.equal(profile.isCold, false)
 })
 
 test('under NODE_ENV=test, live resolution is skipped when no fetchImpl is injected (never hits real network)', async () => {

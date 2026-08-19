@@ -1,5 +1,94 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **2026-08-18 bounded-execution expansion:** the philosophy below remains authoritative: the
+> conversational model owns intent and code owns truth/constraints. The next cost phase does not
+> add a keyword pre-route. It promotes the existing one-call visual `generate_outfits` pipeline for
+> 2–5 fresh looks sharing one context, following the atomic capsule precedent, while retaining the
+> full loop for open-ended work. See [freeform-bounded-execution-spec.md](freeform-bounded-execution-spec.md).
+>
+> **Live tightening, 2026-08-18:** `thread_1787079261414` completed the same three-look nature-walk
+> request in three paid iterations at $0.267537 (17.6% below the six-iteration $0.324696 baseline),
+> with live destination weather and three structurally valid cards. Its first reason exposed the
+> visual composer's recent-piece comparisons and discarded IDs. The flagged contract now asks the
+> controller to call `generate_outfits` directly—its call declares the bounded cards intent—and
+> locally withholds composer deliberation that does not describe the final card. The general
+> `declare_intent` contract and recent-piece memory remain unchanged outside this bounded profile.
+>
+> **Owner ruling after `thread_1787089704692`, 2026-08-18:** an ordinary “what should I wear?”
+> should offer options and defaults to two. It goes directly to bounded `generate_outfits`; explicit
+> one/best/pick-one language keeps the one-card path and explicit counts win. The third run’s hybrid
+> search-plus-composer path cost about $0.3376, proving the preliminary search is not harmless.
+> Composer deliberation is now withheld independently from `reason`, `watchFor`, and
+> `stylingInstructions`.
+>
+> **Memory visibility, 2026-08-18:** bounded freeform cards write and consult the same
+> `whole_wardrobe_sessions` rotation memory as Visual Composer. A header control beside Weather
+> names the recent-piece count and offers *Include all pieces again*. It appears only while a flow
+> that consults this memory is active: Visual Composer, saved-outfit variants, or a bounded
+> whole-wardrobe freeform result. It is absent from ordinary advice, critique, and selected-piece
+> styling. A blank new chat is the necessary preflight exception: it shows the control while its
+> first request is still unresolved so the user can reset before a bounded call, then hides it if
+> the resulting flow does not consult rotation memory. The reset clears only short-lived rotation
+> memory, not feedback, durable learning, or thread context.
+>
+> **Comparison quality, 2026-08-18:** the first accepted two-option bounded run returned two valid
+> but structurally near-identical tee + shorts + athletic-shoe looks. Root cause was not roster
+> scarcity: the composer returned exactly the requested two candidates, advisor mode correctly
+> preserved them (`applyDiversity:false`), and “different visual thesis” allowed variation without
+> structural choice. Multi-option requests now carry a volatile-tail comparison contract asking the
+> visual model for a different formula or silhouette when eligible pieces support it, while allowing
+> activity-safe footwear to repeat. Debug output records unique formula/silhouette counts and a
+> collapsed-set flag; it does not post-select or censor the model's visual judgment.
+>
+> **Exact-weather and closing-tone correction, 2026-08-18:** the Sausalito art-fair run proved that
+> `weather_source:live` was not enough: `getCurrentWeatherProfile` reduced a 69°F forecast to
+> `mild weather` before composition, producing generic warm-weather cards. Live profiles now retain
+> `highF`/`lowF`; bounded composition receives the range, while existing hot/cold gates remain
+> unchanged. The paid closing call stays removed. Its robotic local replacement (*“wardrobe-verified
+> outfits for this request”*) is replaced by a contextual no-call line naming forecast and place.
+>
+> **Small execution router, 2026-08-18 (flagged):** `thread_1787093817045` showed that the
+> bounded outer controller still wrote ~40,353 cache-creation tokens merely to choose
+> `generate_outfits`; the nested visual composer then wrote ~41,105. Under
+> both `WARDROBE_FREEFORM_ATOMIC_MULTILOOK=true` and
+> `WARDROBE_FREEFORM_EXECUTION_ROUTER=true`, eligible fresh requests first reach a compact
+> structured model call with only request/date/timezone. A confident 2–5-look same-context route
+> calls the existing visual composer directly; one-look, advice, critique, selected-piece,
+> revision, capsule, packing, multi-context and ambiguous requests—and every failure—fall back to
+> the full stylist. This preserves the inversion: a model still owns intent, while code owns the
+> narrow contract and the photograph-aware model owns styling judgment. Diagnostics persist router
+> and composer usage separately in the same turn total. Its initial cold-cost projection was
+> ~$0.17–$0.18; the later corrected run measured ~$0.146.
+>
+> **First router live result, 2026-08-18:** `thread_1787096409835` measured ~$0.186 versus ~$0.324
+> immediately before it (about 43% lower), with `execution_router;generate_outfits` and no full
+> manifest controller. Owner ruling: the router's `casual` classification for this app's farmers'
+> market is correct. Quality was not yet accepted because its `summer` label overrode a live
+> 78°F/56°F non-hot profile inside the composer and suppressed 59 insulating pieces plus 20 fiber
+> matches. The resolved live profile now owns hard weather gates; season remains styling context.
+>
+> **Adaptive-evidence experiment:** the corrected Larkspur roster reconstructs to 80 photographed
+> pieces, evenly split by the existing visual-detail policy: 40 complex/expressive/textured pieces
+> at 800px and 40 plain pieces at 448px. That is 28.7% fewer aggregate pixels than forcing all 80 to
+> 768px while increasing detail for the hard-to-read half. `WARDROBE_FREEFORM_ADAPTIVE_VISUALS=true`
+> enables this only for bounded freeform; roster identity and other flows stay unchanged. Pixel
+> reduction was subsequently live-measured in `thread_1787097967248`: cache creation fell from
+> 43,682 to 32,398 tokens while two valid cards were returned.
+>
+> **Do not cite `thread_1787097350838` as a result.** It repeated the old hot roster and 43,682
+> cache-creation tokens because both new arguments were mistakenly wired to the selected-piece
+> generator rather than the whole-wardrobe generator used here. The branch wiring is corrected and
+> its test now inspects the two call blocks independently. This wrong turn matters: the earlier
+> source assertion proved only that the argument text existed somewhere in `tools.js`, not that the
+> executing branch received it.
+>
+> **Corrected live result, 2026-08-18:** `thread_1787097967248` carried the live 77.9°F/56.2°F
+> profile into composition, removed the erroneous hot-weather exclusions, and returned two valid
+> cards. Adaptive evidence reduced cache creation from 43,682 to 32,398 tokens. Total measured
+> usage (2,436 input, 1,145 output, 32,398 cache creation) estimates to ~$0.146 at the recorded
+> provider rates—about 55% below the original ~$0.324 call. This is one accepted architecture run,
+> not yet a broad quality distribution.
+
 For any assistant (or human) continuing this effort. Written 2026-07-12, mid-way
 through live testing. The architecture rationale and migration plan live in
 [docs/flows/freeform-stylist-chat.md](flows/freeform-stylist-chat.md) (the
@@ -1426,6 +1515,43 @@ its own first commit:
   execution record, including the devtools-diagnostics UI gap now marked
   **CLOSED — affirmed keep-as-is** by owner ruling (two prior audits had
   independently recommended the same thing).
+
+## 2026-08-19 — bounded-router review hardening and shared-composer boundaries
+
+The bounded ordinary-request architecture is accepted; this pass hardened its boundaries without
+adding a paid step. `boundedAtomicMultiLookResponse` now writes the actual ready count.
+`boundedConversationStateFromToolContext` persists the generated set and established context before
+the direct `/ask` return, while every browser `/ask` branch supplies its real thread ID. The prose
+integrity detector no longer erases legitimate instructions containing “wait” or “must use”; it
+continues to catch recognizable rebuilding/checking/recent-memory deliberation.
+
+Two changes are explicitly global by owner ruling: direct Visual Composer “Current season” resolves
+saved-home live weather, and every shared whole-wardrobe composer receives wear facts plus the
+explicit `styling_instructions` renderer contract. These are not flag leakage. Comparison guidance
+is narrower: bounded options, direct Visual Composer, and adjacent exploration receive it;
+formula-similar saved-outfit variants do not. Failed named-location forecasts remain neutral for
+all callers, but plan weather labels now state that the forecast is unavailable and temperature is
+unknown rather than claiming a seasonal estimate.
+
+Live dinner thread `thread_1787101448245` proved that ordinary prose produces explicit renderer
+instructions without application inference. It also showed a 70°F/55°F evening card without a
+layer. The shared composer now judges the time-relevant end of the numeric range and asks for a
+removable arrival/departure layer when supported, including for indoor destinations. This remains
+model judgment inside the mild band, not a new deterministic weather gate.
+
+Live dinner thread `thread_1787103270104` then showed why “plausible layer” was too loose: a
+sleeveless vest over a light top was narrated as handling a 55°F transit. The shared prompt now
+rejects that specific physical claim and requires sleeve-bearing outerwear, a genuinely warm
+long-sleeved base plus an adequate layer, or a wardrobe-gap disclosure. The same hardening closes
+the review's hybrid run-3 loss: bounded generation is ineligible once a valid card already exists,
+so it cannot overwrite that card. Composite display-season strings still round-trip through
+memory; carrying resolved weather physics separately is recorded as follow-up work.
+
+The same live thread exposed a separate truth-surface omission: the composer saw lace visually but
+did not receive the stored `opacity:opaque` and `needs_base:no`, so it invented sheerness and a nude
+camisole. `composerPieceLineSuffix` now transmits opacity plus either explicit base status, and the
+shared prompt forbids contradicting those fields or inventing an underlayer for an independently
+wearable garment.
 
 ## Gotchas for the next assistant
 

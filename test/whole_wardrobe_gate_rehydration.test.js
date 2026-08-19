@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { locallyGateWholeWardrobeOutfits, normalizeWholeWardrobeOutfitObject } from '../styling-engine/rules.js'
+import { locallyGateWholeWardrobeOutfits, normalizeWholeWardrobeOutfitObject, sanitizeWholeWardrobeOutfitProse } from '../styling-engine/rules.js'
 
 // Spec 29 Part 1 regression test — runs the REAL production sequence (DB-shaped full pieces ->
 // normalizeWholeWardrobeOutfitObject -> locallyGateWholeWardrobeOutfits), the exact chain
@@ -88,7 +88,7 @@ test('locallyGateWholeWardrobeOutfits rehydrates trimmed pieces so register-ceil
 // new field the model returns (e.g. styling_instructions, the whole-wardrobe visual composer's
 // authoritative garment-relationship mechanics field) is silently dropped here unless explicitly
 // carried through, the same class of gap the trim above already causes for gate-relevant fields.
-test('normalizeWholeWardrobeOutfitObject carries styling_instructions through from the model output, and defaults to empty when absent', () => {
+test('normalizeWholeWardrobeOutfitObject preserves explicit renderer instructions without inferring them from silhouette', () => {
   const dressyTop = { ...base, id: 301, name: 'silk cami top', category: 'top', formality: 'dressy' }
   const flatShoe = { ...base, id: 302, name: 'canvas slip shoe', category: 'shoes', formality: 'everyday', heel_height: 'flat', walk_support: 'high' }
   const everydayBottom = { ...base, id: 303, name: 'cotton trousers', category: 'bottom', formality: 'everyday' }
@@ -101,8 +101,96 @@ test('normalizeWholeWardrobeOutfitObject carries styling_instructions through fr
   assert.equal(withMechanics.stylingInstructions, 'Leave the top untucked over the trousers.')
 
   const withoutMechanics = normalizeWholeWardrobeOutfitObject(
-    { label: 'Without mechanics', pieceIds: [301, 303, 302] },
+    { label: 'Without mechanics', pieceIds: [301, 303, 302], silhouette: 'compact top over wide trousers' },
     candidatePieces
   )
   assert.equal(withoutMechanics.stylingInstructions, '')
+})
+
+test('composer prose integrity withholds deliberation and IDs outside the final card without another model call', () => {
+  const outfit = {
+    label: 'Final card',
+    pieceIds: [301, 302, 303],
+    pieces: [
+      { id: 301, name: 'cream top' },
+      { id: 302, name: 'olive pants' },
+      { id: 303, name: 'grey sneakers' }
+    ],
+    reason: 'Wait — rebuilding. Checking available tops: ID 999. Using it despite the recently-shown list.'
+  }
+  const sanitized = sanitizeWholeWardrobeOutfitProse(outfit)
+  assert.match(sanitized.reason, /original explanation was withheld/)
+  assert.deepEqual(sanitized.proseIntegrityIssues, [
+    'reason: exposed composer deliberation',
+    'reason: cited IDs outside final card: 999'
+  ])
+  assert.match(sanitized.resolutionNote, /review the final garment combination/)
+})
+
+test('a false silhouette does not overwrite separate explicit renderer instructions', () => {
+  const candidatePieces = [
+    { ...base, id: 311, name: 'black top', category: 'top' },
+    { ...base, id: 312, name: 'apple skirt', category: 'bottom', bottom_subtype: 'skirt', length_hits_at: 'midi' },
+    { ...base, id: 313, name: 'black mules', category: 'shoes' }
+  ]
+  const normalized = normalizeWholeWardrobeOutfitObject({
+    label: 'Wrong silhouette',
+    pieceIds: [311, 312, 313],
+    silhouette: 'fitted top over wide-leg trousers',
+    styling_instructions: 'Wear the top fully over the skirt waistband.',
+    reason: 'The black top lets the apple skirt lead.'
+  }, candidatePieces)
+  const sanitized = sanitizeWholeWardrobeOutfitProse(normalized)
+  assert.equal(sanitized.stylingInstructions, 'Wear the top fully over the skirt waistband.')
+})
+
+test('composer prose integrity preserves a clean explanation tied to final IDs', () => {
+  const outfit = {
+    pieceIds: [301, 302, 303],
+    pieces: [{ id: 301, name: 'cream top' }, { id: 302, name: 'olive pants' }, { id: 303, name: 'grey sneakers' }],
+    reason: 'The cream texture softens the olive utility line, while sneakers keep the look grounded for movement.'
+  }
+  assert.equal(sanitizeWholeWardrobeOutfitProse(outfit), outfit)
+})
+
+test('composer prose integrity withholds a silhouette that calls a skirt trousers', () => {
+  const outfit = {
+    pieceIds: [301, 302, 303],
+    pieces: [
+      { id: 301, name: 'black top', category: 'top', bottomKind: null },
+      { id: 302, name: 'apple skirt', category: 'bottom', bottomKind: 'skirt-midi' },
+      { id: 303, name: 'black mules', category: 'shoes', bottomKind: null }
+    ],
+    silhouette: 'fitted dark top over wide-leg trouser, clean vertical column',
+    reason: 'The black top lets the apple skirt lead.'
+  }
+  const sanitized = sanitizeWholeWardrobeOutfitProse(outfit)
+  assert.equal(sanitized.reason, outfit.reason, 'a correct reason remains intact')
+  assert.match(sanitized.silhouette, /withheld because it did not match/)
+  assert.match(sanitized.proseIntegrityIssues.join(' '), /silhouette: named a bottom category/)
+})
+
+test('composer prose integrity removes recent-memory deliberation from watchFor independently', () => {
+  const outfit = {
+    reason: 'The red graphic and brown twill make a clear warm color story.',
+    watchFor: 'The red tee has been recently shown — justified here as the clearest option.',
+    stylingInstructions: '',
+    pieceIds: [350, 214],
+    pieces: [{ id: 350, name: 'red graphic tee' }, { id: 214, name: 'black canvas sneakers' }]
+  }
+  const sanitized = sanitizeWholeWardrobeOutfitProse(outfit)
+  assert.equal(sanitized.reason, outfit.reason)
+  assert.equal(sanitized.watchFor, 'none')
+  assert.match(sanitized.proseIntegrityIssues.join(' '), /watchFor: exposed composer deliberation/)
+})
+
+test('composer prose integrity preserves legitimate imperative wear instructions', () => {
+  const outfit = {
+    reason: 'The belt gives the open layer a deliberate center.',
+    watchFor: 'none',
+    stylingInstructions: 'You must use the belt over the cardigan, not beneath it; wait until the cardigan is on before fastening it.',
+    pieceIds: [401, 402],
+    pieces: [{ id: 401, name: 'cardigan' }, { id: 402, name: 'belt' }]
+  }
+  assert.equal(sanitizeWholeWardrobeOutfitProse(outfit), outfit)
 })

@@ -1176,6 +1176,7 @@ Composition rules:
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
 - Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.
 - Respect the rotation warnings and any rejected-pairing memory provided.
+- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
 - When two or more pieces in an outfit have a physical relationship that isn't obvious from the pieces alone — a belt worn over one layer and not another, a cardigan meant to hang open rather than tuck, which garment a tie/sash cinches, sleeve/hem interaction between layers — put that in that outfit's \`styling_instructions\`, not \`reason\`: concrete, actionable mechanics ("open cardigan over the dress, belt over the cardigan at the natural waist"), the way you'd explain it to the person getting dressed. This is the ONLY field the image renderer treats as authoritative for how pieces relate to each other. Omit it (empty string) for a simple outfit with no layering or positioning decision.
 

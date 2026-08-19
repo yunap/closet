@@ -4194,14 +4194,16 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
   const strength = String(outfit?.strength || '').toLowerCase().trim()
   const missionId = outfit?.missionId || null
   const activeMission = OUTFIT_MISSIONS.find(m => m.id === missionId)
+  const silhouette = String(outfit?.silhouette || '').trim()
+  const suppliedStylingInstructions = String(outfit?.styling_instructions || outfit?.stylingInstructions || '').trim()
   return {
     label,
     strength: ['signature', 'strong', 'usable', 'experimental'].includes(strength) ? strength : 'strong',
     dominantDirection: outfit?.dominantDirection || outfit?.dominant_direction || outfit?.direction || '',
-    silhouette: outfit?.silhouette || '',
+    silhouette,
     bestFor: outfit?.bestFor || outfit?.best_for || '',
     reason: outfit?.reason || outfit?.why || '',
-    stylingInstructions: outfit?.styling_instructions || outfit?.stylingInstructions || '',
+    stylingInstructions: suppliedStylingInstructions,
     watchFor: outfit?.watchFor || outfit?.watch_for || 'none',
     pieceIds: ids.slice(0, 6),
     missingPieces: [],
@@ -4212,7 +4214,57 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
     formulaFamily: outfit?.formulaFamily || null,
     missionId,
     missionLabel: activeMission ? activeMission.label : null,
-    pieces: ownedPieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null }))
+    pieces: ownedPieces.map(p => ({
+      id: p.id,
+      name: p.name,
+      category: wardrobeCategoryGroup(p),
+      bottomKind: bottomKind(p),
+      photo: p.photo || null,
+      worn_photo: p.worn_photo || null
+    }))
+  }
+}
+
+export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {
+  const finalIds = new Set((outfit?.pieceIds || []).map(Number).filter(Number.isFinite))
+  const proseFields = ['reason', 'watchFor', 'stylingInstructions']
+  const fieldIssues = proseFields.flatMap(field => {
+    const text = String(outfit?.[field] || '')
+    const citedIds = [...text.matchAll(/\bID\s*#?\s*(\d+)\b/gi)].map(match => Number(match[1])) // ratchet-allow: validating model output citations, not garment classification
+    const outsideIds = [...new Set(citedIds.filter(id => !finalIds.has(id)))]
+    const exposesDeliberation = /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown)\b/i.test(text) // ratchet-allow: model-output integrity boundary, not garment classification
+    if (!outsideIds.length && !exposesDeliberation) return []
+    return [{ field, outsideIds, exposesDeliberation }]
+  })
+  const actualBottomKinds = (outfit?.pieces || [])
+    .filter(piece => piece?.category === 'bottom')
+    .map(piece => String(piece?.bottomKind || ''))
+  const silhouette = String(outfit?.silhouette || '')
+  const callsSkirtPants = actualBottomKinds.some(kind => kind.startsWith('skirt')) && /\b(?:trousers?|pants?|jeans?)\b/i.test(silhouette) // ratchet-allow: validating model output against structured bottom_kind, not classifying garments
+  const callsPantsSkirt = actualBottomKinds.includes('pants') && /\bskirt\b/i.test(silhouette) // ratchet-allow: validating model output against structured bottom_kind, not classifying garments
+  const silhouetteIssue = callsSkirtPants || callsPantsSkirt
+    ? 'silhouette: named a bottom category that is not present on the final card'
+    : ''
+  if (!fieldIssues.length && !silhouetteIssue) return outfit
+
+  const names = (outfit?.pieces || []).map(piece => piece?.name).filter(Boolean)
+  const issues = fieldIssues.flatMap(issue => [
+    ...(issue.exposesDeliberation ? [`${issue.field}: exposed composer deliberation`] : []),
+    ...(issue.outsideIds.length ? [`${issue.field}: cited IDs outside final card: ${issue.outsideIds.join(', ')}`] : [])
+  ]).concat(silhouetteIssue ? [silhouetteIssue] : [])
+  const badFields = new Set(fieldIssues.map(issue => issue.field))
+  return {
+    ...outfit,
+    ...(badFields.has('reason') ? { reason: `Final card: ${names.join(', ')}. The composer’s original explanation was withheld because it did not consistently describe these final pieces.` } : {}),
+    ...(badFields.has('watchFor') ? { watchFor: 'none' } : {}),
+    ...(badFields.has('stylingInstructions') ? { stylingInstructions: '' } : {}),
+    ...(silhouetteIssue ? {
+      silhouette: 'Silhouette description withheld because it did not match the garments shown.'
+    } : {}),
+    proseIntegrityIssues: issues,
+    resolutionNote: silhouetteIssue && !fieldIssues.length
+      ? 'Silhouette wording corrected locally; review the garment photos shown on this card.'
+      : 'Styling explanation withheld; review the final garment combination shown on this card.'
   }
 }
 

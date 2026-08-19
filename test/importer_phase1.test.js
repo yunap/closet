@@ -26,7 +26,7 @@ process.env.WARDROBE_FFMPEG_BIN = path.join(tmpRoot, 'no-such-ffmpeg')
 const { app } = await import('../server.js')
 const { db } = await import('../db.js')
 
-const server = app.listen(0)
+const server = app.listen(0, '127.0.0.1')
 await once(server, 'listening')
 const baseUrl = `http://127.0.0.1:${server.address().port}`
 

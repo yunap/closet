@@ -17,6 +17,8 @@ import {
   askStylistWithUsage,
   askStylistStructuredWithUsage,
   askStylistWithTools,
+  routeFreeformExecutionProfile,
+  boundedAtomicMultiLookResponse,
   recordToolLoopUsage,
   estimateAiUsageCost,
   parseModelJson,
@@ -56,8 +58,9 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
+import { getCurrentWeatherProfile } from '../styling-engine/weather.js'
 
-import { storeUserCorrection } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 
 import {
@@ -109,6 +112,7 @@ import {
   wholeWardrobePieceByGroup,
   wholeWardrobeMissesMood,
   normalizeWholeWardrobeOutfitObject,
+  sanitizeWholeWardrobeOutfitProse,
   dedupeMissingAgainstOwned,
   photoPreservingVisualsEnabled,
   wholeWardrobeMoodProfile,
@@ -567,8 +571,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -579,6 +583,8 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.outfitProseWithoutToolCall) || 0,
       Number(diagnostics.zeroResultContradictionBlocks) || 0,
       Number(diagnostics.cardProseInconsistentBlocks) || 0,
+      Number(diagnostics.atomicMultiLookCalls) || 0,
+      Number(diagnostics.executionRouterCalls) || 0,
       String(diagnostics.toolSequence || ''),
       Number(diagnostics.destinationClarificationRetries) || 0,
       Number(diagnostics.planSlotEnvironmentInferred) || 0,
@@ -609,6 +615,35 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
   }
 }
 
+export function boundedConversationStateFromToolContext(toolContext = {}) {
+  const outfits = Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : []
+  const currentOutfitSet = outfits.slice(0, 8).map((outfit, index) => ({
+    index: index + 1,
+    label: outfit?.label || outfit?.title || `Outfit ${index + 1}`,
+    ...(outfit?.occasion ? { occasion: outfit.occasion } : {}),
+    ...(outfit?.activity ? { activity: outfit.activity } : {}),
+    piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+      ? outfit.pieceIds
+      : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
+    ).map(Number).filter(Boolean),
+    pieces: (Array.isArray(outfit?.pieces) ? outfit.pieces : []).map(piece => piece?.name).filter(Boolean)
+  }))
+  const established = {
+    ...(toolContext?.occasion ? { occasion: toolContext.occasion } : {}),
+    ...(toolContext?.activity ? { activity: toolContext.activity } : {}),
+    ...(toolContext?.season ? { season: toolContext.season } : {}),
+    ...(toolContext?.mood ? { mood: toolContext.mood } : {}),
+    ...(toolContext?.mission ? { mission: toolContext.mission } : {}),
+    ...(toolContext?.boundedLocation ? { location: toolContext.boundedLocation } : {}),
+    ...(toolContext?.boundedWeatherSummary ? { weather: toolContext.boundedWeatherSummary } : {}),
+    ...(toolContext?.boundedWeatherUnavailable ? { weather_resolution: 'forecast unavailable; do not infer temperature' } : {})
+  }
+  return {
+    established,
+    ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {})
+  }
+}
+
 function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasionProfile = null, activityProfile = null } = {}) {
   let limitedSlots = []
   if (topCoverage !== null && topCoverage < 5) limitedSlots.push('tops')
@@ -622,8 +657,14 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
-const composerPieceLineSuffix = piece =>
-  `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}`
+export const composerPieceLineSuffix = piece =>
+  `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
+  `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
+  `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
+  `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
+  `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
+  `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +
+  `${piece.needs_base ? `; needs_base: ${piece.needs_base}` : ''}`
 
 async function composeSelectedPieceVisualWardrobeOutfits({
   selectedPiece,
@@ -1406,6 +1447,14 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
   }
 })
 
+export function resolveWholeWardrobeWeatherProfile({ mood = '', stylingRequest = '', season = '', resolvedWeatherProfile = null } = {}) {
+  // A live forecast is physical evidence. Calendar/season language may still shape the composer's
+  // aesthetic brief, but must not recompute hard hot/cold gates (live Larkspur: 78°F became hot
+  // solely because the execution router supplied `season: summer`).
+  if (['live', 'unavailable'].includes(resolvedWeatherProfile?.weatherSource)) return resolvedWeatherProfile
+  return weatherProfileFromContext({ mood: [mood, stylingRequest].filter(Boolean).join(' '), season })
+}
+
 export async function generateWholeWardrobeOutfitsVisualInternal({
   occasion = 'casual',
   season = 'current season',
@@ -1416,12 +1465,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   question = '',
   request = '',
   activity = '',
-  savedOutfitSeed = null
+  savedOutfitSeed = null,
+  resolvedWeatherProfile = null,
+  adaptiveVisualDetail = false,
+  comparisonSetGuidance = true
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const stylingRequest = String(request || question || '').trim()
-    const weatherProfile = weatherProfileFromContext({ mood: [mood, stylingRequest].filter(Boolean).join(' '), season })
+    const weatherProfile = resolveWholeWardrobeWeatherProfile({ mood, stylingRequest, season, resolvedWeatherProfile })
     const occasionProfile = resolveOccasionProfile(occasion, mood)
     const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: request || question || '' })
     const comfortConstraint = resolveComfortFootwearConstraint({
@@ -1644,6 +1696,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     let shownPieceCount = 0
     const shownPieces = []
+    const imageSizeCounts = {}
     for (const group of grouped.keys()) {
       const pieces = grouped.get(group)
       if (!pieces?.length) continue
@@ -1653,8 +1706,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         if (!photoFile) continue
         const filePath = path.join(userUploadsDir(), photoFile)
         if (!fs.existsSync(filePath)) continue
-        const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: false })
+        const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: adaptiveVisualDetail })
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${maxPx}:${photoFile}`, { maxPx })
+        imageSizeCounts[maxPx] = (imageSizeCounts[maxPx] || 0) + 1
         content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
         content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
         shownPieceCount++
@@ -1681,7 +1735,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       activityFactLine,
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
+      'Garment wear facts in the image labels are constraints. Obey them silently. Opacity and needs_base are authoritative: do not call an opaque, independently wearable garment sheer or invent an underlayer for it. Do not repeat a fixed fact the owner already knows merely to fill styling_instructions; use that field only for an actual, useful action or chosen relationship between pieces.',
+      'RENDERER CONTRACT: the image generator treats styling_instructions—not silhouette—as authoritative garment-placement guidance. If silhouette states a useful physical relationship such as a top worn over a waistband, repeat that relationship concisely in styling_instructions even though the card also shows the silhouette.',
+      'TIME-OF-DAY WEATHER: Judge the part of the forecast range relevant to the request, not only the daily high. For an evening or early-morning outing near a cooler low, include a plausible removable transition layer when the shown wardrobe supports one. At roughly 55°F, do not claim that a sleeveless vest over a light or short-sleeved base handles the outdoor chill; use sleeve-bearing outerwear, a genuinely warm long-sleeved base plus an adequate layer, or state the wardrobe gap. An indoor destination may shape the base outfit, but it does not erase arrival and departure weather.',
       `Compose ${requestedLimit} outfits.`,
+      comparisonSetGuidance && requestedLimit > 1
+        ? 'COMPARISON SET CONTRACT: These options will be compared side by side. When the eligible pieces shown support it, use meaningfully different outfit formulas or clearly different silhouettes/proportion logic. Changing only the color, print, or individual garments while repeating the same top + bottom + shoe shape does not create a useful alternative. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.'
+        : '',
       savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
@@ -1756,7 +1816,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
     }).filter(o => o.pieces.length >= 2)
 
-    const normalizedModelOutfits = resolved.map(o => normalizeWholeWardrobeOutfitObject(o, allowedPieces))
+    const normalizedModelOutfits = resolved.map(o =>
+      sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject(o, allowedPieces))
+    )
     const structuralRejectionReason = (outfit) => {
       const groups = (outfit?.pieces || []).map(piece => wardrobeCategoryGroup(piece))
       const shoeCount = groups.filter(group => group === 'shoes').length
@@ -1909,6 +1971,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       aiReturnedRaw: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
       aiResolvedWithOwnedPieces: resolved.length,
       aiStructurallyValid: modelOutfits.length,
+      proseIntegritySanitizedCount: normalizedModelOutfits.filter(outfit => outfit.proseIntegrityIssues?.length).length,
       mode: 'advisor',
       applyDiversity: false
     }
@@ -2028,6 +2091,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }
     })
 
+    const deliveredOutfitsForDiversity = structuredOutfits.filter(outfit => !outfit.broken)
+    const deliveredFormulaFamilies = deliveredOutfitsForDiversity.map(outfit => (
+      outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allowedPieces, occasion)
+    ))
+    const deliveredSilhouettes = deliveredOutfitsForDiversity.map(outfit => (
+      wholeWardrobeSilhouetteFromPieces(outfit) || outfit.silhouette || 'unknown'
+    ))
+    visualDebugLog.uniqueFormulaCount = new Set(deliveredFormulaFamilies).size
+    visualDebugLog.uniqueSilhouetteCount = new Set(deliveredSilhouettes).size
+    visualDebugLog.comparisonSetCollapsed = deliveredOutfitsForDiversity.length >= 2
+      && visualDebugLog.uniqueFormulaCount === 1
+      && visualDebugLog.uniqueSilhouetteCount === 1
+
     saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
 
     const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile, activityProfile)
@@ -2095,7 +2171,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         advisorFlaggedCount: structuredOutfits.filter(outfit => Array.isArray(outfit.systemFlags) && outfit.systemFlags.length).length,
         localFillAddedCount: softBackfillCount,
         imageDetail: composerImageDetail,
-        thumbPx: composerThumbPx,
+        thumbPx: adaptiveVisualDetail ? null : composerThumbPx,
+        adaptiveVisualDetail,
+        imageSizeCounts,
         composerUsage: composerUsage ? {
           ...composerUsage,
           estimatedCost: estimateAiUsageCost(composerUsage)
@@ -2147,9 +2225,34 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
 }
 
+export async function resolveDirectVisualComposerWeather({
+  season = 'current season',
+  location = '',
+  date = new Date(),
+  mood = '',
+  fetchImpl
+} = {}) {
+  const normalizedSeason = String(season || 'current season').trim().toLowerCase()
+  if (normalizedSeason !== 'current season') return null
+  return getCurrentWeatherProfile({
+    date,
+    location,
+    mood,
+    season,
+    ...(fetchImpl ? { fetchImpl } : {})
+  })
+}
+
 router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
   try {
-    const result = await generateWholeWardrobeOutfitsVisualInternal(req.body || {})
+    const input = req.body || {}
+    const resolvedWeatherProfile = input.resolvedWeatherProfile || await resolveDirectVisualComposerWeather({
+      season: input.season,
+      location: input.location || getHomeLocation(),
+      date: input.date || input.currentDate || new Date(),
+      mood: [input.mood, input.request, input.question].filter(Boolean).join(' ')
+    })
+    const result = await generateWholeWardrobeOutfitsVisualInternal({ ...input, resolvedWeatherProfile })
     res.json(result)
   } catch (err) {
     console.error('Visual wardrobe composer error:', err)
@@ -2280,7 +2383,8 @@ router.post('/generate-saved-outfit-variants', async (req, res) => {
         ? 'Preserve the style neighborhood and Main piece while exploring adjacent formulas.'
         : 'Preserve the saved outfit formula and Main piece while substituting owned wardrobe pieces.',
       activity,
-      savedOutfitSeed: sourceOutfit
+      savedOutfitSeed: sourceOutfit,
+      comparisonSetGuidance: variantMode !== 'formula'
     })
     res.json({
       ...result,
@@ -3606,6 +3710,11 @@ router.post('/repair-capsule-look', async (req, res) => {
   }
 })
 
+function freeformExecutionRouterEnabled() {
+  return String(process.env.WARDROBE_FREEFORM_EXECUTION_ROUTER || '').toLowerCase() === 'true' &&
+    String(process.env.WARDROBE_FREEFORM_ATOMIC_MULTILOOK || '').toLowerCase() === 'true'
+}
+
 router.post('/ask', async (req, res) => {
   // Hoisted so the catch below can still record what this turn spent and
   // learned. A turn that throws part-way has usually already made paid provider
@@ -3698,6 +3807,71 @@ router.post('/ask', async (req, res) => {
     if (modelCapsuleRosterEnabled()) {
       toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
     }
+    const routerEligible = freeformExecutionRouterEnabled()
+      && String(req.body.conversationMode || 'new_request') === 'new_request'
+      && !req.body.activeContext
+      && !req.body.outfit
+      && !(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)
+      && !req.body.image
+      && !req.body.imageData
+    if (routerEligible) {
+      try {
+        const routed = await routeFreeformExecutionProfile({
+          question: currentQuestion,
+          currentDate: req.body.currentDate || '',
+          timezone: req.body.timezone || 'America/Los_Angeles'
+        })
+        recordToolLoopUsage(toolContext, routed.usage)
+        bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
+        recordFreeformToolIteration(toolContext, ['execution_router'])
+        const routedLimit = Number(routed.value?.limit) || 0
+        if (routed.value?.profile === 'bounded_multi' && routedLimit >= 2 && routedLimit <= 5) {
+          toolContext.turnMode = 'new_request'
+          recordFreeformToolIteration(toolContext, ['generate_outfits'])
+          await executeTool('generate_outfits', {
+            occasion: routed.value.occasion,
+            activity: routed.value.activity,
+            season: routed.value.season,
+            mood: routed.value.mood,
+            mission: routed.value.mission,
+            limit: routedLimit,
+            location: routed.value.location,
+            date: routed.value.date
+          }, toolContext)
+          if (toolContext.atomicMultiLookCompleted) {
+            const freeformDiagnostics = toolContext.freeformDiagnostics || {}
+            saveStylistConversationState(
+              boundedConversationStateFromToolContext(toolContext),
+              req.body.sessionId || 'default'
+            )
+            persistFreeformGenerationRun({
+              sessionId: req.body.sessionId || '',
+              occasion: toolContext.occasion,
+              diagnostics: freeformDiagnostics,
+              turnFailed: false
+            })
+            return res.json({
+              answer: boundedAtomicMultiLookResponse(toolContext),
+              savedCorrections: [],
+              renderedBoards: [],
+              provider: AI_PROVIDER,
+              structuredOutfits: toolContext.generatedOutfits,
+              structuredOutfitsSource: toolContext.source,
+              structuredOutfitsOccasion: toolContext.occasion,
+              structuredOutfitsSeason: toolContext.season,
+              structuredOutfitsMood: toolContext.mood,
+              structuredOutfitsMission: toolContext.mission,
+              structuredOutfitsActivity: toolContext.activity,
+              debug: freeformDiagnostics,
+              suggestedTitle: null
+            })
+          }
+        }
+      } catch (routerError) {
+        if (routerError?.usage) recordToolLoopUsage(toolContext, routerError.usage)
+        console.warn('[Freeform Execution Router] Falling back to full stylist:', routerError.message)
+      }
+    }
     const payload = await buildStylistConversationPayload({
       ...req.body,
       occasion: req.body.occasion,
@@ -3707,6 +3881,7 @@ router.post('/ask', async (req, res) => {
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
     toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
+    toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [
