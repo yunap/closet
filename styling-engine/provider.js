@@ -6,7 +6,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration } from './tools.js'
-import { unexplainedLayeredTops } from './rules.js'
+import { unexplainedLayeredTops, exposesComposerDeliberation } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
@@ -259,6 +259,55 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
       `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`)
   }
   return { block: false }
+}
+
+// Accepted-card authority over the closing answer.
+//
+// Once a card is accepted this turn, the card is the product and the prose is commentary on it. Live
+// turns showed the commentary drifting from the thing it commented on: a follow-up called the
+// loafers the grounding finishing piece while the card's own prose called the earrings its single
+// finishing detail; a sparse composition repeated its accepted card, contradicted itself about a
+// piece it had not used, and narrated each lookup on the way.
+//
+// This is deliberately mechanical and paragraph-level. A paragraph is dropped when it shows the
+// turn's working, or when it cites a garment ID that is not on any accepted card -- the reliable
+// signal for reintroducing a candidate the composition rejected. It does NOT judge whether the prose
+// is good, and it does not compare wording between two prose fields: that is semantic work, and the
+// owner has ruled repeatedly against growing these guards into a rules engine.
+//
+// Withheld, never retried. A retry costs a paid round-trip to fix commentary on a card the user can
+// already see; the capsule ending applies -- deliver, and drop what cannot be trusted.
+export function applyAcceptedCardAuthority(answerText = '', toolContext = {}) {
+  const cards = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(card => !card?.broken)
+    : []
+  // No accepted card means the prose IS the answer and has no card to defer to.
+  if (!cards.length) return String(answerText || '').trim()
+
+  const acceptedIds = new Set(cards.flatMap(card => {
+    const ids = Array.isArray(card?.pieceIds) && card.pieceIds.length
+      ? card.pieceIds
+      : (Array.isArray(card?.pieces) ? card.pieces.map(piece => piece?.id) : [])
+    return ids.map(Number).filter(Number.isFinite)
+  }))
+
+  const paragraphs = String(answerText || '').split(/\n{2,}/).map(part => part.trim()).filter(Boolean)
+  const withheld = []
+  const kept = paragraphs.filter(part => {
+    if (exposesComposerDeliberation(part)) { withheld.push('deliberation'); return false }
+    const outside = extractPieceIdsFromProse(part).filter(id => !acceptedIds.has(Number(id)))
+    if (outside.length) { withheld.push(`ids:${outside.join(',')}`); return false }
+    return true
+  })
+  if (!withheld.length) return paragraphs.join('\n\n')
+
+  bumpFreeformDiagnostic(toolContext, 'closingProseWithheld', withheld.length)
+  if (kept.length) return kept.join('\n\n')
+  // Nothing survived. Say what was delivered rather than emitting an empty reply beside the cards --
+  // the same locally-generated ending boundedAtomicMultiLookResponse uses.
+  return cards.length === 1
+    ? 'Here is the look, with its pieces and styling notes on the card.'
+    : `Here are ${cards.length} looks, with their pieces and styling notes on each card.`
 }
 
 export function boundedAtomicMultiLookFinalAnswer(answerText = '', toolContext = {}) {
@@ -1303,7 +1352,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        const disclosed = discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks)
+        const authoritative = applyAcceptedCardAuthority(finalText, toolContext)
+        const disclosed = discloseUnresolvedFreeformChecks(authoritative, toolContext, retriedChecks)
         return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
       }
     } else {
@@ -1402,7 +1452,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        const disclosed = discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks)
+        const authoritative = applyAcceptedCardAuthority(finalText, toolContext)
+        const disclosed = discloseUnresolvedFreeformChecks(authoritative, toolContext, retriedChecks)
         return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
       }
     }

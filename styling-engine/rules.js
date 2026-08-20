@@ -4225,6 +4225,15 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
   }
 }
 
+// One vocabulary for "this text is showing its working", shared by the card fields below and by the
+// closing answer in provider.js. Retrieval and self-correction are how the turn was produced, not
+// what it produced: the user asked for an outfit, not a transcript of the search that found it.
+// Keep this list mechanical and short. It is not a semantic judge — prose that merely reads oddly is
+// the model's business, and widening it into a style filter is how a guard becomes a rules engine.
+export function exposesComposerDeliberation(text = '') {
+  return /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown|let me (?:search|check|look)|searching (?:for|the)|no (?:results|matches) (?:for|found)|instead of the|rejected)\b/i.test(String(text || '')) // ratchet-allow: model-output integrity boundary, not garment classification
+}
+
 export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {
   const finalIds = new Set((outfit?.pieceIds || []).map(Number).filter(Number.isFinite))
   const proseFields = ['reason', 'watchFor', 'stylingInstructions']
@@ -4232,7 +4241,7 @@ export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {
     const text = String(outfit?.[field] || '')
     const citedIds = [...text.matchAll(/\bID\s*#?\s*(\d+)\b/gi)].map(match => Number(match[1])) // ratchet-allow: validating model output citations, not garment classification
     const outsideIds = [...new Set(citedIds.filter(id => !finalIds.has(id)))]
-    const exposesDeliberation = /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown)\b/i.test(text) // ratchet-allow: model-output integrity boundary, not garment classification
+    const exposesDeliberation = exposesComposerDeliberation(text)
     if (!outsideIds.length && !exposesDeliberation) return []
     return [{ field, outsideIds, exposesDeliberation }]
   })

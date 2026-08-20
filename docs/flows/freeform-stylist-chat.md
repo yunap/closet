@@ -91,6 +91,25 @@ the turn. This prevents a hybrid tool sequence from replacing an earlier `propos
 arrival/departure coverage; around 55°F, a sleeveless vest over a light or short-sleeved base is not
 narrated as sufficient warmth.
 
+**[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
+accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
+the commentary drifting from what it commented on: a follow-up called the loafers the grounding
+finishing piece while the card's own prose called the earrings its single finishing detail, and a
+sparse composition repeated its accepted card, contradicted itself about a piece it had not used, and
+narrated each lookup on the way.
+
+`applyAcceptedCardAuthority` drops a closing paragraph when it shows the turn's working, or when it
+cites a garment ID that is on no accepted card — the reliable signal for reintroducing a rejected
+candidate. Withheld, never retried: a retry would buy a paid round-trip to fix commentary on a card
+the user can already see. If nothing survives, the reply is generated locally rather than left blank
+beside the cards. `closingProseWithheld` records that it fired.
+
+Deliberately mechanical. It does not judge whether prose is good and does not compare wording between
+two prose fields — that is semantic work, and this guard is not allowed to grow into a rules engine.
+Turns with no accepted card are untouched, because there the prose *is* the answer. Requested wear
+mechanics are handled at the source instead: the shared composer prompt requires them in the outfit's
+`styling_instructions`, since prose commenting on a card may not be its only record.
+
 **[amended 2026-08-19] Declaration is required by its consumers, not by every turn.** `declare_intent`
 is required before `propose_outfit`, `generate_outfits` or `render_preview`, which stay blocked until
 the turn declares `cards` or `image`. It is **not** required to answer in prose: an explanation,

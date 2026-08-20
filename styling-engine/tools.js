@@ -182,6 +182,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       cardProseInconsistentBlocks: 0,
       atomicMultiLookCalls: 0,
       executionRouterCalls: 0,
+      closingProseWithheld: 0,
       unresolvedCheckDisclosures: 0,
       destinationClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,

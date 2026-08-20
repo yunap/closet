@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -41,6 +41,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     atomicMultiLookCalls: 0,
     executionRouterCalls: 0,
     // Capsule's ending: a clause that spent its retry and is still failing ships with a note.
+    closingProseWithheld: 0,
     unresolvedCheckDisclosures: 0,
     destinationClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
@@ -103,6 +104,64 @@ test('compact answer profiles expose only bounded card and garment context', () 
     pieces: [{ id: 11, name: 'must not leak' }], state: { established: { occasion: 'private context' } }
   })
   assert.equal(generalMessage, 'Question: What is smart casual?')
+})
+
+test('an accepted card has authority over the closing prose that comments on it', () => {
+  const ctx = () => ({
+    generatedOutfits: [{ label: 'Quiet column', pieceIds: [11, 12, 13], pieces: [{ id: 11 }, { id: 12 }, { id: 13 }] }],
+    freeformDiagnostics: {},
+  })
+
+  // Ordinary commentary about the accepted card is untouched.
+  const good = 'The shell keeps the top half quiet so the trousers carry the shape.'
+  assert.equal(applyAcceptedCardAuthority(good, ctx()), good)
+
+  // Showing the turn's working is not the product. (Live: the sparse run narrated each lookup.)
+  const narrated = `Let me search the wardrobe for a top.\n\n${good}`
+  const trimmed = applyAcceptedCardAuthority(narrated, ctx())
+  assert.equal(trimmed, good, 'retrieval narration is dropped, the styling prose survives')
+
+  // Reintroducing a piece the composition did not accept. (Live: the sparse run contradicted itself
+  // about a piece that never made the card.)
+  const contradicting = `${good}\n\nI nearly used the taupe boots (ID 359), which would also have worked.`
+  assert.equal(applyAcceptedCardAuthority(contradicting, ctx()), good)
+
+  // A paragraph citing only accepted pieces is fine -- the rule is about candidates outside the card,
+  // not about mentioning IDs at all.
+  const citesAccepted = `${good}\n\nThe trousers (ID 12) are doing the most work here.`
+  assert.equal(applyAcceptedCardAuthority(citesAccepted, ctx()), citesAccepted)
+
+  // Diagnostics record that something was withheld, so a bad turn is reconstructable.
+  const counted = ctx()
+  applyAcceptedCardAuthority(contradicting, counted)
+  assert.equal(counted.freeformDiagnostics.closingProseWithheld, 1)
+})
+
+test('accepted-card authority applies only when a card was actually accepted', () => {
+  // A prose turn has no card to defer to, so its answer is the product and is never filtered --
+  // otherwise the guard would eat ordinary conversational answers.
+  const prose = 'Let me check the difference: smart casual keeps structure, casual does not.'
+  assert.equal(applyAcceptedCardAuthority(prose, { generatedOutfits: [], freeformDiagnostics: {} }), prose)
+  assert.equal(applyAcceptedCardAuthority(prose, { freeformDiagnostics: {} }), prose)
+
+  // A turn whose only cards are broken has nothing accepted either.
+  const brokenOnly = { generatedOutfits: [{ broken: true, pieceIds: [11] }], freeformDiagnostics: {} }
+  assert.equal(applyAcceptedCardAuthority(prose, brokenOnly), prose)
+})
+
+test('closing prose that is entirely withheld is replaced locally, not left empty', () => {
+  const ctx = {
+    generatedOutfits: [
+      { label: 'One', pieceIds: [11], pieces: [{ id: 11 }] },
+      { label: 'Two', pieceIds: [12], pieces: [{ id: 12 }] },
+    ],
+    freeformDiagnostics: {},
+  }
+  const allBad = 'Let me search for a better top.\n\nI nearly used the cream shell (ID 999) along the way.'
+  const result = applyAcceptedCardAuthority(allBad, ctx)
+  assert.match(result, /Here are 2 looks/, 'the reply says what was delivered rather than going blank beside the cards')
+  assert.doesNotMatch(result, /search|rejected|999/)
+  assert.equal(ctx.freeformDiagnostics.closingProseWithheld, 2)
 })
 
 test('compact router eligibility requires context the compact profiles can actually use', () => {
