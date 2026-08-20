@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -41,6 +41,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     atomicMultiLookCalls: 0,
     executionRouterCalls: 0,
     // Capsule's ending: a clause that spent its retry and is still failing ships with a note.
+    closingProseWithheld: 0,
     unresolvedCheckDisclosures: 0,
     destinationClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
@@ -103,6 +104,88 @@ test('compact answer profiles expose only bounded card and garment context', () 
     pieces: [{ id: 11, name: 'must not leak' }], state: { established: { occasion: 'private context' } }
   })
   assert.equal(generalMessage, 'Question: What is smart casual?')
+})
+
+test('an accepted card has authority over the closing prose that comments on it', () => {
+  const ctx = () => ({
+    generatedOutfits: [{ label: 'Quiet column', pieceIds: [11, 12, 13], pieces: [{ id: 11 }, { id: 12 }, { id: 13 }] }],
+    freeformDiagnostics: {},
+  })
+
+  // Ordinary commentary about the accepted card is untouched.
+  const good = 'The shell keeps the top half quiet so the trousers carry the shape.'
+  assert.equal(applyAcceptedCardAuthority(good, ctx()), good)
+
+  // Showing the turn's working is not the product. (Live: the sparse run narrated each lookup.)
+  const narrated = `Let me search the wardrobe for a top.\n\n${good}`
+  const trimmed = applyAcceptedCardAuthority(narrated, ctx())
+  assert.equal(trimmed, good, 'retrieval narration is dropped, the styling prose survives')
+
+  // Reintroducing a piece the composition did not accept. (Live: the sparse run contradicted itself
+  // about a piece that never made the card.)
+  const contradicting = `${good}\n\nI nearly used the taupe boots (ID 359), which would also have worked.`
+  assert.equal(applyAcceptedCardAuthority(contradicting, ctx()), good)
+
+  // A paragraph citing only accepted pieces is fine -- the rule is about candidates outside the card,
+  // not about mentioning IDs at all.
+  const citesAccepted = `${good}\n\nThe trousers (ID 12) are doing the most work here.`
+  assert.equal(applyAcceptedCardAuthority(citesAccepted, ctx()), citesAccepted)
+
+  // Diagnostics record that something was withheld, so a bad turn is reconstructable.
+  const counted = ctx()
+  applyAcceptedCardAuthority(contradicting, counted)
+  assert.equal(counted.freeformDiagnostics.closingProseWithheld, 1)
+})
+
+test('the deliberation vocabulary does not eat legitimate styling instructions', async () => {
+  // This predicate also gates the card's own styling_instructions, so a loose term deletes advice
+  // rather than leaking a sentence. "instead of the" and "rejected" were drafted into it and pulled
+  // before shipping for exactly this reason — the same failure as the earlier detector that erased
+  // instructions containing "wait" or "must use".
+  const { exposesComposerDeliberation } = await import('../styling-engine/rules.js')
+  for (const instruction of [
+    'Wear the cardigan open instead of the belted version.',
+    'Ground it with the loafers instead of the sandals.',
+    'Push the sleeves instead of the full cuff.',
+    'Belt it over the cardigan at the natural waist.',
+  ]) {
+    assert.equal(exposesComposerDeliberation(instruction), false, `must not withhold: ${instruction}`)
+  }
+  for (const leak of [
+    'Let me search the wardrobe for a top.',
+    'No results for lightweight jackets, so I broadened.',
+    'Checking the recently-shown list first.',
+    'Rebuilding that look around the trousers.',
+  ]) {
+    assert.equal(exposesComposerDeliberation(leak), true, `must withhold: ${leak}`)
+  }
+})
+
+test('accepted-card authority applies only when a card was actually accepted', () => {
+  // A prose turn has no card to defer to, so its answer is the product and is never filtered --
+  // otherwise the guard would eat ordinary conversational answers.
+  const prose = 'Let me check the difference: smart casual keeps structure, casual does not.'
+  assert.equal(applyAcceptedCardAuthority(prose, { generatedOutfits: [], freeformDiagnostics: {} }), prose)
+  assert.equal(applyAcceptedCardAuthority(prose, { freeformDiagnostics: {} }), prose)
+
+  // A turn whose only cards are broken has nothing accepted either.
+  const brokenOnly = { generatedOutfits: [{ broken: true, pieceIds: [11] }], freeformDiagnostics: {} }
+  assert.equal(applyAcceptedCardAuthority(prose, brokenOnly), prose)
+})
+
+test('closing prose that is entirely withheld is replaced locally, not left empty', () => {
+  const ctx = {
+    generatedOutfits: [
+      { label: 'One', pieceIds: [11], pieces: [{ id: 11 }] },
+      { label: 'Two', pieceIds: [12], pieces: [{ id: 12 }] },
+    ],
+    freeformDiagnostics: {},
+  }
+  const allBad = 'Let me search for a better top.\n\nI nearly used the cream shell (ID 999) along the way.'
+  const result = applyAcceptedCardAuthority(allBad, ctx)
+  assert.match(result, /Here are 2 looks/, 'the reply says what was delivered rather than going blank beside the cards')
+  assert.doesNotMatch(result, /search|rejected|999/)
+  assert.equal(ctx.freeformDiagnostics.closingProseWithheld, 2)
 })
 
 test('compact router eligibility requires context the compact profiles can actually use', () => {
@@ -291,7 +374,11 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.match(bounded, /existing-card revisions use suggest_slot_swaps/)
 
   const tool = name => STYLIST_TOOLS.find(candidate => candidate.name === name)
-  assert.match(tool('declare_intent').description, /Call it first each turn/)
+  // The declaration is required by the operations that consume it, not by every turn: a prose
+  // answer needs none, and declaring want:'text' merely to answer buys a second round-trip for
+  // nothing (measured at $0.0134 against a ~$0.04 follow-up).
+  assert.match(tool('declare_intent').description, /Required before propose_outfit, generate_outfits or render_preview/)
+  assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
   assert.match(tool('suggest_slot_swaps').description, /alternatives to ONE slot/)
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)
@@ -1046,6 +1133,41 @@ test('a completed turn is distinguishable from a failed one in the same table', 
   persistFreeformGenerationRun({ sessionId: 'finished-fine', occasion: 'capsule', diagnostics: { capsuleRosterModelCalls: 1 } })
   const row = db.prepare('SELECT turn_failed FROM freeform_generation_runs WHERE session_id = ?').get('finished-fine')
   assert.equal(row.turn_failed, 0, 'default is a completed turn, so existing rows keep their meaning')
+})
+
+// Attribution guard. 112 of the first 127 recorded rows had an empty session_id, so a month of cost
+// telemetry could not be grouped into conversations at all — which is how three wrong cost
+// hypotheses survived as long as they did. The bounded early-return path was the last offender; it
+// was fixed 2026-08-19 and every row since carries a real thread ID. The risk now is a SIXTH early
+// return being added that forgets, so this enumerates the call sites rather than trusting review.
+test('every freeform run row is attributed to its thread, on success and on failure', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const marker = 'persistFreeformGenerationRun({'
+  const sites = []
+  for (let at = routeSrc.indexOf(marker); at !== -1; at = routeSrc.indexOf(marker, at + 1)) {
+    // Skip the function's own declaration; only its call sites carry a sessionId argument.
+    if (/function\s*$/.test(routeSrc.slice(Math.max(0, at - 20), at))) continue
+    // Bound each window at the NEXT call site. A fixed-width slice bleeds into the following call
+    // and lets a site that omits sessionId entirely pass on its neighbour's line — verified by
+    // injecting exactly that regression.
+    const next = routeSrc.indexOf(marker, at + 1)
+    sites.push(routeSrc.slice(at, next === -1 ? at + 260 : Math.min(next, at + 260)))
+  }
+  assert.ok(sites.length >= 5, `expected every persist call site to be found, got ${sites.length}`)
+  sites.forEach((site, index) => {
+    assert.match(site, /sessionId: req\.body\.sessionId/,
+      `persistFreeformGenerationRun call site ${index + 1} must pass the request's real thread ID`)
+  })
+  // A literal or invented id would satisfy the pattern above only by being written deliberately;
+  // this catches the likelier slip of dropping the field and letting the '' default stand.
+  sites.forEach((site, index) => {
+    assert.doesNotMatch(site, /sessionId: ''/,
+      `persistFreeformGenerationRun call site ${index + 1} must not persist an unattributed row`)
+  })
+  // The catch block is one of those sites: a turn that died still has to say which thread it died in.
+  const catchBlock = routeSrc.slice(routeSrc.indexOf('if (diagnosticsContext) {'))
+  assert.match(catchBlock.slice(0, 300), /sessionId: req\.body\.sessionId/)
+  assert.match(catchBlock.slice(0, 300), /turnFailed: true/)
 })
 
 // The route must actually reach that path. Source-asserted because forcing the

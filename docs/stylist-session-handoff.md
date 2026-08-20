@@ -196,11 +196,17 @@ run it outside this sandbox with provider keys disabled as the suite already exp
 (“Do I have enough lightweight jackets for a cool rainy week?”) is cancelled: the profile it would
 have validated no longer exists, and rollout row 4 is closed as abandoned rather than passed.
 
-The next paid call is **rollout row 5's missing OFF arm** — the deliberately sparse discovery request
-run with `WARDROBE_FREEFORM_TIERED_DISCOVERY` and `WARDROBE_FREEFORM_DEFERRED_TOOLS` off. Only the ON
-arm was ever run (`thread_1787128902650`, nine iterations), so tiered discovery currently has no
-measured baseline and its default-on decision is unsupported in either direction. Do not rerun
-already-passed general-advice/card/tuck rows merely for wording polish.
+**Rollout row 5 is also closed, not pending.** It was written as a matched off/on comparison for
+tiered discovery and deferred tools. Both were removed from the code later the same day, so "off" is
+now the only state and the ON arm's architecture no longer exists to compare against — the
+experiment cannot produce an answer and must not be paid for. `thread_1787128902650` (nine
+iterations, five searches) stands as the recorded sparse-composition baseline for batched discovery
+instead.
+
+**No paid call is currently pending.** The next work is offline: repair `session_id` on
+`freeform_generation_runs` rows, remove unnecessary `declare_intent` ceremony on prose-only turns,
+and enforce accepted-card authority over closing prose — in that order, before batched discovery.
+Do not rerun already-passed general-advice/card/tuck rows merely for wording polish.
 
 ### Earlier 2026-08-19 progress log — superseded by the consolidated handoff above
 
