@@ -106,6 +106,73 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(generalMessage, 'Question: What is smart casual?')
 })
 
+test('one batched search covers several categories and reports no compromise when it finds them', async () => {
+  const ids = [
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe tee', 'top', 'active', '[\"blue\"]')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe trouser', 'bottom', 'active', '[\"black\"]')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe loafer', 'shoes', 'active', '[\"tan\"]')").run().lastInsertRowid,
+  ]
+  try {
+    // The gallery run spent one provider round-trip per category. One call covers them all.
+    const res = await executeTool('search_wardrobe', { category: ['top', 'bottom', 'shoes'] }, { freeformDiagnostics: {} })
+    const found = new Set(res.filter(item => item.id).map(item => Number(item.id)))
+    for (const id of ids) assert.ok(found.has(Number(id)), `batched search must return the ${id} piece`)
+    assert.ok(!res.some(item => item.retrieval), 'every requested category was satisfied, so there is nothing to report')
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
+test('broadening climbs a fixed ladder and never relaxes category, status or exclusions', async () => {
+  const id = db.prepare("INSERT INTO pieces (name, category, status, colors, silhouette) VALUES ('ladder probe skirt', 'bottom', 'active', '[\"olive\"]', 'a-line')").run().lastInsertRowid
+  const inactive = db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('ladder probe archived', 'bottom', 'inactive', '[\"olive\"]')").run().lastInsertRowid
+  try {
+    // A free-text anchor that matches nothing: rung 1 drops the query rather than costing the model
+    // a round-trip to discover the emptiness itself.
+    const ctx = { freeformDiagnostics: {} }
+    const res = await executeTool('search_wardrobe', { query: 'nonexistent sequined cape', category: ['bottom'] }, ctx)
+    const summary = res.find(item => item.retrieval)?.retrieval
+    assert.ok(summary, 'a broadened search says so')
+    assert.equal(summary.broadened, true)
+    assert.ok(summary.relaxedFilters.includes('query'), 'free text is the first rung')
+    assert.deepEqual(summary.requestedCategories, ['bottom'])
+
+    const returnedIds = res.filter(item => item.id).map(item => Number(item.id))
+    assert.ok(returnedIds.includes(Number(id)), 'broadening returns the closest active pieces')
+    // The three things no rung may ever touch.
+    assert.ok(!returnedIds.includes(Number(inactive)), 'broadening never resurrects an inactive piece')
+    for (const item of res) {
+      if (!item.id) continue
+      assert.equal(item.category, 'bottom', 'broadening never widens the requested category')
+    }
+    // Internal re-entry stays internal: one search the model made is one search recorded.
+    assert.equal(ctx.freeformDiagnostics.searchCalls, 1, 'climbing rungs is not extra searches')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(id, inactive)
+  }
+})
+
+test('broadening does not let the model claim the narrow thing it searched for exists', async () => {
+  // The false-claim guard keys on queries that returned nothing. Broadening finds *other* pieces, so
+  // without this ordering the original named garment would stop being recorded and the answer could
+  // describe a garment the wardrobe does not have -- the exact failure zeroResultQueries exists for.
+  const ctx = { freeformDiagnostics: {} }
+  await executeTool('search_wardrobe', { query: 'cream sequined opera cape', category: ['bottom'] }, ctx)
+  assert.ok(Array.isArray(ctx.zeroResultQueries), 'the empty narrow query is still recorded')
+  assert.ok(ctx.zeroResultQueries.includes('cream sequined opera cape'))
+})
+
+test('a category with nothing in it is reported as a real shortfall, not hidden by broadening', async () => {
+  const ctx = { freeformDiagnostics: {} }
+  // Nothing is seeded for this category in this fixture wardrobe, so no amount of relaxing finds one.
+  const res = await executeTool('search_wardrobe', { query: 'anything at all', category: ['outerwear'] }, ctx)
+  const summary = res.find(item => item.retrieval)?.retrieval
+  assert.ok(summary, 'a shortfall is always reported')
+  assert.deepEqual(summary.shortfalls, ['outerwear'])
+  assert.match(summary.note, /real wardrobe shortfall, not a narrow search/)
+  assert.equal(ctx.freeformDiagnostics.searchCalls, 1)
+})
+
 test('an accepted card has authority over the closing prose that comments on it', () => {
   const ctx = () => ({
     generatedOutfits: [{ label: 'Quiet column', pieceIds: [11, 12, 13], pieces: [{ id: 11 }, { id: 12 }, { id: 13 }] }],

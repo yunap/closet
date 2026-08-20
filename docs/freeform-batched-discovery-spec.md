@@ -1,6 +1,6 @@
 # Freeform batched discovery
 
-**Status:** specified, not implemented — 2026-08-19
+**Status:** implemented 2026-08-19 by promoting `search_wardrobe`, not by adding a primitive
 **Authority:** succeeds the deleted `qualified_coverage` profile; inherits its acceptance cases.
 Supersedes the qualified-coverage sections of `freeform-tiered-discovery-spec.md`.
 
@@ -22,21 +22,70 @@ which are only 13.2% of recorded spend. Reducing round-trips is still the right 
 discovery, but justify it by latency and by the compounding of *writes* across turns, not by an
 iteration-cost model that the data does not support.
 
-## The primitive
+## The primitive — `search_wardrobe`, promoted
 
-One batched retrieval returns, in a single operation, what five sequential searches returned
-separately: broadened anchor candidates plus every requested support category — bottoms, shoes,
-layers, accessories — with the evidence needed to judge them.
+**No new tool was built.** `search_wardrobe` already accepted `category` as an array, built
+`category IN (...)`, and budgeted thumbnails *per category rather than per call* — with a comment
+already in the code saying batching three category searches into one must not hand the model a third
+of the photos. The multi-category batch existed; nothing told the model to use it.
+
+The gallery run's five sequential searches were therefore never five *necessary* searches. Three
+things were missing, none of them a primitive:
+
+| Gap | Fix |
+|---|---|
+| Batching was never taught | the tool description now says `category` takes an array and that the image budget is per category, so batching costs no photographs |
+| No automatic broadening | a request that finds nothing climbs a fixed relaxation ladder in code instead of costing a round-trip |
+| No shortfall reporting | a `retrieval` entry states what was relaxed and which categories are genuinely empty |
+
+This follows the precedent set by bounded multi-look, which refused to "build a second composer" and
+promoted `generate_outfits` instead. Duplicating `search_wardrobe` would have meant re-implementing
+its filters, gating, weather resolution, truth rows and image budget, then maintaining both.
 
 Target shape for an ordinary composition turn:
 
 1. router
-2. batched wardrobe discovery
+2. one batched wardrobe search
 3. optionally one composition/submission or correction call
 
 Code owns completeness, IDs, physical eligibility and truthful uncertainty. The model owns
 contextual, aesthetic and stylistic judgment over the bounded result. This is the division that made
 bounded multi-look work, applied to discovery.
+
+### The relaxation ladder
+
+Broadening is where code could quietly become the stylist, so the order is fixed, mechanical, and
+reported rather than applied silently:
+
+1. **free text** (`query`) — a name or phrase that matched nothing is likeliest to be too narrow
+2. **soft descriptive filters** — `color`, `pattern_type`, `silhouette`, `fabric_weight`,
+   `fabric_category`, `neckline`: how a piece looks, not what it is or whether it is allowed
+3. **occasion tag confidence** — last, and only as tag confidence
+
+**Never relaxed at any rung: category, active status, and owner or request exclusions.** Those are
+truth, not preference; relaxing them would let code overrule the owner to avoid an empty list.
+
+A request that found something is never second-guessed — "enough" is the stylist's judgment, not
+code's. Only an empty result triggers a rung.
+
+The result carries `requestedCategories`, `returnedByCategory`, `shortfalls`, `broadened`,
+`relaxedFilters` and a plain-language `note` — **and only when there is a compromise to report.** A
+search that found what it asked for returns exactly the piece list it always did, so the 37 existing
+callers see no shape change. That is what kept this a promotion rather than a breaking API change.
+
+Two properties worth keeping: internal re-entry does not inflate `searchCalls` (one search the model
+made stays one search recorded), and a narrow query that returned nothing is still recorded in
+`zeroResultQueries` even when broadening then finds other pieces — otherwise the answer could
+describe a garment the wardrobe does not have, which is the failure that guard exists for.
+
+### Why this is worth doing — corrected justification
+
+Not primarily cost. Iterations drive cache *reads*, 13.2% of recorded spend; collapsing nine
+iterations to about three saves roughly 20% on a composition turn, which is real but secondary.
+
+The case is **latency** — nine sequential round-trips is a long wait for one card — and
+**consistency**: every extra step is another chance to drift, and the sparse run leaked search
+narration, duplicated its own card and contradicted itself about a piece it never used.
 
 ## Coverage is a use case, not an architecture
 

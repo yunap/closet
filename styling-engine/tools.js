@@ -85,6 +85,24 @@ export function resolvePlanKind(rawKind = '', question = '') {
 }
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
+
+// Relaxation ladder for automatic broadening. Deliberately boring: code owns retrieval completeness,
+// not styling judgment, so the order is fixed and each rung is reported back rather than applied
+// silently. A model that broadens by hand spends a provider round-trip per attempt; the gallery run
+// (thread_1787128902650) burned iterations doing exactly that after a narrow anchor found nothing.
+//
+// Never relaxed, at any rung: category, active status, and the gates that hide pieces the owner
+// excluded or that the request itself rules out. Those are truth, not preference — relaxing them
+// would let code quietly overrule the owner to avoid returning an empty list.
+const SEARCH_RELAXATION_LADDER = [
+  // Free text first: a name or phrase that matched nothing is the likeliest thing to be too narrow.
+  ['query'],
+  // Then soft descriptive preferences — how a piece looks, not what it is or whether it is allowed.
+  ['color', 'pattern_type', 'silhouette', 'fabric_weight', 'fabric_category', 'neckline'],
+  // Occasion last, and only as tag confidence: pieceOccasionCompatible already falls back to
+  // flexible pieces, and owner/request exclusions are enforced separately and stay enforced.
+  ['occasion'],
+]
 const OCCASION_VALUE_SET = new Set(OCCASION_VALUES)
 const SEARCH_QUERY_OCCASION_SYNONYMS = new Map([
   ['dinner', 'evening'],
@@ -525,7 +543,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed.",
     input_schema: {
       type: "object",
       properties: {
@@ -1009,6 +1027,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return { status: "success", message: "Intent recorded: text. Answer conversationally; cite any wardrobe pieces as (ID <n>) and verify them this turn before recommending." }
       }
       case 'search_wardrobe': {
+        // Broadening re-enters this case with fewer filters. The pass counter keeps that internal:
+        // one model-visible search stays one searchCalls bump however many rungs code climbed.
+        const relaxationPass = Number(args.__relaxationPass) || 0
+        const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
         const { categories, unknown: unknownCategories } = normalizeCategoryFilters(args.category)
         if (unknownCategories.length) {
@@ -1348,7 +1370,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           })
         }
 
-        bumpFreeformDiagnostic(toolContext, 'searchCalls')
+        if (!relaxationPass) bumpFreeformDiagnostic(toolContext, 'searchCalls')
         if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
         if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
@@ -1360,6 +1382,46 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (query && !results.length && toolContext) {
           if (!Array.isArray(toolContext.zeroResultQueries)) toolContext.zeroResultQueries = []
           toolContext.zeroResultQueries.push(String(query))
+        }
+
+        // Which requested categories came back with nothing. With no category asked for, the whole
+        // result set is the unit. This is the only thing that triggers broadening: a request that
+        // found something is never second-guessed, because "enough" is the stylist's judgment.
+        const returnedByCategory = {}
+        for (const piece of resultList) {
+          if (!piece?.id) continue
+          const key = wardrobeCategoryGroup(piece) || piece.category || 'other'
+          returnedByCategory[key] = (returnedByCategory[key] || 0) + 1
+        }
+        const shortfalls = categories.length
+          ? categories.filter(category => !returnedByCategory[category])
+          : (resultList.some(item => item.id) ? [] : ['(any)'])
+
+        const nextRung = SEARCH_RELAXATION_LADDER[relaxationPass]
+        const relaxable = nextRung ? nextRung.filter(name => args[name]) : []
+        if (shortfalls.length && nextRung) {
+          // Climb a rung. If this rung has nothing to drop, keep climbing — an empty rung must not
+          // silently end broadening while filters remain that could still be relaxed.
+          const relaxedArgs = { ...args, __relaxationPass: relaxationPass + 1, __relaxedFilters: [...relaxedSoFar, ...relaxable] }
+          for (const name of relaxable) delete relaxedArgs[name]
+          return executeToolInternal('search_wardrobe', relaxedArgs, toolContext)
+        }
+
+        // Report the compromise, and only the compromise: with nothing relaxed and nothing missing
+        // the result is exactly what it always was, so 37 existing callers see no shape change.
+        if (relaxedSoFar.length || shortfalls.length) {
+          resultList.push({
+            retrieval: {
+              requestedCategories: categories.length ? categories : ['(any)'],
+              returnedByCategory,
+              shortfalls,
+              broadened: relaxedSoFar.length > 0,
+              relaxedFilters: relaxedSoFar,
+              note: shortfalls.length
+                ? `No active pieces remain for ${shortfalls.join(', ')} after broadening — this is a real wardrobe shortfall, not a narrow search.`
+                : `No exact match for the original filters; relaxed ${relaxedSoFar.join(', ')} and returned the closest active pieces.`
+            }
+          })
         }
 
         return resultList
