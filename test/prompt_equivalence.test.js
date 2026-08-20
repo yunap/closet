@@ -86,6 +86,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         '- Never pair two "loud" pieces. One loud + one solid/quiet only. Pattern mixing works when prints share a color family and one is simpler than the other.',
         '- Do not pair two focal pieces unless there is a clear unifying relationship between them. Deliberate print or colour mixing is allowed when hierarchy, palette and scale are controlled — prints that share a colour family, with one simpler or smaller in scale than the other, are the usual way that works.'
       )
+      // 2026-08-20: this prohibition contradicted the shipped architecture. Bounded multi-look routes
+      // an ordinary "what should I wear?" TO generate_outfits, and both the tool description and the
+      // turn's own controller instruction say so — leaving the cached prompt telling the model the
+      // opposite, in the most authoritative-sounding place it reads.
+      expected = expected.replace(
+        " Do not call 'generate_outfits' for ordinary styling advice.",
+        " Use 'generate_outfits' when the turn's contract says to (a fresh same-context batch); use 'propose_outfit' for one specific outfit you have composed yourself."
+      )
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }

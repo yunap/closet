@@ -115,10 +115,46 @@ per-piece `RULES (authoritative)`, a mechanism that already exists in this same 
 `EARNED WISDOM OVERRIDE`. Pinned by `the stylist prompt states no global material absolutes`, which
 asserts the absolutes are gone *and* that the override mechanism survives.
 
-### Parts A and B — not started
+### Part A — ATTEMPTED AND REVERTED; it is not a bulk removal
 
-A is mechanical and has a ruling behind it. B needs a stated bet per line: name the behaviour you
-expect the model to preserve unaided, rather than trusting a reader's sense of what is obvious.
+17 of the 95 bullets name a tool, totalling ~6,346 tokens. The two largest —
+`Planning a Coordinated Multi-Outfit Set` (1,693 tok) and `Seasonal Capsule Intake` (395 tok) — were
+removed after verifying that `plan_outfit_set`'s description **and its per-argument schema docs**
+carry the same content: `constraints` says "packing wants reuse maximized; an at-home work week wants
+looks diversified", `location` says "slots inherit it unless they set their own", `plan_kind` says
+"use 'trip' for destination packing even when the trip has a piece limit" — which is the
+capsule/budget independence rule stated as an argument doc.
+
+**The removal was reverted.** The bullets are not duplication with some behaviour attached; they are
+duplication *interleaved* with unique behaviour, and the unique parts only surface one failing
+assertion at a time:
+
+- `Do NOT stall a multi-day plan with a weather question when no place is named` — a clarification
+  rule, owned by nothing else
+- the shoes-role contract in `Proposing Outfits` — "every outfit MUST include a shoes-role piece…
+  do not use missing_gaps as a shoe substitute" is **not** in `propose_outfit`'s description
+- `cover each stated occasion/use case as a separate proposed outfit` and
+  `Do not collapse distinct stated needs into one generic list`
+
+Also: the bullet is what makes the tool *reachable*. Its own test comment records that before it
+existed "the tool was live but unreachable — nothing in the prompt named it." Deleting the pointer
+risks recreating that, and a tool nobody calls describes itself to no one.
+
+**So part A needs clause-level surgery, not bulk deletion.** Per bullet: does an owner already carry
+this clause; if not, does it belong in the tool description (arguments, output contract) or stay in
+the prompt (cross-tool routing, clarification policy)? That is a per-clause review with an owner
+ruling, and it should keep the one-line reachability pointer regardless. Estimated prize is real —
+most of ~6,346 tokens — but it is not the cheap mechanical win it looked like.
+
+One correctness fix from that pass was kept: `Do not call 'generate_outfits' for ordinary styling
+advice` contradicted the shipped architecture, where bounded multi-look routes an ordinary
+"what should I wear?" *to* `generate_outfits`. The cached prompt was telling the model the opposite of
+its tool description and its own turn controller.
+
+### Part B — not started
+
+Needs a stated bet per line: name the behaviour you expect the model to preserve unaided, rather than
+trusting a reader's sense of what is obvious.
 
 ## Lever 3 — model tiering · SPECIFIED, POSTPONED BY OWNER
 
