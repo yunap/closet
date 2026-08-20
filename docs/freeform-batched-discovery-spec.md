@@ -273,6 +273,70 @@ accepted. Either say nothing about its contents or render from the accepted card
 the precedent is `boundedAtomicMultiLookResponse`, which generates the closing line in code rather
 than letting the model narrate a card it has already submitted.
 
+## Live findings — 2026-08-19/20
+
+Three owner-approved turns on the real wardrobe, measured with
+`scratch/measure_freeform_turns.js`.
+
+### Ordinary composition never reaches this work
+
+`thread_1787188241277` — "I have a gallery opening tonight, what should I wear?" — routed to
+`bounded_multi` and produced two looks in **2 iterations with zero searches, $0.1613**. Two
+follow-ups on the same thread took `compact_existing_card_explanation` at $0.0175 and $0.0211; one
+correctly asked *which* card rather than guessing across two. The closing line was the
+code-generated bounded ending, so there was no model narration to drift from the cards.
+
+That is the already-merged bounded architecture working, **not this work**. Batching and broadening
+were never exercised, because no search happened.
+
+The distinction is in the request shape, and the router is right about it:
+
+| Request | Route | Iterations |
+|---|---|---:|
+| "what should I wear?" | `bounded_multi` | 2, no searches |
+| "Build me **one** outfit around a polished sleeveless top…" (`thread_1787128902650`) | `full_stylist` | 9, five searches |
+
+Batching therefore only applies to the one/best/anchored path. **Whether the model actually batches
+is still unverified**, and deliberately so: it is a latency and consistency change, not a cost one,
+and paying for a turn to measure it is a poor trade. `tool_sequence` and `search_calls` record it on
+every turn, so the next naturally occurring one/best request answers it for free. If several
+sequential `search_wardrobe` entries still appear, the tool-description change was inert and the
+instruction should become structural instead.
+
+### Coverage got more expensive, and the recorded miss survived
+
+`thread_1787188412205` — "Do I have enough dressy flats I can actually walk in for a week of city
+dinners?" — reached `full_stylist` (`wardrobe_coverage;search_wardrobe;view_pieces`), **4 iterations,
+$0.2138**, against the deleted profile's $0.0708–$0.1012. Removing `qualified_coverage` made coverage
+**two to three times more expensive**. The direction was predicted; this is the number.
+
+The cost is 4 iterations re-reading ~125k cached tokens — which is precisely what round-trip
+reduction targets. **The coverage regression is an argument for finishing this work, not against it.**
+
+Answer quality was judged sound by the owner. Two gaps remain against the acceptance cases:
+
+- **Latent claims from appearance.** Piece 217 was called "low support… knit construction" and piece
+  190 "wears you down over distance… platform sole", while both carry `walk_support: medium`.
+  Appearance is not same-dimension evidence (both are `conf: medium` rather than `manual`, so the
+  model had some latitude, but the claims are still inferred from looks).
+- **Owner-confirmed pieces still absent.** 169 and 361 both carry `walk_support: medium` at
+  `conf: manual` — the strongest rung — and neither appears at all, not judged and excluded. This is
+  the same miss `thread_1787126412249` recorded. Piece 190 *was* surfaced this time, where the staged
+  run had dropped it before sight, and owner-confirmed 194 was used correctly.
+
+**The lesson is about where the boundary sits.** The original fix for this class was *code* that
+downgraded visual-only latent claims; it was deleted with the profile. Restoring the *instruction*
+without the enforcement reproduced the original behaviour. That is the second time in this arc that
+prompt-only provenance has proved insufficient — `thread_1787123957953` was the first. Treat
+enforcement as code work when batched discovery takes coverage on.
+
+### Next lever, visible in the same turn
+
+The coverage turn spent three retrieval steps — `wardrobe_coverage`, then `search_wardrobe`, then
+`view_pieces` — before answering. That is the same "one call, not three" problem solved here for
+categories, one level up at the *tool* level. Collapsing it is description-level and offline
+testable; it needs no new architecture.
+
 ## Open question carried forward
 
 Whether the moving cache breakpoint earns its cost. Writing a new entry per iteration at 1.25× may be
