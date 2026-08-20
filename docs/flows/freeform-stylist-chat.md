@@ -91,6 +91,26 @@ the turn. This prevents a hybrid tool sequence from replacing an earlier `propos
 arrival/departure coverage; around 55°F, a sleeveless vest over a light or short-sleeved base is not
 narrated as sufficient warmth.
 
+**[2026-08-19] One batched search, and broadening owned by code.** `search_wardrobe`'s `category`
+argument takes an array and its thumbnail budget is per category, so one call can retrieve every
+category an outfit needs without losing photographs. The tool description now says so; previously
+nothing did, which is why the gallery run spent a provider round-trip per category.
+
+A request that finds nothing no longer returns an empty list. It climbs a fixed relaxation ladder —
+free text, then soft descriptive filters (`color`, `pattern_type`, `silhouette`, `fabric_weight`,
+`fabric_category`, `neckline`), then occasion tag confidence — and returns the closest active pieces
+with a `retrieval` entry naming what it relaxed. **Category, active status and owner or request
+exclusions are never relaxed at any rung.** A request that found something is never second-guessed:
+"enough" is the stylist's judgment.
+
+The entry also names any category that is still empty after broadening, which is a real wardrobe
+shortfall the model may report as a gap. It appears **only when there is a compromise to report**, so
+an ordinary successful search returns the piece list unchanged. Climbing rungs does not inflate
+`searchCalls`, and a narrow query that found nothing is still recorded against the false-claim guard
+even when broadening then finds other pieces.
+
+See [freeform-batched-discovery-spec.md](../freeform-batched-discovery-spec.md).
+
 **[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
 accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
 the commentary drifting from what it commented on: a follow-up called the loafers the grounding

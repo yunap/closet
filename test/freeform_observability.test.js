@@ -106,6 +106,119 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(generalMessage, 'Question: What is smart casual?')
 })
 
+// Batched discovery acceptance case 1. The coverage arc failed twice on this: thread_1787127928718
+// discussed only the four visually sampled shoes, and thread_1787128659041 dropped deserving
+// candidates before visual refinement. A piece without a photograph must stay a candidate.
+test('a piece with no photograph is still returned by a batched search', async () => {
+  const withPhoto = db.prepare("INSERT INTO pieces (name, category, status, photo) VALUES ('pictured probe top', 'top', 'active', 'nonexistent.jpg')").run().lastInsertRowid
+  const withoutPhoto = db.prepare("INSERT INTO pieces (name, category, status) VALUES ('unpictured probe top', 'top', 'active')").run().lastInsertRowid
+  try {
+    const res = await executeTool('search_wardrobe', { category: ['top'], visual: true }, { freeformDiagnostics: {} })
+    const returned = new Set(res.filter(item => item.id).map(item => Number(item.id)))
+    assert.ok(returned.has(Number(withoutPhoto)), 'an unpictured piece must not be filtered out of retrieval')
+    assert.ok(returned.has(Number(withPhoto)))
+    // The visual budget limits which pieces get a THUMBNAIL, never which pieces exist. If that ever
+    // becomes a filter, unpictured candidates go invisible and the model reports a false gap.
+    const row = res.find(item => Number(item.id) === Number(withoutPhoto))
+    assert.ok(row.name, 'it comes back as a full truth row, just without an image')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(withPhoto, withoutPhoto)
+  }
+})
+
+// Source-asserted deliberately. Exercising the real budget needs 17+ seeded pieces WITH photo files
+// on disk per category, which would make this a slow fixture test of image plumbing rather than of
+// the property that matters. The property: the visual budget is ranked PER CATEGORY, so a batched
+// four-category search cannot let the first category eat every thumbnail.
+//
+// This is load-bearing for two commitments at once. Visual grounding is a founding principle of this
+// app, and batched discovery's first acceptance case says unpictured candidates must not become
+// invisible — both fail silently if someone "simplifies" this to a per-call index.
+test('the search image budget is ranked per category, so batching cannot starve later categories', () => {
+  const toolsSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
+  const searchCase = toolsSrc.slice(
+    toolsSrc.indexOf("case 'search_wardrobe'"),
+    toolsSrc.indexOf("case 'view_pieces'")
+  )
+  // A per-category counter, not the row's position in the whole result set.
+  assert.match(searchCase, /seenPerCategory/, 'per-category ranking must exist')
+  assert.match(searchCase, /visualRankByPiece\.set\(p\.id, rank\)/)
+  assert.match(searchCase, /const visualRank = visualRankByPiece\.get\(p\.id\)/)
+  assert.match(searchCase, /visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP/,
+    'the cap must be applied to the per-category rank, never to the flat index')
+  // The tool description promises this, and the promise is what makes batching safe to encourage.
+  const description = STYLIST_TOOLS.find(tool => tool.name === 'search_wardrobe').description
+  assert.match(description, /image budget is per category/)
+  assert.match(description, /category` accepts an array/)
+})
+
+test('one batched search covers several categories and reports no compromise when it finds them', async () => {
+  const ids = [
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe tee', 'top', 'active', '[\"blue\"]')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe trouser', 'bottom', 'active', '[\"black\"]')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe loafer', 'shoes', 'active', '[\"tan\"]')").run().lastInsertRowid,
+  ]
+  try {
+    // The gallery run spent one provider round-trip per category. One call covers them all.
+    const res = await executeTool('search_wardrobe', { category: ['top', 'bottom', 'shoes'] }, { freeformDiagnostics: {} })
+    const found = new Set(res.filter(item => item.id).map(item => Number(item.id)))
+    for (const id of ids) assert.ok(found.has(Number(id)), `batched search must return the ${id} piece`)
+    assert.ok(!res.some(item => item.retrieval), 'every requested category was satisfied, so there is nothing to report')
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
+test('broadening climbs a fixed ladder and never relaxes category, status or exclusions', async () => {
+  const id = db.prepare("INSERT INTO pieces (name, category, status, colors, silhouette) VALUES ('ladder probe skirt', 'bottom', 'active', '[\"olive\"]', 'a-line')").run().lastInsertRowid
+  const inactive = db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('ladder probe archived', 'bottom', 'inactive', '[\"olive\"]')").run().lastInsertRowid
+  try {
+    // A free-text anchor that matches nothing: rung 1 drops the query rather than costing the model
+    // a round-trip to discover the emptiness itself.
+    const ctx = { freeformDiagnostics: {} }
+    const res = await executeTool('search_wardrobe', { query: 'nonexistent sequined cape', category: ['bottom'] }, ctx)
+    const summary = res.find(item => item.retrieval)?.retrieval
+    assert.ok(summary, 'a broadened search says so')
+    assert.equal(summary.broadened, true)
+    assert.ok(summary.relaxedFilters.includes('query'), 'free text is the first rung')
+    assert.deepEqual(summary.requestedCategories, ['bottom'])
+
+    const returnedIds = res.filter(item => item.id).map(item => Number(item.id))
+    assert.ok(returnedIds.includes(Number(id)), 'broadening returns the closest active pieces')
+    // The three things no rung may ever touch.
+    assert.ok(!returnedIds.includes(Number(inactive)), 'broadening never resurrects an inactive piece')
+    for (const item of res) {
+      if (!item.id) continue
+      assert.equal(item.category, 'bottom', 'broadening never widens the requested category')
+    }
+    // Internal re-entry stays internal: one search the model made is one search recorded.
+    assert.equal(ctx.freeformDiagnostics.searchCalls, 1, 'climbing rungs is not extra searches')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(id, inactive)
+  }
+})
+
+test('broadening does not let the model claim the narrow thing it searched for exists', async () => {
+  // The false-claim guard keys on queries that returned nothing. Broadening finds *other* pieces, so
+  // without this ordering the original named garment would stop being recorded and the answer could
+  // describe a garment the wardrobe does not have -- the exact failure zeroResultQueries exists for.
+  const ctx = { freeformDiagnostics: {} }
+  await executeTool('search_wardrobe', { query: 'cream sequined opera cape', category: ['bottom'] }, ctx)
+  assert.ok(Array.isArray(ctx.zeroResultQueries), 'the empty narrow query is still recorded')
+  assert.ok(ctx.zeroResultQueries.includes('cream sequined opera cape'))
+})
+
+test('a category with nothing in it is reported as a real shortfall, not hidden by broadening', async () => {
+  const ctx = { freeformDiagnostics: {} }
+  // Nothing is seeded for this category in this fixture wardrobe, so no amount of relaxing finds one.
+  const res = await executeTool('search_wardrobe', { query: 'anything at all', category: ['outerwear'] }, ctx)
+  const summary = res.find(item => item.retrieval)?.retrieval
+  assert.ok(summary, 'a shortfall is always reported')
+  assert.deepEqual(summary.shortfalls, ['outerwear'])
+  assert.match(summary.note, /real wardrobe shortfall, not a narrow search/)
+  assert.equal(ctx.freeformDiagnostics.searchCalls, 1)
+})
+
 test('an accepted card has authority over the closing prose that comments on it', () => {
   const ctx = () => ({
     generatedOutfits: [{ label: 'Quiet column', pieceIds: [11, 12, 13], pieces: [{ id: 11 }, { id: 12 }, { id: 13 }] }],
@@ -148,6 +261,12 @@ test('the deliberation vocabulary does not eat legitimate styling instructions',
     'Ground it with the loafers instead of the sandals.',
     'Push the sleeves instead of the full cuff.',
     'Belt it over the cardigan at the natural waist.',
+    // The broadening vocabulary added 2026-08-19 collides with real styling language: "relaxed" is
+    // a silhouette and a jacket can broaden a shoulder. These must survive.
+    'The relaxed wide-leg trousers balance the fitted top.',
+    'A relaxed silhouette needs one sharp edge to hold it together.',
+    'The jacket broadens the shoulder line, so keep the bottom narrow.',
+    'Push the sleeves up so the cuff sits below the elbow.',
   ]) {
     assert.equal(exposesComposerDeliberation(instruction), false, `must not withhold: ${instruction}`)
   }
@@ -156,6 +275,13 @@ test('the deliberation vocabulary does not eat legitimate styling instructions',
     'No results for lightweight jackets, so I broadened.',
     'Checking the recently-shown list first.',
     'Rebuilding that look around the trousers.',
+    // search_wardrobe reports the filters it relaxed. That report is for the model's reasoning, not
+    // for the reader — quoting it into the answer is machinery in user-facing prose.
+    'I relaxed the color filter to find these.',
+    'No exact match for the original filters.',
+    'I dropped the neckline requirement to widen the search.',
+    'I broadened the search to find these.',
+    'relaxedFilters: [query, color]',
   ]) {
     assert.equal(exposesComposerDeliberation(leak), true, `must withhold: ${leak}`)
   }

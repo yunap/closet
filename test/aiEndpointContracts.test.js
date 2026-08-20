@@ -3283,10 +3283,23 @@ test('executeTool search_wardrobe supports filtering and returns visual metadata
   assert.equal(res2.length, 1)
   assert.equal(res2[0].id, seeded.top)
 
-  // 3. Verify mismatch neckline returns empty
+  // res1 and res2 found matches, so nothing was relaxed and the result is a plain piece list --
+  // the shape 37 existing callers already expect. The summary appears only when there is a
+  // compromise to report.
+  assert.ok(!res1.some(item => item.retrieval), 'a search that found what it asked for reports nothing extra')
+
+  // 3. A filter that matches nothing no longer returns an empty list. Broadening drops the soft
+  // descriptive filter and returns the closest active pieces, saying so -- an empty list cost the
+  // model a round-trip to re-search, and reads like a wardrobe gap when it is only a narrow filter.
   const res3 = await executeTool('search_wardrobe', { neckline: 'V' })
   assert.ok(Array.isArray(res3))
-  assert.equal(res3.length, 0)
+  assert.ok(res3.some(item => item.id), 'closest active pieces are returned instead of nothing')
+  const summary = res3.find(item => item.retrieval)?.retrieval
+  assert.ok(summary, 'the compromise is reported rather than applied silently')
+  assert.equal(summary.broadened, true)
+  assert.deepEqual(summary.relaxedFilters, ['neckline'])
+  assert.deepEqual(summary.shortfalls, [], 'pieces were found after broadening, so this is not a wardrobe gap')
+  assert.match(summary.note, /No exact match for the original filters/)
 })
 
 test('executeTool search_wardrobe ranks and annotates weather and profile-rule fit', async () => {

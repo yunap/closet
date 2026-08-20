@@ -1,6 +1,6 @@
 # Freeform batched discovery
 
-**Status:** specified, not implemented — 2026-08-19
+**Status:** implemented 2026-08-19 by promoting `search_wardrobe`, not by adding a primitive
 **Authority:** succeeds the deleted `qualified_coverage` profile; inherits its acceptance cases.
 Supersedes the qualified-coverage sections of `freeform-tiered-discovery-spec.md`.
 
@@ -22,21 +22,70 @@ which are only 13.2% of recorded spend. Reducing round-trips is still the right 
 discovery, but justify it by latency and by the compounding of *writes* across turns, not by an
 iteration-cost model that the data does not support.
 
-## The primitive
+## The primitive — `search_wardrobe`, promoted
 
-One batched retrieval returns, in a single operation, what five sequential searches returned
-separately: broadened anchor candidates plus every requested support category — bottoms, shoes,
-layers, accessories — with the evidence needed to judge them.
+**No new tool was built.** `search_wardrobe` already accepted `category` as an array, built
+`category IN (...)`, and budgeted thumbnails *per category rather than per call* — with a comment
+already in the code saying batching three category searches into one must not hand the model a third
+of the photos. The multi-category batch existed; nothing told the model to use it.
+
+The gallery run's five sequential searches were therefore never five *necessary* searches. Three
+things were missing, none of them a primitive:
+
+| Gap | Fix |
+|---|---|
+| Batching was never taught | the tool description now says `category` takes an array and that the image budget is per category, so batching costs no photographs |
+| No automatic broadening | a request that finds nothing climbs a fixed relaxation ladder in code instead of costing a round-trip |
+| No shortfall reporting | a `retrieval` entry states what was relaxed and which categories are genuinely empty |
+
+This follows the precedent set by bounded multi-look, which refused to "build a second composer" and
+promoted `generate_outfits` instead. Duplicating `search_wardrobe` would have meant re-implementing
+its filters, gating, weather resolution, truth rows and image budget, then maintaining both.
 
 Target shape for an ordinary composition turn:
 
 1. router
-2. batched wardrobe discovery
+2. one batched wardrobe search
 3. optionally one composition/submission or correction call
 
 Code owns completeness, IDs, physical eligibility and truthful uncertainty. The model owns
 contextual, aesthetic and stylistic judgment over the bounded result. This is the division that made
 bounded multi-look work, applied to discovery.
+
+### The relaxation ladder
+
+Broadening is where code could quietly become the stylist, so the order is fixed, mechanical, and
+reported rather than applied silently:
+
+1. **free text** (`query`) — a name or phrase that matched nothing is likeliest to be too narrow
+2. **soft descriptive filters** — `color`, `pattern_type`, `silhouette`, `fabric_weight`,
+   `fabric_category`, `neckline`: how a piece looks, not what it is or whether it is allowed
+3. **occasion tag confidence** — last, and only as tag confidence
+
+**Never relaxed at any rung: category, active status, and owner or request exclusions.** Those are
+truth, not preference; relaxing them would let code overrule the owner to avoid an empty list.
+
+A request that found something is never second-guessed — "enough" is the stylist's judgment, not
+code's. Only an empty result triggers a rung.
+
+The result carries `requestedCategories`, `returnedByCategory`, `shortfalls`, `broadened`,
+`relaxedFilters` and a plain-language `note` — **and only when there is a compromise to report.** A
+search that found what it asked for returns exactly the piece list it always did, so the 37 existing
+callers see no shape change. That is what kept this a promotion rather than a breaking API change.
+
+Two properties worth keeping: internal re-entry does not inflate `searchCalls` (one search the model
+made stays one search recorded), and a narrow query that returned nothing is still recorded in
+`zeroResultQueries` even when broadening then finds other pieces — otherwise the answer could
+describe a garment the wardrobe does not have, which is the failure that guard exists for.
+
+### Why this is worth doing — corrected justification
+
+Not primarily cost. Iterations drive cache *reads*, 13.2% of recorded spend; collapsing nine
+iterations to about three saves roughly 20% on a composition turn, which is real but secondary.
+
+The case is **latency** — nine sequential round-trips is a long wait for one card — and
+**consistency**: every extra step is another chance to drift, and the sparse run leaked search
+narration, duplicated its own card and contradicted itself about a piece it never used.
 
 ## Coverage is a use case, not an architecture
 
@@ -82,6 +131,32 @@ must become tests when it exists — they are not prose principles.
    observation > provisional inference > unknown. Inference may never silently become verified fact.
 7. **Final prose exposes no machinery.** No IDs, database field names, enum syntax, evidence labels,
    confidence values, visible self-correction, or truncated reasoning.
+
+### Status of each case — 2026-08-19
+
+They were written as coverage-judge contracts. `qualified_coverage` is gone and coverage now routes
+to `full_stylist`, so each landed in a different place: retrieval enforces some mechanically, and the
+rest became general reasoning rules in the stylist prompt. **Their deletion alongside the profile was
+a real regression** — the arc paid live calls to learn them, and for a period coverage questions
+reached the full stylist with none of them.
+
+| # | Case | Where it now lives |
+|---|---|---|
+| 1 | Unpictured candidates stay visible | **Enforced.** The visual cap limits thumbnails, never rows; tested directly, plus a guard that the budget stays per category |
+| 2 | Contextual qualities are not enum equality | **Prompt rule.** Retrieval was never the offender — `pieceOccasionCompatible` already passes untagged pieces and uses an adjacency map, not equality |
+| 3 | Latent performance needs same-dimension evidence | **Prompt rule**, stated generally |
+| 4 | Duration does not multiply quantity | **Prompt rule**, stated generally |
+| 5 | Sight cannot prove waterproofing or comfort | **Prompt rule**, folded into 3 |
+| 6 | Owner-confirmed facts outrank inference | **Prompt rule** — the provenance ladder |
+| 7 | Final prose exposes no machinery | **Enforced.** `applyAcceptedCardAuthority`, extended to cover the broadening report this work introduced |
+
+The prompt rules sit in `STYLIST_SYSTEM` under `EVIDENCE PROVENANCE`, above the tuck rule, which is
+one instance of the same authority. They are declared as an explicit delta in
+`prompt_equivalence.test.js` — that fixture is a byte-level ratchet on the owner's prompts, so any
+future edit to them has to be stated rather than absorbed.
+
+Cases 3–6 are model behaviour and cannot be asserted offline. They remain the live-validation set if
+coverage is ever measured again.
 
 ### The known shoe case
 
@@ -197,6 +272,70 @@ about piece 359.
 accepted. Either say nothing about its contents or render from the accepted card deterministically —
 the precedent is `boundedAtomicMultiLookResponse`, which generates the closing line in code rather
 than letting the model narrate a card it has already submitted.
+
+## Live findings — 2026-08-19/20
+
+Three owner-approved turns on the real wardrobe, measured with
+`scratch/measure_freeform_turns.js`.
+
+### Ordinary composition never reaches this work
+
+`thread_1787188241277` — "I have a gallery opening tonight, what should I wear?" — routed to
+`bounded_multi` and produced two looks in **2 iterations with zero searches, $0.1613**. Two
+follow-ups on the same thread took `compact_existing_card_explanation` at $0.0175 and $0.0211; one
+correctly asked *which* card rather than guessing across two. The closing line was the
+code-generated bounded ending, so there was no model narration to drift from the cards.
+
+That is the already-merged bounded architecture working, **not this work**. Batching and broadening
+were never exercised, because no search happened.
+
+The distinction is in the request shape, and the router is right about it:
+
+| Request | Route | Iterations |
+|---|---|---:|
+| "what should I wear?" | `bounded_multi` | 2, no searches |
+| "Build me **one** outfit around a polished sleeveless top…" (`thread_1787128902650`) | `full_stylist` | 9, five searches |
+
+Batching therefore only applies to the one/best/anchored path. **Whether the model actually batches
+is still unverified**, and deliberately so: it is a latency and consistency change, not a cost one,
+and paying for a turn to measure it is a poor trade. `tool_sequence` and `search_calls` record it on
+every turn, so the next naturally occurring one/best request answers it for free. If several
+sequential `search_wardrobe` entries still appear, the tool-description change was inert and the
+instruction should become structural instead.
+
+### Coverage got more expensive, and the recorded miss survived
+
+`thread_1787188412205` — "Do I have enough dressy flats I can actually walk in for a week of city
+dinners?" — reached `full_stylist` (`wardrobe_coverage;search_wardrobe;view_pieces`), **4 iterations,
+$0.2138**, against the deleted profile's $0.0708–$0.1012. Removing `qualified_coverage` made coverage
+**two to three times more expensive**. The direction was predicted; this is the number.
+
+The cost is 4 iterations re-reading ~125k cached tokens — which is precisely what round-trip
+reduction targets. **The coverage regression is an argument for finishing this work, not against it.**
+
+Answer quality was judged sound by the owner. Two gaps remain against the acceptance cases:
+
+- **Latent claims from appearance.** Piece 217 was called "low support… knit construction" and piece
+  190 "wears you down over distance… platform sole", while both carry `walk_support: medium`.
+  Appearance is not same-dimension evidence (both are `conf: medium` rather than `manual`, so the
+  model had some latitude, but the claims are still inferred from looks).
+- **Owner-confirmed pieces still absent.** 169 and 361 both carry `walk_support: medium` at
+  `conf: manual` — the strongest rung — and neither appears at all, not judged and excluded. This is
+  the same miss `thread_1787126412249` recorded. Piece 190 *was* surfaced this time, where the staged
+  run had dropped it before sight, and owner-confirmed 194 was used correctly.
+
+**The lesson is about where the boundary sits.** The original fix for this class was *code* that
+downgraded visual-only latent claims; it was deleted with the profile. Restoring the *instruction*
+without the enforcement reproduced the original behaviour. That is the second time in this arc that
+prompt-only provenance has proved insufficient — `thread_1787123957953` was the first. Treat
+enforcement as code work when batched discovery takes coverage on.
+
+### Next lever, visible in the same turn
+
+The coverage turn spent three retrieval steps — `wardrobe_coverage`, then `search_wardrobe`, then
+`view_pieces` — before answering. That is the same "one call, not three" problem solved here for
+categories, one level up at the *tool* level. Collapsing it is description-level and offline
+testable; it needs no new architecture.
 
 ## Open question carried forward
 

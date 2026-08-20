@@ -1903,6 +1903,41 @@ Earlier in the same day, three unshipped experiments were deleted rather than le
 (`qualified_coverage`, deferred tools, tiered discovery), and the cross-turn cache prefix was
 restored. Net effect: nothing in the freeform path is behind a flag, and nothing dormant ships.
 
+### 2026-08-19/20 — batched retrieval, and what three live turns actually showed
+
+`search_wardrobe` was promoted rather than duplicated: it already took `category` as an array and
+already budgeted thumbnails per category, so the multi-category batch existed and nothing told the
+model to use it. Added: the batching instruction, an automatic relaxation ladder (free text → soft
+descriptive filters → occasion tag confidence, never category/status/exclusions), and a `retrieval`
+summary reporting what was relaxed and which categories are genuinely empty. The summary is appended
+only when there is a compromise to report, so the 37 existing call sites see no shape change.
+
+**Three live turns, measured** (`scratch/measure_freeform_turns.js`, which reads the answers back out
+of `chat_threads`):
+
+- An ordinary "what should I wear?" routes to `bounded_multi` — 2 iterations, **zero searches**,
+  $0.1613 — so it never touches this work. Batching only applies to the one/best/anchored path that
+  goes to `full_stylist`. **Whether the model batches is still unverified**, deliberately: it is a
+  latency change, not a cost one, and `tool_sequence` records it for free on the next natural
+  one/best request.
+- Coverage now costs **$0.2138 at 4 iterations** against the deleted profile's $0.0708–$0.1012.
+  Removing `qualified_coverage` made it 2–3× more expensive. The cost is iterations re-reading ~125k
+  cached tokens, which is what round-trip reduction targets — an argument for finishing the work.
+- The evidence rules restored earlier that day **did not hold in prose**. Two pieces got latent
+  claims from appearance despite saved `walk_support: medium`, and two owner-confirmed (`conf:
+  manual`) pieces were absent entirely. The original fix for this class was code that downgraded
+  visual-only latent claims, deleted with the profile; restoring the instruction without the
+  enforcement reproduced the original behaviour. **Second time this arc that prompt-only provenance
+  has proved insufficient.**
+
+Owner judged the coverage advice sound despite the misses, so the interim is "more expensive but
+good", not broken.
+
+Three tooling bugs found while measuring, each of which would have corrupted a result: copying
+`wardrobe.db` without its `-wal` missed 13 of 140 rows; the prose reader showed the newest answer
+against every row of a multi-turn thread; and a single-category turn was being reported as proof of
+batching.
+
 ## Gotchas for the next assistant
 
 - **Branch off fresh main before every piece of work** (recurring slip: twice a
