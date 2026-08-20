@@ -14,6 +14,7 @@ inferring intent from implementation. See §"How to use this index" at the botto
 
 | If you are asking… | Read first |
 |---|---|
+| A user typed a message into the chat — what happens next? | [message-lifecycle.md](message-lifecycle.md) — routing, prompt, model call, answer, follow-up, end to end |
 | Why did the engine allow / block / rank this garment? | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | What did the user tell the app, where did it go, who reads it, with what authority? | [feedback-and-memory-map.md](feedback-and-memory-map.md) |
 | Where in the UI does this happen, and what can the user actually touch? | [app-surface-map.md](app-surface-map.md) |
@@ -39,6 +40,7 @@ markers: **[by design]** · **[unverified]** · **[owner check wanted]** · **[b
 | [engine-behaviour-map.md](engine-behaviour-map.md) | Gates, scores, ceilings, caches, retry loops, owner-constraint gate, capsule composition | 12th pass 2026-07-26, amended 2026-08-12 |
 | [feedback-and-memory-map.md](feedback-and-memory-map.md) | 12 store categories × writer / user action / reader / **authority**; the four persistence media | Ratified 2026-08-09, amended 2026-08-12 |
 | [app-surface-map.md](app-surface-map.md) | Every route, tab, mode-split and dialog group | First pass 2026-07-26 |
+| [message-lifecycle.md](message-lifecycle.md) | One chat message end to end: the 13-way client dispatcher, the execution router, prompt composition and cache layout, the tool loop, the output guards, persistence, and the follow-up turn — plus the seven discontinuities that live between flows | Traced 2026-08-20 |
 
 **The authority column is the point of the feedback map.** *hard gate* · *score* · *prompt* ·
 *thread-only* · *display* are not interchangeable, and most misdiagnoses come from treating a

@@ -75,5 +75,8 @@ overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ### Progress
 
-**Atlas complete — all 16 model-facing flows across families A–F are mapped.**
+**16 model-facing flows across families A–F are mapped.** Two known gaps: `/expand-capsule` and
+`/repair-capsule-look` have no diagram here (noted 2026-08-20). For how a message *reaches* any of
+these flows in the first place, see [message-lifecycle.md](../message-lifecycle.md) — the dispatcher
+is a seam between flows and is owned by no diagram on this page.
 Every flow that talks to a model now has a diagram here.
