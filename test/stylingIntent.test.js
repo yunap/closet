@@ -130,7 +130,10 @@ test('extractWeatherContext captures lightweight forecast phrases', () => {
 
 test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {
   assert.ok(STYLIST_SYSTEM.includes('Proposing Outfits (default)'))
-  assert.ok(STYLIST_SYSTEM.includes("Do not call 'generate_outfits' for ordinary styling advice"))
+  // 2026-08-20: removed as a contradiction. An ordinary "what should I wear?" now routes to
+  // generate_outfits through the bounded multi-look path, so the prompt must not forbid it.
+  assert.ok(!STYLIST_SYSTEM.includes("Do not call 'generate_outfits' for ordinary styling advice"))
+  assert.ok(STYLIST_SYSTEM.includes("Use 'generate_outfits' when the turn's contract says to"))
   assert.ok(STYLIST_SYSTEM.includes("call 'search_wardrobe' with `visual: true`"))
   assert.ok(STYLIST_SYSTEM.includes('A packing list or garment inventory may appear only as a secondary recap after the proposed outfits'))
   assert.ok(STYLIST_SYSTEM.includes('it must never replace them unless the user explicitly asks for a checklist only'))

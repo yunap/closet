@@ -5682,7 +5682,12 @@ test('freeform ask retries the model once when prose cites unverified ids', asyn
     sessionId: 'citation-retry-contract',
   })
 
-  assert.ok(json.answer.includes(`ID ${seeded.top}`))
+  // The ordered contract (owner ruling 2026-08-20). The guard runs on prose that still carries the
+  // citation -- proven by the retry below -- and the citation is stripped only at the last boundary
+  // before the user sees it. Both halves matter: asserting only the strip would pass even if the
+  // guard had been disarmed, and asserting only the retry would pass with database handles on screen.
+  assert.ok(!/\bID\s*:?\s*\d+/i.test(json.answer), `final prose must show no piece IDs: ${json.answer}`)
+  assert.match(json.answer, /black button detail top/, 'the garment is still named, just not by handle')
   const stylistCalls = aiCalls.filter(call => String(call.system).includes('WARDROBE MANIFEST'))
   assert.equal(stylistCalls.length, 2, 'blocked once for the unverified citation, then answered on the retry')
   const correction = stylistCalls[1].messages.at(-1)
@@ -5821,18 +5826,46 @@ test('bounded multi-look routing is unconditional in the freeform controller pro
       conversationMode: 'new_request',
       sessionId: 'atomic-prompt-default'
     })
-    assert.match(String(bounded.system), /BOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY/)
-    assert.match(String(bounded.system), /fresh 2–5 option requests sharing one occasion, activity, and weather context/)
-    assert.match(String(bounded.system), /dynamically amended declare_intent\/generate_outfits exception/)
+    // The guidance is unchanged in substance; it now lives in the volatile controller instead of in
+    // the tool schemas. See docs/freeform-prompt-cache-levers.md lever 1.
+    assert.match(String(bounded.system), /BOUNDED MULTI-LOOK EXCEPTION/)
+    assert.match(String(bounded.system), /do NOT call declare_intent and do NOT call search_wardrobe/)
+    assert.match(String(bounded.system), /defaults to limit:2/)
     assert.match(String(bounded.system), /Never flatten distinct contexts/)
 
-    const boundedTools = stylistToolsForTurn({ turnMode: 'new_request' })
-    assert.match(boundedTools.find(tool => tool.name === 'declare_intent').description, /do not call this tool/)
-    assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /also declares the cards contract/)
-    assert.match(boundedTools.find(tool => tool.name === 'generate_outfits').description, /do not call declare_intent or search_wardrobe first/)
-
-    // The exception is still scoped to new requests, not the whole app.
-    const followupTools = stylistToolsForTurn({ turnMode: 'followup' })
-    assert.doesNotMatch(followupTools.find(tool => tool.name === 'declare_intent').description, /do not call this tool/)
+    // …and it is scoped to a fresh request, which the volatile block can do for free.
+    const followup = await buildStylistConversationPayload({
+      question: 'why does that work?', conversationMode: 'followup', sessionId: 'atomic-prompt-followup'
+    })
+    assert.doesNotMatch(String(followup.system), /BOUNDED MULTI-LOOK EXCEPTION/)
   }
+})
+
+// docs/freeform-prompt-cache-levers.md lever 1, and the reason it exists.
+//
+// Anthropic's cached prefix is ordered tools -> system -> messages, so the breakpoint on the system
+// block covers the tools ahead of it: one byte that varies in a tool description throws away the
+// WHOLE prefix, not just the tools. A per-mode amendment used to move 97.8% of a 31,259-character
+// block, so a thread going from a new request to a follow-up discarded ~35k tokens of warm prefix.
+//
+// Adding "just one line" to a tool description for a particular kind of turn is the easiest way to
+// reintroduce that, and it is invisible in review. This makes it fail instead.
+test('tool schemas are byte-identical across turn modes, so the cached prefix survives', () => {
+  const modes = ['new_request', 'followup', 'correction', 'explanation', 'preference_reaction', undefined]
+  const serialized = modes.map(turnMode => JSON.stringify(stylistToolsForTurn({ turnMode })))
+  for (let i = 1; i < serialized.length; i++) {
+    assert.equal(serialized[i], serialized[0],
+      `tool schemas differ between ${modes[0]} and ${modes[i]} — that invalidates the whole cached prefix`)
+  }
+
+  // No tool description may carry request-mode policy: that belongs to the volatile controller.
+  for (const tool of stylistToolsForTurn({ turnMode: 'new_request' })) {
+    assert.doesNotMatch(tool.description, /this turn only|in a follow-up|on a new request|BOUNDED EXCEPTION/i,
+      `${tool.name}'s description carries per-turn policy`)
+  }
+
+  // Offering FEWER tools is a different thing and stays legitimate: which tools exist is a
+  // turn-ending boundary, not policy text inside a cached schema.
+  assert.equal(stylistToolsForTurn({ atomicMultiLookCompleted: true }).length, 0)
+  assert.equal(stylistToolsForTurn({ slotSwapCompleted: true }).length, 0)
 })

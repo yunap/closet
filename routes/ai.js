@@ -19,6 +19,7 @@ import {
   askStylistWithTools,
   routeFreeformExecutionProfile,
   boundedAtomicMultiLookResponse,
+  stripPieceIdCitations,
   recordToolLoopUsage,
   estimateAiUsageCost,
   parseModelJson,
@@ -4036,7 +4037,7 @@ router.post('/ask', async (req, res) => {
             diagnostics: freeformDiagnostics, turnFailed: false
           })
           return res.json({
-            answer: formatWardrobeInventoryAnswer(categoryCounts),
+            answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
             savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
             structuredOutfits: [], structuredOutfitsSource: null,
             structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
@@ -4093,7 +4094,7 @@ router.post('/ask', async (req, res) => {
                 diagnostics: freeformDiagnostics, turnFailed: false
               })
               return res.json({
-                answer: answerCall.text,
+                answer: stripPieceIdCitations(answerCall.text),
                 savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
                 structuredOutfits: [], structuredOutfitsSource: null,
                 structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
@@ -4129,7 +4130,7 @@ router.post('/ask', async (req, res) => {
               turnFailed: false
             })
             return res.json({
-              answer: boundedAtomicMultiLookResponse(toolContext),
+              answer: stripPieceIdCitations(boundedAtomicMultiLookResponse(toolContext)),
               savedCorrections: [],
               renderedBoards: [],
               provider: AI_PROVIDER,
@@ -4216,7 +4217,9 @@ router.post('/ask', async (req, res) => {
     })
 
     res.json({
-      answer,
+      // Last boundary before the user sees it: every guard that needs the citations has
+      // already run on the text that still had them.
+      answer: stripPieceIdCitations(answer),
       savedCorrections: allSaved,
       renderedBoards: Array.isArray(toolContext.renderedBoards) ? toolContext.renderedBoards : [],
       provider: AI_PROVIDER,

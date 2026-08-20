@@ -186,6 +186,42 @@ function shouldBroadenSparseOccasionSearch(occasion = '') {
 // Spec 3 (freeform observability): per-turn counters accumulated on toolContext across every tool
 // call in a chat turn, surfaced by routes/ai.js in the /ask response and logged to
 // freeform_generation_runs — the freeform-chat equivalent of the composer's roster debug/excludedCounts.
+// The full stable-truth row a retrieval tool hands back. Extracted so `search_wardrobe` and
+// `wardrobe_coverage` return garments under ONE contract: a coverage answer that judged a piece from
+// a different field set than a search would have is a second truth surface, and this codebase has
+// paid for those before. Judgment fields (weatherFit/ruleFit) are per-request and stay with search.
+export function wardrobeTruthRow(p = {}) {
+  return {
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    reads_as: p.reads_as,
+    colors: p.colors,
+    occasions: p.occasions,
+    pattern_type: p.pattern_type,
+    pattern_scale: p.pattern_scale,
+    pattern_complexity: p.pattern_complexity,
+    silhouette: p.silhouette,
+    shoe_type: p.shoe_type,
+    toe_shape: p.toe_shape,
+    walk_support: p.walk_support,
+    heel_height: p.heel_height,
+    fabric_category: p.fabric_category,
+    fabric_weight: p.fabric_weight,
+    visual_weight: p.visual_weight,
+    opacity: p.opacity,
+    needs_base: p.needs_base,
+    neckline: p.neckline,
+    sleeve_length: p.sleeve_length,
+    sleeve_shape: p.sleeve_shape,
+    length_hits_at: p.length_hits_at,
+    hem_finish: p.hem_finish,
+    tuck_behavior: p.tuck_behavior,
+    formality: p.formality,
+    notes: p.notes ? p.notes.slice(0, 120) : '',
+  }
+}
+
 export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
   if (!toolContext) return
   if (!toolContext.freeformDiagnostics) {
@@ -612,7 +648,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "wardrobe_coverage",
-    description: "Exact counts over the active wardrobe grouped by an attribute — for coverage and gap questions ('how many dressy shoes do I own?'). The manifest lists every piece; this gives exact numbers instead of hand-counting.",
+    description: "Coverage and gap questions ('do I have enough dressy flats I can walk in?', 'how many dressy shoes do I own?'). Returns exact counts over the active wardrobe grouped by an attribute. When you pass `category`, it ALSO returns `candidates`: the complete active census for that category as full truth rows — every piece, not a sample or a ranking — so you can judge coverage from this one result. Do not follow it with search_wardrobe or view_pieces to find or inspect the same pieces; the rows are already here. Call view_pieces only when seeing a specific garment would actually change your answer. A piece with no photograph is still a candidate, and a differing label is not by itself a disqualification — contextual judgment is yours, physical facts are the saved values",
     input_schema: {
       type: "object",
       properties: {
@@ -2088,7 +2124,43 @@ async function executeToolInternal(name, args, toolContext = {}) {
           for (const value of values) counts[value] = (counts[value] || 0) + 1
         }
         bumpFreeformDiagnostic(toolContext, 'coverageCalls')
-        return { group_by: groupField, total_pieces: scoped.length, counts }
+
+        // Counts alone told the model HOW MANY and never WHICH, so a coverage question cost three
+        // retrieval steps: wardrobe_coverage, then search_wardrobe to find candidates, then
+        // view_pieces for the truth to judge them (measured: thread_1787188412205, 4 iterations,
+        // $0.2138, against $0.0708-$0.1012 for the profile this replaced). Coverage is already the
+        // intent-specific primitive, so it should carry the evidence to answer from one result.
+        //
+        // The census is COMPLETE for the scoped category — never sampled, never ranked, never
+        // capped. Sampling is exactly how the coverage arc failed twice: pieces that were never
+        // shown could not be judged, and unpictured candidates went invisible. Whether 33 shoes are
+        // "enough" is the stylist's judgment; code's job is to make sure it saw all 33.
+        //
+        // Candidates ride only on a category-scoped call. Unscoped coverage spans the whole active
+        // wardrobe, where the manifest already carries identity and a full dump would be the
+        // prompt over again.
+        if (!coverageCategory) {
+          return { group_by: groupField, total_pieces: scoped.length, counts }
+        }
+        // Same rule search_wardrobe uses, and for the same measured reason: when the manifest is in
+        // the prompt the model ALREADY holds every stable field for every piece — walk_support,
+        // formality, heel_height, the lot. Re-sending them here would duplicate the manifest one
+        // category at a time (measured: 88 tops = 65,196 chars ≈ 16.3k tokens of pure repetition).
+        // What coverage uniquely adds is the CLOSED SET: exactly which pieces are in scope, so the
+        // model knows it has seen all of them. Above the manifest cap there is no manifest to read
+        // from, so the full truth row travels with the candidate instead.
+        const manifestCarriesTruth = toolContext?.wardrobeManifestIncluded === true
+        return {
+          group_by: groupField,
+          total_pieces: scoped.length,
+          counts,
+          candidates: manifestCarriesTruth
+            ? scoped.map(piece => ({ id: piece.id, name: piece.name }))
+            : scoped.map(wardrobeTruthRow),
+          candidates_note: manifestCarriesTruth
+            ? `Complete active ${coverageCategory} census (${scoped.length} pieces), not a sample — this is every one, so judge them all. Their stable truth is already in the wardrobe manifest above; read it there rather than searching again. Call view_pieces only if seeing a garment would change your answer; a piece with no photograph is still a candidate.`
+            : `Complete active ${coverageCategory} census (${scoped.length} pieces) with full truth, not a sample — judge every row. Call view_pieces only if seeing a garment would change your answer; a piece with no photograph is still a candidate.`
+        }
       }
       case 'get_garment_details': {
         const { ids } = args

@@ -277,6 +277,36 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
 //
 // Withheld, never retried. A retry costs a paid round-trip to fix commentary on a card the user can
 // already see; the capsule ending applies -- deliver, and drop what cannot be trusted.
+// Owner ruling, 2026-08-20: final user-facing prose shows no piece IDs. The "(ID <n>)" citation the
+// prompt requires is a VERIFICATION SCAFFOLD, not product copy — it exists so the unverified-citation
+// guard, the accepted-card authority and the zero-result contradiction check can all confirm the
+// model is talking about garments that exist. The user should not have to read database handles.
+//
+// So the contract is ordered, not relaxed: IDs are required while the model reasons, every guard
+// that needs them runs on the text that still has them, and this strips them at the last boundary
+// before the answer is sent. Never call this before validation — that would silently disarm three
+// guards at once. Structured cards keep their piece IDs, so nothing downstream loses the reference.
+export function stripPieceIdCitations(answerText = '') {
+  return String(answerText || '')
+    // The mandated form, and its bracketed and plural variants: "(ID 196)", "[IDs 196, 204]".
+    .replace(/[ \t]*[([]\s*IDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // A bare inline citation the model wrote without brackets.
+    .replace(/[ \t]*\bIDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\b/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // Tidy what removal leaves behind, without touching line structure.
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/\(\s*\)|\[\s*\]/g, '')
+    // Removing a mid-sentence citation leaves its separators behind: "the loafers, ID 196, work"
+    // became "the loafers,, work". The bracketed form the prompt actually mandates never hits this,
+    // but the model does sometimes cite inline.
+    .replace(/,(\s*,)+/g, ',')
+    .replace(/,\s*([.;:!?])/g, '$1')
+    // A list item that was nothing but a citation is now an empty bullet; drop the line rather than
+    // rendering a stray dash.
+    .split('\n').map(line => line.replace(/[ \t]+$/, '')).filter(line => !/^\s*[-*]\s*$/.test(line)).join('\n')
+    .trim()
+}
+
 export function applyAcceptedCardAuthority(answerText = '', toolContext = {}) {
   const cards = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(card => !card?.broken)
@@ -734,30 +764,24 @@ export function stylistToolsForTurn(toolContext = {}) {
   const allowedNames = Array.isArray(toolContext?.allowedToolNames)
     ? new Set(toolContext.allowedToolNames)
     : null
-  const tools = allowedNames
+  // docs/freeform-prompt-cache-levers.md lever 1. Tool SCHEMAS are byte-identical across turn modes.
+  //
+  // This used to append a bounded-multi-look exception to declare_intent and generate_outfits, but
+  // only for new_request. Anthropic's cached prefix is ordered tools -> system -> messages, so the
+  // breakpoint on the system block covers the tools ahead of it: a byte that varies in a tool
+  // description invalidates the WHOLE prefix, not just the tools. Measured, that amendment moved
+  // 97.8% of a 31,259-character block, so a thread going from a new request to a follow-up threw
+  // away roughly 35k tokens of otherwise-warm prefix.
+  //
+  // It was a prompt-ownership violation too: per-turn mode behaviour belongs to the volatile
+  // controller (freeformToolRoutingInstruction), which sits below the breakpoint and already varies
+  // per turn, so saying it there costs nothing in reuse. Do not put request-mode policy back here.
+  //
+  // Returning FEWER tools above is a different thing and stays: which tools are offered is a
+  // deliberate turn-ending boundary, not per-request policy inside a schema.
+  return allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
-  if (toolContext?.turnMode !== 'new_request') {
-    return tools
-  }
-  // The bounded batch call is itself the cards declaration. Reinforce that exception in the tool
-  // descriptions the controller actually sees; otherwise declare_intent's general "call first"
-  // wording can win over the narrower system instruction and preserve an unnecessary paid turn.
-  return tools.map(tool => {
-    if (tool.name === 'declare_intent') {
-      return {
-        ...tool,
-        description: `${tool.description} BOUNDED EXCEPTION: for fresh options sharing one occasion, activity, and weather context, do not call this tool; call generate_outfits directly. An ordinary new 'what should I wear?' request defaults to 2 options.`
-      }
-    }
-    if (tool.name === 'generate_outfits') {
-      return {
-        ...tool,
-        description: `${tool.description} When the bounded multi-look exception applies, this call also declares the cards contract, so do not call declare_intent or search_wardrobe first.`
-      }
-    }
-    return tool
-  })
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"

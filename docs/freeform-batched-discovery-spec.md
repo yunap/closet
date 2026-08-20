@@ -337,11 +337,72 @@ The coverage turn spent three retrieval steps — `wardrobe_coverage`, then `sea
 categories, one level up at the *tool* level. Collapsing it is description-level and offline
 testable; it needs no new architecture.
 
-## Open question carried forward
+## Coverage answers from one tool result — 2026-08-20
 
-Whether the moving cache breakpoint earns its cost. Writing a new entry per iteration at 1.25× may be
-worse than caching only the stable prefix and letting messages ride as ordinary input at 1×. This is
-computable from the recorded token counts before any paid call.
+The live coverage turn spent three retrieval steps before answering:
+`wardrobe_coverage` → `search_wardrobe` → `view_pieces`, 4 iterations, $0.2138. The cause was in the
+primitive: `wardrobe_coverage` returned aggregate counts only, so it said **how many** and never
+**which**. The model then had to find the pieces, and then fetch enough truth to judge them.
+
+Owner ruling: collapse it by promoting the existing tool, not by adding architecture — coverage is
+already the intent-specific primitive, so it should own the coverage maths *and* carry the evidence.
+
+A category-scoped call now returns `candidates`: the **complete active census for that category**.
+Never sampled, never ranked, never capped — sampling is exactly how the coverage arc failed twice,
+because a piece the model never saw could not be judged, and the ones dropped were owner-confirmed.
+Whether 33 shoes are "enough" is the stylist's judgment; code's job is to guarantee it saw all 33.
+
+**What the census carries depends on what the prompt already holds**, using the same rule and the
+same measured reason as `search_wardrobe`'s row trimming:
+
+| Manifest in prompt | Census carries | Why |
+|---|---|---|
+| yes | `id` + `name` | the manifest already holds every stable field — `walk_support`, `formality`, `heel_height`, all of them |
+| no (above the cap) | full truth rows | nothing else carries them |
+
+Measured on the owner's wardrobe, with the manifest present: **88 tops fell from 65,196 characters
+(~16.3k tokens) to 4,593 (~1.1k)** for the same completeness guarantee. Sending full rows would have
+duplicated the manifest one category at a time — the mistake row trimming was introduced to fix,
+repeated at larger scale.
+
+Unscoped coverage stays counts-only: its scope is the whole active wardrobe, where the manifest
+already carries identity and a full dump would be the prompt over again.
+
+`wardrobeTruthRow` is now shared by both tools, so a coverage answer cannot judge a piece from a
+different field set than a search would have.
+
+**Not verified:** whether the model actually stops calling `search_wardrobe` and `view_pieces` after
+a coverage call. The description tells it the rows are already there. Like batching, that is model
+behaviour, readable for free from `tool_sequence` on the next coverage question rather than worth a
+paid turn.
+
+## Open question — answered 2026-08-20, from recorded data
+
+*Does the moving cache breakpoint earn its cost? Writing a new entry per iteration at 1.25× might be
+worse than caching only the stable prefix and letting messages ride as ordinary input at 1×.*
+
+**It earns it.** Answered offline from the recorded token counts; no paid call was needed.
+
+On the clean two-iteration turn (`created 43,085 / read 42,960 / 4 uncached input`), the stable
+prefix is a measured 27,350 tokens, so the message span reused on iteration 2 was 15,610 tokens:
+
+| | Cost |
+|---|---:|
+| Moving breakpoint (today) | **$0.1745** |
+| Stable prefix only, messages at 1× | $0.2048 |
+
+The breakpoint is **15% cheaper on a two-iteration turn**, and the gap widens with every additional
+iteration, because the alternative re-sends the whole accumulated span at full input price each time
+while the breakpoint reads it at a tenth.
+
+A coarser check across all 109 recorded turns with cache activity — assuming, less precisely, that
+everything currently cached would otherwise be fresh input — puts the saving at **$29.86 of $55.62,
+or 53.7%**. Treat the 15% as the rigorous figure for the specific counterfactual and the 53.7% as
+the upper bound for removing message caching altogether.
+
+Neither figure argues for changing it. **Do not revisit this without new pricing**: the question is
+settled at current rates, and it was the fourth cost hypothesis this arc examined — the other three
+are in the table above, all disproven.
 
 ## Related
 

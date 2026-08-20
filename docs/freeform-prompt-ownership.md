@@ -1,5 +1,22 @@
 # Freeform prompt and tool ownership
 
+> **Amendment 2026-08-20 — ownership does not imply reachability.** Moving a tool's argument
+> semantics into its schema is correct, but a tool description cannot make a tool reachable if the
+> model never gets a routing pointer to it. `plan_outfit_set` is the precedent: before the prompt
+> named it, the tool was live and unused. So a clause can be *owned* by the schema for its details
+> and still need one compact "when to reach for this" line in the prompt. Splitting those two is the
+> first move in any dedup pass; collapsing them is how a working tool goes quiet.
+>
+> **Amendment 2026-08-20 — cache stability is part of ownership.** A tool description is a *cached*
+> artefact: Anthropic orders the prefix tools → system → messages, so the breakpoint on the system
+> block covers the tools ahead of it. Per-turn policy in a tool description therefore does not merely
+> sit in the wrong owner's block — it invalidates the entire cached prefix whenever the turn mode
+> changes. Measured: a per-mode amendment moved 97.8% of a 31,259-character tool block, discarding
+> ~35k tokens of warm prefix on the first follow-up. The volatile controller varies for free.
+> Enforced by `tool schemas are byte-identical across turn modes` in `aiEndpointContracts.test.js`.
+> See [freeform-prompt-cache-levers.md](freeform-prompt-cache-levers.md).
+
+
 **Status:** first ownership pass implemented; deeper cached-prefix audit remains evidence-gated — 2026-08-19
 **Scope:** `/api/ai/ask` full-stylist controller and its tool catalog
 

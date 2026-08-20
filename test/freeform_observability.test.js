@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -217,6 +217,122 @@ test('a category with nothing in it is reported as a real shortfall, not hidden 
   assert.deepEqual(summary.shortfalls, ['outerwear'])
   assert.match(summary.note, /real wardrobe shortfall, not a narrow search/)
   assert.equal(ctx.freeformDiagnostics.searchCalls, 1)
+})
+
+test('category-scoped coverage answers from one result instead of three retrieval steps', async () => {
+  // thread_1787188412205 spent wardrobe_coverage -> search_wardrobe -> view_pieces before answering,
+  // because counts said HOW MANY and never WHICH. Coverage is already the intent-specific primitive,
+  // so it carries the evidence.
+  const ids = [
+    db.prepare("INSERT INTO pieces (name, category, status, walk_support, formality) VALUES ('census probe flat', 'shoes', 'active', 'medium', 'elevated')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, walk_support, formality) VALUES ('census probe sneaker', 'shoes', 'active', 'high', 'everyday')").run().lastInsertRowid,
+  ]
+  try {
+    // Above the manifest cap there is no manifest to read from, so full truth travels with the row.
+    const noManifest = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, { freeformDiagnostics: {} })
+    assert.ok(noManifest.counts, 'the coverage maths is still there')
+    assert.equal(noManifest.candidates.length, noManifest.total_pieces, 'the census is complete, never sampled')
+    const full = noManifest.candidates.find(c => Number(c.id) === Number(ids[0]))
+    assert.equal(full.walk_support, 'medium', 'latent physical truth travels when nothing else carries it')
+    assert.equal(full.formality, 'elevated')
+
+    // With the manifest present the model already holds every stable field, so repeating them here
+    // would duplicate the manifest one category at a time — measured at 16.3k tokens for 88 tops.
+    // What coverage uniquely adds is the CLOSED SET, so identity is enough.
+    const res = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' },
+      { freeformDiagnostics: {}, wardrobeManifestIncluded: true })
+    assert.equal(res.candidates.length, res.total_pieces, 'still complete, still never sampled')
+    const probe = res.candidates.find(c => Number(c.id) === Number(ids[0]))
+    assert.deepEqual(Object.keys(probe).sort(), ['id', 'name'], 'identity only; the manifest carries the truth')
+    assert.match(res.candidates_note, /already in the wardrobe manifest/)
+    assert.ok(JSON.stringify(res).length < JSON.stringify(noManifest).length / 2, 'and it is dramatically smaller')
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
+test('unscoped coverage stays counts-only, and the census is never ranked or capped', async () => {
+  const ctx = { freeformDiagnostics: {} }
+  // Without a category the scope is the whole active wardrobe, where the manifest already carries
+  // identity — dumping every row would be the prompt over again.
+  const unscoped = await executeTool('wardrobe_coverage', { group_by: 'category' }, ctx)
+  assert.ok(unscoped.counts)
+  assert.equal(unscoped.candidates, undefined)
+
+  // Scoped: complete, and in stable id order rather than a relevance ranking. Ranking would
+  // reintroduce the failure the coverage arc hit twice — a piece the model never saw cannot be
+  // judged, and the ones dropped were owner-confirmed.
+  const scoped = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, ctx)
+  const ids = scoped.candidates.map(c => Number(c.id))
+  assert.deepEqual(ids, [...ids].sort((a, b) => a - b), 'stable id order, not a ranking')
+  assert.equal(new Set(ids).size, ids.length, 'each piece appears exactly once')
+  assert.match(scoped.candidates_note, /not a sample/)
+  assert.match(scoped.candidates_note, /no photograph is still a candidate/)
+})
+
+test('the stylist prompt states no global material absolutes', async () => {
+  // Owner ruling 2026-08-20. Three rules read as authoritative law while being globally false, and
+  // one of them — "silk, satin, chiffon → always wear_over_only REGARDLESS OF NOTES" — overrode the
+  // owner's own note about their own garment, which the evidence-provenance ladder calls the
+  // strongest evidence there is. Silk blouses are tucked routinely; the rule was an incident
+  // generalised to a material name and shipped to every user of a multiuser app.
+  //
+  // Structured truth (tuck_behavior) carries the general case; per-piece RULES carry the specific
+  // one. That mechanism already exists in the same prompt under EARNED WISDOM OVERRIDE.
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const { LEGACY_PROFILE, LEGACY_CONSTITUTION } = await import('../styling-engine/constitutionSeed.js')
+  const system = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION }).STYLIST_SYSTEM
+
+  assert.doesNotMatch(system, /regardless of notes/i,
+    'nothing may override an owner note about their own garment')
+  assert.doesNotMatch(system, /cannot hold a tuck/i)
+  assert.doesNotMatch(system, /never suggest tucking them/i)
+  assert.doesNotMatch(system, /Never recommend heels, wedges, or delicate shoes/i)
+  assert.doesNotMatch(system, /Never pair two "loud" pieces/i)
+
+  // The replacements keep the caution and drop the law.
+  assert.match(system, /may be less stable when tucked/)
+  assert.match(system, /Do not infer "wear over only" from the material name alone/)
+  assert.match(system, /the owner's note wins/)
+  assert.match(system, /a low block heel may be acceptable where saved comfort evidence supports it/)
+  assert.match(system, /Deliberate print or colour mixing is allowed when hierarchy, palette and scale are controlled/)
+
+  // The mechanism that should carry owner-specific truth is still there and still authoritative.
+  assert.match(system, /RULES \(authoritative\)/)
+})
+
+test('piece IDs are a verification scaffold, not product copy', () => {
+  // Owner ruling 2026-08-20: acceptance case 7 wins over the "(ID <n>)" citation requirement. The
+  // app may require handles internally; the reader should never see them.
+  const cases = [
+    ['**Black slip-on loafers** (ID 196) — minimalist suede.', '**Black slip-on loafers** — minimalist suede.'],
+    ['Pair the tee (ID 12) with the trousers (ID 34).', 'Pair the tee with the trousers.'],
+    ['Try IDs 169, 361 together.', 'Try together.'],
+    ['Start with the shell [ID 204].', 'Start with the shell.'],
+    ['The cutout flats (ID 204) and loafers (ID 196) both work.', 'The cutout flats and loafers both work.'],
+  ]
+  for (const [input, expected] of cases) {
+    assert.equal(stripPieceIdCitations(input), expected)
+  }
+
+  // Must not touch text that merely contains digits or the letters "ID".
+  for (const untouched of [
+    'The 501 jeans work here.',
+    'That IDEA is worth trying.',
+    'Wear it with the 3/4 sleeve knit.',
+    'A 90s silhouette, cropped at the waist.',
+  ]) {
+    assert.equal(stripPieceIdCitations(untouched), untouched, `must not rewrite: ${untouched}`)
+  }
+
+  // Removing a mid-sentence citation must not leave its separators behind. The bracketed form the
+  // prompt mandates never hits this, but the model does sometimes cite inline.
+  assert.equal(stripPieceIdCitations('The loafers, ID 196, work.'), 'The loafers, work.')
+  assert.equal(stripPieceIdCitations('- ID 196\n- ID 204'), '', 'a bullet that was only a citation is dropped, not left as a stray dash')
+
+  // Line structure survives, because answers are markdown with lists and headings.
+  const markdown = '**The reliable two:**\n- **Cutout flats** (ID 204) — pointed toe.\n- **Loafers** (ID 196) — suede.'
+  assert.equal(stripPieceIdCitations(markdown), '**The reliable two:**\n- **Cutout flats** — pointed toe.\n- **Loafers** — suede.')
 })
 
 test('an accepted card has authority over the closing prose that comments on it', () => {
@@ -490,12 +606,16 @@ test('the message array stays a cacheable prefix across turns until the history 
 
 test('freeform prompt ownership leaves tool mechanics in tool descriptions and only cross-tool boundaries in the controller', async () => {
   const { freeformToolRoutingInstruction } = await import('../styling-engine/core.js')
-  const base = freeformToolRoutingInstruction(false)
-  const bounded = freeformToolRoutingInstruction(true)
+  // Takes the turn mode now: per-turn behaviour lives in this block precisely because it is below
+  // the cache breakpoint, where varying costs nothing. See docs/freeform-prompt-cache-levers.md.
+  const base = freeformToolRoutingInstruction('followup')
+  const bounded = freeformToolRoutingInstruction('new_request')
   assert.match(base, /each tool description owns its eligibility, required arguments, and mechanical output contract/)
   assert.doesNotMatch(base, /want:"text"|outfit_index|piece_ids/)
-  assert.match(bounded, /fresh 2–5 option requests/)
-  assert.match(bounded, /One\/best requests stay on the verified serial path/)
+  assert.doesNotMatch(base, /BOUNDED MULTI-LOOK EXCEPTION/, 'the exception is a fresh-request rule only')
+  assert.match(bounded, /BOUNDED MULTI-LOOK EXCEPTION/)
+  assert.match(bounded, /do NOT call declare_intent and do NOT call search_wardrobe/)
+  assert.match(bounded, /One\/best\/pick-one requests stay on the verified search \+ propose path/)
   assert.match(bounded, /multi-context schedules and capsules use plan_outfit_set/)
   assert.match(bounded, /existing-card revisions use suggest_slot_swaps/)
 
@@ -509,7 +629,12 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)
   assert.match(tool('plan_outfit_set').description, /multiple use-case slots/)
-  assert.ok(bounded.length < 800, 'the cross-tool controller stays smaller than the schemas it references')
+  // Grew from ~700 to ~890 chars when lever 1 moved the bounded exception out of the tool schemas.
+  // That is the trade working: ~48 tokens of volatile text at full input price (~$0.00014/call)
+  // buys back ~35k tokens of cached prefix that a turn-mode change used to discard (~$0.13). The
+  // bound still guards the thing it was written for — the controller restating tool schemas — which
+  // the assertions above check directly.
+  assert.ok(bounded.length < 1100, 'the cross-tool controller stays smaller than the schemas it references')
 })
 
 test('assembled full-stylist prompt carries one mode owner and no retired schema restatements', async () => {
@@ -525,7 +650,7 @@ test('assembled full-stylist prompt carries one mode owner and no retired schema
     assert.doesNotMatch(payload.system, /INTENT DECLARATION \(mechanically enforced\)/)
     assert.doesNotMatch(payload.system, /If mode is followup|If mode is correction|If mode is explanation|If mode is preference_reaction/)
     assert.match(payload.system, /TOOL ROUTING OWNERSHIP:/)
-    assert.match(payload.system, /BOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY:/)
+    assert.doesNotMatch(payload.system, /BOUNDED MULTI-LOOK EXCEPTION/, 'an explanation turn is not a fresh request')
   }
 })
 
