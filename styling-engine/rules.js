@@ -4238,7 +4238,22 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
 // "must use". When in doubt, leave a term out — a missed leak costs a sentence, a false positive
 // deletes advice the user needed.
 export function exposesComposerDeliberation(text = '') {
-  return /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown|let me (?:search|check|look)|searching (?:for|the)|no (?:results|matches) (?:for|found))\b/i.test(String(text || '')) // ratchet-allow: model-output integrity boundary, not garment classification
+  const value = String(text || '')
+  // Retrieval and self-correction. Note what is NOT here: "instead of the" and "rejected" were
+  // drafted into this list and removed before shipping, because they ate real styling instructions
+  // ("wear the cardigan open instead of the belted version"). Do not put them back.
+  if (/\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown|let me (?:search|check|look)|searching (?:for|the)|no (?:results|matches) (?:for|found))\b/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  // Search-broadening machinery (2026-08-19). search_wardrobe now reports which filters it relaxed;
+  // that report exists for the model's reasoning, not for the reader. These patterns are deliberately
+  // narrow because the vocabulary collides with real styling language: "relaxed" is a silhouette
+  // ("relaxed wide-leg trousers") and a jacket can "broaden" a shoulder line. Match the machinery
+  // phrasing, never the bare adjective.
+  if (/\bno exact match\b/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  if (/\b(?:relaxed|dropped|removed|loosened) (?:the |my )?[\w-]* ?(?:filter|filters|requirement|constraint)s?\b/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  if (/\bbroadened (?:the |my )?(?:search|query|criteria)\b/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  // The literal field names of the retrieval report: quoting them is machinery by definition.
+  if (/\b(?:relaxedFilters|requestedCategories|returnedByCategory|shortfalls?)\b/.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  return false
 }
 
 export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {

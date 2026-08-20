@@ -106,6 +106,32 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(generalMessage, 'Question: What is smart casual?')
 })
 
+// Source-asserted deliberately. Exercising the real budget needs 17+ seeded pieces WITH photo files
+// on disk per category, which would make this a slow fixture test of image plumbing rather than of
+// the property that matters. The property: the visual budget is ranked PER CATEGORY, so a batched
+// four-category search cannot let the first category eat every thumbnail.
+//
+// This is load-bearing for two commitments at once. Visual grounding is a founding principle of this
+// app, and batched discovery's first acceptance case says unpictured candidates must not become
+// invisible — both fail silently if someone "simplifies" this to a per-call index.
+test('the search image budget is ranked per category, so batching cannot starve later categories', () => {
+  const toolsSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
+  const searchCase = toolsSrc.slice(
+    toolsSrc.indexOf("case 'search_wardrobe'"),
+    toolsSrc.indexOf("case 'view_pieces'")
+  )
+  // A per-category counter, not the row's position in the whole result set.
+  assert.match(searchCase, /seenPerCategory/, 'per-category ranking must exist')
+  assert.match(searchCase, /visualRankByPiece\.set\(p\.id, rank\)/)
+  assert.match(searchCase, /const visualRank = visualRankByPiece\.get\(p\.id\)/)
+  assert.match(searchCase, /visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP/,
+    'the cap must be applied to the per-category rank, never to the flat index')
+  // The tool description promises this, and the promise is what makes batching safe to encourage.
+  const description = STYLIST_TOOLS.find(tool => tool.name === 'search_wardrobe').description
+  assert.match(description, /image budget is per category/)
+  assert.match(description, /category` accepts an array/)
+})
+
 test('one batched search covers several categories and reports no compromise when it finds them', async () => {
   const ids = [
     db.prepare("INSERT INTO pieces (name, category, status, colors) VALUES ('batch probe tee', 'top', 'active', '[\"blue\"]')").run().lastInsertRowid,
@@ -215,6 +241,12 @@ test('the deliberation vocabulary does not eat legitimate styling instructions',
     'Ground it with the loafers instead of the sandals.',
     'Push the sleeves instead of the full cuff.',
     'Belt it over the cardigan at the natural waist.',
+    // The broadening vocabulary added 2026-08-19 collides with real styling language: "relaxed" is
+    // a silhouette and a jacket can broaden a shoulder. These must survive.
+    'The relaxed wide-leg trousers balance the fitted top.',
+    'A relaxed silhouette needs one sharp edge to hold it together.',
+    'The jacket broadens the shoulder line, so keep the bottom narrow.',
+    'Push the sleeves up so the cuff sits below the elbow.',
   ]) {
     assert.equal(exposesComposerDeliberation(instruction), false, `must not withhold: ${instruction}`)
   }
@@ -223,6 +255,13 @@ test('the deliberation vocabulary does not eat legitimate styling instructions',
     'No results for lightweight jackets, so I broadened.',
     'Checking the recently-shown list first.',
     'Rebuilding that look around the trousers.',
+    // search_wardrobe reports the filters it relaxed. That report is for the model's reasoning, not
+    // for the reader — quoting it into the answer is machinery in user-facing prose.
+    'I relaxed the color filter to find these.',
+    'No exact match for the original filters.',
+    'I dropped the neckline requirement to widen the search.',
+    'I broadened the search to find these.',
+    'relaxedFilters: [query, color]',
   ]) {
     assert.equal(exposesComposerDeliberation(leak), true, `must withhold: ${leak}`)
   }
