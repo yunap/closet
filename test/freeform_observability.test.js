@@ -137,6 +137,30 @@ test('an accepted card has authority over the closing prose that comments on it'
   assert.equal(counted.freeformDiagnostics.closingProseWithheld, 1)
 })
 
+test('the deliberation vocabulary does not eat legitimate styling instructions', async () => {
+  // This predicate also gates the card's own styling_instructions, so a loose term deletes advice
+  // rather than leaking a sentence. "instead of the" and "rejected" were drafted into it and pulled
+  // before shipping for exactly this reason — the same failure as the earlier detector that erased
+  // instructions containing "wait" or "must use".
+  const { exposesComposerDeliberation } = await import('../styling-engine/rules.js')
+  for (const instruction of [
+    'Wear the cardigan open instead of the belted version.',
+    'Ground it with the loafers instead of the sandals.',
+    'Push the sleeves instead of the full cuff.',
+    'Belt it over the cardigan at the natural waist.',
+  ]) {
+    assert.equal(exposesComposerDeliberation(instruction), false, `must not withhold: ${instruction}`)
+  }
+  for (const leak of [
+    'Let me search the wardrobe for a top.',
+    'No results for lightweight jackets, so I broadened.',
+    'Checking the recently-shown list first.',
+    'Rebuilding that look around the trousers.',
+  ]) {
+    assert.equal(exposesComposerDeliberation(leak), true, `must withhold: ${leak}`)
+  }
+})
+
 test('accepted-card authority applies only when a card was actually accepted', () => {
   // A prose turn has no card to defer to, so its answer is the product and is never filtered --
   // otherwise the guard would eat ordinary conversational answers.

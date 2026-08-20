@@ -4230,8 +4230,15 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
 // what it produced: the user asked for an outfit, not a transcript of the search that found it.
 // Keep this list mechanical and short. It is not a semantic judge — prose that merely reads oddly is
 // the model's business, and widening it into a style filter is how a guard becomes a rules engine.
+//
+// Every term must be unambiguous deliberation. "instead of the" and "rejected" were drafted here and
+// removed before shipping: "wear the cardigan open instead of the belted version" is a styling
+// instruction, not a confession, and this predicate also gates the card's own styling_instructions.
+// Same failure as the earlier detector that erased legitimate instructions containing "wait" or
+// "must use". When in doubt, leave a term out — a missed leak costs a sentence, a false positive
+// deletes advice the user needed.
 export function exposesComposerDeliberation(text = '') {
-  return /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown|let me (?:search|check|look)|searching (?:for|the)|no (?:results|matches) (?:for|found)|instead of the|rejected)\b/i.test(String(text || '')) // ratchet-allow: model-output integrity boundary, not garment classification
+  return /\b(?:rebuilding|checking available|checking the|using it despite|recently[- ]shown|let me (?:search|check|look)|searching (?:for|the)|no (?:results|matches) (?:for|found))\b/i.test(String(text || '')) // ratchet-allow: model-output integrity boundary, not garment classification
 }
 
 export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {
