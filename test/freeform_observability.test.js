@@ -575,12 +575,16 @@ test('the message array stays a cacheable prefix across turns until the history 
 
 test('freeform prompt ownership leaves tool mechanics in tool descriptions and only cross-tool boundaries in the controller', async () => {
   const { freeformToolRoutingInstruction } = await import('../styling-engine/core.js')
-  const base = freeformToolRoutingInstruction(false)
-  const bounded = freeformToolRoutingInstruction(true)
+  // Takes the turn mode now: per-turn behaviour lives in this block precisely because it is below
+  // the cache breakpoint, where varying costs nothing. See docs/freeform-prompt-cache-levers.md.
+  const base = freeformToolRoutingInstruction('followup')
+  const bounded = freeformToolRoutingInstruction('new_request')
   assert.match(base, /each tool description owns its eligibility, required arguments, and mechanical output contract/)
   assert.doesNotMatch(base, /want:"text"|outfit_index|piece_ids/)
-  assert.match(bounded, /fresh 2–5 option requests/)
-  assert.match(bounded, /One\/best requests stay on the verified serial path/)
+  assert.doesNotMatch(base, /BOUNDED MULTI-LOOK EXCEPTION/, 'the exception is a fresh-request rule only')
+  assert.match(bounded, /BOUNDED MULTI-LOOK EXCEPTION/)
+  assert.match(bounded, /do NOT call declare_intent and do NOT call search_wardrobe/)
+  assert.match(bounded, /One\/best\/pick-one requests stay on the verified search \+ propose path/)
   assert.match(bounded, /multi-context schedules and capsules use plan_outfit_set/)
   assert.match(bounded, /existing-card revisions use suggest_slot_swaps/)
 
@@ -594,7 +598,12 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)
   assert.match(tool('plan_outfit_set').description, /multiple use-case slots/)
-  assert.ok(bounded.length < 800, 'the cross-tool controller stays smaller than the schemas it references')
+  // Grew from ~700 to ~890 chars when lever 1 moved the bounded exception out of the tool schemas.
+  // That is the trade working: ~48 tokens of volatile text at full input price (~$0.00014/call)
+  // buys back ~35k tokens of cached prefix that a turn-mode change used to discard (~$0.13). The
+  // bound still guards the thing it was written for — the controller restating tool schemas — which
+  // the assertions above check directly.
+  assert.ok(bounded.length < 1100, 'the cross-tool controller stays smaller than the schemas it references')
 })
 
 test('assembled full-stylist prompt carries one mode owner and no retired schema restatements', async () => {
@@ -610,7 +619,7 @@ test('assembled full-stylist prompt carries one mode owner and no retired schema
     assert.doesNotMatch(payload.system, /INTENT DECLARATION \(mechanically enforced\)/)
     assert.doesNotMatch(payload.system, /If mode is followup|If mode is correction|If mode is explanation|If mode is preference_reaction/)
     assert.match(payload.system, /TOOL ROUTING OWNERSHIP:/)
-    assert.match(payload.system, /BOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY:/)
+    assert.doesNotMatch(payload.system, /BOUNDED MULTI-LOOK EXCEPTION/, 'an explanation turn is not a fresh request')
   }
 })
 

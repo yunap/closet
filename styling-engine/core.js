@@ -3841,9 +3841,18 @@ export function buildStylistConversationDirective(mode) {
   }
 }
 
-export function freeformToolRoutingInstruction() {
+// docs/freeform-prompt-cache-levers.md lever 1. This block is BELOW the prompt cache breakpoint, so
+// it may vary per turn at no cost to reuse. That is exactly why per-turn mode behaviour lives here
+// and not in a tool description: tool schemas sit above the breakpoint, where one varying byte
+// invalidates the whole cached prefix.
+export function freeformToolRoutingInstruction(turnMode = '') {
   const ownerLine = 'TOOL ROUTING OWNERSHIP: each tool description owns its eligibility, required arguments, and mechanical output contract. Follow declare_intent, suggest_slot_swaps, render_preview, generate_outfits, and plan_outfit_set as written instead of restating their schemas here.'
-  return `${ownerLine}\nBOUNDED MULTI-LOOK CROSS-TOOL BOUNDARY: apply the dynamically amended declare_intent/generate_outfits exception only to fresh 2–5 option requests sharing one occasion, activity, and weather context. One/best requests stay on the verified serial path; multi-context schedules and capsules use plan_outfit_set; existing-card revisions use suggest_slot_swaps. Never flatten distinct contexts to qualify.`
+  if (String(turnMode || '') !== 'new_request') return ownerLine
+  // Stated in full here, because the tool descriptions no longer carry it. A fresh request is the
+  // only turn shape the bounded exception applies to, which is why it is emitted only for one mode.
+  return `${ownerLine}
+BOUNDED MULTI-LOOK EXCEPTION (this turn only): for a fresh request for 2–5 outfit options that share one occasion, activity, location, date and weather context, do NOT call declare_intent and do NOT call search_wardrobe — call generate_outfits directly and exactly once. That call is itself the cards declaration. An ordinary new "what should I wear?" defaults to limit:2; an explicit count 2–5 wins.
+One/best/pick-one requests stay on the verified search + propose path; multi-context schedules and capsules use plan_outfit_set; existing-card revisions use suggest_slot_swaps. Never flatten distinct contexts to qualify.`
 }
 
 export const STYLIST_CONVERSATION_MODES = new Set([
@@ -4253,7 +4262,7 @@ export async function buildStylistConversationPayload(body) {
     `Turn directive: ${conversationDirective}`,
     'FIT CONCERNS: when the user states a fit problem (baggy, loose waist, clingy, riding up), address it head-on in prose FIRST — belting, tucking, proportion balancing, silhouette pairing — then compose cards that implement the advice. Do not ignore the stated concern and just assemble an outfit.',
     'INDOOR TRANSIT WEATHER: indoor describes a climate-controlled destination, not a weather escape hatch. In a multi-outfit plan, the outside forecast still governs the base outfit and transit. During extreme heat, build a breathable hot-weather base and use only an optional light layer for AC; never solve AC with a heavy main garment. Indoor suppresses direct-sun and outdoor-activity styling, not temperature itself.',
-    freeformToolRoutingInstruction(),
+    freeformToolRoutingInstruction(conversationMode),
     extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
     `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${prompts.PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,

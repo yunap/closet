@@ -764,30 +764,24 @@ export function stylistToolsForTurn(toolContext = {}) {
   const allowedNames = Array.isArray(toolContext?.allowedToolNames)
     ? new Set(toolContext.allowedToolNames)
     : null
-  const tools = allowedNames
+  // docs/freeform-prompt-cache-levers.md lever 1. Tool SCHEMAS are byte-identical across turn modes.
+  //
+  // This used to append a bounded-multi-look exception to declare_intent and generate_outfits, but
+  // only for new_request. Anthropic's cached prefix is ordered tools -> system -> messages, so the
+  // breakpoint on the system block covers the tools ahead of it: a byte that varies in a tool
+  // description invalidates the WHOLE prefix, not just the tools. Measured, that amendment moved
+  // 97.8% of a 31,259-character block, so a thread going from a new request to a follow-up threw
+  // away roughly 35k tokens of otherwise-warm prefix.
+  //
+  // It was a prompt-ownership violation too: per-turn mode behaviour belongs to the volatile
+  // controller (freeformToolRoutingInstruction), which sits below the breakpoint and already varies
+  // per turn, so saying it there costs nothing in reuse. Do not put request-mode policy back here.
+  //
+  // Returning FEWER tools above is a different thing and stays: which tools are offered is a
+  // deliberate turn-ending boundary, not per-request policy inside a schema.
+  return allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
-  if (toolContext?.turnMode !== 'new_request') {
-    return tools
-  }
-  // The bounded batch call is itself the cards declaration. Reinforce that exception in the tool
-  // descriptions the controller actually sees; otherwise declare_intent's general "call first"
-  // wording can win over the narrower system instruction and preserve an unnecessary paid turn.
-  return tools.map(tool => {
-    if (tool.name === 'declare_intent') {
-      return {
-        ...tool,
-        description: `${tool.description} BOUNDED EXCEPTION: for fresh options sharing one occasion, activity, and weather context, do not call this tool; call generate_outfits directly. An ordinary new 'what should I wear?' request defaults to 2 options.`
-      }
-    }
-    if (tool.name === 'generate_outfits') {
-      return {
-        ...tool,
-        description: `${tool.description} When the bounded multi-look exception applies, this call also declares the cards contract, so do not call declare_intent or search_wardrobe first.`
-      }
-    }
-    return tool
-  })
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
