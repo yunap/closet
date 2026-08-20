@@ -94,6 +94,23 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         " Do not call 'generate_outfits' for ordinary styling advice.",
         " Use 'generate_outfits' when the turn's contract says to (a fresh same-context batch); use 'propose_outfit' for one specific outfit you have composed yourself."
       )
+      // 2026-08-20 — the Part A carve-outs. Each of these clauses now lives on the tool that owns it
+      // (propose_outfit's output contract, search_wardrobe's result semantics), so the cached prompt
+      // no longer restates it. The 'Storing User Corrections' bullet went entirely: every clause in
+      // it was already documented on store_user_correction's arguments, envelope included.
+      expected = expected.replace(
+        " Every outfit MUST include a shoes-role piece — never finalize an outfit without one. If no suitable shoe exists in the wardrobe for this occasion, say plainly that the wardrobe has a shoe gap; do not call 'propose_outfit' for an incomplete outfit using missing_gaps as a shoe substitute.",
+        ''
+      )
+      expected = expected.replace(
+        ' Search for a visually plausible base underneath it: a fitted or smooth primary_top, or a simple dress, unless the saved garment notes explicitly say it works over a button-down or bulkier blouse.',
+        ''
+      )
+      expected = expected.replace(
+        " Honor the per-result flags returned by 'search_wardrobe': use `weatherFit` (avoid heavy fabrics like denim on hot daytime looks; reserve heavier pieces for cool-evening layers) and the `ruleFit` tier.",
+        ''
+      )
+      expected = expected.split('\n').filter(line => !line.includes("* Storing User Corrections:")).join('\n')
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }

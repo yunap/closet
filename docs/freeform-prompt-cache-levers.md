@@ -390,14 +390,24 @@ At ~650 tokens for the safe subset, four near-misses across four tranches, and e
 its own semantic check, the token case does not justify the risk. **Declined on the same basis as
 lever 4: measured, and the number is too small.**
 
-Two pieces are worth doing standalone, both as correctness rather than cost:
+Two pieces were done standalone, as correctness rather than cost:
 
-1. **Move the four category-2 clauses to their tools** — the shoes-role requirement and shoe-gap
-   behaviour to `propose_outfit`, the `weatherFit`/`ruleFit` semantics to `search_wardrobe`, the
-   base-garment guidance to `propose_outfit`. Each currently lives only in a prompt that a
-   *different flow* would not read, and the tools are the correct owner regardless of tokens.
-2. **Remove the `Storing User Corrections` bullet** (855 chars) — the one bullet the inventory found
-   fully covered, including the applicability envelope.
+1. **The four category-2 clauses moved to their tools** — the shoes-role requirement and shoe-gap
+   behaviour and the base-under-overlay guidance to `propose_outfit`, the `weatherFit` guidance to
+   `search_wardrobe`. Each had lived *only* in a prompt other flows do not read, so a composer
+   calling `propose_outfit` never learned that an outfit needs shoes. The tool had capped an outfit
+   at one shoes piece without ever requiring one.
+2. **The `Storing User Corrections` bullet removed** (855 chars) — the one bullet the inventory found
+   fully covered, applicability envelope included.
+
+Net 1,545 characters out of the cached prompt, and four contracts now readable by every caller of
+those tools rather than by one flow.
+
+**A self-inflicted duplication, caught in verification.** The first version of the `search_wardrobe`
+addition also restated the `preferred`/`discouraged`/`unknown` tier semantics — which are clause 13,
+a category-1 clause deliberately left in the prompt. That would have created in the tool exactly the
+duplication this exercise exists to remove. The addition was trimmed to carry only what the removed
+clause 12 actually said. **When moving a clause, move that clause — not the paragraph around it.**
 
 Category B stays untouched until someone wants to state the bet per line, per the standing rule that
 several of these exist because a model once face-planted confidently.

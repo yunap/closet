@@ -257,8 +257,14 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // cardigan) rendered with zero shoes and no warning at all — freeform chat's prompt only mentioned
   // shoes as one item in a buried list, nowhere near the composer's explicit hard rule. Regression
   // test for the new explicit rule, mirroring WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM's language.
-  assert.ok(STYLIST_SYSTEM.includes('Every outfit MUST include a shoes-role piece'))
-  assert.ok(STYLIST_SYSTEM.includes('do not call \'propose_outfit\' for an incomplete outfit using missing_gaps as a shoe substitute'))
+  // 2026-08-20: moved to its owner. The rule is the OUTPUT CONTRACT of propose_outfit, so it belongs
+  // on the tool — where every caller reads it, not only the flows that happen to load STYLIST_SYSTEM.
+  // The tool previously capped an outfit at one shoes piece without ever requiring one.
+  const proposeTool = STYLIST_TOOLS.find(tool => tool.name === 'propose_outfit')
+  assert.match(proposeTool.description, /every outfit needs a shoes-role piece/i)
+  assert.match(proposeTool.description, /never finalize one without it/i)
+  assert.match(proposeTool.description, /missing_gaps standing in for footwear/i)
+  assert.ok(!STYLIST_SYSTEM.includes('Every outfit MUST include a shoes-role piece'), 'and is no longer restated in the cached prompt')
 })
 
 // Spec 25 Part 1: re-homes the deleted pieceOfficePolishScore/office-register
