@@ -1,6 +1,7 @@
 # Freeform prompt-cache levers
 
-**Status:** lever 1 implemented, lever 4 examined and declined, both 2026-08-20; levers 2, 3, 5 specified
+**Status:** lever 1 implemented; lever 2 audited in full (part C done, part A swept and declined); lever 4
+examined and declined; levers 3 and 5 specified. All 2026-08-20.
 **Authority:** succeeds the cost work in `freeform-batched-discovery-spec.md`, which established what
 actually drives spend. Read its "Measured cache shape" section before proposing anything here.
 
@@ -86,7 +87,7 @@ to audit. Four categories:
 
 | | Content | Verdict |
 |---|---|---|
-| **A · tool-mechanics duplication** | "call `propose_outfit` once per outfit", "use `plan_outfit_set` when…", capsule intake, re-rendering, storing corrections | largest share; `freeform-prompt-ownership.md` already rules this belongs to tool descriptions, and explicitly deferred this cached block to "a separate quality-and-cache review" — this is it |
+| **A · tool-mechanics duplication** | "call `propose_outfit` once per outfit", "use `plan_outfit_set` when…", capsule intake, re-rendering, storing corrections | *originally estimated as the largest share* — **the inventory falsified that**; see tranche 3. Most tool-naming bullets state turn policy and merely mention a tool |
 | **B · generic knowledge** | office = quiet and structured; hikes need durable shoes; don't wear two vests | trim last and least; several exist because a model once face-planted confidently |
 | **C · global false law** | material absolutes | **done, below** |
 | **D · app-specific** | photo honesty, no hallucinated garments, verification contract, scarcity honesty, voice/avoid-words | keep |
@@ -143,6 +144,71 @@ risks recreating that, and a tool nobody calls describes itself to no one.
 **So part A needs a clause inventory, not bulk deletion.** Estimated prize is real — most of
 ~6,346 tokens — but it is not the mechanical win it looked like.
 
+### Blast radius — which flows read this block
+
+Checked 2026-08-20, because a clause that looks duplicated for freeform may be another flow's only
+copy. **It is narrower than it looks: every other named flow has its own system prompt.**
+
+| Flow | Its prompt | Reads this block? |
+|---|---|---|
+| Selected piece builder | `STYLE_SELECTED_ITEM_SYSTEM` | no |
+| Visual composer | `OUTFIT_COMPOSER_SYSTEM`, `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` | no |
+| Capsule | `capsuleRosterSelectionSystemPrompt`, `capsulePlanCompositionSystemPrompt`, `capsuleExpansionSystemPrompt` | no |
+| Outfit critique | `COMPARE_OUTFITS_SYSTEM`, `VISUAL_WARDROBE_CRITIC_SYSTEM`, `criticSystem` | no |
+| Tagger / importer / feedback synthesis | `TAG_PIECE_SYSTEM`, `EXTRACT_PIECES_SYSTEM`, `FEEDBACK_SYNTHESIS_SYSTEM` | no |
+| **Freeform stylist** | `STYLIST_SYSTEM` | **yes** |
+| **Freeform plan** (`plan_outfit_set`) | runs inside the freeform loop | **yes** |
+
+The freeform plan flow is the one most at risk from a careless trim, not an innocent bystander: it is
+the flow whose 6,800-character bullet Part A is about.
+
+**Two prerequisites before the inventory starts.**
+
+1. **`/evaluate-piece` inherits `STYLIST_SYSTEM` by omission.** `routes/ai.js` calls
+   `askStylist({ maxTokens, messages })` with no `system`, so it silently picks up the default — the
+   whole stylist manual, including outfit-proposal rules, slot semantics and capsule budgets, to
+   evaluate one piece. Every other call site passes an explicit prompt. Decide whether that is
+   deliberate; if not, give it a narrow prompt and it leaves Part A's blast radius entirely.
+2. **The prompt is built in two layers, and the second one fails silently.** *(Corrected — this was
+   first recorded here as "the text is duplicated". It is not duplication.)*
+   `stylistSystemTemplate` holds the base text; `currentStylistSystemTemplate` applies **five
+   `.replace()` patches** that supersede specific strings in it, and `STYLIST_SYSTEM` is the patched
+   result. Verified: the old capsule wording is absent from the built prompt and the new wording
+   present, so the patches do apply today.
+
+   `String.replace` is a **silent no-op when its needle is not found.** Editing a base line that a
+   patch targets does not error, does not fail a build, and quietly reverts that correction to the
+   older wording. That is the single largest hazard standing between here and any clause-level edit,
+   because the clause you edit and the clause that breaks are in different functions.
+
+   Guarded by `every currentStylistSystemTemplate patch still finds its target`
+   (`prompt_equivalence.test.js`), which parses the patch pairs out of the source rather than listing
+   them — so a patch written tomorrow is covered the day it is written. Verified by editing a base
+   line a patch targets and watching three tests fail.
+
+### Where owner rules actually belong
+
+The global absolutes removed in part C were doing a job that four real channels already do, and doing
+it for every user at once. Ownership per `feedback-and-memory-map.md`:
+
+| Channel | Store | Authority | Right home for |
+|---|---|---|---|
+| A · tagged garment truth | `pieces.tuck_behavior` and siblings | **hard gate** in composition | the physical general case — what my part-C replacement text now points at |
+| B · per-garment user memory | `pieces.styling_rules_learned` | renders as `RULES (authoritative)`, overrides generic principles | "*this* silk top will not hold a tuck" |
+| E · standing prose rules | `stylist_feedback` owner-rule rows | relevance-selected **prompt** authority, with a validated applicability envelope | "I do not tuck silk" — and the envelope takes **`materials:[silk]`**, conjunctive with context |
+| — · structured hard constraint | `owner_constraints` | **hard authority**, hard-blocks and emits its constraint ID in suppression reasons | standing constraints whose context is occasion / activity / season / weather |
+
+**The point:** "silk does not tuck" is a channel-E statement — a standing preference over a material
+class — and channel E is *per user* and takes a `materials` selector. Writing it into the shared
+prompt made one user's rule into everyone's physics. Channel C (`occasion_exclusions`) is explicitly
+not the home: the map states its "only axis is occasion — it cannot express season, weather or
+material." `owner_constraints` is also a poor fit for tucking, since its context axis is
+occasion/activity/season/weather rather than a wear mechanic.
+
+So a clause in this block that reads like an owner preference has a destination, not just a deletion:
+per-piece to B, per-material or per-context to E, and the physical case stays in A where the gates
+already read it.
+
 ### The method: assign every clause exactly one disposition
 
 Work clause by clause, not bullet by bullet. The bullets are single 6,800-character lines with
@@ -185,87 +251,163 @@ next pass starts from these rather than re-deriving them.
 | One-line pointer to `plan_outfit_set` for multi-use-case requests | **3** | reachability; see above |
 | "Do not call `generate_outfits` for ordinary styling advice" | **4** | **done** — contradicted bounded multi-look; fixed 2026-08-20 |
 
-Unstarted: the remaining ~12 tool-naming bullets, and the `Proposing Outfits` line beyond its shoes
-clause.
+### Inventory tranche 1 — `Proposing Outfits (default)` (3,592 chars, 17 clauses)
 
-One correctness fix from that pass was kept: `Do not call 'generate_outfits' for ordinary styling
-advice` contradicted the shipped architecture, where bounded multi-look routes an ordinary
-"what should I wear?" *to* `generate_outfits`. The cached prompt was telling the model the opposite of
-its tool description and its own turn controller.
+Split on sentence boundaries and checked clause by clause against the live tool surface.
 
-### Part B — not started
+| # | Clause | Disposition |
+|---|---|---|
+| 1 | propose each outfit via `propose_outfit`, prose around the calls | **1** — verbatim in the tool description |
+| 2 | every outfit MUST include a shoes-role piece | **2 → `propose_outfit`** |
+| 3 | shoe gap: say so plainly, don't use `missing_gaps` as a substitute | **2 → `propose_outfit`** |
+| 4 | when to use `generate_outfits` vs `propose_outfit` | **3** — cross-tool routing (already corrected in part C) |
+| 5 | a packing list is a secondary recap, never a replacement | **3** — output-shape policy, owned by nothing else |
+| 6 | call `search_wardrobe` with `visual:true` before composing | **1** — the tool documents its visual mode |
+| 7 | narrow each visual search by category/occasion/activity/weather | **1** — argument docs |
+| 8 | a follow-up with a new need gets a fresh scoped search | **3** — turn policy, not an argument |
+| 9 | sparse/imageless search → say what you can and cannot see | **3** — honesty policy; pairs with the no-hallucination rule |
+| 10 | multi-occasion requests get one outfit per stated use case | **3** — coverage policy |
+| 11 | do not collapse distinct needs into one generic list | **3** — same policy as 10 |
+| 12 | honour `weatherFit` / `ruleFit` flags on results | **2 → `search_wardrobe`** — the flags are returned but their *semantics* are not documented |
+| 13 | `compose` mode already filtered prohibited pieces; don't self-reject | **1** — documented on the `intent` argument |
+| 14 | filtering is per-search, so scope each call to that outfit | **1** — argument docs |
+| 15 | `intent:'explain'` to show and explain prohibited pieces | **1** — documented |
+| 16 | in a multi-outfit set, treat assigned pieces as occupied | **3** — cross-outfit policy |
+| 17 | if a correction needs a repeat, offer it as a tradeoff | **3** — same policy as 16 |
 
-Needs a stated bet per line: name the behaviour you expect the model to preserve unaided, rather than
-trusting a reader's sense of what is obvious.
+**Tally: 6 already owned (1), 3 should move (2), 8 stay (3).** Roughly a third of the line is
+removable once clauses 2, 3 and 12 are moved to their tools — not the whole bullet, and not nothing.
 
-## Lever 3 — model tiering · SPECIFIED, POSTPONED BY OWNER
+**A false positive worth recording.** A first pass probed `propose_outfit`'s description for
+`/shoes/i` and reported clause 2 as already covered. It is not: the description says "at most one
+primary_top (or one dress), one primary_bottom, and one shoes" — a **cap**, not a requirement.
+Deleting the clause on that evidence would have removed the rule that every outfit needs footwear.
+Probe for the semantic, never for the noun.
 
-Everything runs on `claude-sonnet-4-6`. The pricing table already knows Haiku at a third of the cost,
-and `askStylistStructuredWithUsage` already accepts a `model` parameter that nothing passes.
+### Inventory tranche 2 — anchors, rendering, corrections (5,583 chars across 6 bullets)
 
-- **The execution router is the obvious candidate.** It is a pure classification, sees no wardrobe,
-  writes no prose, and runs on essentially every turn.
-- **Anything that writes styling prose or chooses garments stays on Sonnet until measured.** That is
-  where judgment lives, and cheapening it is how a quality regression arrives quietly.
+| Bullet | Clause | Disposition |
+|---|---|---|
+| **[5]** rendered card | roles enumerated (`primary_top`/`layer_top`/…) | **1** |
+| | one `propose_outfit` call per outfit | **1** |
+| | give the outfit a title and a "why it works" **in prose**, since the card shows the pieces | **3** — output-shape policy, absent from the tool |
+| **[6]** precise garment naming | never offer generic placeholders ("a dark top", "a lightweight scarf"); name an owned garment for every slot | **3** — prose policy; absent from every tool |
+| **[7]** anchor recomposition | `anchor:true` locks a piece the user asked to wear | **1** — documented on the argument |
+| | compose *fresh* outfits around the anchor rather than substituting it into prior ones | **3** — turn policy |
+| **[8]** top-layer anchors | `layer_top` role exists and means intentional layering | **1** |
+| | find a plausible base underneath — a fitted/smooth `primary_top` or simple dress, unless notes say otherwise | **2 → `propose_outfit`** |
+| **[15]** re-rendering | render/show an already-discussed outfit | **1** |
+| | resolve plural references ("these", "all of them") against the Current outfit set | **3** — thread-state policy |
+| **[18]** storing corrections | `piece_id` for a single garment; `guidance_applicability` envelope; `universal` only when meant | **1, 1, 1 — fully covered** |
 
-Postponed deliberately, not forgotten. Revisit only with a quality comparison, not a cost argument.
+**[18] is the first bullet removable in full** (855 chars): every clause is documented on
+`store_user_correction`'s arguments, including the applicability envelope and the caution about
+`universal`.
 
-## Lever 4 — the volatile block · EXAMINED 2026-08-20, DECLINED
+**Running tally across tranches 1–2:** 12 clauses already owned, 4 to move, 13 staying.
 
-Audited line by line across six turns varying only turn-level inputs (mode, question, date, session,
-weather) with the wardrobe held constant, since the prefix is already per-wardrobe.
+### Inventory tranche 3 — clarification, pushback, layering (7,450 chars across 6 bullets)
 
-| Portion of the ~2,844-token block | Tokens | Verdict |
-|---|---:|---|
-| Varies per turn (date, turn mode, turn directive, thread state, bounded exception) | ~550 | must stay below |
-| Stable but **user data** — feedback memory, saved corrections | ~1,158 | **must stay below** |
-| Stable **policy** text | ~1,400 | the only cacheable part |
+| Bullet | Clause | Disposition |
+|---|---|---|
+| **[9]** proactive alternatives | on a stated objection, search immediately for named replacements | **3** — absent from `search_wardrobe`; turn policy |
+| **[13]** current outfit set | maintain the set, one card per entry, stable labels, revise in place | **3** — `label` is only "Creative outfit title"; set maintenance is prompt policy |
+| **[17]** pushback on a garment | re-read that garment's own record before defending the choice | **3** — the *mechanism* is `get_garment_details`; the *policy* of using it on pushback is not in any tool |
+| **[19]** destination & weather | a named place resolves weather live instead of asking | **1** — documented on `search_wardrobe`'s `location` |
+| | when a destination is required, and when never to ask about weather | **3** — clarification policy, the bulk of these 2,221 chars |
+| **[23]** no garment hallucination | verify existence before suggesting; never invent a garment | **D — keep**; overlaps the VERIFICATION CONTRACT elsewhere in the same cached block, so a *consolidation* candidate rather than a move |
+| **[26]** layering logic | a warm layer must be real outerwear, not a tank/tee/dress | **3** — the role enum merely lists `outerwear`; the rule is absent |
 
-**The trap this audit exists to record:** "stable across turns" is not "safe to cache." Feedback
-memory reads as perfectly stable turn to turn, and it is the single most tempting block to move —
-but it changes whenever the user rates an outfit, and above the breakpoint each rating would
-invalidate the entire ~35k prefix. Caching it would cost far more than the full-price reads it saves.
+**Running tally, tranches 1–3: 13 clauses already owned, 4 to move, 18 staying.**
 
-### Why it was declined
+### The estimate was wrong — Part A's prize is much smaller than "the largest share"
 
-Moving the ~1,400 cacheable tokens is worth:
+The category table above calls A "the largest share" of ~6,346 tokens. Three tranches in, that looks
+wrong. Of roughly 16,600 characters audited, about **2,600 (~650 tokens) are actually removable** —
+around 16%, not most.
 
-| Thread length | Now | Cached | Saving |
-|---|---:|---:|---:|
-| 2 turns | $0.0084 | $0.0057 | $0.0027 |
-| 3 turns | $0.0126 | $0.0061 | $0.0065 |
-| 5 turns | $0.0210 | $0.0069 | $0.0141 |
+The reason is now obvious in hindsight: **a bullet that names a tool is not thereby about the tool.**
+Most of these mention `search_wardrobe` or `propose_outfit` in passing while stating turn policy —
+when to search again, when to ask a clarifying question, what to re-read before defending a choice,
+what counts as a layer. Tools own *mechanism*; the prompt owns *when and whether*. The bullets are
+mostly the second kind.
 
-That is **~2% of a full-stylist turn** ($0.15–$0.21), and it touches nothing else: compact profiles
-never send this block at all, so the cheap paths are unaffected.
+Extrapolated across the remaining bullets, Part A is plausibly worth **1,000–1,500 tokens**, against
+a cached prefix of 27,736. That is real but small, and it should be weighed against the risk
+demonstrated below before anyone spends a session on it.
 
-Against that, the failure mode is asymmetric. Any line moved above the breakpoint that turns out to
-vary — because it is conditional on an input the six probes held constant — invalidates ~35k tokens
-of prefix rather than saving 1,400. A 2% prize with a 25× downside on a mistake is a bad trade, and
-the restructuring required is not trivial: the volatile array interleaves conditional and
-unconditional strings.
+**This is what the inventory was for.** The bulk removal would have been justified by an estimate the
+inventory has now falsified.
 
-**Do not re-propose without new pricing or a much larger volatile block.** The audit is the
-deliverable; the numbers above are why the answer is no. If the block grows substantially — for
-instance if a future change moves more policy text down here — re-run
-`scratch/volatile-audit` reasoning before assuming the answer is still no.
+### Method note — four false positives, one cause
 
-One caveat on the figures: the policy/user-data classifier is approximate — two `catalog_like`
-feedback lines were counted as policy, so the genuinely cacheable share is slightly under 1,400.
+Every one came from probing for a **word** rather than a **meaning**, and each would have deleted
+live behaviour with a green suite:
 
-## Lever 5 — image and roster tokens · MEASUREMENT TASK, NOT A REFACTOR
+| Probe | What matched | What the clause actually said |
+|---|---|---|
+| `/shoes/i` on `propose_outfit` | "at most one shoes" — a **cap** | every outfit must **include** one |
+| `/base layer/` on `propose_outfit` | the `role` argument's "a base layer under a sheer top" — **role semantics** | which garment to **choose** as that base |
+| `/label/` on `propose_outfit` | `label`: "Creative outfit title" | maintain a **Current outfit set** with stable per-entry labels |
+| `/verif/` on the volatile block | "verified search + propose path" in the bounded exception | **never invent a garment**; verify existence first |
 
-`WARDROBE_FREEFORM_ADAPTIVE_VISUALS` shipped and was made default-on without anyone quantifying what
-the photo roster costs per composition turn. Images are input tokens; a bounded visual roster can
-reach 90 pieces.
+**Print the matching context and read it; never trust the boolean.** A probe answers "does this
+string appear"; the question is always "does the tool actually say this".
 
-**Measure before touching it.** Visual grounding is a founding principle of this app, and the image
-budget is already load-bearing for two commitments: per-category thumbnails under batching, and
-unpictured candidates staying visible. Do not propose a cap before the number exists.
+### Inventory tranche 4 — the remainder, and the sweep is complete
 
-## What not to re-propose
+80 remaining lines, 12,807 characters. Only two still name a tool, and both are dialogue examples.
 
-`freeform-batched-discovery-spec.md` records four cost hypotheses. Three were disproven with data —
-iteration count dominating, TTL expiry, and the moving cache breakpoint duplicating writes. The
-fourth, whether the moving breakpoint earns its cost, was answered yes at 15% on a two-iteration turn
-and is settled at current pricing.
+| Section | Size | Disposition |
+|---|---|---|
+| Conversational styling examples (4 worked dialogues, incl. the 2 tool-naming lines) | 1,412 chars / ~353 tok | **B** — teaches one behaviour: don't ask for weather when a place is named. The `location` argument documents the mechanism; the examples exist because the model asked anyway. **Bet before trimming:** that it now resolves a named place without being shown a transcript |
+| Scarcity honesty [14] | 1,024 | **D — keep.** App-specific: what to say when the wardrobe cannot fill a slot without violating the brief |
+| Trip scope / material override / context persistence [20–22] | 1,895 | **3** — clarification and context policy, owned by nothing else |
+| Established styling context [16] | 443 | **3** — overlaps THREAD STATE in the volatile block; consolidation candidate, and the *cached* copy is the cheap one to keep |
+| Occasion realism [24], professional context [25] | 989 | **B** — "hikes need durable shoes", "office defaults to quiet and structured". The clearest generic-knowledge candidates in the block |
+| Aesthetic neutrality: don't treat style lanes as bad; the drift failure modes | ~400 | **D — keep.** This is the actual taste guardrail |
+| Avoid-words / voice list | 569 | **D — keep.** House voice; a model will not infer "never say elevated, cohesive, visual interest" |
+| Hard constraints, photo visibility, evidence provenance, tuck compatibility, pattern mixing, earned wisdom | 5,509 / ~1,377 tok | **D — keep.** Verification, honesty and provenance contracts, plus the per-piece override mechanism that part C's demotions depend on |
+| Correcting gracefully [4] | 276 | **B** — generic conversational competence |
+
+### Final tally — the sweep, complete
+
+| Disposition | Clauses | Approx. chars |
+|---|---:|---:|
+| **1** · already owned by a tool description or schema | 13 | ~2,600 |
+| **2** · should move to a tool | 4 | ~600 |
+| **3** · prompt-owned routing / clarification policy | 18 | ~6,900 |
+| **B** · generic knowledge, trimmable with a stated bet | ~7 lines | ~2,700 |
+| **D** · app-specific, keep | — | ~8,000 |
+
+**Removable without a behavioural bet: ~2,600 characters, roughly 650 tokens — 2.3% of the cached
+prefix.** Adding every category-B trim, on the bet that a current model no longer needs to be told
+that offices are quiet or that hikes need real shoes, reaches perhaps 1,300 tokens, 4.7%.
+
+### Verdict — Part A is declined as a token exercise, with two carve-outs
+
+At ~650 tokens for the safe subset, four near-misses across four tranches, and each removal needing
+its own semantic check, the token case does not justify the risk. **Declined on the same basis as
+lever 4: measured, and the number is too small.**
+
+Two pieces were done standalone, as correctness rather than cost:
+
+1. **The four category-2 clauses moved to their tools** — the shoes-role requirement and shoe-gap
+   behaviour and the base-under-overlay guidance to `propose_outfit`, the `weatherFit` guidance to
+   `search_wardrobe`. Each had lived *only* in a prompt other flows do not read, so a composer
+   calling `propose_outfit` never learned that an outfit needs shoes. The tool had capped an outfit
+   at one shoes piece without ever requiring one.
+2. **The `Storing User Corrections` bullet removed** (855 chars) — the one bullet the inventory found
+   fully covered, applicability envelope included.
+
+Net 1,545 characters out of the cached prompt, and four contracts now readable by every caller of
+those tools rather than by one flow.
+
+**A self-inflicted duplication, caught in verification.** The first version of the `search_wardrobe`
+addition also restated the `preferred`/`discouraged`/`unknown` tier semantics — which are clause 13,
+a category-1 clause deliberately left in the prompt. That would have created in the tool exactly the
+duplication this exercise exists to remove. The addition was trimmed to carry only what the removed
+clause 12 actually said. **When moving a clause, move that clause — not the paragraph around it.**
+
+Category B stays untouched until someone wants to state the bet per line, per the standing rule that
+several of these exist because a model once face-planted confidently.

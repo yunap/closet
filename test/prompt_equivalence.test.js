@@ -94,8 +94,56 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         " Do not call 'generate_outfits' for ordinary styling advice.",
         " Use 'generate_outfits' when the turn's contract says to (a fresh same-context batch); use 'propose_outfit' for one specific outfit you have composed yourself."
       )
+      // 2026-08-20 — the Part A carve-outs. Each of these clauses now lives on the tool that owns it
+      // (propose_outfit's output contract, search_wardrobe's result semantics), so the cached prompt
+      // no longer restates it. The 'Storing User Corrections' bullet went entirely: every clause in
+      // it was already documented on store_user_correction's arguments, envelope included.
+      expected = expected.replace(
+        " Every outfit MUST include a shoes-role piece — never finalize an outfit without one. If no suitable shoe exists in the wardrobe for this occasion, say plainly that the wardrobe has a shoe gap; do not call 'propose_outfit' for an incomplete outfit using missing_gaps as a shoe substitute.",
+        ''
+      )
+      expected = expected.replace(
+        ' Search for a visually plausible base underneath it: a fitted or smooth primary_top, or a simple dress, unless the saved garment notes explicitly say it works over a button-down or bulkier blouse.',
+        ''
+      )
+      expected = expected.replace(
+        " Honor the per-result flags returned by 'search_wardrobe': use `weatherFit` (avoid heavy fabrics like denim on hot daytime looks; reserve heavier pieces for cool-evening layers) and the `ruleFit` tier.",
+        ''
+      )
+      expected = expected.split('\n').filter(line => !line.includes("* Storing User Corrections:")).join('\n')
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
+  }
+})
+
+// The stylist prompt is built in two layers: stylistSystemTemplate holds the base text, and
+// currentStylistSystemTemplate applies .replace() patches that supersede specific strings in it.
+// String.replace is a SILENT no-op when its needle is not found — so editing a base line that a
+// patch targets does not error, does not fail a build, and quietly reverts that correction to the
+// older wording. This is the trap standing between here and any clause-level edit of the prompt.
+//
+// Parses the patch pairs out of the source rather than listing them, so a new patch is covered the
+// day it is written.
+test('every currentStylistSystemTemplate patch still finds its target', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
+  const start = source.indexOf('function currentStylistSystemTemplate')
+  assert.ok(start > 0, 'the patch layer must still exist')
+  const body = source.slice(start, source.indexOf('\n}', source.indexOf('return stylistSystemTemplate', start)))
+
+  // .replace('old', 'new') across the quote styles used in this file.
+  const pairs = [...body.matchAll(/\.replace\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'/g)]
+  assert.ok(pairs.length >= 4, `expected the patch layer to be parsed, found ${pairs.length}`)
+
+  const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION }).STYLIST_SYSTEM
+  const unescape = text => text.replace(/\\'/g, "'").replace(/\\n/g, '\n').replace(/\\\\/g, '\\')
+
+  for (const [, rawOld, rawNew] of pairs) {
+    const before = unescape(rawOld)
+    const after = unescape(rawNew)
+    assert.ok(!built.includes(before),
+      `a patch did not apply — its target text is still in the built prompt, so the correction was lost silently: ${before.slice(0, 70)}`)
+    assert.ok(built.includes(after),
+      `a patch's replacement text is missing from the built prompt: ${after.slice(0, 70)}`)
   }
 })
 
