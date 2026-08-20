@@ -5,7 +5,7 @@ summarizing the other docs.
 
 Every other chat document in this repo describes a *destination* — what the visual composer does,
 what outfit evaluation does, what `/ask` does once you are already inside it. None of them describes
-the *journey*, and the journey is where the surprises live: a single typed sentence can reach eleven
+the *journey*, and the journey is where the surprises live: a single typed sentence can reach ten
 different server endpoints, and which one it reaches is decided by React state the user cannot see.
 
 Read this first. Then read the flow doc for whichever destination you landed in
@@ -21,7 +21,7 @@ Read this first. Then read the flow doc for whichever destination you landed in
 ## The short version
 
 ```
-user types  →  send()  →  [12-way client dispatcher]  →  one of ~11 endpoints
+user types  →  send()  →  [13-way client dispatcher]  →  one of 10 endpoints
                                     │
                                     └── ordinary text lands on POST /api/ai/ask
                                              │
@@ -105,7 +105,7 @@ Branches 11, 12 and 13 all reach `/ask`, but with different bodies, and that dif
 ### Also decided here, before any request
 
 - **The composer is cleared** — `setInput(''); setImageFile(null); setImagePrev(null)`
-  ([:4886](../src/components/StylistChat.jsx#L4886)). The attached photo is consumed by exactly one
+  ([:4887](../src/components/StylistChat.jsx#L4887)). The attached photo is consumed by exactly one
   turn; a second question about the same garment carries no image.
 - **A new thread may be forced.** `forceNewFromExisting` splits off a fresh thread whenever a piece
   or outfit is attached inside an existing thread. The new thread gets a greeting and this message —
@@ -153,7 +153,7 @@ evidence entirely.
 
 ## Stage 3 — The execution router
 
-**`routes/ai.js` [:3993–4172](../routes/ai.js#L3993).** This is the cost-control layer: one cheap
+**`routes/ai.js` [:3994–4172](../routes/ai.js#L3994).** This is the cost-control layer: one cheap
 model call that decides whether the expensive one is needed at all.
 
 ### Eligibility

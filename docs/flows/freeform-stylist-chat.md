@@ -17,7 +17,7 @@ decisions.
 > is Layer 1's decision and is invisible to the user.
 >
 > **Reaching `/ask` at all is a decision made before this document starts.** The
-> chat box dispatches to eleven different endpoints from a 13-way client-side
+> chat box dispatches to ten different endpoints from a 13-way client-side
 > `if/else` on transient React state; ordinary typed text is the *last* branch.
 > Attach a photo and the same sentence goes to `/outfit-feedback` instead, which
 > has no tools, no retrieval and no cards. That seam is owned by
