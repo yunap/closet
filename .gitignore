@@ -86,3 +86,4 @@ scratch/*
 # Offline measurement for the conversation-history budget question (read-only, needs an
 # isolated WARDROBE_DB_PATH).
 !scratch/measure_history_budget.js
+!scratch/measure_freeform_turns.js
