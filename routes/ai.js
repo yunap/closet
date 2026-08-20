@@ -1348,7 +1348,12 @@ router.post('/evaluate-piece', async (req, res) => {
       question || 'What can you tell me about this piece and how to style it?'
     ].filter(Boolean).join('\n') })
 
+    // Explicit, narrow prompt. This used to omit `system` and inherit askStylist's default --
+    // STYLIST_SYSTEM -- so a question about one garment carried the whole stylist manual: outfit-set
+    // policy, capsule rules, proposal mechanics, trip planning. The call passes no tools, so those
+    // instructions were unreachable as well as irrelevant. 10,377 tokens -> 502.
     const answer = await askStylist({
+      system: prompts.EVALUATE_PIECE_SYSTEM,
       maxTokens: 1200,
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),

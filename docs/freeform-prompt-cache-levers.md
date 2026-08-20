@@ -164,11 +164,19 @@ the flow whose 6,800-character bullet Part A is about.
 
 **Two prerequisites before the inventory starts.**
 
-1. **`/evaluate-piece` inherits `STYLIST_SYSTEM` by omission.** `routes/ai.js` calls
-   `askStylist({ maxTokens, messages })` with no `system`, so it silently picks up the default — the
-   whole stylist manual, including outfit-proposal rules, slot semantics and capsule budgets, to
-   evaluate one piece. Every other call site passes an explicit prompt. Decide whether that is
-   deliberate; if not, give it a narrow prompt and it leaves Part A's blast radius entirely.
+1. ~~`/evaluate-piece` inherits `STYLIST_SYSTEM` by omission.~~ **RESOLVED 2026-08-20 (owner ruling:
+   accidental, not deliberate).** It now passes `EVALUATE_PIECE_SYSTEM` — **502 tokens against
+   10,377**, a 95% cut for that endpoint, and it leaves Part A's blast radius entirely.
+
+   The prompt carries what the ruling specified: garment truth, evidence provenance, no hallucinated
+   facts, owner/manual facts outranking inference, and answering the question asked. It carries no
+   outfit-set policy, capsule rules, proposal mechanics or trip planning — and the call passes **no
+   tools at all**, so those instructions were unreachable as well as irrelevant.
+
+   Guarded by `a one-piece evaluation gets its own narrow prompt, not the stylist manual`, which
+   asserts both halves and, source-side, that the route passes the prompt explicitly. That last
+   assertion matters because **the bug was an omission**: the call works fine without the argument,
+   which is exactly why it went unnoticed.
 2. **The prompt is built in two layers, and the second one fails silently.** *(Corrected — this was
    first recorded here as "the text is duplicated". It is not duplication.)*
    `stylistSystemTemplate` holds the base text; `currentStylistSystemTemplate` applies **five
@@ -198,8 +206,18 @@ it for every user at once. Ownership per `feedback-and-memory-map.md`:
 | E · standing prose rules | `stylist_feedback` owner-rule rows | relevance-selected **prompt** authority, with a validated applicability envelope | "I do not tuck silk" — and the envelope takes **`materials:[silk]`**, conjunctive with context |
 | — · structured hard constraint | `owner_constraints` | **hard authority**, hard-blocks and emits its constraint ID in suppression reasons | standing constraints whose context is occasion / activity / season / weather |
 
-**The point:** "silk does not tuck" is a channel-E statement — a standing preference over a material
-class — and channel E is *per user* and takes a `materials` selector. Writing it into the shared
+**Owner ruling, 2026-08-20 — channel E is the home for material-class rules.** "Silk does not tuck"
+is a channel-E statement: a standing preference over a material class, stored as an owner-rule row
+with an envelope like `materials: ["silk"]` and wording scoped to the mechanic — *"I don't like
+tucking silk pieces"*, *"don't suggest tucking silk unless I ask"*. One garment instead goes to
+per-piece `styling_rules_learned`; observed physical truth about one garment goes to that garment's
+`tuck_behavior`.
+
+Ruled out explicitly: `occasion_exclusions`, and `owner_constraints` unless a true wear-mechanic axis
+is added to it later. Channel E is the right balance — per user, envelope-scoped, authoritative in
+prose, **without pretending a material name equals physics**.
+
+Channel E is *per user* and takes a `materials` selector. Writing it into the shared
 prompt made one user's rule into everyone's physics. Channel C (`occasion_exclusions`) is explicitly
 not the home: the map states its "only axis is occasion — it cannot express season, weather or
 material." `owner_constraints` is also a poor fit for tucking, since its context axis is
