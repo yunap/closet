@@ -1,7 +1,11 @@
 # The message lifecycle
 
+**Status:** active — **Last verified:** 2026-08-20
+
 **One user message, from keystroke to answer.** Written 2026-08-20 by tracing the code, not by
-summarizing the other docs.
+summarizing the other docs. Every source anchor and count below was checked against the code on the
+verification date; the token figures are measurements of the owner's wardrobe on that date, not
+invariants.
 
 Every other chat document in this repo describes a *destination* — what the visual composer does,
 what outfit evaluation does, what `/ask` does once you are already inside it. None of them describes
