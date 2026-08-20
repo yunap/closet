@@ -270,6 +270,39 @@ test('unscoped coverage stays counts-only, and the census is never ranked or cap
   assert.match(scoped.candidates_note, /no photograph is still a candidate/)
 })
 
+test('a one-piece evaluation gets its own narrow prompt, not the stylist manual', async () => {
+  // /evaluate-piece used to omit `system` and inherit askStylist's default, STYLIST_SYSTEM, so a
+  // question about a single garment carried outfit-set policy, capsule rules, proposal mechanics and
+  // trip planning. That call passes NO tools, so the tool instructions were unreachable as well as
+  // irrelevant. Owner ruling 2026-08-20: it gets an explicit narrow prompt.
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const { LEGACY_PROFILE, LEGACY_CONSTITUTION } = await import('../styling-engine/constitutionSeed.js')
+  const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
+  const evaluate = built.EVALUATE_PIECE_SYSTEM
+
+  // What it must carry: the owner's list.
+  assert.match(evaluate, /corrected truth and overrides anything you think you see in the photo/i, 'garment truth')
+  assert.match(evaluate, /An inference may never silently become a verified fact/i, 'evidence provenance')
+  assert.match(evaluate, /Never invent a garment, a fact, or a feature/i, 'no hallucinated facts')
+  assert.match(evaluate, /the owner's note wins/i, 'owner and manual facts outrank inference')
+  assert.match(evaluate, /Answer that question/i, 'answer the piece question')
+
+  // What it must not: the multi-outfit machinery this ruling exists to remove.
+  for (const machinery of ['plan_outfit_set', 'propose_outfit', 'submit_plan_outfits', 'piece_budget', 'declare_intent', 'shared_anchor_ids']) {
+    assert.ok(!evaluate.includes(machinery), `a one-piece evaluation must not carry ${machinery}`)
+  }
+  assert.ok(evaluate.length < built.STYLIST_SYSTEM.length / 4,
+    `expected a narrow prompt, got ${evaluate.length} against ${built.STYLIST_SYSTEM.length}`)
+
+  // And the route must actually pass it. Source-asserted because the endpoint's own mock path does
+  // not reveal which system prompt was chosen, and the bug being guarded is an OMISSION -- the call
+  // still works when the argument is missing, which is exactly why it went unnoticed.
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const evaluateRoute = routeSrc.slice(routeSrc.indexOf("router.post('/evaluate-piece'"), routeSrc.indexOf("mode: 'evaluate_piece'"))
+  assert.match(evaluateRoute, /system: prompts\.EVALUATE_PIECE_SYSTEM/,
+    'the evaluate_piece branch must pass its prompt explicitly, never inherit the default')
+})
+
 test('the stylist prompt states no global material absolutes', async () => {
   // Owner ruling 2026-08-20. Three rules read as authoritative law while being globally false, and
   // one of them — "silk, satin, chiffon → always wear_over_only REGARDLESS OF NOTES" — overrode the
