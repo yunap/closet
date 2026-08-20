@@ -283,6 +283,41 @@ primary_top (or one dress), one primary_bottom, and one shoes" — a **cap**, no
 Deleting the clause on that evidence would have removed the rule that every outfit needs footwear.
 Probe for the semantic, never for the noun.
 
+### Inventory tranche 2 — anchors, rendering, corrections (5,583 chars across 6 bullets)
+
+| Bullet | Clause | Disposition |
+|---|---|---|
+| **[5]** rendered card | roles enumerated (`primary_top`/`layer_top`/…) | **1** |
+| | one `propose_outfit` call per outfit | **1** |
+| | give the outfit a title and a "why it works" **in prose**, since the card shows the pieces | **3** — output-shape policy, absent from the tool |
+| **[6]** precise garment naming | never offer generic placeholders ("a dark top", "a lightweight scarf"); name an owned garment for every slot | **3** — prose policy; absent from every tool |
+| **[7]** anchor recomposition | `anchor:true` locks a piece the user asked to wear | **1** — documented on the argument |
+| | compose *fresh* outfits around the anchor rather than substituting it into prior ones | **3** — turn policy |
+| **[8]** top-layer anchors | `layer_top` role exists and means intentional layering | **1** |
+| | find a plausible base underneath — a fitted/smooth `primary_top` or simple dress, unless notes say otherwise | **2 → `propose_outfit`** |
+| **[15]** re-rendering | render/show an already-discussed outfit | **1** |
+| | resolve plural references ("these", "all of them") against the Current outfit set | **3** — thread-state policy |
+| **[18]** storing corrections | `piece_id` for a single garment; `guidance_applicability` envelope; `universal` only when meant | **1, 1, 1 — fully covered** |
+
+**[18] is the first bullet removable in full** (855 chars): every clause is documented on
+`store_user_correction`'s arguments, including the applicability envelope and the caution about
+`universal`.
+
+**Running tally across tranches 1–2:** 12 clauses already owned, 4 to move, 13 staying.
+
+### Method note — two false positives, same cause
+
+Both came from probing for a **word** rather than a **meaning**, and both would have deleted live
+behaviour with a green suite:
+
+- `/shoes/i` matched `propose_outfit`'s "at most one shoes" — a **cap**, and the clause being checked
+  was a **requirement** that every outfit include one.
+- `/base layer/` matched the `role` argument's "a base layer under a sheer top" — **role semantics**,
+  where the clause was guidance about *which garment to choose* as that base.
+
+**Print the matching context and read it; never trust the boolean.** A coverage probe answers "does
+this string appear", and the question is always "does the tool actually say this".
+
 ### Still unstarted
 
 The remaining ~12 tool-naming bullets, and the non-tool bullets (categories B and D).
