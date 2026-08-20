@@ -143,6 +143,58 @@ risks recreating that, and a tool nobody calls describes itself to no one.
 **So part A needs a clause inventory, not bulk deletion.** Estimated prize is real — most of
 ~6,346 tokens — but it is not the mechanical win it looked like.
 
+### Blast radius — which flows read this block
+
+Checked 2026-08-20, because a clause that looks duplicated for freeform may be another flow's only
+copy. **It is narrower than it looks: every other named flow has its own system prompt.**
+
+| Flow | Its prompt | Reads this block? |
+|---|---|---|
+| Selected piece builder | `STYLE_SELECTED_ITEM_SYSTEM` | no |
+| Visual composer | `OUTFIT_COMPOSER_SYSTEM`, `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` | no |
+| Capsule | `capsuleRosterSelectionSystemPrompt`, `capsulePlanCompositionSystemPrompt`, `capsuleExpansionSystemPrompt` | no |
+| Outfit critique | `COMPARE_OUTFITS_SYSTEM`, `VISUAL_WARDROBE_CRITIC_SYSTEM`, `criticSystem` | no |
+| Tagger / importer / feedback synthesis | `TAG_PIECE_SYSTEM`, `EXTRACT_PIECES_SYSTEM`, `FEEDBACK_SYNTHESIS_SYSTEM` | no |
+| **Freeform stylist** | `STYLIST_SYSTEM` | **yes** |
+| **Freeform plan** (`plan_outfit_set`) | runs inside the freeform loop | **yes** |
+
+The freeform plan flow is the one most at risk from a careless trim, not an innocent bystander: it is
+the flow whose 6,800-character bullet Part A is about.
+
+**Two prerequisites before the inventory starts.**
+
+1. **`/evaluate-piece` inherits `STYLIST_SYSTEM` by omission.** `routes/ai.js` calls
+   `askStylist({ maxTokens, messages })` with no `system`, so it silently picks up the default — the
+   whole stylist manual, including outfit-proposal rules, slot semantics and capsule budgets, to
+   evaluate one piece. Every other call site passes an explicit prompt. Decide whether that is
+   deliberate; if not, give it a narrow prompt and it leaves Part A's blast radius entirely.
+2. **The text is duplicated inside `prompts.js`.** `Seasonal Capsule Intake` appears in
+   `stylistSystemTemplate` once and `currentStylistSystemTemplate` twice. Resolve which template is
+   live before removing anything, or an edit to one leaves the others stale.
+
+### Where owner rules actually belong
+
+The global absolutes removed in part C were doing a job that four real channels already do, and doing
+it for every user at once. Ownership per `feedback-and-memory-map.md`:
+
+| Channel | Store | Authority | Right home for |
+|---|---|---|---|
+| A · tagged garment truth | `pieces.tuck_behavior` and siblings | **hard gate** in composition | the physical general case — what my part-C replacement text now points at |
+| B · per-garment user memory | `pieces.styling_rules_learned` | renders as `RULES (authoritative)`, overrides generic principles | "*this* silk top will not hold a tuck" |
+| E · standing prose rules | `stylist_feedback` owner-rule rows | relevance-selected **prompt** authority, with a validated applicability envelope | "I do not tuck silk" — and the envelope takes **`materials:[silk]`**, conjunctive with context |
+| — · structured hard constraint | `owner_constraints` | **hard authority**, hard-blocks and emits its constraint ID in suppression reasons | standing constraints whose context is occasion / activity / season / weather |
+
+**The point:** "silk does not tuck" is a channel-E statement — a standing preference over a material
+class — and channel E is *per user* and takes a `materials` selector. Writing it into the shared
+prompt made one user's rule into everyone's physics. Channel C (`occasion_exclusions`) is explicitly
+not the home: the map states its "only axis is occasion — it cannot express season, weather or
+material." `owner_constraints` is also a poor fit for tucking, since its context axis is
+occasion/activity/season/weather rather than a wear mechanic.
+
+So a clause in this block that reads like an owner preference has a destination, not just a deletion:
+per-piece to B, per-material or per-context to E, and the physical case stays in A where the gates
+already read it.
+
 ### The method: assign every clause exactly one disposition
 
 Work clause by clause, not bullet by bullet. The bullets are single 6,800-character lines with
