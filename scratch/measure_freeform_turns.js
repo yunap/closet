@@ -23,7 +23,13 @@ const PRICES = { input: 3.0, cacheWrite: 3.75, cacheRead: 0.30, output: 15.0 } /
 // Recorded baselines from this arc, for comparison rather than nostalgia.
 const BASELINES = {
   'sparse composition (pre-batching)': { thread: 'thread_1787128902650', iterations: 9, searches: 5, created: 60532, read: 212147, input: 2174, output: 1875 },
-  'coverage (pre-removal, qualified_coverage)': { thread: 'thread_1787122233484', iterations: 4, searches: 1, created: 32430, read: 0, input: 19384, output: 2867 },
+  // Shoe-coverage baselines rather than the lightweight-jacket one: `outerwear` is a storage
+  // category, not a garment kind, so a jacket audit mixes the evidence question with a taxonomy
+  // problem. `shoes` is both, and walk_support is an owner-confirmable latent property — the same
+  // shape as the failures these threads recorded.
+  'shoe coverage — single judge (visually anchored)': { thread: 'thread_1787126412249', iterations: 2, searches: 0, created: 0, read: 0, input: 16354, output: 1446 },
+  'shoe coverage — restated instruction, same miss': { thread: 'thread_1787127928718', iterations: 2, searches: 0, created: 0, read: 0, input: 16469, output: 1450 },
+  'shoe coverage — staged, rejected for default-on': { thread: 'thread_1787128659041', iterations: 3, searches: 0, created: 0, read: 0, input: 19384, output: 2867 },
   'follow-up (post cache fix)': { thread: 'thread_1787128902650', iterations: 2, searches: 0, created: 4730, read: 80220, input: 4, output: 0 },
 }
 
