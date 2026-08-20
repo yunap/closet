@@ -106,6 +106,26 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(generalMessage, 'Question: What is smart casual?')
 })
 
+// Batched discovery acceptance case 1. The coverage arc failed twice on this: thread_1787127928718
+// discussed only the four visually sampled shoes, and thread_1787128659041 dropped deserving
+// candidates before visual refinement. A piece without a photograph must stay a candidate.
+test('a piece with no photograph is still returned by a batched search', async () => {
+  const withPhoto = db.prepare("INSERT INTO pieces (name, category, status, photo) VALUES ('pictured probe top', 'top', 'active', 'nonexistent.jpg')").run().lastInsertRowid
+  const withoutPhoto = db.prepare("INSERT INTO pieces (name, category, status) VALUES ('unpictured probe top', 'top', 'active')").run().lastInsertRowid
+  try {
+    const res = await executeTool('search_wardrobe', { category: ['top'], visual: true }, { freeformDiagnostics: {} })
+    const returned = new Set(res.filter(item => item.id).map(item => Number(item.id)))
+    assert.ok(returned.has(Number(withoutPhoto)), 'an unpictured piece must not be filtered out of retrieval')
+    assert.ok(returned.has(Number(withPhoto)))
+    // The visual budget limits which pieces get a THUMBNAIL, never which pieces exist. If that ever
+    // becomes a filter, unpictured candidates go invisible and the model reports a false gap.
+    const row = res.find(item => Number(item.id) === Number(withoutPhoto))
+    assert.ok(row.name, 'it comes back as a full truth row, just without an image')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(withPhoto, withoutPhoto)
+  }
+})
+
 // Source-asserted deliberately. Exercising the real budget needs 17+ seeded pieces WITH photo files
 // on disk per category, which would make this a slow fixture test of image plumbing rather than of
 // the property that matters. The property: the visual budget is ranked PER CATEGORY, so a batched

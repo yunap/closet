@@ -132,6 +132,32 @@ must become tests when it exists — they are not prose principles.
 7. **Final prose exposes no machinery.** No IDs, database field names, enum syntax, evidence labels,
    confidence values, visible self-correction, or truncated reasoning.
 
+### Status of each case — 2026-08-19
+
+They were written as coverage-judge contracts. `qualified_coverage` is gone and coverage now routes
+to `full_stylist`, so each landed in a different place: retrieval enforces some mechanically, and the
+rest became general reasoning rules in the stylist prompt. **Their deletion alongside the profile was
+a real regression** — the arc paid live calls to learn them, and for a period coverage questions
+reached the full stylist with none of them.
+
+| # | Case | Where it now lives |
+|---|---|---|
+| 1 | Unpictured candidates stay visible | **Enforced.** The visual cap limits thumbnails, never rows; tested directly, plus a guard that the budget stays per category |
+| 2 | Contextual qualities are not enum equality | **Prompt rule.** Retrieval was never the offender — `pieceOccasionCompatible` already passes untagged pieces and uses an adjacency map, not equality |
+| 3 | Latent performance needs same-dimension evidence | **Prompt rule**, stated generally |
+| 4 | Duration does not multiply quantity | **Prompt rule**, stated generally |
+| 5 | Sight cannot prove waterproofing or comfort | **Prompt rule**, folded into 3 |
+| 6 | Owner-confirmed facts outrank inference | **Prompt rule** — the provenance ladder |
+| 7 | Final prose exposes no machinery | **Enforced.** `applyAcceptedCardAuthority`, extended to cover the broadening report this work introduced |
+
+The prompt rules sit in `STYLIST_SYSTEM` under `EVIDENCE PROVENANCE`, above the tuck rule, which is
+one instance of the same authority. They are declared as an explicit delta in
+`prompt_equivalence.test.js` — that fixture is a byte-level ratchet on the owner's prompts, so any
+future edit to them has to be stated rather than absorbed.
+
+Cases 3–6 are model behaviour and cannot be asserted offline. They remain the live-validation set if
+coverage is ever measured again.
+
 ### The known shoe case
 
 `thread_1787126412249` found only two elevated-labelled flats and called both unverified, while two
