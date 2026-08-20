@@ -277,6 +277,29 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
 //
 // Withheld, never retried. A retry costs a paid round-trip to fix commentary on a card the user can
 // already see; the capsule ending applies -- deliver, and drop what cannot be trusted.
+// Owner ruling, 2026-08-20: final user-facing prose shows no piece IDs. The "(ID <n>)" citation the
+// prompt requires is a VERIFICATION SCAFFOLD, not product copy — it exists so the unverified-citation
+// guard, the accepted-card authority and the zero-result contradiction check can all confirm the
+// model is talking about garments that exist. The user should not have to read database handles.
+//
+// So the contract is ordered, not relaxed: IDs are required while the model reasons, every guard
+// that needs them runs on the text that still has them, and this strips them at the last boundary
+// before the answer is sent. Never call this before validation — that would silently disarm three
+// guards at once. Structured cards keep their piece IDs, so nothing downstream loses the reference.
+export function stripPieceIdCitations(answerText = '') {
+  return String(answerText || '')
+    // The mandated form, and its bracketed and plural variants: "(ID 196)", "[IDs 196, 204]".
+    .replace(/[ \t]*[([]\s*IDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // A bare inline citation the model wrote without brackets.
+    .replace(/[ \t]*\bIDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\b/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // Tidy what removal leaves behind, without touching line structure.
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/\(\s*\)|\[\s*\]/g, '')
+    .split('\n').map(line => line.replace(/[ \t]+$/, '')).join('\n')
+    .trim()
+}
+
 export function applyAcceptedCardAuthority(answerText = '', toolContext = {}) {
   const cards = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(card => !card?.broken)

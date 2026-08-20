@@ -5682,7 +5682,12 @@ test('freeform ask retries the model once when prose cites unverified ids', asyn
     sessionId: 'citation-retry-contract',
   })
 
-  assert.ok(json.answer.includes(`ID ${seeded.top}`))
+  // The ordered contract (owner ruling 2026-08-20). The guard runs on prose that still carries the
+  // citation -- proven by the retry below -- and the citation is stripped only at the last boundary
+  // before the user sees it. Both halves matter: asserting only the strip would pass even if the
+  // guard had been disarmed, and asserting only the retry would pass with database handles on screen.
+  assert.ok(!/\bID\s*:?\s*\d+/i.test(json.answer), `final prose must show no piece IDs: ${json.answer}`)
+  assert.match(json.answer, /black button detail top/, 'the garment is still named, just not by handle')
   const stylistCalls = aiCalls.filter(call => String(call.system).includes('WARDROBE MANIFEST'))
   assert.equal(stylistCalls.length, 2, 'blocked once for the unverified citation, then answered on the retry')
   const correction = stylistCalls[1].messages.at(-1)

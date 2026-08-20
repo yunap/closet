@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -217,6 +217,35 @@ test('a category with nothing in it is reported as a real shortfall, not hidden 
   assert.deepEqual(summary.shortfalls, ['outerwear'])
   assert.match(summary.note, /real wardrobe shortfall, not a narrow search/)
   assert.equal(ctx.freeformDiagnostics.searchCalls, 1)
+})
+
+test('piece IDs are a verification scaffold, not product copy', () => {
+  // Owner ruling 2026-08-20: acceptance case 7 wins over the "(ID <n>)" citation requirement. The
+  // app may require handles internally; the reader should never see them.
+  const cases = [
+    ['**Black slip-on loafers** (ID 196) — minimalist suede.', '**Black slip-on loafers** — minimalist suede.'],
+    ['Pair the tee (ID 12) with the trousers (ID 34).', 'Pair the tee with the trousers.'],
+    ['Try IDs 169, 361 together.', 'Try together.'],
+    ['Start with the shell [ID 204].', 'Start with the shell.'],
+    ['The cutout flats (ID 204) and loafers (ID 196) both work.', 'The cutout flats and loafers both work.'],
+  ]
+  for (const [input, expected] of cases) {
+    assert.equal(stripPieceIdCitations(input), expected)
+  }
+
+  // Must not touch text that merely contains digits or the letters "ID".
+  for (const untouched of [
+    'The 501 jeans work here.',
+    'That IDEA is worth trying.',
+    'Wear it with the 3/4 sleeve knit.',
+    'A 90s silhouette, cropped at the waist.',
+  ]) {
+    assert.equal(stripPieceIdCitations(untouched), untouched, `must not rewrite: ${untouched}`)
+  }
+
+  // Line structure survives, because answers are markdown with lists and headings.
+  const markdown = '**The reliable two:**\n- **Cutout flats** (ID 204) — pointed toe.\n- **Loafers** (ID 196) — suede.'
+  assert.equal(stripPieceIdCitations(markdown), '**The reliable two:**\n- **Cutout flats** — pointed toe.\n- **Loafers** — suede.')
 })
 
 test('an accepted card has authority over the closing prose that comments on it', () => {
