@@ -71,5 +71,17 @@ Engineer notes:
 - **Compare** (`routes/ai.js:3387`) attaches both outfit photos and their linked
   (or likely) pieces, plus confirmed-outfit taste memory, and uses
   `COMPARE_OUTFITS_SYSTEM`. Returns `{ feedback }` prose.
-- **Uploaded photos are temporary** — `outfit-feedback` deletes the temp file in a
-  `finally` block after the model call.
+- **Uploaded photos persist, owned by the thread** — **amended 2026-08-20.** They used to be
+  deleted in a `finally` block right after the model call, which made this endpoint the only
+  thing that ever saw the garment: an uploaded piece has no `pieces` row and no lookbook entry,
+  so every later turn in the same thread was blind to it, and the chat thumbnail fell back to a
+  browser `blob:` URL that died on reload. `outfit-feedback` now keeps the file and returns its
+  filename as `photo`; the client stores that on the message as `uploadedPhoto`. Retention is
+  thread-scoped — `DELETE /chat-threads/:id` (`routes/crud.js`) unlinks each `uploadedPhoto` its
+  messages cite, skipping any file still referenced by a `pieces` row, an `outfits` row, or
+  another thread. A failed critique still unlinks, since nothing will hold a reference.
+- **[open] Follow-up turns still do not reach the saved photo.** The client picks the endpoint by
+  "is a file attached to this message" (`StylistChat.jsx`, the `fileToSend` branch), so message 1
+  reaches `/outfit-feedback` and every later turn goes to `/ask`, which has no access to the
+  upload. Persisting the file is the precondition for fixing that; the routing decision is not
+  made yet.
