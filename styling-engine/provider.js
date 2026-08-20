@@ -296,7 +296,14 @@ export function stripPieceIdCitations(answerText = '') {
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([,.;:!?])/g, '$1')
     .replace(/\(\s*\)|\[\s*\]/g, '')
-    .split('\n').map(line => line.replace(/[ \t]+$/, '')).join('\n')
+    // Removing a mid-sentence citation leaves its separators behind: "the loafers, ID 196, work"
+    // became "the loafers,, work". The bracketed form the prompt actually mandates never hits this,
+    // but the model does sometimes cite inline.
+    .replace(/,(\s*,)+/g, ',')
+    .replace(/,\s*([.;:!?])/g, '$1')
+    // A list item that was nothing but a citation is now an empty bullet; drop the line rather than
+    // rendering a stray dash.
+    .split('\n').map(line => line.replace(/[ \t]+$/, '')).filter(line => !/^\s*[-*]\s*$/.test(line)).join('\n')
     .trim()
 }
 

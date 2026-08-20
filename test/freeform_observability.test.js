@@ -294,6 +294,11 @@ test('piece IDs are a verification scaffold, not product copy', () => {
     assert.equal(stripPieceIdCitations(untouched), untouched, `must not rewrite: ${untouched}`)
   }
 
+  // Removing a mid-sentence citation must not leave its separators behind. The bracketed form the
+  // prompt mandates never hits this, but the model does sometimes cite inline.
+  assert.equal(stripPieceIdCitations('The loafers, ID 196, work.'), 'The loafers, work.')
+  assert.equal(stripPieceIdCitations('- ID 196\n- ID 204'), '', 'a bullet that was only a citation is dropped, not left as a stray dash')
+
   // Line structure survives, because answers are markdown with lists and headings.
   const markdown = '**The reliable two:**\n- **Cutout flats** (ID 204) — pointed toe.\n- **Loafers** (ID 196) — suede.'
   assert.equal(stripPieceIdCitations(markdown), '**The reliable two:**\n- **Cutout flats** — pointed toe.\n- **Loafers** — suede.')
