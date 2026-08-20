@@ -30,7 +30,7 @@ Taken on the owner's wardrobe, 2026-08-20, with `scratch/` instrumentation:
 | Tool schemas | 7,725 | yes — precede the system block |
 | Stable system block | 27,736 | yes |
 |  · wardrobe manifest | 15,698 (57%) | |
-|  · aesthetic block | 9,382 (34%) | |
+|  · instruction block (see lever 2) | 9,382 (34%) | |
 |  · occasion profiles | 1,462 (5%) | |
 |  · style constitution | 1,142 (4%) | |
 | Volatile system block | 2,788 | **no — full input price every call** |
@@ -70,19 +70,55 @@ and `allowedToolNames` still narrows the catalog. Those change **which** tools a
 deliberate turn-ending boundary. The contract is about the *text of a tool's schema*, not about the
 catalog being fixed.
 
-## Lever 2 — the aesthetic block · SPECIFIED, NOT STARTED
+## Lever 2 — the big instruction block · AUDITED; part C DONE 2026-08-20
 
-9,382 tokens, 34% of the cached prefix, and never examined. Tiered discovery attacked the manifest
-(57%) and was removed for being coupled to a failed loop; nobody has asked what the second-largest
-section is doing.
+**First, a correction.** This was originally recorded here as "the aesthetic block, probably
+load-bearing taste substrate." That label was wrong, and came from a marker-matching heuristic that
+swept from an `AESTHETIC` heading to the next heading it recognised.
 
-**Risk: this is probably load-bearing taste substrate.** It is the material that makes the stylist
-sound like this app rather than a generic assistant, and the founding lesson of the Visual Composer
-redesign was that stripping context to save tokens produces confident, worse output.
+The section is `AESTHETIC NEUTRALITY & CONVERSATIONAL CONSTRAINTS` — 8,099 tokens, 95 bullets — and
+it is not taste. It is the accumulated operating manual: how to speak, when to call which tool, how
+to handle anchor pieces, hard garment constraints, photo honesty. The genuine taste material (body
+contract, proven formulas, aesthetic gravity, style lanes) is about **812 tokens**, not 9,382.
 
-So: audit, do not trim on sight. Compress only behind a byte or behaviour ratchet, or an A/B harness
-that can show the styling did not get worse. `prompt_equivalence.test.js` is the existing mechanism —
-it already freezes these strings and requires any change to be declared.
+That matters for scoping. The block is not delicate substrate to compress carefully; it is a rulebook
+to audit. Four categories:
+
+| | Content | Verdict |
+|---|---|---|
+| **A · tool-mechanics duplication** | "call `propose_outfit` once per outfit", "use `plan_outfit_set` when…", capsule intake, re-rendering, storing corrections | largest share; `freeform-prompt-ownership.md` already rules this belongs to tool descriptions, and explicitly deferred this cached block to "a separate quality-and-cache review" — this is it |
+| **B · generic knowledge** | office = quiet and structured; hikes need durable shoes; don't wear two vests | trim last and least; several exist because a model once face-planted confidently |
+| **C · global false law** | material absolutes | **done, below** |
+| **D · app-specific** | photo honesty, no hallucinated garments, verification contract, scarcity honesty, voice/avoid-words | keep |
+
+### Part C — global absolutes removed (owner ruling)
+
+Three rules read as authoritative while being globally false. Ordered first, ahead of the larger
+token win in A, because **A is a cost question and C was a correctness one**: a rule that looks
+authoritative and is wrong silently damages outfit quality.
+
+The worst was self-contradiction. `Silk, satin, chiffon → always wear_over_only regardless of notes`
+overrode **the owner's own note about their own garment** — the strongest rung on the evidence
+provenance ladder ratified the day before, and contradicted by two other passages in the same prompt
+saying `tuck_behavior` is evidence rather than infallible truth. Silk blouses are tucked routinely;
+this was an incident generalised to a material name and shipped to every user of a multiuser app.
+
+| Was | Now |
+|---|---|
+| "Silky or satin fabrics cannot hold a tuck — never suggest tucking them" | slippery/drapey fabrics *may be less stable*; check `tuck_behavior`, owner notes, hem, length and the receiving waistband. **Do not infer "wear over only" from the material name alone** |
+| "Silk, satin, chiffon → always wear_over_only regardless of notes" | a reason to check, not a verdict; **where material and owner notes conflict, the owner's note wins** |
+| "Never recommend heels, wedges, or delicate shoes for walking-heavy days" | avoid high, slender or unstable heels; **a low block heel may be acceptable where saved comfort evidence supports it** (the body contract already allowed low block heels — the absolute contradicted the constitution) |
+| "Never pair two 'loud' pieces" | don't pair two focal pieces **without a clear unifying relationship**; deliberate mixing is allowed when hierarchy, palette and scale are controlled |
+
+The general case stays with structured truth (`tuck_behavior`); the specific case belongs to
+per-piece `RULES (authoritative)`, a mechanism that already exists in this same prompt under
+`EARNED WISDOM OVERRIDE`. Pinned by `the stylist prompt states no global material absolutes`, which
+asserts the absolutes are gone *and* that the override mechanism survives.
+
+### Parts A and B — not started
+
+A is mechanical and has a ruling behind it. B needs a stated bet per line: name the behaviour you
+expect the model to preserve unaided, rather than trusting a reader's sense of what is obvious.
 
 ## Lever 3 — model tiering · SPECIFIED, POSTPONED BY OWNER
 

@@ -270,6 +270,37 @@ test('unscoped coverage stays counts-only, and the census is never ranked or cap
   assert.match(scoped.candidates_note, /no photograph is still a candidate/)
 })
 
+test('the stylist prompt states no global material absolutes', async () => {
+  // Owner ruling 2026-08-20. Three rules read as authoritative law while being globally false, and
+  // one of them — "silk, satin, chiffon → always wear_over_only REGARDLESS OF NOTES" — overrode the
+  // owner's own note about their own garment, which the evidence-provenance ladder calls the
+  // strongest evidence there is. Silk blouses are tucked routinely; the rule was an incident
+  // generalised to a material name and shipped to every user of a multiuser app.
+  //
+  // Structured truth (tuck_behavior) carries the general case; per-piece RULES carry the specific
+  // one. That mechanism already exists in the same prompt under EARNED WISDOM OVERRIDE.
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const { LEGACY_PROFILE, LEGACY_CONSTITUTION } = await import('../styling-engine/constitutionSeed.js')
+  const system = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION }).STYLIST_SYSTEM
+
+  assert.doesNotMatch(system, /regardless of notes/i,
+    'nothing may override an owner note about their own garment')
+  assert.doesNotMatch(system, /cannot hold a tuck/i)
+  assert.doesNotMatch(system, /never suggest tucking them/i)
+  assert.doesNotMatch(system, /Never recommend heels, wedges, or delicate shoes/i)
+  assert.doesNotMatch(system, /Never pair two "loud" pieces/i)
+
+  // The replacements keep the caution and drop the law.
+  assert.match(system, /may be less stable when tucked/)
+  assert.match(system, /Do not infer "wear over only" from the material name alone/)
+  assert.match(system, /the owner's note wins/)
+  assert.match(system, /a low block heel may be acceptable where saved comfort evidence supports it/)
+  assert.match(system, /Deliberate print or colour mixing is allowed when hierarchy, palette and scale are controlled/)
+
+  // The mechanism that should carry owner-specific truth is still there and still authoritative.
+  assert.match(system, /RULES \(authoritative\)/)
+})
+
 test('piece IDs are a verification scaffold, not product copy', () => {
   // Owner ruling 2026-08-20: acceptance case 7 wins over the "(ID <n>)" citation requirement. The
   // app may require handles internally; the reader should never see them.

@@ -65,6 +65,27 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'TUCK COMPATIBILITY (two-piece check before every tuck suggestion):',
         'EVIDENCE PROVENANCE (general; the tuck rule below is one instance of it):\n- Rank what you know: an explicit owner statement or a manually confirmed saved fact is strongest;\n  then what a photograph clearly shows; then a cautious inference from construction; then unknown.\n  An inference may never silently become a verified fact. Say which you are working from when it\n  matters, in ordinary language, without naming fields or confidence levels.\n- A claim about hidden performance — waterproofing, warmth rating, breathability, comfort over\n  distance, durability — needs evidence about that same property. Material, colour, appearance and\n  visible hardware are not that evidence: a waxed cotton jacket with taped-looking seams may or may\n  not keep rain out, and saying it does because it looks the part is inventing a fact. Purpose-built\n  design can establish function where a tag is weak or missing; the material name alone cannot.\n- How long something lasts does not multiply how much of it is needed. A week away does not mean\n  seven of a garment; one suitable piece covers repeated use unless the request actually states\n  simultaneous use, rotation, laundering or drying time.\n- Contextual qualities — dressy, polished, casual, creative — are judgments about whether a garment\n  can play that role in the use being asked about, not equality against its saved formality, occasion\n  or style labels. A piece labelled differently may still qualify; say why it does. Physical limits\n  are the opposite: those stay with the saved fact.\n\n' + 'TUCK COMPATIBILITY (two-piece check before every tuck suggestion):'
       )
+      // 2026-08-20 owner ruling — global absolutes that were false as universal law. Each looked
+      // authoritative while contradicting either generic styling knowledge or the prompt's own
+      // evidence hierarchy: "silk … regardless of notes" overrode the owner's own note about their
+      // own garment, which is the strongest rung on the provenance ladder. Structured truth
+      // (tuck_behavior) carries the general case; per-piece RULES carry the specific one.
+      expected = expected.replace(
+        '- Silky or satin fabrics cannot hold a tuck — never suggest tucking them.',
+        '- Slippery or drapey fabrics such as silk, satin, chiffon and some viscose may be less stable when tucked. Check the garment\'s saved tuck_behavior, owner notes, hem and length, and the receiving waistband before suggesting a tuck. Do not infer "wear over only" from the material name alone.'
+      )
+      expected = expected.replace(
+        '- Silk, satin, chiffon → always wear_over_only regardless of notes.',
+        "- Silk, satin and chiffon drape and slip, so a tuck holds less reliably — but that is a reason to check, not a verdict. Judge from the saved tuck_behavior, the owner's notes, the hem and length, and the waistband receiving it. Where material and owner notes conflict, the owner's note wins."
+      )
+      expected = expected.replace(
+        '- For city walks or walking-heavy outings, ensure shoes are practical and comfortable. Never recommend heels, wedges, or delicate shoes for walking-heavy days or walks.',
+        '- For city walks or walking-heavy outings, ensure shoes are practical and comfortable. Avoid high, slender or unstable heels and delicate constructions on walking-heavy days; a low block heel may be acceptable where saved comfort evidence supports it.'
+      )
+      expected = expected.replace(
+        '- Never pair two "loud" pieces. One loud + one solid/quiet only. Pattern mixing works when prints share a color family and one is simpler than the other.',
+        '- Do not pair two focal pieces unless there is a clear unifying relationship between them. Deliberate print or colour mixing is allowed when hierarchy, palette and scale are controlled — prints that share a colour family, with one simpler or smaller in scale than the other, are the usual way that works.'
+      )
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
