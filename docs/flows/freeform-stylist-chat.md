@@ -174,8 +174,10 @@ mechanics are handled at the source instead: the shared composer prompt requires
 `styling_instructions`, since prose commenting on a card may not be its only record.
 
 **[amended 2026-08-19] Declaration is required by its consumers, not by every turn.** `declare_intent`
-is required before `propose_outfit`, `generate_outfits` or `render_preview`, which stay blocked until
-the turn declares `cards` or `image`. It is **not** required to answer in prose: an explanation,
+is required before **five** tools — `propose_outfit` ([tools.js:1497](../../styling-engine/tools.js#L1497)),
+`suggest_slot_swaps` (:1820), `render_preview` (:2043), `plan_outfit_set` (:2251) and
+`generate_outfits` (:2725) — which stay blocked until the turn declares `cards` or `image`.
+*(Corrected 2026-08-20: this said three.)* It is **not** required to answer in prose: an explanation,
 comparison, critique, garment question or recalled detail needs no declaration. Declaring
 `want:'text'` merely to answer bought a whole extra provider round-trip — measured at $0.0134 against
 a follow-up turn that costs about $0.04, and observed twice on turns that produced no cards at all.
@@ -466,6 +468,20 @@ stateDiagram-v2
 
 # Proposed architecture — from router to stylist
 
+> **[status banner, 2026-08-20]** Everything above this line has been verified
+> against the code. **Everything below it has not**, and should be read as a design
+> record rather than a description of the app.
+>
+> It was written 2026-07-12, when `/ask` still had a keyword pre-route. Most of it
+> shipped — the manifest, thread state, the retrieval rule, intent declaration, the
+> planning workbench — and the parts that shipped are described in their current
+> form in Layers 0–3. Two things have moved against it: precompose was **deleted**
+> rather than demoted, and the guard count went **up**, from five to eight, instead
+> of collapsing into one contract check.
+>
+> Individual claims below carry inline status notes where they are known to be
+> stale. Absence of a note is not a warranty.
+
 > **2026-08-19 cost amendment — HISTORICAL, implementation removed.** The tiered index is no longer
 > in the code; its principle is inherited by batched discovery. It described two separable levels of
 > “knows the wardrobe”: the full stylist receiving every
@@ -575,15 +591,19 @@ flowchart TD
 Note what disappeared relative to the current pipeline diagram: the pre-route
 decision and the five bespoke guards. Routing moved *into* the hexagon; truth
 moved *into* the tools; form became one generic contract check.
+*(As of 2026-08-20 the first half has happened and the second has not: the
+pre-route is gone, but the guards grew from five to eight.)*
 
 ## The five pillars
 
 1. **Thick, truthful context.** The stylist "knows the wardrobe" by reading it,
    not searching for it. The full wardrobe manifest already rides in the system
-   prompt (`CURRENT WARDROBE TRUTH`, `core.js:3740`) — make it the centerpiece:
+   prompt (`CURRENT WARDROBE TRUTH`, [core.js:4251](../../styling-engine/core.js#L4251)) — make it the centerpiece:
    compact per-piece truth (attributes + confidence), plus structured **thread
    state** (current outfit set, established weather/occasion/destination, pinned
-   pieces, saved corrections). At ~224 pieces this fits comfortably and caches.
+   pieces, saved corrections). At the ~224 pieces of writing it fits comfortably
+   and caches; the shipped cap is `WARDROBE_MANIFEST_MAX_PIECES`, default 400,
+   above which the manifest is dropped for tools-only guidance.
    Most questions then need *zero* tool round-trips to reason about coverage.
 2. **Tools as primitives, not pre-scripted flows.** Keep the engines
    (`generate_outfits`, `propose_outfit`) but add the missing query surface:
@@ -638,6 +658,10 @@ Neither of these strings appears anywhere in code — both must work:
 
 ## Migration path (each step ships alone)
 
+> **[status 2026-08-20]** Steps 1–4 and 6 have shipped; step 5 has not, and step 6
+> shipped harder than written — precompose was not demoted, it was **deleted**
+> (spec 14). Statuses are inline below.
+
 1. **Context first:** strengthen the wardrobe manifest (attributes +
    confidence) and add structured thread state to the payload.
 2. **Primitives:** coverage/aggregate query, batch visual fetch,
@@ -646,17 +670,29 @@ Neither of these strings appears anywhere in code — both must work:
    turn; base-layer/skin-contact advice requires `visual: true`.
 4. **Intent declaration:** the model declares the turn's `want`
    (text/cards/image) — client regex classification becomes advisory, then dies.
-5. **Contract check:** collapse the five guards into the one generic
-   "want satisfied + schema valid" validator.
+5. **Contract check:** collapse the guards into the one generic
+   "want satisfied + schema valid" validator. — **NOT SHIPPED.** The count went
+   the other way: five clauses at the time of writing, **eight** today
+   (Layer 3). `tripScopeClarification` retired; `unverifiedCitation`,
+   `cardProseInconsistent`, `cardsNotDelivered` and `imageNotDelivered` were
+   added. The generic contract check remains a proposal.
 6. **Demote precompose** to an optimization once model-initiated
-   `generate_outfits` proves equivalent on the planning cases.
+   `generate_outfits` proves equivalent on the planning cases. — **SHIPPED, harder
+   than written (spec 14, 2026-07-16):** precompose and `composeOutfitSet` were
+   deleted outright rather than demoted.
 
 What deliberately does **not** change: the composer engines and their gates, the
 no-repair-in-advisor-mode decision, `store_user_correction` and its recall, and
 the card contract (`propose_outfit` with verified IDs) — those are the parts the
 atlas showed to be working.
 
-## Step 6 resolution — the planning engine (designed 2026-07-12, not yet built)
+## Step 6 resolution — the planning engine (designed 2026-07-12, **shipped**)
+
+> **[status 2026-08-20]** This section's heading said "not yet built". It is built:
+> `buildPlanSlotWorkbench` ([outfitSetPlanner.js:3278](../../styling-engine/outfitSetPlanner.js#L3278))
+> is what `plan_outfit_set` composes through, with `submit_plan_outfits` closing the
+> loop, and there is no engine-mode fallback left. Read the design below as the
+> record of *why* it has its shape.
 
 Live trip tests settled step 6 with evidence in both directions: the model CAN
 self-compose planning turns, but the trip precompose produces something the
