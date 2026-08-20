@@ -1,6 +1,6 @@
 # Freeform prompt-cache levers
 
-**Status:** lever 1 implemented 2026-08-20; levers 2–5 specified, not implemented
+**Status:** lever 1 implemented, lever 4 examined and declined, both 2026-08-20; levers 2, 3, 5 specified
 **Authority:** succeeds the cost work in `freeform-batched-discovery-spec.md`, which established what
 actually drives spend. Read its "Measured cache shape" section before proposing anything here.
 
@@ -96,13 +96,48 @@ and `askStylistStructuredWithUsage` already accepts a `model` parameter that not
 
 Postponed deliberately, not forgotten. Revisit only with a quality comparison, not a cost argument.
 
-## Lever 4 — the volatile block · SPECIFIED, NOT STARTED
+## Lever 4 — the volatile block · EXAMINED 2026-08-20, DECLINED
 
-2,788 tokens paid at **full input price on every call**, because it sits below the breakpoint. Never
-audited. The question is per-line: does this genuinely vary per turn, or is it stable text that
-drifted below the breakpoint and could move above it?
+Audited line by line across six turns varying only turn-level inputs (mode, question, date, session,
+weather) with the wardrobe held constant, since the prefix is already per-wardrobe.
 
-Cheap and safe to examine, and best done *after* lever 1, since lever 1 moves text into this block.
+| Portion of the ~2,844-token block | Tokens | Verdict |
+|---|---:|---|
+| Varies per turn (date, turn mode, turn directive, thread state, bounded exception) | ~550 | must stay below |
+| Stable but **user data** — feedback memory, saved corrections | ~1,158 | **must stay below** |
+| Stable **policy** text | ~1,400 | the only cacheable part |
+
+**The trap this audit exists to record:** "stable across turns" is not "safe to cache." Feedback
+memory reads as perfectly stable turn to turn, and it is the single most tempting block to move —
+but it changes whenever the user rates an outfit, and above the breakpoint each rating would
+invalidate the entire ~35k prefix. Caching it would cost far more than the full-price reads it saves.
+
+### Why it was declined
+
+Moving the ~1,400 cacheable tokens is worth:
+
+| Thread length | Now | Cached | Saving |
+|---|---:|---:|---:|
+| 2 turns | $0.0084 | $0.0057 | $0.0027 |
+| 3 turns | $0.0126 | $0.0061 | $0.0065 |
+| 5 turns | $0.0210 | $0.0069 | $0.0141 |
+
+That is **~2% of a full-stylist turn** ($0.15–$0.21), and it touches nothing else: compact profiles
+never send this block at all, so the cheap paths are unaffected.
+
+Against that, the failure mode is asymmetric. Any line moved above the breakpoint that turns out to
+vary — because it is conditional on an input the six probes held constant — invalidates ~35k tokens
+of prefix rather than saving 1,400. A 2% prize with a 25× downside on a mistake is a bad trade, and
+the restructuring required is not trivial: the volatile array interleaves conditional and
+unconditional strings.
+
+**Do not re-propose without new pricing or a much larger volatile block.** The audit is the
+deliverable; the numbers above are why the answer is no. If the block grows substantially — for
+instance if a future change moves more policy text down here — re-run
+`scratch/volatile-audit` reasoning before assuming the answer is still no.
+
+One caveat on the figures: the policy/user-data classifier is approximate — two `catalog_like`
+feedback lines were counted as policy, so the genuinely cacheable share is slightly under 1,400.
 
 ## Lever 5 — image and roster tokens · MEASUREMENT TASK, NOT A REFACTOR
 
