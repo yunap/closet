@@ -99,6 +99,37 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
   }
 })
 
+// The stylist prompt is built in two layers: stylistSystemTemplate holds the base text, and
+// currentStylistSystemTemplate applies .replace() patches that supersede specific strings in it.
+// String.replace is a SILENT no-op when its needle is not found — so editing a base line that a
+// patch targets does not error, does not fail a build, and quietly reverts that correction to the
+// older wording. This is the trap standing between here and any clause-level edit of the prompt.
+//
+// Parses the patch pairs out of the source rather than listing them, so a new patch is covered the
+// day it is written.
+test('every currentStylistSystemTemplate patch still finds its target', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
+  const start = source.indexOf('function currentStylistSystemTemplate')
+  assert.ok(start > 0, 'the patch layer must still exist')
+  const body = source.slice(start, source.indexOf('\n}', source.indexOf('return stylistSystemTemplate', start)))
+
+  // .replace('old', 'new') across the quote styles used in this file.
+  const pairs = [...body.matchAll(/\.replace\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*'((?:[^'\\]|\\.)*)'/g)]
+  assert.ok(pairs.length >= 4, `expected the patch layer to be parsed, found ${pairs.length}`)
+
+  const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION }).STYLIST_SYSTEM
+  const unescape = text => text.replace(/\\'/g, "'").replace(/\\n/g, '\n').replace(/\\\\/g, '\\')
+
+  for (const [, rawOld, rawNew] of pairs) {
+    const before = unescape(rawOld)
+    const after = unescape(rawNew)
+    assert.ok(!built.includes(before),
+      `a patch did not apply — its target text is still in the built prompt, so the correction was lost silently: ${before.slice(0, 70)}`)
+    assert.ok(built.includes(after),
+      `a patch's replacement text is missing from the built prompt: ${after.slice(0, 70)}`)
+  }
+})
+
 test('untouched global prompt constants still match the snapshot', async () => {
   const prompts = await import('../styling-engine/prompts.js')
   for (const key of ['EXPRESSIVE_HIERARCHY_RULES', 'TAG_PIECE_SYSTEM', 'EXTRACT_PIECES_SYSTEM', 'EDITORIAL_IMAGE_BASE_PROMPT', 'EDITORIAL_IMAGE_REALISM_RULE', 'STYLE_SELECTED_ITEM_FEW_SHOTS']) {

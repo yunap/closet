@@ -168,9 +168,22 @@ the flow whose 6,800-character bullet Part A is about.
    whole stylist manual, including outfit-proposal rules, slot semantics and capsule budgets, to
    evaluate one piece. Every other call site passes an explicit prompt. Decide whether that is
    deliberate; if not, give it a narrow prompt and it leaves Part A's blast radius entirely.
-2. **The text is duplicated inside `prompts.js`.** `Seasonal Capsule Intake` appears in
-   `stylistSystemTemplate` once and `currentStylistSystemTemplate` twice. Resolve which template is
-   live before removing anything, or an edit to one leaves the others stale.
+2. **The prompt is built in two layers, and the second one fails silently.** *(Corrected — this was
+   first recorded here as "the text is duplicated". It is not duplication.)*
+   `stylistSystemTemplate` holds the base text; `currentStylistSystemTemplate` applies **five
+   `.replace()` patches** that supersede specific strings in it, and `STYLIST_SYSTEM` is the patched
+   result. Verified: the old capsule wording is absent from the built prompt and the new wording
+   present, so the patches do apply today.
+
+   `String.replace` is a **silent no-op when its needle is not found.** Editing a base line that a
+   patch targets does not error, does not fail a build, and quietly reverts that correction to the
+   older wording. That is the single largest hazard standing between here and any clause-level edit,
+   because the clause you edit and the clause that breaks are in different functions.
+
+   Guarded by `every currentStylistSystemTemplate patch still finds its target`
+   (`prompt_equivalence.test.js`), which parses the patch pairs out of the source rather than listing
+   them — so a patch written tomorrow is covered the day it is written. Verified by editing a base
+   line a patch targets and watching three tests fail.
 
 ### Where owner rules actually belong
 
