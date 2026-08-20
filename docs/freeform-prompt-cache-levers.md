@@ -86,7 +86,7 @@ to audit. Four categories:
 
 | | Content | Verdict |
 |---|---|---|
-| **A · tool-mechanics duplication** | "call `propose_outfit` once per outfit", "use `plan_outfit_set` when…", capsule intake, re-rendering, storing corrections | largest share; `freeform-prompt-ownership.md` already rules this belongs to tool descriptions, and explicitly deferred this cached block to "a separate quality-and-cache review" — this is it |
+| **A · tool-mechanics duplication** | "call `propose_outfit` once per outfit", "use `plan_outfit_set` when…", capsule intake, re-rendering, storing corrections | *originally estimated as the largest share* — **the inventory falsified that**; see tranche 3. Most tool-naming bullets state turn policy and merely mention a tool |
 | **B · generic knowledge** | office = quiet and structured; hikes need durable shoes; don't wear two vests | trim last and least; several exist because a model once face-planted confidently |
 | **C · global false law** | material absolutes | **done, below** |
 | **D · app-specific** | photo honesty, no hallucinated garments, verification contract, scarcity honesty, voice/avoid-words | keep |
@@ -305,18 +305,53 @@ Probe for the semantic, never for the noun.
 
 **Running tally across tranches 1–2:** 12 clauses already owned, 4 to move, 13 staying.
 
-### Method note — two false positives, same cause
+### Inventory tranche 3 — clarification, pushback, layering (7,450 chars across 6 bullets)
 
-Both came from probing for a **word** rather than a **meaning**, and both would have deleted live
-behaviour with a green suite:
+| Bullet | Clause | Disposition |
+|---|---|---|
+| **[9]** proactive alternatives | on a stated objection, search immediately for named replacements | **3** — absent from `search_wardrobe`; turn policy |
+| **[13]** current outfit set | maintain the set, one card per entry, stable labels, revise in place | **3** — `label` is only "Creative outfit title"; set maintenance is prompt policy |
+| **[17]** pushback on a garment | re-read that garment's own record before defending the choice | **3** — the *mechanism* is `get_garment_details`; the *policy* of using it on pushback is not in any tool |
+| **[19]** destination & weather | a named place resolves weather live instead of asking | **1** — documented on `search_wardrobe`'s `location` |
+| | when a destination is required, and when never to ask about weather | **3** — clarification policy, the bulk of these 2,221 chars |
+| **[23]** no garment hallucination | verify existence before suggesting; never invent a garment | **D — keep**; overlaps the VERIFICATION CONTRACT elsewhere in the same cached block, so a *consolidation* candidate rather than a move |
+| **[26]** layering logic | a warm layer must be real outerwear, not a tank/tee/dress | **3** — the role enum merely lists `outerwear`; the rule is absent |
 
-- `/shoes/i` matched `propose_outfit`'s "at most one shoes" — a **cap**, and the clause being checked
-  was a **requirement** that every outfit include one.
-- `/base layer/` matched the `role` argument's "a base layer under a sheer top" — **role semantics**,
-  where the clause was guidance about *which garment to choose* as that base.
+**Running tally, tranches 1–3: 13 clauses already owned, 4 to move, 18 staying.**
 
-**Print the matching context and read it; never trust the boolean.** A coverage probe answers "does
-this string appear", and the question is always "does the tool actually say this".
+### The estimate was wrong — Part A's prize is much smaller than "the largest share"
+
+The category table above calls A "the largest share" of ~6,346 tokens. Three tranches in, that looks
+wrong. Of roughly 16,600 characters audited, about **2,600 (~650 tokens) are actually removable** —
+around 16%, not most.
+
+The reason is now obvious in hindsight: **a bullet that names a tool is not thereby about the tool.**
+Most of these mention `search_wardrobe` or `propose_outfit` in passing while stating turn policy —
+when to search again, when to ask a clarifying question, what to re-read before defending a choice,
+what counts as a layer. Tools own *mechanism*; the prompt owns *when and whether*. The bullets are
+mostly the second kind.
+
+Extrapolated across the remaining bullets, Part A is plausibly worth **1,000–1,500 tokens**, against
+a cached prefix of 27,736. That is real but small, and it should be weighed against the risk
+demonstrated below before anyone spends a session on it.
+
+**This is what the inventory was for.** The bulk removal would have been justified by an estimate the
+inventory has now falsified.
+
+### Method note — four false positives, one cause
+
+Every one came from probing for a **word** rather than a **meaning**, and each would have deleted
+live behaviour with a green suite:
+
+| Probe | What matched | What the clause actually said |
+|---|---|---|
+| `/shoes/i` on `propose_outfit` | "at most one shoes" — a **cap** | every outfit must **include** one |
+| `/base layer/` on `propose_outfit` | the `role` argument's "a base layer under a sheer top" — **role semantics** | which garment to **choose** as that base |
+| `/label/` on `propose_outfit` | `label`: "Creative outfit title" | maintain a **Current outfit set** with stable per-entry labels |
+| `/verif/` on the volatile block | "verified search + propose path" in the bounded exception | **never invent a garment**; verify existence first |
+
+**Print the matching context and read it; never trust the boolean.** A probe answers "does this
+string appear"; the question is always "does the tool actually say this".
 
 ### Still unstarted
 
