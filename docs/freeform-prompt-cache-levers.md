@@ -1,6 +1,7 @@
 # Freeform prompt-cache levers
 
-**Status:** lever 1 implemented, lever 4 examined and declined, both 2026-08-20; levers 2, 3, 5 specified
+**Status:** lever 1 implemented; lever 2 audited in full (part C done, part A swept and declined); lever 4
+examined and declined; levers 3 and 5 specified. All 2026-08-20.
 **Authority:** succeeds the cost work in `freeform-batched-discovery-spec.md`, which established what
 actually drives spend. Read its "Measured cache shape" section before proposing anything here.
 
@@ -353,88 +354,50 @@ live behaviour with a green suite:
 **Print the matching context and read it; never trust the boolean.** A probe answers "does this
 string appear"; the question is always "does the tool actually say this".
 
-### Still unstarted
+### Inventory tranche 4 — the remainder, and the sweep is complete
 
-The remaining ~12 tool-naming bullets, and the non-tool bullets (categories B and D).
+80 remaining lines, 12,807 characters. Only two still name a tool, and both are dialogue examples.
 
-One correctness fix from that pass was kept: `Do not call 'generate_outfits' for ordinary styling
-advice` contradicted the shipped architecture, where bounded multi-look routes an ordinary
-"what should I wear?" *to* `generate_outfits`. The cached prompt was telling the model the opposite of
-its tool description and its own turn controller.
+| Section | Size | Disposition |
+|---|---|---|
+| Conversational styling examples (4 worked dialogues, incl. the 2 tool-naming lines) | 1,412 chars / ~353 tok | **B** — teaches one behaviour: don't ask for weather when a place is named. The `location` argument documents the mechanism; the examples exist because the model asked anyway. **Bet before trimming:** that it now resolves a named place without being shown a transcript |
+| Scarcity honesty [14] | 1,024 | **D — keep.** App-specific: what to say when the wardrobe cannot fill a slot without violating the brief |
+| Trip scope / material override / context persistence [20–22] | 1,895 | **3** — clarification and context policy, owned by nothing else |
+| Established styling context [16] | 443 | **3** — overlaps THREAD STATE in the volatile block; consolidation candidate, and the *cached* copy is the cheap one to keep |
+| Occasion realism [24], professional context [25] | 989 | **B** — "hikes need durable shoes", "office defaults to quiet and structured". The clearest generic-knowledge candidates in the block |
+| Aesthetic neutrality: don't treat style lanes as bad; the drift failure modes | ~400 | **D — keep.** This is the actual taste guardrail |
+| Avoid-words / voice list | 569 | **D — keep.** House voice; a model will not infer "never say elevated, cohesive, visual interest" |
+| Hard constraints, photo visibility, evidence provenance, tuck compatibility, pattern mixing, earned wisdom | 5,509 / ~1,377 tok | **D — keep.** Verification, honesty and provenance contracts, plus the per-piece override mechanism that part C's demotions depend on |
+| Correcting gracefully [4] | 276 | **B** — generic conversational competence |
 
-### Part B — not started
+### Final tally — the sweep, complete
 
-Needs a stated bet per line: name the behaviour you expect the model to preserve unaided, rather than
-trusting a reader's sense of what is obvious.
+| Disposition | Clauses | Approx. chars |
+|---|---:|---:|
+| **1** · already owned by a tool description or schema | 13 | ~2,600 |
+| **2** · should move to a tool | 4 | ~600 |
+| **3** · prompt-owned routing / clarification policy | 18 | ~6,900 |
+| **B** · generic knowledge, trimmable with a stated bet | ~7 lines | ~2,700 |
+| **D** · app-specific, keep | — | ~8,000 |
 
-## Lever 3 — model tiering · SPECIFIED, POSTPONED BY OWNER
+**Removable without a behavioural bet: ~2,600 characters, roughly 650 tokens — 2.3% of the cached
+prefix.** Adding every category-B trim, on the bet that a current model no longer needs to be told
+that offices are quiet or that hikes need real shoes, reaches perhaps 1,300 tokens, 4.7%.
 
-Everything runs on `claude-sonnet-4-6`. The pricing table already knows Haiku at a third of the cost,
-and `askStylistStructuredWithUsage` already accepts a `model` parameter that nothing passes.
+### Verdict — Part A is declined as a token exercise, with two carve-outs
 
-- **The execution router is the obvious candidate.** It is a pure classification, sees no wardrobe,
-  writes no prose, and runs on essentially every turn.
-- **Anything that writes styling prose or chooses garments stays on Sonnet until measured.** That is
-  where judgment lives, and cheapening it is how a quality regression arrives quietly.
+At ~650 tokens for the safe subset, four near-misses across four tranches, and each removal needing
+its own semantic check, the token case does not justify the risk. **Declined on the same basis as
+lever 4: measured, and the number is too small.**
 
-Postponed deliberately, not forgotten. Revisit only with a quality comparison, not a cost argument.
+Two pieces are worth doing standalone, both as correctness rather than cost:
 
-## Lever 4 — the volatile block · EXAMINED 2026-08-20, DECLINED
+1. **Move the four category-2 clauses to their tools** — the shoes-role requirement and shoe-gap
+   behaviour to `propose_outfit`, the `weatherFit`/`ruleFit` semantics to `search_wardrobe`, the
+   base-garment guidance to `propose_outfit`. Each currently lives only in a prompt that a
+   *different flow* would not read, and the tools are the correct owner regardless of tokens.
+2. **Remove the `Storing User Corrections` bullet** (855 chars) — the one bullet the inventory found
+   fully covered, including the applicability envelope.
 
-Audited line by line across six turns varying only turn-level inputs (mode, question, date, session,
-weather) with the wardrobe held constant, since the prefix is already per-wardrobe.
-
-| Portion of the ~2,844-token block | Tokens | Verdict |
-|---|---:|---|
-| Varies per turn (date, turn mode, turn directive, thread state, bounded exception) | ~550 | must stay below |
-| Stable but **user data** — feedback memory, saved corrections | ~1,158 | **must stay below** |
-| Stable **policy** text | ~1,400 | the only cacheable part |
-
-**The trap this audit exists to record:** "stable across turns" is not "safe to cache." Feedback
-memory reads as perfectly stable turn to turn, and it is the single most tempting block to move —
-but it changes whenever the user rates an outfit, and above the breakpoint each rating would
-invalidate the entire ~35k prefix. Caching it would cost far more than the full-price reads it saves.
-
-### Why it was declined
-
-Moving the ~1,400 cacheable tokens is worth:
-
-| Thread length | Now | Cached | Saving |
-|---|---:|---:|---:|
-| 2 turns | $0.0084 | $0.0057 | $0.0027 |
-| 3 turns | $0.0126 | $0.0061 | $0.0065 |
-| 5 turns | $0.0210 | $0.0069 | $0.0141 |
-
-That is **~2% of a full-stylist turn** ($0.15–$0.21), and it touches nothing else: compact profiles
-never send this block at all, so the cheap paths are unaffected.
-
-Against that, the failure mode is asymmetric. Any line moved above the breakpoint that turns out to
-vary — because it is conditional on an input the six probes held constant — invalidates ~35k tokens
-of prefix rather than saving 1,400. A 2% prize with a 25× downside on a mistake is a bad trade, and
-the restructuring required is not trivial: the volatile array interleaves conditional and
-unconditional strings.
-
-**Do not re-propose without new pricing or a much larger volatile block.** The audit is the
-deliverable; the numbers above are why the answer is no. If the block grows substantially — for
-instance if a future change moves more policy text down here — re-run
-`scratch/volatile-audit` reasoning before assuming the answer is still no.
-
-One caveat on the figures: the policy/user-data classifier is approximate — two `catalog_like`
-feedback lines were counted as policy, so the genuinely cacheable share is slightly under 1,400.
-
-## Lever 5 — image and roster tokens · MEASUREMENT TASK, NOT A REFACTOR
-
-`WARDROBE_FREEFORM_ADAPTIVE_VISUALS` shipped and was made default-on without anyone quantifying what
-the photo roster costs per composition turn. Images are input tokens; a bounded visual roster can
-reach 90 pieces.
-
-**Measure before touching it.** Visual grounding is a founding principle of this app, and the image
-budget is already load-bearing for two commitments: per-category thumbnails under batching, and
-unpictured candidates staying visible. Do not propose a cap before the number exists.
-
-## What not to re-propose
-
-`freeform-batched-discovery-spec.md` records four cost hypotheses. Three were disproven with data —
-iteration count dominating, TTL expiry, and the moving cache breakpoint duplicating writes. The
-fourth, whether the moving breakpoint earns its cost, was answered yes at 15% on a two-iteration turn
-and is settled at current pricing.
+Category B stays untouched until someone wants to state the bet per line, per the standing rule that
+several of these exist because a model once face-planted confidently.
