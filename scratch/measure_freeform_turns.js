@@ -55,15 +55,19 @@ for (const suffix of ['-wal', '-shm']) {
 }
 const db = new Database(copy, { readonly: true })
 
-// The assistant's own words for a thread, newest last.
-function lastAssistantText(sessionId) {
+// The assistant reply belonging to a specific turn. Aligning the LAST N assistant messages with the
+// N measured rows in order skips the opening greeting without having to recognise it. Reading only
+// the newest message showed the same answer against every row of a multi-turn thread, which made a
+// three-turn thread look like it had answered identically three times.
+function assistantTextForTurn(sessionId, turnIndex, turnCount) {
   if (!sessionId) return ''
   try {
     const row = db.prepare('SELECT payload FROM chat_threads WHERE id = ?').get(sessionId)
     const messages = JSON.parse(row?.payload || '{}')?.messages
     if (!Array.isArray(messages)) return ''
-    const assistant = messages.filter(m => m?.role === 'assistant' && m?.text)
-    return String(assistant.at(-1)?.text || '')
+    const assistant = messages.filter(m => m?.role === 'assistant' && m?.text).map(m => String(m.text))
+    const aligned = assistant.length >= turnCount ? assistant.slice(-turnCount) : assistant
+    return aligned[turnIndex] || ''
   } catch { return '' }
 }
 
@@ -77,7 +81,7 @@ if (!rows.length) {
 }
 
 console.log(`\n=== ${rows.length} turn(s) ${thread ? `on ${thread}` : `since ${since}`} ===\n`)
-for (const r of rows) {
+for (const [rowIndex, r] of rows.entries()) {
   const sequence = String(r.tool_sequence || '')
   const searchIterations = sequence.split(';').filter(step => step.includes('search_wardrobe')).length
   console.log(`${r.created_at}  ${r.session_id || '(UNATTRIBUTED — attribution guard should have prevented this)'}`)
@@ -100,7 +104,7 @@ for (const r of rows) {
   // Half of what a live turn proves is in the prose, not the counters: whether the closing answer
   // drifted from its card, leaked retrieval machinery, or claimed hidden performance from looks.
   // chat_threads stores it, so this does not need pasting back by hand.
-  const answer = lastAssistantText(r.session_id)
+  const answer = assistantTextForTurn(r.session_id, rowIndex, rows.length)
   if (answer) {
     console.log(`  answer       ${answer.slice(0, 400).replace(/\n+/g, ' ')}${answer.length > 400 ? ' …' : ''}`)
     const leaks = [
