@@ -219,6 +219,57 @@ test('a category with nothing in it is reported as a real shortfall, not hidden 
   assert.equal(ctx.freeformDiagnostics.searchCalls, 1)
 })
 
+test('category-scoped coverage answers from one result instead of three retrieval steps', async () => {
+  // thread_1787188412205 spent wardrobe_coverage -> search_wardrobe -> view_pieces before answering,
+  // because counts said HOW MANY and never WHICH. Coverage is already the intent-specific primitive,
+  // so it carries the evidence.
+  const ids = [
+    db.prepare("INSERT INTO pieces (name, category, status, walk_support, formality) VALUES ('census probe flat', 'shoes', 'active', 'medium', 'elevated')").run().lastInsertRowid,
+    db.prepare("INSERT INTO pieces (name, category, status, walk_support, formality) VALUES ('census probe sneaker', 'shoes', 'active', 'high', 'everyday')").run().lastInsertRowid,
+  ]
+  try {
+    // Above the manifest cap there is no manifest to read from, so full truth travels with the row.
+    const noManifest = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, { freeformDiagnostics: {} })
+    assert.ok(noManifest.counts, 'the coverage maths is still there')
+    assert.equal(noManifest.candidates.length, noManifest.total_pieces, 'the census is complete, never sampled')
+    const full = noManifest.candidates.find(c => Number(c.id) === Number(ids[0]))
+    assert.equal(full.walk_support, 'medium', 'latent physical truth travels when nothing else carries it')
+    assert.equal(full.formality, 'elevated')
+
+    // With the manifest present the model already holds every stable field, so repeating them here
+    // would duplicate the manifest one category at a time — measured at 16.3k tokens for 88 tops.
+    // What coverage uniquely adds is the CLOSED SET, so identity is enough.
+    const res = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' },
+      { freeformDiagnostics: {}, wardrobeManifestIncluded: true })
+    assert.equal(res.candidates.length, res.total_pieces, 'still complete, still never sampled')
+    const probe = res.candidates.find(c => Number(c.id) === Number(ids[0]))
+    assert.deepEqual(Object.keys(probe).sort(), ['id', 'name'], 'identity only; the manifest carries the truth')
+    assert.match(res.candidates_note, /already in the wardrobe manifest/)
+    assert.ok(JSON.stringify(res).length < JSON.stringify(noManifest).length / 2, 'and it is dramatically smaller')
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
+test('unscoped coverage stays counts-only, and the census is never ranked or capped', async () => {
+  const ctx = { freeformDiagnostics: {} }
+  // Without a category the scope is the whole active wardrobe, where the manifest already carries
+  // identity — dumping every row would be the prompt over again.
+  const unscoped = await executeTool('wardrobe_coverage', { group_by: 'category' }, ctx)
+  assert.ok(unscoped.counts)
+  assert.equal(unscoped.candidates, undefined)
+
+  // Scoped: complete, and in stable id order rather than a relevance ranking. Ranking would
+  // reintroduce the failure the coverage arc hit twice — a piece the model never saw cannot be
+  // judged, and the ones dropped were owner-confirmed.
+  const scoped = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, ctx)
+  const ids = scoped.candidates.map(c => Number(c.id))
+  assert.deepEqual(ids, [...ids].sort((a, b) => a - b), 'stable id order, not a ranking')
+  assert.equal(new Set(ids).size, ids.length, 'each piece appears exactly once')
+  assert.match(scoped.candidates_note, /not a sample/)
+  assert.match(scoped.candidates_note, /no photograph is still a candidate/)
+})
+
 test('piece IDs are a verification scaffold, not product copy', () => {
   // Owner ruling 2026-08-20: acceptance case 7 wins over the "(ID <n>)" citation requirement. The
   // app may require handles internally; the reader should never see them.

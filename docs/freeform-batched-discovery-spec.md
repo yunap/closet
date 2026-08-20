@@ -337,6 +337,45 @@ The coverage turn spent three retrieval steps — `wardrobe_coverage`, then `sea
 categories, one level up at the *tool* level. Collapsing it is description-level and offline
 testable; it needs no new architecture.
 
+## Coverage answers from one tool result — 2026-08-20
+
+The live coverage turn spent three retrieval steps before answering:
+`wardrobe_coverage` → `search_wardrobe` → `view_pieces`, 4 iterations, $0.2138. The cause was in the
+primitive: `wardrobe_coverage` returned aggregate counts only, so it said **how many** and never
+**which**. The model then had to find the pieces, and then fetch enough truth to judge them.
+
+Owner ruling: collapse it by promoting the existing tool, not by adding architecture — coverage is
+already the intent-specific primitive, so it should own the coverage maths *and* carry the evidence.
+
+A category-scoped call now returns `candidates`: the **complete active census for that category**.
+Never sampled, never ranked, never capped — sampling is exactly how the coverage arc failed twice,
+because a piece the model never saw could not be judged, and the ones dropped were owner-confirmed.
+Whether 33 shoes are "enough" is the stylist's judgment; code's job is to guarantee it saw all 33.
+
+**What the census carries depends on what the prompt already holds**, using the same rule and the
+same measured reason as `search_wardrobe`'s row trimming:
+
+| Manifest in prompt | Census carries | Why |
+|---|---|---|
+| yes | `id` + `name` | the manifest already holds every stable field — `walk_support`, `formality`, `heel_height`, all of them |
+| no (above the cap) | full truth rows | nothing else carries them |
+
+Measured on the owner's wardrobe, with the manifest present: **88 tops fell from 65,196 characters
+(~16.3k tokens) to 4,593 (~1.1k)** for the same completeness guarantee. Sending full rows would have
+duplicated the manifest one category at a time — the mistake row trimming was introduced to fix,
+repeated at larger scale.
+
+Unscoped coverage stays counts-only: its scope is the whole active wardrobe, where the manifest
+already carries identity and a full dump would be the prompt over again.
+
+`wardrobeTruthRow` is now shared by both tools, so a coverage answer cannot judge a piece from a
+different field set than a search would have.
+
+**Not verified:** whether the model actually stops calling `search_wardrobe` and `view_pieces` after
+a coverage call. The description tells it the rows are already there. Like batching, that is model
+behaviour, readable for free from `tool_sequence` on the next coverage question rather than worth a
+paid turn.
+
 ## Open question carried forward
 
 Whether the moving cache breakpoint earns its cost. Writing a new entry per iteration at 1.25× may be
