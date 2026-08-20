@@ -250,8 +250,42 @@ next pass starts from these rather than re-deriving them.
 | One-line pointer to `plan_outfit_set` for multi-use-case requests | **3** | reachability; see above |
 | "Do not call `generate_outfits` for ordinary styling advice" | **4** | **done** — contradicted bounded multi-look; fixed 2026-08-20 |
 
-Unstarted: the remaining ~12 tool-naming bullets, and the `Proposing Outfits` line beyond its shoes
-clause.
+### Inventory tranche 1 — `Proposing Outfits (default)` (3,592 chars, 17 clauses)
+
+Split on sentence boundaries and checked clause by clause against the live tool surface.
+
+| # | Clause | Disposition |
+|---|---|---|
+| 1 | propose each outfit via `propose_outfit`, prose around the calls | **1** — verbatim in the tool description |
+| 2 | every outfit MUST include a shoes-role piece | **2 → `propose_outfit`** |
+| 3 | shoe gap: say so plainly, don't use `missing_gaps` as a substitute | **2 → `propose_outfit`** |
+| 4 | when to use `generate_outfits` vs `propose_outfit` | **3** — cross-tool routing (already corrected in part C) |
+| 5 | a packing list is a secondary recap, never a replacement | **3** — output-shape policy, owned by nothing else |
+| 6 | call `search_wardrobe` with `visual:true` before composing | **1** — the tool documents its visual mode |
+| 7 | narrow each visual search by category/occasion/activity/weather | **1** — argument docs |
+| 8 | a follow-up with a new need gets a fresh scoped search | **3** — turn policy, not an argument |
+| 9 | sparse/imageless search → say what you can and cannot see | **3** — honesty policy; pairs with the no-hallucination rule |
+| 10 | multi-occasion requests get one outfit per stated use case | **3** — coverage policy |
+| 11 | do not collapse distinct needs into one generic list | **3** — same policy as 10 |
+| 12 | honour `weatherFit` / `ruleFit` flags on results | **2 → `search_wardrobe`** — the flags are returned but their *semantics* are not documented |
+| 13 | `compose` mode already filtered prohibited pieces; don't self-reject | **1** — documented on the `intent` argument |
+| 14 | filtering is per-search, so scope each call to that outfit | **1** — argument docs |
+| 15 | `intent:'explain'` to show and explain prohibited pieces | **1** — documented |
+| 16 | in a multi-outfit set, treat assigned pieces as occupied | **3** — cross-outfit policy |
+| 17 | if a correction needs a repeat, offer it as a tradeoff | **3** — same policy as 16 |
+
+**Tally: 6 already owned (1), 3 should move (2), 8 stay (3).** Roughly a third of the line is
+removable once clauses 2, 3 and 12 are moved to their tools — not the whole bullet, and not nothing.
+
+**A false positive worth recording.** A first pass probed `propose_outfit`'s description for
+`/shoes/i` and reported clause 2 as already covered. It is not: the description says "at most one
+primary_top (or one dress), one primary_bottom, and one shoes" — a **cap**, not a requirement.
+Deleting the clause on that evidence would have removed the rule that every outfit needs footwear.
+Probe for the semantic, never for the noun.
+
+### Still unstarted
+
+The remaining ~12 tool-naming bullets, and the non-tool bullets (categories B and D).
 
 One correctness fix from that pass was kept: `Do not call 'generate_outfits' for ordinary styling
 advice` contradicted the shipped architecture, where bounded multi-look routes an ordinary
