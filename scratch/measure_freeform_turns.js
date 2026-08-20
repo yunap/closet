@@ -92,7 +92,10 @@ for (const [rowIndex, r] of rows.entries()) {
 
   const notes = []
   if (r.search_calls > 1) notes.push(`${r.search_calls} searches — batching did NOT happen; the description asks for one call covering every category`)
-  if (r.search_calls === 1 && searchIterations === 1) notes.push('one search covering the turn — batching worked')
+  // One search only demonstrates batching if the turn actually needed several categories. A
+  // single-category question ("enough dressy flats?") reaches one search either way, so claiming
+  // batching there would be reading a result into a request that could not produce it.
+  if (r.search_calls === 1 && searchIterations === 1) notes.push('one search — batching is only demonstrated if the request needed several categories; check the question')
   if (sequence.includes('declare_intent') && r.propose_calls === 0 && !sequence.includes('generate_outfits') && !sequence.includes('render_preview')) {
     notes.push('declare_intent on a turn that produced no cards — the ceremony change did not take')
   }
