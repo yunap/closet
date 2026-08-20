@@ -1770,10 +1770,46 @@ router.patch('/chat-threads/:id/archive', (req, res) => {
   }
 })
 
+// Photos uploaded into a chat (`/api/ai/outfit-feedback`) are kept so later turns in the thread
+// can still see the garment, but they have no pieces or outfits row to own them. The thread owns
+// them instead, so deleting it deletes them. Only files a message marked `uploadedPhoto` are
+// eligible.
+//
+// The pieces/outfits lookup below guards a path that does not exist yet, deliberately: today an
+// upload can never become a garment or an outfit photo, so no filename is ever shared. It is here
+// because turning a chat upload into a real (provisional) piece is the direction under discussion
+// for styling un-owned garments, and that feature would otherwise land with a silent delete of a
+// live photo. Two indexed lookups is a cheap thing to carry for it. Nothing guards a second
+// thread citing the same file: filenames are unique per upload and branching a thread does not
+// copy messages (StylistChat.jsx, forceNewFromExisting), so no second citation can exist.
+function threadOwnedUploadFilenames(payloadText) {
+  const messages = safeJsonParse(payloadText, {})?.messages
+  if (!Array.isArray(messages)) return []
+  const names = new Set()
+  for (const message of messages) {
+    const name = path.basename(String(message?.uploadedPhoto || '').trim())
+    if (name && name !== '.' && name !== '..') names.add(name)
+  }
+  return [...names]
+}
+
 router.delete('/chat-threads/:id', (req, res) => {
   try {
+    const row = db.prepare('SELECT payload FROM chat_threads WHERE id = ?').get(req.params.id)
     const result = db.prepare('DELETE FROM chat_threads WHERE id = ?').run(req.params.id)
     if (result.changes === 0) return res.status(404).json({ error: 'Not found' })
+    for (const filename of threadOwnedUploadFilenames(row?.payload)) {
+      try {
+        const referenced = db.prepare('SELECT 1 FROM pieces WHERE photo = ? OR worn_photo = ? LIMIT 1').get(filename, filename)
+          || db.prepare('SELECT 1 FROM outfits WHERE photo = ? LIMIT 1').get(filename)
+        if (referenced) continue
+        const filePath = path.join(userUploadsDir(), filename)
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      } catch (cleanupErr) {
+        // A photo left behind is harmless; a failed thread deletion is not.
+        console.error('Failed to remove chat upload', filename, cleanupErr)
+      }
+    }
     res.json({ success: true })
   } catch (err) {
     console.error('Error deleting chat thread:', err)

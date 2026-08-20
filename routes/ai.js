@@ -2821,8 +2821,16 @@ router.post('/evaluate-wardrobe-outfit', async (req, res) => {
   }
 })
 
+// The uploaded photo is the ONLY record of an un-owned garment: it has no pieces row and no
+// lookbook entry, so deleting it after this one critique left every later turn in the thread
+// blind — and broke the thumbnail in the user's own history, which fell back to a browser
+// blob: URL that dies on reload. The file now survives and its name is returned so the thread
+// can own it. Retention is thread-scoped: DELETE /chat-threads/:id unlinks the photos its own
+// messages cite (routes/crud.js). A failed critique still unlinks, because nothing will ever
+// hold a reference to it.
 router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
-  const tempPath = req.file ? path.join(userUploadsDir(), req.file.filename) : ''
+  const savedPhoto = req.file ? req.file.filename : ''
+  const tempPath = savedPhoto ? path.join(userUploadsDir(), savedPhoto) : ''
   try {
     const { question, outfitName, outfitNotes } = req.body
     const activeWardrobeText = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece).map(buildPieceText).join('\n')
@@ -2838,12 +2846,11 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
         activeWardrobeText ? `Active wardrobe truth, for identifying likely saved garments and avoiding wrong guesses:\n${activeWardrobeText}` : ''
       ].filter(Boolean).join('\n\n')
     })
-    res.json(result)
+    res.json({ ...result, photo: savedPhoto })
   } catch (err) {
     console.error('AI error:', err)
-    res.status(err.statusCode || 500).json({ error: err.message })
-  } finally {
     if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+    res.status(err.statusCode || 500).json({ error: err.message })
   }
 })
 

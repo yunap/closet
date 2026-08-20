@@ -8,42 +8,85 @@ fenced by app logic on both sides.
 
 Reading convention (see [use-my-wardrobe.md](use-my-wardrobe.md)): rectangles are
 the app's own code, the hexagon labelled `LLM ·` is the model, diamonds are
-decisions. There is exactly **one** model step here — everything around it is the
-app deciding what to feed the model and whether to accept its answer.
+decisions.
+
+> **[amended 2026-08-20] Two things this document used to get wrong at the top.**
+>
+> **There is no longer exactly one model step.** A turn can make a routing call, a
+> compact answer call, and up to ten tool-loop iterations. Which of those it makes
+> is Layer 1's decision and is invisible to the user.
+>
+> **Reaching `/ask` at all is a decision made before this document starts.** The
+> chat box dispatches to ten different endpoints from a 13-way client-side
+> `if/else` on transient React state; ordinary typed text is the *last* branch.
+> Attach a photo and the same sentence goes to `/outfit-feedback` instead, which
+> has no tools, no retrieval and no cards. That seam is owned by
+> [message-lifecycle.md](../message-lifecycle.md) — **read it first if you are
+> asking why a message behaved differently than you expected.** This document
+> begins one layer down, once the turn is already inside `/ask`.
 
 ## Pipeline overview (PM altitude)
 
 ```mermaid
 flowchart TD
-    IN["Your message"] --> C["Classify the turn<br/>new_request / followup / correction / …"]
-    C --> PR{"Pre-route:<br/>precompose outfits?"}
-    PR -->|"broad plan / trip"| PC["Precompose outfit cards<br/>whole-wardrobe or trip slots"]
-    PR -->|"missing weather / scope"| HOLD["Hold for clarification<br/>no precompose"]
-    PR -->|"plain turn"| SKIP["No precompose"]
-    PC --> M
-    SKIP --> M
-    HOLD --> M
-    M{{"LLM · tool loop<br/>search · propose · generate · advise"}} --> G{"Output guards<br/>pass?"}
-    G -->|"no — force one retry"| M
+    IN["Your message<br/>(already dispatched to /ask)"] --> LOC{"Self-contained<br/>prohibition?"}
+    LOC -->|"yes"| ACK["Store it locally<br/>acknowledge · no model call"]
+    LOC -->|"no"| C["Classify the turn<br/>new_request / followup / correction / …"]
+    C --> EL{"Router eligible?<br/>no outfit · no image ·<br/>fresh ask or known subject"}
+    EL -->|"no"| PAY
+    EL -->|"yes"| R{{"LLM · execution router<br/>sees question + date only"}}
+    R -->|"wardrobe_inventory"| SQL["SQL category census<br/>no second model call"]
+    R -->|"card / garment / advice"| CMP{{"LLM · compact answer<br/>no tools"}}
+    R -->|"bounded_multi"| BM{{"LLM · one batched composer<br/>2–5 looks"}}
+    R -->|"full_stylist · or any failure"| PAY["Assemble full prompt<br/>manifest + thread state + feedback"]
+    PAY --> M{{"LLM · tool loop ×10<br/>search · view · propose · plan"}}
+    M --> G{"Output guards<br/>pass?"}
+    G -->|"no — one retry per clause"| M
     G -->|"yes"| OUT["Answer + any outfit cards"]
+    SQL --> OUT
+    CMP --> OUT
+    BM --> OUT
+    ACK --> OUT
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class IN,C,PC,SKIP,HOLD,OUT app;
-    class M model;
-    class PR,G check;
+    class IN,C,ACK,SQL,PAY,OUT app;
+    class R,CMP,BM,M model;
+    class LOC,EL,G check;
 ```
 
 The whole flow is four layers. The tables below list **every way** to reach each
 state — that precision is why they're tables, not more boxes.
 
+Note what the diagram now shows that the old one did not: **four of the six exits
+never reach the tool loop**, and the cheapest exit makes no model call at all.
+Layer 1 is no longer "pre-routing"; it is the cost boundary of the whole feature.
+
 ## Layer 0 — Turn classification
 
 Every message is tagged with a *conversation mode* from its text plus whether the
-thread has history (`classifyChatTurn`, `src/components/StylistChat.jsx:3590`;
-server fallback `styling-engine/core.js:3404`). This sets the "CONVERSATION
-CONTROLLER" directive in the system prompt.
+thread has history. This sets the "CONVERSATION CONTROLLER" directive in the
+system prompt.
+
+**[corrected 2026-08-20] It is classified twice, by two different classifiers,
+and they can disagree.**
+
+| | Where | Reads | Consumed by |
+| --- | --- | --- | --- |
+| Client | `classifyChatTurn`, [`StylistChat.jsx:551`](../../src/components/StylistChat.jsx#L551) | the text + `hasThreadMemory` | sent in the body as `conversationMode` |
+| Server | `resolveStylistConversationMode`, [`core.js:3794`](../../styling-engine/core.js#L3794) | the text + `hasThreadContext` / `hasGeneratedContext`, with the client value as `requestedMode` | the prompt's turn directive |
+
+The server's version is richer — it distinguishes correction from
+preference_reaction on real thread context, and only calls a turn `followup` when
+the text actually refers to something. **But Layer 1's eligibility test reads
+`req.body.conversationMode`, the raw client value** ([`routes/ai.js:4003`](../../routes/ai.js#L4003)),
+while the prompt reads the resolved one. So routing is decided by the coarse
+classifier and behaviour by the fine one, and a turn can be routed as a follow-up
+while being prompted as a new request.
+
+The coarse classifier's last rule is the consequential one: **any message in a
+thread that has memory becomes `followup`**, whatever it says.
 
 | Mode | Reached when | Cross-turn? |
 | --- | --- | --- |
@@ -131,8 +174,10 @@ mechanics are handled at the source instead: the shared composer prompt requires
 `styling_instructions`, since prose commenting on a card may not be its only record.
 
 **[amended 2026-08-19] Declaration is required by its consumers, not by every turn.** `declare_intent`
-is required before `propose_outfit`, `generate_outfits` or `render_preview`, which stay blocked until
-the turn declares `cards` or `image`. It is **not** required to answer in prose: an explanation,
+is required before **five** tools — `propose_outfit` ([tools.js:1497](../../styling-engine/tools.js#L1497)),
+`suggest_slot_swaps` (:1820), `render_preview` (:2043), `plan_outfit_set` (:2251) and
+`generate_outfits` (:2725) — which stay blocked until the turn declares `cards` or `image`.
+*(Corrected 2026-08-20: this said three.)* It is **not** required to answer in prose: an explanation,
 comparison, critique, garment question or recalled detail needs no declaration. Declaring
 `want:'text'` merely to answer bought a whole extra provider round-trip — measured at $0.0134 against
 a follow-up turn that costs about $0.04, and observed twice on turns that produced no cards at all.
@@ -210,19 +255,44 @@ becoming a second stylist architecture, so coverage becomes a use case of batche
 
 ## Layer 2 — Model tool loop
 
-Model-driven, up to 7 iterations (`askStylistWithTools`,
-`styling-engine/provider.js:504`). The model chooses what to do:
+Model-driven, up to **10** iterations
+([`askStylistWithTools`, provider.js:1212](../../styling-engine/provider.js#L1212)).
+The disciplined flow — declare, search, view supports, view layers, propose ×N —
+legitimately needs 6–8; the old cap of 7 left no margin for one corrective bounce
+and live turns died with zero cards. The model chooses what to do:
 
 | Action | What it means |
 | --- | --- |
 | *(no tool)* | conversational advice / evaluation prose |
-| `search_wardrobe` (± `visual`) | look up real owned pieces |
+| `declare_intent` | declare `cards` / `image`; required *by its consumers*, not by every turn |
+| `search_wardrobe` (± `visual`) | look up real owned pieces; `category` takes an array, so one call covers every slot |
+| `view_pieces` | cheap verification: thumbnails + truth lines for exact IDs |
+| `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
+| `wardrobe_coverage` | coverage/gap census |
 | `propose_outfit` | render a verified outfit card ("show me") |
 | `generate_outfits` | compose fresh cards from scratch |
-| `plan_outfit_set` | compose coordinated multi-slot plans (trip, work-week, capsule, event set) from the deterministic planner |
+| `suggest_slot_swaps` | one-slot alternatives against an existing card |
+| `plan_outfit_set` → `submit_plan_outfits` | multi-slot plans (trip, work-week, capsule, event set) via the model-mode workbench |
 | `render_preview` | render an image from an existing card only after the turn declares `want:"image"` |
-| `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
 | `store_user_correction` | persist a taste correction |
+
+**All 14 schemas are offered on every turn, byte-identically.**
+`stylistToolsForTurn` ([provider.js:757](../../styling-engine/provider.js#L757))
+deliberately does not vary tool descriptions by turn mode: Anthropic's cached
+prefix is ordered tools → system → messages, so one varying byte in a schema
+invalidates the manifest sitting behind it — measured at ~35k tokens of warm
+prefix thrown away when a thread went from new request to follow-up. Per-turn
+policy belongs below the cache breakpoint, in the conversation controller.
+
+Returning *fewer* tools is a different thing and stays: once an atomic composer
+has finished (`atomicMultiLookCompleted`, `capsuleAtomicCompleted`,
+`slotSwapCompleted`) the function returns `[]`, which is how a turn is ended.
+
+**Prose written beside tool calls is part of the answer.** The model writes its
+intro and per-look framing in the same assistant messages as its `propose_outfit`
+calls, because the prompt asks it to. The loop collects that narration rather than
+returning only the final tool-free message — discarding it once shipped a reply
+that was a bare `---` followed by notes about looks that had been thrown away.
 
 **[default since 2026-08-19] Bounded same-context batches.** A new request for 2–5 fresh looks that share one
 occasion, activity and weather context uses `generate_outfits` once. That tool invokes the existing
@@ -243,17 +313,43 @@ paid iteration.
 
 ## Layer 3 — Output guards
 
-Deterministic post-checks on the model's final text. Each can force **one** retry
-with a correction message before you see anything (`applyFreeformOutputChecks`,
-`styling-engine/provider.js:116`). This is where the app overrides the model.
+Deterministic post-checks on the model's final text, run **before** citations are
+stripped so every clause sees the `(ID 196)` markers it needs. First failing clause
+wins; each clause gets **one** retry
+([`applyFreeformOutputChecks`, provider.js:132](../../styling-engine/provider.js#L132)).
+This is where the app overrides the model.
+
+**[corrected 2026-08-20] The full clause list.** This table previously listed five
+clauses, one of which (`tripScopeClarification`) had been retired in spec 21 Part 3
+and three of which had never been added.
 
 | Guard | Fires when | Forces |
 | --- | --- | --- |
-| `destinationClarification` | travel answer without a destination | ask where you're going |
-| `tripScopeClarification` | trip scope still ambiguous | ask what the trip covers |
-| `outfitProse` | model wrote an outfit as prose | redo via `propose_outfit` tool |
-| `outfitCount` | wrong number of outfits | retry with the right count |
 | `zeroResultContradiction` | recommended pieces despite a zero-result search | retry honestly |
+| `unverifiedCitation` | cited a piece ID never retrieved this turn | retry with verified IDs |
+| `cardProseInconsistent` | a card's own words don't describe the card | explain the piece or drop it |
+| `destinationClarification` | travel answer without a destination | ask where you're going |
+| `cardsNotDelivered` | declared `cards`, delivered none, asked nothing | deliver or ask |
+| `imageNotDelivered` | declared `want:'image'`, never called `render_preview` | render or ask |
+| `outfitCount` | asked for N cards, produced fewer | propose the remainder |
+| `outfitProse` | prose lays out an outfit that never went through `propose_outfit` | redo via the tool |
+
+`tripScopeClarification` is gone: the model repeatedly demonstrated the judgment
+the clause distrusted, with no misfire evidence.
+
+**A retry replaces the answer, and supersedes the prose that earned it.**
+`supersedeNarrationOnRetry` clears accumulated narration on a blocked turn —
+without it, a guard that rejected a claim would still ship the claim above its own
+correction, having already spent its one retry.
+
+**Three transforms then run in a fixed order**, and the order is load-bearing:
+
+1. `applyAcceptedCardAuthority` — an accepted card is the product; the closing
+   paragraph is commentary, and is dropped when it shows the turn's working or
+   cites a garment on no accepted card. Withheld, never retried.
+2. `discloseUnresolvedFreeformChecks` — re-runs the predicates and **tells the
+   user** what is still failing after the retry, instead of silently shipping it.
+3. `stripPieceIdCitations` — last, at the response boundary in `routes/ai.js`.
 
 The `outfitCount` retry is intentionally bypassed after a bounded capsule or bounded same-context
 batch has completed; those flows deliver accepted cards plus explicit gap language within their
@@ -294,8 +390,16 @@ stateDiagram-v2
 
 ## Engineer notes
 
-- **Entry:** `POST /api/ai/ask` (`routes/ai.js`). The turn's `conversationMode`
-  is classified client-side by `classifyChatTurn` and passed in the body.
+- **Entry:** `POST /api/ai/ask` ([`routes/ai.js:3902`](../../routes/ai.js#L3902)) — but only for
+  turns the client dispatcher sent here; see [message-lifecycle.md](../message-lifecycle.md).
+  `conversationMode` arrives from the client and is re-resolved server-side (Layer 0).
+- **The free exit runs first.** `detectExplicitProhibition` resolves a self-contained prohibition
+  locally, files it via `storeUserCorrection`, and returns `isLocalAcknowledgment: true` with **no
+  model call**. It exists because a live turn once spent five provider iterations to store one
+  sentence.
+- **The client posts its entire wardrobe array on every turn.** `req.body.pieces` is read in exactly
+  one place — resolving card thumbnails for generated-outfit reference sheets. Everything else the
+  server reads from SQLite itself.
 - **Optional execution router:** `routeFreeformExecutionProfile` (`styling-engine/provider.js`)
   makes one compact structured call before `buildStylistConversationPayload`, within its eligibility
   boundary (fresh request, verified card set, or resolved garment subject). A successful `bounded_multi` result calls `generate_outfits`
@@ -324,10 +428,10 @@ stateDiagram-v2
   entirely on the model calling `plan_outfit_set` itself.
 - **The model call is `askStylistWithTools`** with the tools in
   `styling-engine/tools.js` and the `STYLIST_SYSTEM` prompt assembled in
-  `buildStylistConversationPayload` (`styling-engine/core.js:3469`), which injects
+  `buildStylistConversationPayload` ([`styling-engine/core.js:3877`](../../styling-engine/core.js#L3877)), which injects
   the conversation-mode directive, occasion/climate profiles, established weather,
   and thread context.
-- **The loop caps at 7 iterations.** Tool calls (search, details, etc.) feed
+- **The loop caps at 10 iterations.** Tool calls (search, details, etc.) feed
   results back and continue; a plain text answer exits — unless a Layer-3 guard
   blocks it, which pushes a correction message and re-runs the model once per
   guard type.
@@ -348,12 +452,35 @@ stateDiagram-v2
   the visual composer path (`generate_outfits` / whole-wardrobe composer) and
   by legacy precompose when explicitly re-enabled, not by a plain model-called
   set plan.
-- **Diagnostics:** each turn logs gate exclusions / proposal validation via
-  `persistFreeformGenerationRun` (`routes/ai.js`), mirroring the composer's debug.
+- **Diagnostics:** each turn writes one `freeform_generation_runs` row via
+  `persistFreeformGenerationRun` ([`routes/ai.js:573`](../../routes/ai.js#L573)) — iterations, token
+  counts with cache read/write splits, gate exclusions, proposal validation failures, history
+  diagnostics. It runs on **both** the success and the error path (a turn that dies mid-way has
+  already paid for what it did), and swallows its own errors so it can never turn a provider failure
+  into a 500.
+- **[gap, 2026-08-20] `executionProfile` is not persisted.** It is set on the diagnostics object and
+  returned to the browser in `debug`, where the thread payload keeps it — but it is **not a column**
+  in `freeform_generation_runs`, so no query over the diagnostics table can see which profile ran.
+  It is also only set on the two branches that *take*: a turn that fell through to the full stylist
+  records no profile at all. Reconstructing a misroute means reading the thread's stored `debug`.
 
 ---
 
 # Proposed architecture — from router to stylist
+
+> **[status banner, 2026-08-20]** Everything above this line has been verified
+> against the code. **Everything below it has not**, and should be read as a design
+> record rather than a description of the app.
+>
+> It was written 2026-07-12, when `/ask` still had a keyword pre-route. Most of it
+> shipped — the manifest, thread state, the retrieval rule, intent declaration, the
+> planning workbench — and the parts that shipped are described in their current
+> form in Layers 0–3. Two things have moved against it: precompose was **deleted**
+> rather than demoted, and the guard count went **up**, from five to eight, instead
+> of collapsing into one contract check.
+>
+> Individual claims below carry inline status notes where they are known to be
+> stale. Absence of a note is not a warranty.
 
 > **2026-08-19 cost amendment — HISTORICAL, implementation removed.** The tiered index is no longer
 > in the code; its principle is inherited by batched discovery. It described two separable levels of
@@ -464,15 +591,19 @@ flowchart TD
 Note what disappeared relative to the current pipeline diagram: the pre-route
 decision and the five bespoke guards. Routing moved *into* the hexagon; truth
 moved *into* the tools; form became one generic contract check.
+*(As of 2026-08-20 the first half has happened and the second has not: the
+pre-route is gone, but the guards grew from five to eight.)*
 
 ## The five pillars
 
 1. **Thick, truthful context.** The stylist "knows the wardrobe" by reading it,
    not searching for it. The full wardrobe manifest already rides in the system
-   prompt (`CURRENT WARDROBE TRUTH`, `core.js:3740`) — make it the centerpiece:
+   prompt (`CURRENT WARDROBE TRUTH`, [core.js:4251](../../styling-engine/core.js#L4251)) — make it the centerpiece:
    compact per-piece truth (attributes + confidence), plus structured **thread
    state** (current outfit set, established weather/occasion/destination, pinned
-   pieces, saved corrections). At ~224 pieces this fits comfortably and caches.
+   pieces, saved corrections). At the ~224 pieces of writing it fits comfortably
+   and caches; the shipped cap is `WARDROBE_MANIFEST_MAX_PIECES`, default 400,
+   above which the manifest is dropped for tools-only guidance.
    Most questions then need *zero* tool round-trips to reason about coverage.
 2. **Tools as primitives, not pre-scripted flows.** Keep the engines
    (`generate_outfits`, `propose_outfit`) but add the missing query surface:
@@ -527,6 +658,10 @@ Neither of these strings appears anywhere in code — both must work:
 
 ## Migration path (each step ships alone)
 
+> **[status 2026-08-20]** Steps 1–4 and 6 have shipped; step 5 has not, and step 6
+> shipped harder than written — precompose was not demoted, it was **deleted**
+> (spec 14). Statuses are inline below.
+
 1. **Context first:** strengthen the wardrobe manifest (attributes +
    confidence) and add structured thread state to the payload.
 2. **Primitives:** coverage/aggregate query, batch visual fetch,
@@ -535,17 +670,29 @@ Neither of these strings appears anywhere in code — both must work:
    turn; base-layer/skin-contact advice requires `visual: true`.
 4. **Intent declaration:** the model declares the turn's `want`
    (text/cards/image) — client regex classification becomes advisory, then dies.
-5. **Contract check:** collapse the five guards into the one generic
-   "want satisfied + schema valid" validator.
+5. **Contract check:** collapse the guards into the one generic
+   "want satisfied + schema valid" validator. — **NOT SHIPPED.** The count went
+   the other way: five clauses at the time of writing, **eight** today
+   (Layer 3). `tripScopeClarification` retired; `unverifiedCitation`,
+   `cardProseInconsistent`, `cardsNotDelivered` and `imageNotDelivered` were
+   added. The generic contract check remains a proposal.
 6. **Demote precompose** to an optimization once model-initiated
-   `generate_outfits` proves equivalent on the planning cases.
+   `generate_outfits` proves equivalent on the planning cases. — **SHIPPED, harder
+   than written (spec 14, 2026-07-16):** precompose and `composeOutfitSet` were
+   deleted outright rather than demoted.
 
 What deliberately does **not** change: the composer engines and their gates, the
 no-repair-in-advisor-mode decision, `store_user_correction` and its recall, and
 the card contract (`propose_outfit` with verified IDs) — those are the parts the
 atlas showed to be working.
 
-## Step 6 resolution — the planning engine (designed 2026-07-12, not yet built)
+## Step 6 resolution — the planning engine (designed 2026-07-12, **shipped**)
+
+> **[status 2026-08-20]** This section's heading said "not yet built". It is built:
+> `buildPlanSlotWorkbench` ([outfitSetPlanner.js:3278](../../styling-engine/outfitSetPlanner.js#L3278))
+> is what `plan_outfit_set` composes through, with `submit_plan_outfits` closing the
+> loop, and there is no engine-mode fallback left. Read the design below as the
+> record of *why* it has its shape.
 
 Live trip tests settled step 6 with evidence in both directions: the model CAN
 self-compose planning turns, but the trip precompose produces something the
@@ -681,6 +828,12 @@ with its own hiking slot + per-slot coastal location, weather resolved live from
 `location`. `shouldEngageAskPrecompose` returns false for both branches by
 default; `WARDROBE_PLAN_PREROUTE=on` restores the whole legacy path as a
 reversible fallback. **The 8-step plan is complete.**).
+
+> **[HISTORICAL — do not act on the next three paragraphs.]** They are the
+> 2026-07-13 build log, written in the present tense about code that was deleted
+> three days later. `maybePrecomposeStructuredFollowupForAsk`, `planFreeformUseCases`
+> and `composeOutfitSet` **no longer exist** — see Layer 1 and the "Resolved (spec 14)"
+> note that closes this section. Kept for the reasoning, not the instructions.
 
 **Caveat (2026-07-13 architecture review): step 8 retired the NEW-REQUEST
 pre-routes only.** The follow-up replan path

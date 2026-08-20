@@ -4744,6 +4744,7 @@ export default function StylistChat({
     const outfitToSend = overrides.outfit ?? pendingOutfit
     const pieceToSend = overrides.piece ?? pendingPiece
     const fileToSend = overrides.imageFile ?? imageFile
+    let savedUploadPhoto = ''
     const capsuleExpansionToSend = overrides.capsuleExpansion ?? pendingCapsuleExpansion
     const useCapsuleExpansion = Boolean(
       capsuleExpansionToSend?.canExpandDirectly &&
@@ -5214,6 +5215,9 @@ export default function StylistChat({
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
         replyText = data.feedback || 'Something went wrong.'
+        // The server now keeps the upload. Record its real filename so the thumbnail survives a
+        // reload — the optimistic message still holds a blob: URL that dies with the page.
+        savedUploadPhoto = String(data.photo || '')
       } else if (shouldUseOutfitCritiqueFollowup(q, threadMemory)) {
         const rememberedOutfit = threadMemory.latestOutfit ||
           outfits.find(outfit => String(outfit.id) === String(threadMemory.id))
@@ -5501,7 +5505,17 @@ export default function StylistChat({
         refreshWholeWardrobeSessionMemory()
       }
 
-      const updatedMessages = [...nextMessages, assistantMsg]
+      // Replace the optimistic blob: preview on the message that carried the upload with the
+      // saved filename. uploadedPhoto marks the file as thread-owned, which is what thread
+      // deletion cleans up; imagePrev keeps the existing rendering path unchanged.
+      const settledMessages = savedUploadPhoto
+        ? nextMessages.map((message, index) => (
+          index === nextMessages.length - 1 && message.role === 'user'
+            ? { ...message, imagePrev: savedUploadPhoto, uploadedPhoto: savedUploadPhoto }
+            : message
+        ))
+        : nextMessages
+      const updatedMessages = [...settledMessages, assistantMsg]
       const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: replyText }]
 
       const newBoardResults = { ...boardResults }

@@ -14,6 +14,7 @@ inferring intent from implementation. See §"How to use this index" at the botto
 
 | If you are asking… | Read first |
 |---|---|
+| A user typed a message into the chat — what happens next? | [message-lifecycle.md](message-lifecycle.md) — routing, prompt, model call, answer, follow-up, end to end |
 | Why did the engine allow / block / rank this garment? | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | What did the user tell the app, where did it go, who reads it, with what authority? | [feedback-and-memory-map.md](feedback-and-memory-map.md) |
 | Where in the UI does this happen, and what can the user actually touch? | [app-surface-map.md](app-surface-map.md) |
@@ -39,6 +40,7 @@ markers: **[by design]** · **[unverified]** · **[owner check wanted]** · **[b
 | [engine-behaviour-map.md](engine-behaviour-map.md) | Gates, scores, ceilings, caches, retry loops, owner-constraint gate, capsule composition | 12th pass 2026-07-26, amended 2026-08-12 |
 | [feedback-and-memory-map.md](feedback-and-memory-map.md) | 12 store categories × writer / user action / reader / **authority**; the four persistence media | Ratified 2026-08-09, amended 2026-08-12 |
 | [app-surface-map.md](app-surface-map.md) | Every route, tab, mode-split and dialog group | First pass 2026-07-26 |
+| [message-lifecycle.md](message-lifecycle.md) | One chat message end to end: the 13-way client dispatcher, the execution router, prompt composition and cache layout, the tool loop, the output guards, persistence, and the follow-up turn — plus the seven discontinuities that live between flows | Traced 2026-08-20 |
 
 **The authority column is the point of the feedback map.** *hard gate* · *score* · *prompt* ·
 *thread-only* · *display* are not interchangeable, and most misdiagnoses come from treating a
@@ -85,6 +87,7 @@ proposal is not evidence the capability is absent.
 | [freeform-tiered-discovery-spec.md](freeform-tiered-discovery-spec.md) | HISTORICAL implementation, removed 2026-08-19 — but its owner-ratified principle (complete identity recall, detail on demand) is inherited by batched discovery. Kept for its measurements and wardrobe-independence requirement |
 | [freeform-prompt-cache-levers.md](freeform-prompt-cache-levers.md) | Where a freeform turn's tokens actually sit, and the five levers left. Lever 1 (tool-schema cache stability) implemented; lever 4 (volatile block) measured and declined at ~2%; the big instruction block swept clause by clause (global material absolutes removed; the token trim declined at ~650 safe tokens, with two correctness carve-outs) and image budget specified; model tiering postponed by owner |
 | [freeform-batched-discovery-spec.md](freeform-batched-discovery-spec.md) | The next architecture: one batched retrieval instead of sequential searches, because turn cost is driven by iteration count, not prompt size. Carries the acceptance cases inherited from the removed qualified-coverage profile. Specified, not implemented |
+| [unfiled-garment-spec.md](unfiled-garment-spec.md) | A photo the app has no row for. The axis is filed vs unfiled, not owned vs not: three outcomes, and only the rarest needs new representation. The trigger is the card, not the upload. `status = 'active'` is the single predicate for wardrobe membership (28 server queries), so a `provisional` status excludes it everywhere by default and five sites are widened deliberately. Seven owner rulings open; proposed 2026-08-20, not implemented |
 | [activity-and-roster-spec.md](activity-and-roster-spec.md) | Why a nature walk got sandals: the activity never becomes structured, and the roster can remove pieces but never promote one. Diagnosed 2026-08-16, not implemented |
 | [card-consistency-spec.md](card-consistency-spec.md) | A card and its own words disagreeing — the fourth turn-contract clause, and the single dress archetype. Part 1 + Part 2's mechanical half implemented 2026-08-16 |
 | [active-memory-surface-spec.md](active-memory-surface-spec.md) · [guidance-applicability-review.md](guidance-applicability-review.md) | Owner-guidance surface and applicability |
