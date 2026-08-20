@@ -140,11 +140,53 @@ Also: the bullet is what makes the tool *reachable*. Its own test comment record
 existed "the tool was live but unreachable — nothing in the prompt named it." Deleting the pointer
 risks recreating that, and a tool nobody calls describes itself to no one.
 
-**So part A needs clause-level surgery, not bulk deletion.** Per bullet: does an owner already carry
-this clause; if not, does it belong in the tool description (arguments, output contract) or stay in
-the prompt (cross-tool routing, clarification policy)? That is a per-clause review with an owner
-ruling, and it should keep the one-line reachability pointer regardless. Estimated prize is real —
-most of ~6,346 tokens — but it is not the cheap mechanical win it looked like.
+**So part A needs a clause inventory, not bulk deletion.** Estimated prize is real — most of
+~6,346 tokens — but it is not the mechanical win it looked like.
+
+### The method: assign every clause exactly one disposition
+
+Work clause by clause, not bullet by bullet. The bullets are single 6,800-character lines with
+duplication and unique behaviour braided together mid-sentence; there is no line boundary to cut on.
+
+| # | Disposition | Action |
+|---|---|---|
+| 1 | Already owned by a tool description or schema | remove from the prompt |
+| 2 | Should move to a tool description or schema | move, then remove |
+| 3 | Prompt-owned routing or clarification policy | keep |
+| 4 | Stale or contradictory | remove as a correctness fix, not a token one |
+| 5 | Unknown — needs live failure history | leave until the history is found |
+
+Category 5 is not a parking space for anything awkward. Several of these clauses exist because a
+model once failed confidently, and `git log` plus the surrounding test comments usually say which
+failure. Find the reason before deciding.
+
+### The reachability principle
+
+**A tool description cannot make a tool reachable if the model never gets a routing pointer to it.**
+Argument semantics belong in the schema; "when to reach for this tool" may still need one compact
+line in the prompt. `plan_outfit_set`'s own test comment records the precedent: before the prompt
+named it, "the tool was live but unreachable". So a clause can be category 1 for its *details* and
+category 3 for its *pointer* — the inventory should split those rather than forcing one verdict.
+
+### Seed inventory — clauses with evidence already gathered
+
+From the reverted attempt. Everything here was verified against the current tool surface, so the
+next pass starts from these rather than re-deriving them.
+
+| Clause | Disposition | Evidence |
+|---|---|---|
+| Slot decomposition ("YOU decompose the request into slots") | **1** | verbatim in `plan_outfit_set`'s description |
+| Constraint vocabulary (`reuse`, `no_repeat`, `allow_repeat`) | **1** | `constraints` schema doc: "packing wants reuse maximized; an at-home work week wants looks diversified" |
+| Per-slot forecast inheritance | **1** | `location` schema doc: "slots inherit it unless they set their own" |
+| Capsule intent vs piece budget independence | **1** | `plan_kind` schema doc: "use 'trip' for destination packing even when the trip has a piece limit" |
+| Shoes-role contract ("every outfit MUST include a shoes-role piece… not `missing_gaps` as a shoe substitute") | **2** → `propose_outfit` | checked: absent from that description |
+| "Do NOT stall a multi-day plan with a weather question when no place is named" | **3** | clarification policy; owned by nothing else |
+| "Cover each stated occasion/use case as a separate proposed outfit" | **3** | cross-tool coverage policy |
+| One-line pointer to `plan_outfit_set` for multi-use-case requests | **3** | reachability; see above |
+| "Do not call `generate_outfits` for ordinary styling advice" | **4** | **done** — contradicted bounded multi-look; fixed 2026-08-20 |
+
+Unstarted: the remaining ~12 tool-naming bullets, and the `Proposing Outfits` line beyond its shoes
+clause.
 
 One correctness fix from that pass was kept: `Do not call 'generate_outfits' for ordinary styling
 advice` contradicted the shipped architecture, where bounded multi-look routes an ordinary
