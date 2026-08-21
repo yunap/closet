@@ -240,18 +240,42 @@ export function pieceBareness(p) {
   return null
 }
 
+// Fibers with essentially no natural/cellulosic breathability on their own — a garment made
+// ENTIRELY from these (no cotton/linen/wool/rayon/etc mixed in) runs close to airtight against
+// skin. Not the same list as INSULATING_FIBERS: spandex/nylon/polyester don't trap body heat the
+// way wool does, they just don't wick or breathe — a fully-synthetic piece can be cool in
+// substance (fabric_weight: light) and still poor at ventilating a close-fitting cut.
+const NON_BREATHABLE_ONLY_FIBERS = new Set(['polyester', 'nylon', 'acrylic', 'spandex', 'leather', 'suede'])
+
+function pieceFiberIsAllNonBreathable(p) {
+  const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
+    .map(f => String(f).toLowerCase().trim())
+    .filter(f => f && f !== 'unknown')
+  if (!fibers.length) return false
+  return fibers.every(f => NON_BREATHABLE_ONLY_FIBERS.has(f))
+}
+
 // Real regression: "floral botanical print active leggings" — fabric_weight: light,
-// fabric_category: technical/performance, fit_on_body: clings_stretchy — scored a full hot-weather
-// "lightweight, good for heat" bonus in weatherFitForPiece despite being skin-tight synthetic
-// fabric with essentially no airflow. Coverage/insulating-material (pieceCoverage,
-// pieceHasInsulatingMaterial) already capture fabric substance and hem/sleeve extent; neither one
-// captures how CLOSE the fabric sits to skin, which is a real, independent factor in whether a
-// lightweight piece actually ventilates. 'clings_drapey' is included too even though it's rarer
-// (fluid drape can still sit close against skin) — 'skims'/'hangs_straight'/'drapes'/'structured'
-// all leave real air space and are not treated as occlusive.
+// fabric_category: technical/performance, fiber_content: polyester/nylon/spandex, fit_on_body:
+// clings_stretchy — scored a full hot-weather "lightweight, good for heat" bonus in
+// weatherFitForPiece despite being skin-tight synthetic fabric with essentially no airflow.
+// Coverage/insulating-material (pieceCoverage, pieceHasInsulatingMaterial) already capture fabric
+// substance and hem/sleeve extent; neither one captures how CLOSE the fabric sits to skin, which
+// is a real, independent factor in whether a lightweight piece actually ventilates.
+//
+// A close fit ALONE is not enough — 26 of the 30 real wardrobe tops/bottoms tagged
+// fit_on_body: clings_stretchy/clings_drapey are ordinary cotton tees and knits (a fitted cotton
+// crew tee genuinely clings, but cotton still breathes fine). What actually made the leggings
+// occlusive was the fabric having NO natural fiber at all — fully synthetic construction, not
+// closeness of fit by itself. So this requires both: a close cut, AND either an all-synthetic
+// fiber_content or fabric_category: technical/performance (the fallback for pieces where
+// fiber_content is untagged but the category itself already says activewear).
 export function pieceHasOcclusiveFit(p) {
   const fit = String(p?.fit_on_body || '').toLowerCase().trim()
-  return fit === 'clings_stretchy' || fit === 'clings_drapey'
+  const closeFit = fit === 'clings_stretchy' || fit === 'clings_drapey'
+  if (!closeFit) return false
+  if (pieceFiberIsAllNonBreathable(p)) return true
+  return String(p?.fabric_category || '').toLowerCase().trim() === 'technical/performance'
 }
 
 // Physical coverage — how much body area the garment's sleeve/hem extends over. Deliberately NOT
