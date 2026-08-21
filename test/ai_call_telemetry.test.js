@@ -11,9 +11,8 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
-const realFetch = globalThis.fetch
 const syntheticCalls = []
-globalThis.fetch = async (input, init = {}) => {
+const syntheticFetch = async (input, init = {}) => {
   const url = typeof input === 'string' || input instanceof URL ? String(input) : String(input?.url || '')
   const body = String(init?.body || '')
   syntheticCalls.push({ url, body })
@@ -38,6 +37,13 @@ globalThis.fetch = async (input, init = {}) => {
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
 
+  if (url.includes('/v1/responses')) {
+    return new Response(JSON.stringify({
+      id: 'resp_test', object: 'response', model: 'gpt-4o', output: [],
+      usage: { input_tokens: 10, output_tokens: 0, total_tokens: 10 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+
   if (url.includes('api.openai.com')) {
     return new Response(JSON.stringify({
       id: 'chatcmpl-test', object: 'chat.completion', created: 0, model: 'gpt-4o',
@@ -55,7 +61,7 @@ globalThis.fetch = async (input, init = {}) => {
 }
 
 const telemetry = await import('../lib/aiCallTelemetry.js')
-telemetry.installAiFetchTelemetry()
+await import('../lib/installAiCallTelemetry.js')
 const { default: Anthropic } = await import('@anthropic-ai/sdk')
 const { default: OpenAI } = await import('openai')
 const { db } = await import('../db.js')
@@ -72,12 +78,11 @@ async function waitForRows(count) {
 }
 
 after(() => {
-  globalThis.fetch = realFetch
   fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-test('installed Anthropic and OpenAI SDK clients cross the telemetry transport boundary', async () => {
-  const anthropic = new Anthropic({ apiKey: 'test-key', maxRetries: 0 })
+test('installed Anthropic and OpenAI SDK clients cross the instrumented SDK transport boundary', async () => {
+  const anthropic = new Anthropic({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
   await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/outfit-feedback', sessionId: 'thread_test' }, () =>
     anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -86,7 +91,7 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
     })
   )
 
-  const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0 })
+  const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
   await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/compare-outfits' }, () =>
     openai.chat.completions.create({
       model: 'gpt-4o',
@@ -96,7 +101,7 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
   )
 
   await waitForRows(2)
-  assert.equal(syntheticCalls.length, 2, 'both SDK calls used the synthetic global fetch')
+  assert.equal(syntheticCalls.length, 2, 'both SDK calls used the explicit synthetic transport')
 
   const rows = db.prepare('SELECT * FROM ai_call_log').all()
   assert.equal(rows.length, 2)
@@ -127,15 +132,12 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
 })
 
 test('image-generation responses are classified as image calls with the flat cost override', async () => {
+  const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
   await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/generate-saved-outfit-image' }, () =>
-    globalThis.fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
-        tools: [{ type: 'image_generation', size: '1024x1024', quality: 'medium' }],
-      }),
+    openai.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
+      tools: [{ type: 'image_generation', size: '1024x1024', quality: 'medium' }],
     })
   )
 
@@ -150,15 +152,17 @@ test('image-generation responses are classified as image calls with the flat cos
   assert.equal(row.estimated_cost_usd, 0.07)
 })
 
-test('provider HTTP failures are logged without changing the response returned to the caller', async () => {
-  const response = await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/editorial-directions-preview' }, () =>
-    globalThis.fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'fail-model', messages: [{ role: 'user', content: 'test' }] }),
-    })
+test('provider HTTP failures are logged and the SDK still raises its provider error', async () => {
+  const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
+  await assert.rejects(
+    telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/editorial-directions-preview' }, () =>
+      openai.chat.completions.create({
+        model: 'fail-model',
+        messages: [{ role: 'user', content: 'test' }],
+      })
+    ),
+    err => Number(err?.status) === 500
   )
-  assert.equal(response.status, 500, 'telemetry preserves the original provider response')
 
   await waitForRows(4)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'editorial_directions' ORDER BY id DESC LIMIT 1").get()
