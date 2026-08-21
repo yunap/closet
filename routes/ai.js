@@ -62,8 +62,10 @@ import {
 } from '../styling-engine/stylingIntent.js'
 import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
+import { updateAiTelemetryContext, backfillFreeformRunId } from '../lib/aiCallTelemetry.js'
+import { randomUUID } from 'node:crypto'
 
 import {
   isStyleSelectedQuestion,
@@ -570,9 +572,9 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 // apply to a tool-calling chat turn. Makes "how often does validation fail," "how often are pieces
 // gate-excluded" queryable instead of anecdotal, mirroring how generation_runs already serves that
 // role for the composer. Best-effort: never throws into the request.
-export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false } = {}) {
+export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
-    db.prepare(`
+    const info = db.prepare(`
       INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -615,6 +617,13 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.historyMessagesIncluded) || 0,
       Number(diagnostics.historyCharsRemoved) || 0
     )
+    // Every ai_call_log row this turn's provider calls wrote already carries freeformTurnToken
+    // (staged before each call, before this row's real id existed). Correlate them now in one
+    // UPDATE rather than holding this insert open across the whole turn.
+    const resolvedToken = freeformTurnToken || diagnostics.freeformTurnToken || ''
+    if (resolvedToken) {
+      backfillFreeformRunId({ freeformTurnToken: resolvedToken, freeformRunId: info.lastInsertRowid })
+    }
   } catch (err) {
     console.warn('Failed to persist freeform generation run:', err.message)
   }
@@ -3979,6 +3988,13 @@ router.post('/ask', async (req, res) => {
     // Point the hoisted reference at the live context as soon as it exists, so
     // anything that throws from here on still gets its diagnostics recorded.
     diagnosticsContext = toolContext
+    // Correlates every ai_call_log row this turn's provider calls write (router, tool-loop
+    // iterations, a nested composer call) back to this turn's freeform_generation_runs row. The
+    // real numeric id doesn't exist until persistFreeformGenerationRun inserts it at the end of the
+    // turn, so this token is the join key available at call time — see backfillFreeformRunId.
+    const freeformTurnToken = randomUUID()
+    toolContext.freeformTurnToken = freeformTurnToken
+    updateAiTelemetryContext({ freeformTurnToken })
     // The freeform model still owns intent and slot decomposition. Once it
     // invokes plan_outfit_set with an enforced capsule budget, the tool may
     // use this one-shot structured composer instead of returning a workbench
@@ -4014,6 +4030,14 @@ router.post('/ask', async (req, res) => {
       && !req.body.imageData
     if (routerEligible) {
       try {
+        updateAiTelemetryContext({
+          freeformTurnToken,
+          subflow: 'execution_router',
+          iterationIndex: nextFreeformCallIndex(toolContext),
+          isRetry: false,
+          retryReason: '',
+          isNested: false,
+        })
         const routed = await routeFreeformExecutionProfile({
           question: currentQuestion,
           currentDate: req.body.currentDate || '',
@@ -4044,7 +4068,7 @@ router.post('/ask', async (req, res) => {
           const freeformDiagnostics = toolContext.freeformDiagnostics
           persistFreeformGenerationRun({
             sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
-            diagnostics: freeformDiagnostics, turnFailed: false
+            diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
           })
           return res.json({
             answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
@@ -4083,6 +4107,14 @@ router.post('/ask', async (req, res) => {
               const visualEvidence = compactProfile === 'garment_fact'
                 ? await compactGarmentVisualEvidence(visualPieces)
                 : []
+              updateAiTelemetryContext({
+                freeformTurnToken,
+                subflow: 'compact_profile',
+                iterationIndex: nextFreeformCallIndex(toolContext),
+                isRetry: false,
+                retryReason: '',
+                isNested: false,
+              })
               const answerCall = await askStylistWithUsage({
                 system: compactFreeformAnswerSystem(compactProfile),
                 messages: [{
@@ -4101,7 +4133,7 @@ router.post('/ask', async (req, res) => {
               const freeformDiagnostics = toolContext.freeformDiagnostics || {}
               persistFreeformGenerationRun({
                 sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
-                diagnostics: freeformDiagnostics, turnFailed: false
+                diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
               })
               return res.json({
                 answer: stripPieceIdCitations(answerCall.text),
@@ -4137,7 +4169,8 @@ router.post('/ask', async (req, res) => {
               sessionId: req.body.sessionId || '',
               occasion: toolContext.occasion,
               diagnostics: freeformDiagnostics,
-              turnFailed: false
+              turnFailed: false,
+              freeformTurnToken
             })
             return res.json({
               answer: stripPieceIdCitations(boundedAtomicMultiLookResponse(toolContext)),
@@ -4223,7 +4256,8 @@ router.post('/ask', async (req, res) => {
       sessionId: req.body.sessionId || '',
       occasion: toolContext.occasion,
       diagnostics: freeformDiagnostics || {},
-      turnFailed: false
+      turnFailed: false,
+      freeformTurnToken
     })
 
     res.json({
@@ -4257,7 +4291,8 @@ router.post('/ask', async (req, res) => {
         sessionId: req.body.sessionId || '',
         occasion: diagnosticsContext.occasion,
         diagnostics: diagnosticsContext.freeformDiagnostics || {},
-        turnFailed: true
+        turnFailed: true,
+        freeformTurnToken: diagnosticsContext.freeformTurnToken || ''
       })
     }
     const { status, message } = describeAiError(err)

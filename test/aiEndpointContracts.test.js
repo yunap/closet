@@ -4566,7 +4566,11 @@ test('prompt cache breakpoint splits the system into stable + volatile blocks', 
   assert.equal(Array.isArray(blocks), true)
   assert.equal(blocks.length, 2)
   assert.match(blocks[0].text, /STABLE PREFIX/)
-  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral' })
+  // Cache-efficiency investigation (2026-08-21): this block changes only when the wardrobe itself
+  // changes, so it idles across an ordinary chat cadence far more often than it sits within the
+  // default 5-minute ephemeral window — moved to the 1-hour cache so a normal pause between turns
+  // reads the warm cache (0.1x) instead of paying a full rewrite (1.25x) on nearly every follow-up.
+  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.match(blocks[1].text, /VOLATILE turn state/)
   assert.equal(blocks[1].cache_control, undefined)
 
@@ -4577,6 +4581,17 @@ test('prompt cache breakpoint splits the system into stable + volatile blocks', 
   // No marker → passthrough, unchanged shape.
   assert.equal(systemToAnthropicBlocks('plain system'), 'plain system')
   assert.equal(systemToPlainText('plain system'), 'plain system')
+})
+
+test('the moving message-tail breakpoint stays on the default 5-minute TTL, unlike the stable prefix', () => {
+  // Anthropic requires any longer-TTL breakpoint to precede shorter ones in the same request. The
+  // stable prefix (1-hour, asserted above) already precedes this one in prompt order, so this pins
+  // the other half of that contract: the tail that changes every tool-loop iteration within a turn
+  // must NOT also carry ttl:'1h' — a turn's own iterations happen well inside 5 minutes, so a longer
+  // TTL there buys nothing and would just be an unexamined behavior change.
+  const messages = withMovingCacheBreakpoint([{ role: 'user', content: 'plain question' }])
+  assert.deepEqual(messages[0].content[0].cache_control, { type: 'ephemeral' })
+  assert.equal('ttl' in messages[0].content[0].cache_control, false)
 })
 
 test('moving prompt cache breakpoint marks the final message block only', () => {
