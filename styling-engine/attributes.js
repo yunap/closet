@@ -227,14 +227,27 @@ export function missingGateFields(piece = {}) {
 // were never actually valid sleeve_type values, so only "sleeveless" itself ever matched in
 // practice. Now that halter/strapless are real neckline values (not sleeve values), check both
 // fields on their own terms instead of hoping one field's free text contains another axis's word.
+//
+// Real regression: "light grey and brown knit cardigan" (piece 131, category outerwear) — cashmere,
+// fabric_weight: medium, length_hits_at: mid_thigh — landed in the "Versatile" weather-fit bucket
+// instead of "Good for cold" because this match used to include 'mid_thigh', flipping bareness to
+// 'high' and cancelling out the insulating-material tier bump. length_hits_at is a genuinely
+// PER-CATEGORY vocabulary (docs/garment-field-reference.md, 2026-08-14 taxonomy split): for
+// dress/skirt and pants, a short value like 'mini'/'shorts' means a hem that exposes leg skin, but
+// 'mid_thigh' isn't even in that vocabulary — it's outerwear-only, where length_hits_at describes
+// how far DOWN a coat/cardigan extends (waist < hip < mid_thigh < knee), the opposite direction
+// from bareness — a mid-thigh-length cardigan is a LONGER, more covering piece than a hip-length
+// one, not a bare one (confirmed by real data: piece 996760 "fleece coat", length_hits_at:
+// mid_thigh). 'upper_thigh' isn't a valid value in any current category's schema at all — dead
+// text from before the per-category split. Only 'mini'/'shorts' remain: both are still real,
+// current bare-hemline values in the dress/skirt and pants vocabularies respectively.
 export function pieceBareness(p) {
   if (p?.sleeve_length === 'sleeveless') return 'high'
   if (p?.neckline && /\b(halter|strapless)\b/i.test(p.neckline)) return 'high'
-  // 'shorts' (new pants vocab, plural) and 'mid_thigh' (new outerwear vocab,
-  // underscore) don't match a strict word-boundary regex tuned for the old
-  // singular/hyphenated spellings — 'short' with a trailing \b never matches
-  // inside "shorts" since both are word characters. Match the stem instead.
-  if (p?.length_hits_at && /\b(mini|shorts?|mid[-_]thigh|upper[-_]thigh)\b/i.test(p.length_hits_at)) {
+  // 'shorts' (pants vocab, plural) doesn't match a strict word-boundary regex tuned for the
+  // singular spelling — 'short' with a trailing \b never matches inside "shorts" since both are
+  // word characters. Match the stem instead.
+  if (p?.length_hits_at && /\b(mini|shorts?)\b/i.test(p.length_hits_at)) {
     return 'high'
   }
   return null

@@ -862,6 +862,31 @@ test('pieceCoverage: physical coverage only — no warmth conclusion baked in, a
   assert.equal(pieceCoverage({ sleeve_length: 'long' }), 'full')
 })
 
+test('pieceBareness: length_hits_at bare-hemline check is scoped to values that actually mean short/exposing, not every category\'s vocabulary', () => {
+  // Real regression: "light grey and brown knit cardigan" (piece 131, category outerwear) —
+  // cashmere, fabric_weight: medium, length_hits_at: mid_thigh — read as bareness: 'high', which
+  // cancelled out the insulating-material tier bump and landed it in "Versatile" instead of
+  // "Good for cold". length_hits_at is a genuinely per-category vocabulary
+  // (docs/garment-field-reference.md): 'mid_thigh' is valid ONLY for outerwear, where it means how
+  // far DOWN a coat/cardigan extends (waist < hip < mid_thigh < knee) — the opposite direction from
+  // bareness. A mid-thigh cardigan is longer/more covering than a hip-length one, not bare (real
+  // data: piece 996760 "fleece coat", length_hits_at: mid_thigh — clearly a long, covering coat).
+  assert.equal(pieceBareness({ category: 'outerwear', length_hits_at: 'mid_thigh' }), null)
+  assert.equal(pieceBareness({ category: 'outerwear', length_hits_at: 'knee' }), null)
+  // 'upper_thigh' isn't a valid length_hits_at value in any current category's schema — dead
+  // legacy text, not a real bare-hemline signal.
+  assert.equal(pieceBareness({ length_hits_at: 'upper_thigh' }), null)
+  // 'mini' (dress/skirt) and 'shorts' (pants) remain real, current bare-hemline values.
+  assert.equal(pieceBareness({ category: 'dress', length_hits_at: 'mini' }), 'high')
+  assert.equal(pieceBareness({ category: 'bottom', length_hits_at: 'shorts' }), 'high')
+})
+
+test('pieceWarmthTier: real-data regression — cashmere cardigan (medium, mid_thigh outerwear length) reads warm, not cancelled out by a false bareness signal', () => {
+  const cardigan = { category: 'outerwear', name: 'light grey and brown knit cardigan', fabric_category: 'cashmere', fabric_weight: 'medium', fiber_content: ['cashmere'], sleeve_length: 'long', neckline: 'none', length_hits_at: 'mid_thigh' }
+  assert.equal(pieceWarmthTier(cardigan), 'heavy')
+  assert.equal(pieceHeatSuitability(cardigan), 'cold')
+})
+
 test('pieceWarmthTier: real-data regression — cream wide-leg terry drawstring pants (cotton, medium, ankle) stays medium', () => {
   assert.equal(
     pieceWarmthTier({ category: 'bottom', name: 'cream wide-leg terry drawstring pants', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], length_hits_at: 'ankle' }),
