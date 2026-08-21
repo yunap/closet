@@ -15,7 +15,16 @@ const realFetch = globalThis.fetch
 const syntheticCalls = []
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' || input instanceof URL ? String(input) : String(input?.url || '')
-  syntheticCalls.push({ url, body: String(init?.body || '') })
+  const body = String(init?.body || '')
+  syntheticCalls.push({ url, body })
+
+  if (body.includes('fail-model')) {
+    return new Response(JSON.stringify({ error: { message: 'synthetic provider failure' } }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
   if (url.includes('api.anthropic.com')) {
     return new Response(JSON.stringify({
       id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6',
@@ -28,6 +37,7 @@ globalThis.fetch = async (input, init = {}) => {
       },
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
+
   if (url.includes('api.openai.com')) {
     return new Response(JSON.stringify({
       id: 'chatcmpl-test', object: 'chat.completion', created: 0, model: 'gpt-4o',
@@ -40,6 +50,7 @@ globalThis.fetch = async (input, init = {}) => {
       },
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
+
   throw new Error(`Unexpected synthetic fetch: ${url}`)
 }
 
@@ -115,6 +126,48 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
   assert.equal(openaiRow.success, 1)
 })
 
+test('image-generation responses are classified as image calls with the flat cost override', async () => {
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/generate-saved-outfit-image' }, () =>
+    globalThis.fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
+        tools: [{ type: 'image_generation', size: '1024x1024', quality: 'medium' }],
+      }),
+    })
+  )
+
+  await waitForRows(3)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'saved_outfit_image' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.call_kind, 'image')
+  assert.equal(row.is_image, 1)
+  assert.equal(row.provider, 'openai')
+  assert.equal(row.model, 'gpt-4o')
+  assert.equal(row.success, 1)
+  assert.equal(row.estimated_cost_usd, 0.07)
+})
+
+test('provider HTTP failures are logged without changing the response returned to the caller', async () => {
+  const response = await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/editorial-directions-preview' }, () =>
+    globalThis.fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'fail-model', messages: [{ role: 'user', content: 'test' }] }),
+    })
+  )
+  assert.equal(response.status, 500, 'telemetry preserves the original provider response')
+
+  await waitForRows(4)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'editorial_directions' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.success, 0)
+  assert.equal(row.model, 'fail-model')
+  assert.match(row.error_message, /synthetic provider failure/)
+})
+
 test('mock rows are flagged and excluded from real spend semantics', async () => {
   await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/tag-piece' }, () =>
     telemetry.logAiCall({
@@ -122,7 +175,7 @@ test('mock rows are flagged and excluded from real spend semantics', async () =>
       success: true, context: { source: 'test' },
     })
   )
-  await waitForRows(3)
+  await waitForRows(5)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE provider = 'mock' ORDER BY id DESC LIMIT 1").get()
   assert.equal(row.flow, 'tag_piece')
   assert.equal(row.is_mock, 1)
