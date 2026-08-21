@@ -355,10 +355,12 @@ test('scoreWholeWardrobeCandidate applies weather penalties and boosts correctly
 
   const hotOptions = { mood: 'it is really hot', season: 'current season' }
 
-  // 1. Heavy fabrics & insulating coverages should be penalized in hot weather
+  // 1. Heavy fabrics should be penalized in hot weather. Coverage no longer scores as its own
+  // independent term (consolidated into pieceWarmthTier — see attributes.js): heavyTurtleneck's
+  // directly-tagged fabric_weight: 'heavy' is authoritative on its own, so its long sleeves add no
+  // separate "insulating coverage" penalty on top of the fabric-weight one.
   const heavyRes = scoreWholeWardrobeCandidate([heavyTurtleneck, heavyJeans], hotOptions)
   assert.ok(heavyRes.reasons.includes('hot weather: heavy fabric'), 'Must penalize heavy fabric')
-  assert.ok(heavyRes.reasons.includes('hot weather: insulating coverage'), 'Must penalize insulating coverage')
 
   // 2. Light fabrics should be boosted in hot weather
   const lightRes = scoreWholeWardrobeCandidate([lightShorts], hotOptions)
@@ -774,35 +776,66 @@ test('pieceWarmthTier: an insulating fabric_category counts even when fiber_cont
   assert.equal(pieceWarmthTier({ fabric_category: 'cotton' }), null)
 })
 
-test('pieceWarmthTier: coverage and bareness nudge one tier, but never override fabric substance', () => {
-  // Full-length/long-sleeve coverage bumps a tier up.
-  assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'long' }), 'medium')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'maxi' }), 'heavy')
-  // A high-bareness cut (sleeveless, mini) steps a tier down.
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'medium')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'light')
-  // Capped at one step each way: a heavy wool piece that's also sleeveless steps down to
-  // 'medium' (bareness is real, but doesn't erase heavy insulating fabric down to 'light'), and a
-  // light sleeveless cotton tank has nowhere lower to go and stays 'light'.
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'medium')
+test('pieceWarmthTier: a directly-tagged fabric_weight is authoritative — coverage/bareness add nothing once it is known', () => {
+  // Owner ruling: length/sleeve/hem data describes how much body area the fabric covers, not what
+  // the fabric itself weighs. Once fabric_weight is directly tagged, it speaks for itself — full
+  // coverage does not additionally promote a medium-weight piece to 'heavy', and a bare cut does
+  // not additionally demote it. This is the general fix for a real regression that "ankle" alone
+  // did not fully resolve: a directly-tagged medium-weight piece was still getting bumped to
+  // 'heavy' by maxi/floor/full-length coverage (real wardrobe piece 129: twill wide-leg pants,
+  // fabric_weight: medium, length_hits_at: full_length — wrongly read as 'heavy').
+  assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'long' }), 'light')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'maxi' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'full_length' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'heavy')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'medium')
+  // Insulating MATERIAL is still real, additional evidence fabric_weight alone can miss — it
+  // keeps bumping a tier, capped at 'heavy', regardless of coverage/bareness.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'heavy')
   assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'sleeveless' }), 'light')
 })
 
-test('pieceCoverage: ankle-length is not treated as full-insulating coverage', () => {
+test('pieceWarmthTier: coverage/bareness are a weak, gap-filling fallback only when fabric_weight is completely untagged', () => {
+  // With no fabric_weight and no insulating material at all, coverage/bareness become the only
+  // available evidence — full coverage suggests at least moderate substance, a high-bareness cut
+  // suggests light. Neither reaches 'heavy' on its own; that tier is reserved for a real material
+  // signal (a direct fabric_weight: 'heavy' tag, or an insulating fiber/fabric_category).
+  assert.equal(pieceWarmthTier({ sleeve_length: 'long' }), 'medium')
+  assert.equal(pieceWarmthTier({ length_hits_at: 'maxi' }), 'medium')
+  assert.equal(pieceWarmthTier({ length_hits_at: 'floor_length' }), 'medium')
+  assert.equal(pieceWarmthTier({ sleeve_length: 'sleeveless' }), 'light')
+  assert.equal(pieceWarmthTier({ length_hits_at: 'mini' }), 'light')
+  // Neither coverage nor bareness tagged, and no weight/material signal either -> honest unknown.
+  assert.equal(pieceWarmthTier({}), null)
+})
+
+test('pieceCoverage: physical coverage only — no warmth conclusion baked in, and ankle-length does not count', () => {
   // Owner ruling: hem length alone isn't warmth — a light silk ankle-length skirt is still not a
   // warm layer (needs stockings in winter), and 'ankle' is just where ordinary trousers end, not
-  // an exceptional length. Only genuinely long coverage (floor-length, maxi) counts.
+  // an exceptional length. Only genuinely long coverage (floor-length, maxi, full-length) counts,
+  // and the return value describes coverage, not an insulation verdict — callers that care about
+  // warmth (pieceWarmthTier) decide what it means, weighed against the fabric.
   assert.equal(pieceCoverage({ length_hits_at: 'ankle' }), null)
-  assert.equal(pieceCoverage({ length_hits_at: 'floor_length' }), 'full-insulating')
-  assert.equal(pieceCoverage({ length_hits_at: 'maxi' }), 'full-insulating')
+  assert.equal(pieceCoverage({ length_hits_at: 'floor_length' }), 'full')
+  assert.equal(pieceCoverage({ length_hits_at: 'maxi' }), 'full')
+  assert.equal(pieceCoverage({ length_hits_at: 'full_length' }), 'full')
+  assert.equal(pieceCoverage({ sleeve_length: 'long' }), 'full')
 })
 
 test('pieceWarmthTier: real-data regression — cream wide-leg terry drawstring pants (cotton, medium, ankle) stays medium', () => {
-  // Was landing in the "Heavy" warmth filter purely because length_hits_at: 'ankle' triggered
-  // pieceCoverage's full-insulating bump — nothing about the fabric (cotton, medium weight, no
-  // insulating fiber) actually supports 'heavy'.
   assert.equal(
     pieceWarmthTier({ category: 'bottom', name: 'cream wide-leg terry drawstring pants', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], length_hits_at: 'ankle' }),
+    'medium'
+  )
+})
+
+test('pieceWarmthTier: real-data regression — beige pleated wide-leg pants (twill, medium, full_length) stays medium, not heavy', () => {
+  // Piece 129: was landing in the "Heavy" warmth filter purely because length_hits_at:
+  // 'full_length' triggered pieceCoverage's bump — nothing about the fabric (twill, medium
+  // weight, cotton/unknown fiber) supports 'heavy'. This is the maxi/floor/full-length analog of
+  // the ankle-length terry-pants fix above — general, not a second one-off patch.
+  assert.equal(
+    pieceWarmthTier({ category: 'bottom', name: 'beige pleated wide-leg pants', fabric_category: 'twill', fabric_weight: 'medium', fiber_content: ['cotton', 'unknown'], length_hits_at: 'full_length' }),
     'medium'
   )
 })

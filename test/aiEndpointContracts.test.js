@@ -1170,7 +1170,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
     // path (occasion profile discouraged_pieces matches "sweatshirt" in the name/reads_as, an
     // advisor-mode annotation, not a removal) — 'sweatshirt fleece' as fabric_category also trips
     // the separate, harder hot-weather insulating-material gate in wholeWardrobePieceTrustDecision
-    // (a genuine physical-suitability exclusion, correctly stricter now that pieceHasInsulatingFiber
+    // (a genuine physical-suitability exclusion, correctly stricter now that pieceHasInsulatingMaterial
     // reads fabric_category too, not just fiber_content), which removes the piece from the roster
     // entirely before this test's own soft-annotation path is ever reached.
     fabric_category: 'cotton',

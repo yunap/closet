@@ -91,15 +91,26 @@ function stepWarmthTier(tier, delta) {
   return WARMTH_TIER_ORDER[Math.min(WARMTH_TIER_ORDER.length - 1, Math.max(0, idx + delta))]
 }
 
-// The same four signals weatherFitForPiece (rules.js) already weighs against hot/cold, combined
-// into one tier: base fabric_weight; an insulating material — fiber_content (wool, cashmere...)
-// OR fabric_category (tweed, corduroy...), since either field alone can carry the signal — bumps
-// a tier up; full-length/long-sleeve coverage bumps a tier up; a high-bareness cut (sleeveless,
-// halter, mini/shorts) steps a tier down. fabric_weight and the insulating-material check are the
-// dominant signal (matches weatherFitForPiece's own ±10-12 vs ±8 relative weighting); coverage and
-// bareness are secondary nudges, capped at one step each so a single cut/hem detail cannot flip a
-// heavy wool coat into "light." Returns null only when fabric_weight AND the insulating-material
-// check both come back empty — an honest "unknown," not a guess from coverage alone.
+// The single derived garment-warmth interpretation — used by both the wardrobe page's Warmth
+// filter and weatherFitForPiece (rules.js), which used to duplicate a slightly different version
+// of this same logic. Two tiers of evidence, not four independent ones:
+//
+// 1. PRIMARY, authoritative: fabric_weight, if directly tagged. An insulating MATERIAL — fiber
+//    content (wool, cashmere...) or fabric_category (tweed, corduroy...) naming it, since either
+//    field alone can carry the signal — is real additional evidence fabric_weight can miss (a
+//    lightweight wool knit still runs warmer than lightweight cotton), so it still bumps a tier.
+// 2. SECONDARY, gap-filling only: coverage (full-length/long-sleeve) and bareness (sleeveless,
+//    mini) — consulted ONLY when fabric_weight is untagged and there's no insulating material
+//    either. Once a piece has a real, directly-tagged fabric_weight, length/sleeve/hem data adds
+//    no further information about the FABRIC — a medium-weight ankle-length cotton pant is not
+//    heavier for reaching the ankle rather than being cropped; it's the same fabric covering more
+//    leg. This is the owner-ruled fix for a real regression: "full-insulating" coverage was
+//    treated as independent evidence and could push an already medium-weight piece to "heavy"
+//    purely for its hemline (twill wide-leg pants, real wardrobe piece 129) — the same flaw
+//    already fixed for 'ankle' specifically was still live for maxi/floor/full-length.
+//
+// Returns null only when fabric_weight, insulating material, coverage, AND bareness are all
+// silent — an honest "unknown," never a guess.
 export function pieceWarmthTier(p) {
   // fabric_weight on a shoe/accessory describes construction substance (a chunky-heel sandal
   // tagged 'heavy'), not thermal insulation — an open-toe sandal doesn't run warmer for being
@@ -109,16 +120,12 @@ export function pieceWarmthTier(p) {
   // an honest unknown rather than reading a field tagged for a different purpose.
   if (isShoePiece(p) || isAccessoryPiece(p)) return null
   const fw = fabricWeight(p)
-  const insulatingMaterial = pieceHasInsulatingFiber(p)
-  if (!fw && !insulatingMaterial) return null
-  // No fabric_weight tag but an insulating material is still a real signal — start from a
-  // neutral 'medium' prior (not 'light') so the bump below lands at 'heavy', matching the old
-  // fiber-only behavior this composite replaces.
-  let tier = fw || 'medium'
-  if (insulatingMaterial) tier = stepWarmthTier(tier, 1)
-  if (pieceCoverage(p) === 'full-insulating') tier = stepWarmthTier(tier, 1)
-  if (pieceBareness(p) === 'high') tier = stepWarmthTier(tier, -1)
-  return tier
+  const insulatingMaterial = pieceHasInsulatingMaterial(p)
+  if (fw) return insulatingMaterial ? stepWarmthTier(fw, 1) : fw
+  if (insulatingMaterial) return 'heavy'
+  if (pieceCoverage(p) === 'full') return 'medium'
+  if (pieceBareness(p) === 'high') return 'light'
+  return null
 }
 
 export function formalityRank(value) {
@@ -215,20 +222,23 @@ export function pieceBareness(p) {
   return null
 }
 
+// Physical coverage — how much body area the garment's sleeve/hem extends over. Deliberately NOT
+// a warmth conclusion: whether "full" coverage actually means anything for warmth depends on the
+// fabric it's made of (a full-length silk skirt is not a warm layer), so callers that care about
+// warmth read this as one secondary input into pieceWarmthTier, not as its own verdict.
 export function pieceCoverage(p) {
   if (p?.sleeve_length === 'long' || p?.sleeve_length === 'extra_long') {
-    return 'full-insulating'
+    return 'full'
   }
   // Underscore counts as a word character, so a plain \bfull\b/\bfloor\b never
   // matches inside the new 'full_length'/'floor_length' pants values — there's
   // no \w/\W transition at the underscore for \b to anchor on. Match the
   // underscore-joined forms explicitly instead of relying on \b alone.
-  // 'ankle' deliberately excluded (owner ruling): hem length alone isn't warmth — an ankle-length
-  // light silk skirt is still not a warm layer (it needs stockings in winter), and ankle is where
-  // ordinary trousers end anyway, not an exceptional length. Reserve this for genuinely long
-  // coverage (floor-length, maxi) where more fabric plausibly retains more heat.
+  // 'ankle' deliberately excluded (owner ruling): hem length alone isn't coverage evidence worth
+  // acting on — ankle is where ordinary trousers end, not an exceptional length. Reserve this for
+  // genuinely long coverage (floor-length, maxi).
   if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
-    return 'full-insulating'
+    return 'full'
   }
   return null
 }
@@ -240,7 +250,7 @@ export function pieceCoverage(p) {
 // Checking fiber_content alone silently missed those — this checks both, so a piece needs only
 // ONE of the two fields to correctly name the material.
 const INSULATING_FABRIC_CATEGORIES = new Set(['wool', 'cashmere', 'fleece', 'tweed', 'corduroy', 'shearling', 'flannel', 'sweatshirt fleece'])
-export function pieceHasInsulatingFiber(p) {
+export function pieceHasInsulatingMaterial(p) {
   const fibers = Array.isArray(p?.fiber_content) ? p.fiber_content : []
   if (fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))) return true
   return INSULATING_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())

@@ -9,7 +9,7 @@
 // Read-only. No network, no model call.
 
 import { db, parsePiece } from '../db.js'
-import { pieceFormality, wardrobeCategoryGroup, isAccessory, pieceHasInsulatingFiber, fabricWeight } from '../styling-engine/attributes.js'
+import { pieceFormality, wardrobeCategoryGroup, isAccessory, pieceHasInsulatingMaterial, fabricWeight } from '../styling-engine/attributes.js'
 import { missingGateFields, pieceHasWetSensitiveFootwearMaterial } from '../styling-engine/attributes.js'
 import { wholeWardrobePieceTrustDecision, formalityFitForPiece, weatherFitForPiece, pieceStyleProfile } from '../styling-engine/rules.js'
 import { capsuleVersatilityScore } from '../styling-engine/outfitSetPlanner.js'
@@ -32,7 +32,7 @@ console.log(`  of those, ${noFiberBlockedHot} are blocked in a hot casual contex
 console.log(`  of those, ${noFiberBlockedByFiberClause} are blocked BY the insulating-fiber clause`)
 const heavyNoFiber = noFiber.filter(p => fabricWeight(p) === 'heavy' || fabricWeight(p) === 'medium')
 console.log(`  ${heavyNoFiber.length} of them are medium/heavy weight — the population the clause exists to catch`)
-console.log(`  (pieceHasInsulatingFiber reads fiber_content only: ${noFiber.filter(pieceHasInsulatingFiber).length} of ${noFiber.length} return true)`)
+console.log(`  (pieceHasInsulatingMaterial reads fiber_content AND fabric_category: ${noFiber.filter(pieceHasInsulatingMaterial).length} of ${noFiber.length} return true)`)
 
 // ── Q2: what IS the low-occasion-confidence population for evening / loungewear? ──
 line('Q2  "AI profile low confidence" — untagged, or genuinely unsuitable?')
