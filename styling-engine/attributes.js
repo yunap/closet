@@ -93,21 +93,35 @@ function stepWarmthTier(tier, delta) {
 
 // The single derived garment-warmth interpretation — used by both the wardrobe page's Warmth
 // filter and weatherFitForPiece (rules.js), which used to duplicate a slightly different version
-// of this same logic. Two tiers of evidence, not four independent ones:
+// of this same logic.
 //
-// 1. PRIMARY, authoritative: fabric_weight, if directly tagged. An insulating MATERIAL — fiber
-//    content (wool, cashmere...) or fabric_category (tweed, corduroy...) naming it, since either
-//    field alone can carry the signal — is real additional evidence fabric_weight can miss (a
-//    lightweight wool knit still runs warmer than lightweight cotton), so it still bumps a tier.
-// 2. SECONDARY, gap-filling only: coverage (full-length/long-sleeve) and bareness (sleeveless,
-//    mini) — consulted ONLY when fabric_weight is untagged and there's no insulating material
-//    either. Once a piece has a real, directly-tagged fabric_weight, length/sleeve/hem data adds
-//    no further information about the FABRIC — a medium-weight ankle-length cotton pant is not
-//    heavier for reaching the ankle rather than being cropped; it's the same fabric covering more
-//    leg. This is the owner-ruled fix for a real regression: "full-insulating" coverage was
-//    treated as independent evidence and could push an already medium-weight piece to "heavy"
-//    purely for its hemline (twill wide-leg pants, real wardrobe piece 129) — the same flaw
-//    already fixed for 'ankle' specifically was still live for maxi/floor/full-length.
+// fabric_weight is textile SUBSTANCE, not a warmth verdict on its own — a medium-weight cotton
+// knit made into a sleeveless summer dress is not the same thermal garment as the same fabric
+// made into a long-sleeve top. When fabric_weight is directly tagged, it is the starting point,
+// then two independent, physically-real signals can move it by a tier each:
+//   +1 for an insulating MATERIAL — fiber content (wool, cashmere...) or fabric_category (tweed,
+//      corduroy...), since either field alone can carry the signal. A lightweight wool knit still
+//      runs warmer than lightweight cotton.
+//   -1 for a bare cut (sleeveless, halter/strapless, mini/thigh-length) — skin exposure genuinely
+//      reduces how insulating a garment is regardless of the cloth it's cut from. This is the
+//      owner-flagged fix for a real gap: a medium-weight sleeveless dress was reading as "medium"
+//      warmth with no way for its bare cut to pull that down, the same shape of bug as the
+//      hemline-inflates-warmth issue below, just on the low side instead of the high side.
+// The two offset when both apply (a medium wool sleeveless dress nets back to medium — the
+// insulating fabric and the bare cut roughly cancel), and stepWarmthTier clamps at light/heavy
+// either way, so a heavy sleeveless wool dress lands at medium, not light — the exposed skin
+// makes it less warm than a heavy long-sleeve wool piece, not as cool as an unlined cotton one.
+//
+// Coverage (full-length/long-sleeve) and bareness together are consulted as a full FALLBACK only
+// when fabric_weight is completely untagged — there is no fabric substance to start from, so hem
+// and sleeve length are the only evidence available at all. Once fabric_weight is tagged, coverage
+// specifically adds nothing further: a medium-weight ankle-length cotton pant is not heavier for
+// reaching the ankle rather than being cropped; it's the same fabric covering more leg. This is
+// the owner-ruled fix for a real regression: "full-insulating" coverage was treated as independent
+// evidence and could push an already medium-weight piece to "heavy" purely for its hemline (twill
+// wide-leg pants, real wardrobe piece 129) — the same flaw already fixed for 'ankle' specifically
+// was still live for maxi/floor/full-length. Bareness, unlike coverage, keeps working as a tier
+// modifier even once fabric_weight is known, per above — only coverage becomes moot at that point.
 //
 // Returns null only when fabric_weight, insulating material, coverage, AND bareness are all
 // silent — an honest "unknown," never a guess.
@@ -121,10 +135,14 @@ export function pieceWarmthTier(p) {
   if (isShoePiece(p) || isAccessoryPiece(p)) return null
   const fw = fabricWeight(p)
   const insulatingMaterial = pieceHasInsulatingMaterial(p)
-  if (fw) return insulatingMaterial ? stepWarmthTier(fw, 1) : fw
+  const bare = pieceBareness(p) === 'high'
+  if (fw) {
+    const delta = (insulatingMaterial ? 1 : 0) - (bare ? 1 : 0)
+    return delta ? stepWarmthTier(fw, delta) : fw
+  }
   if (insulatingMaterial) return 'heavy'
   if (pieceCoverage(p) === 'full') return 'medium'
-  if (pieceBareness(p) === 'high') return 'light'
+  if (bare) return 'light'
   return null
 }
 

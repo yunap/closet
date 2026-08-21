@@ -153,27 +153,24 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   if (group === 'shoes' || group === 'accessory') {
     return { score: 0, label: 'neutral', adjustments }
   }
-  // pieceWarmthTier is the single derived warmth interpretation (attributes.js) — fabric_weight,
-  // bumped by an insulating material, with coverage/bareness folded in ONLY as a gap-filling
-  // secondary signal when fabric_weight itself is untagged. This function used to recompute a
-  // slightly different version of the same logic independently, including scoring coverage and
-  // insulating-material as their OWN separate terms on top of fabric_weight — which is what let a
-  // directly-tagged medium-weight piece get bumped an extra, unwarranted step from its hemline
-  // alone (real wardrobe piece 129: twill/medium/full-length pants). Bareness is kept as its own,
-  // smaller adjustment here — unlike coverage, skin exposure is a genuine independent comfort
-  // factor even once the fabric's own tier is already known (a heavy wool sleeveless vest is
-  // still less warm overall than a heavy wool long-sleeve sweater).
+  // pieceWarmthTier is the single derived warmth interpretation (attributes.js) — fabric_weight
+  // as the starting point, moved by insulating material (+1 tier) and bare cut (-1 tier), with
+  // coverage/bareness used as a full fallback only when fabric_weight itself is untagged. This
+  // function used to recompute a slightly different version of the same logic independently,
+  // including scoring coverage/insulating-material/bareness as their OWN separate terms on top of
+  // fabric_weight — which is what let a directly-tagged medium-weight piece get bumped an extra,
+  // unwarranted step from its hemline alone (real wardrobe piece 129: twill/medium/full-length
+  // pants), and separately let a medium-weight sleeveless dress score as plain "medium" with no
+  // way for its bare cut to register as lighter. Bareness is no longer scored again here — it's
+  // already inside `tier` — scoring it twice would double-count the same physical fact.
   const tier = pieceWarmthTier(piece)
-  const bare = pieceBareness(piece)
 
   if (weatherProfile?.isHot) {
     if (tier === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
     if (tier === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
-    if (bare === 'high') adjustments.push({ score: 8, label: 'skin-friendly cut', reason: 'hot weather: skin-friendly cut' })
   } else if (weatherProfile?.isCold) {
     if (tier === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
     if (tier === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
-    if (bare === 'high') adjustments.push({ score: -8, label: 'skin-friendly cut - too bare for cold', reason: 'cold weather: skin-friendly cut' })
   }
 
   return {

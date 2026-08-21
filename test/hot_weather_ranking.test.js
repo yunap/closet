@@ -776,23 +776,63 @@ test('pieceWarmthTier: an insulating fabric_category counts even when fiber_cont
   assert.equal(pieceWarmthTier({ fabric_category: 'cotton' }), null)
 })
 
-test('pieceWarmthTier: a directly-tagged fabric_weight is authoritative — coverage/bareness add nothing once it is known', () => {
-  // Owner ruling: length/sleeve/hem data describes how much body area the fabric covers, not what
-  // the fabric itself weighs. Once fabric_weight is directly tagged, it speaks for itself — full
-  // coverage does not additionally promote a medium-weight piece to 'heavy', and a bare cut does
-  // not additionally demote it. This is the general fix for a real regression that "ankle" alone
-  // did not fully resolve: a directly-tagged medium-weight piece was still getting bumped to
-  // 'heavy' by maxi/floor/full-length coverage (real wardrobe piece 129: twill wide-leg pants,
-  // fabric_weight: medium, length_hits_at: full_length — wrongly read as 'heavy').
+test('pieceWarmthTier: a directly-tagged fabric_weight is the starting point — coverage adds nothing once it is known, but a bare cut still moves it', () => {
+  // Owner ruling: hem/sleeve LENGTH data describes how much body area the fabric covers, not what
+  // the fabric itself weighs. Once fabric_weight is directly tagged, full coverage does not
+  // additionally promote a medium-weight piece to 'heavy' — this is the general fix for a real
+  // regression that "ankle" alone did not fully resolve: a directly-tagged medium-weight piece was
+  // still getting bumped to 'heavy' by maxi/floor/full-length coverage (real wardrobe piece 129:
+  // twill wide-leg pants, fabric_weight: medium, length_hits_at: full_length — wrongly read as
+  // 'heavy').
   assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'long' }), 'light')
   assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'maxi' }), 'medium')
   assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'full_length' }), 'medium')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'heavy')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'medium')
+  // 'mini' is bareness evidence (pieceBareness), not coverage — it's a bare cut, not a long hem,
+  // so it moves the tier the same way sleeveless does: medium steps down to light.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'light')
   // Insulating MATERIAL is still real, additional evidence fabric_weight alone can miss — it
-  // keeps bumping a tier, capped at 'heavy', regardless of coverage/bareness.
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'heavy')
+  // keeps bumping a tier, capped at 'heavy'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'long' }), 'heavy')
+  // A bare CUT (as opposed to a long hem) is a different signal — unlike coverage, skin exposure
+  // is real evidence about warmth even once fabric_weight is known, so it still steps the tier
+  // down by one, same shape as the insulating-material bump but in the other direction. This is
+  // the owner-flagged fix for the sleeveless-dress case: fabric_weight: medium alone does not mean
+  // "warm" for a bare-cut garment.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', sleeve_length: 'sleeveless' }), 'light')
+  // Already at the floor/ceiling -> the step has nowhere further to go.
   assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'sleeveless' }), 'light')
+  // Insulating material (+1) and a bare cut (-1) on the same piece roughly cancel: a medium wool
+  // sleeveless dress is genuinely less warm than a medium wool long-sleeve top, but the wool still
+  // keeps it from reading as merely 'light'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'medium')
+  // A heavy sleeveless wool dress: the insulating-material bump (+1) and the bare-cut step (-1)
+  // are computed together before clamping, so they net to zero here and it stays 'heavy' — already
+  // at the ceiling, so there's no room left for the bump to register before the bare cut cancels
+  // it. Still well short of 'light' — the wool keeps it far warmer than a bare unlined cotton
+  // garment, which is the case that actually matters.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'heavy')
+})
+
+test('pieceWarmthTier: real-world dress example — fabric_weight medium does not mean warm when the cut is bare', () => {
+  // Owner's exact pushback: "this dress weight is medium, but it does not make it warm." A
+  // sleeveless medium-weight cotton dress with no insulating material should read as 'light', the
+  // same as a light-weight non-bare piece — the bare cut is doing real thermal work here that
+  // fabric_weight alone can't see.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }),
+    'light'
+  )
+  // Same fabric, long sleeves instead: no bare cut to pull it down, stays medium.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'long' }),
+    'medium'
+  )
+  // A genuinely light fabric, sleeveless, maxi-length dress: nothing to bump it, stays light.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'linen', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless', length_hits_at: 'maxi' }),
+    'light'
+  )
 })
 
 test('pieceWarmthTier: coverage/bareness are a weak, gap-filling fallback only when fabric_weight is completely untagged', () => {
