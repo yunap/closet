@@ -47,6 +47,10 @@ Text-call pricing delegates dynamically to `styling-engine/provider.js`'s existi
 
 Telemetry failures are swallowed and warned; they must never turn a successful stylist request into an application failure.
 
+## Mock verification
+
+`WARDROBE_MOCK_AI` and ordinary test responses short-circuit before the provider HTTP boundary. `lib/mockAiCallTelemetry.js` wraps the existing canned-response handler and writes equivalent verification rows with `is_mock=1`, `provider='mock'`, zero tokens, and zero cost. Those rows prove route attribution and schema writes without pretending a provider was billed, and `scratch/report_ai_spend.js` excludes them from spend totals.
+
 ## Reporting
 
 `scratch/report_ai_spend.js` follows the database-safety convention used by the existing measurement scripts: it copies `wardrobe.db` plus WAL/SHM to a temporary directory before opening it read-only.
@@ -63,6 +67,6 @@ The report groups non-mock calls by flow, endpoint, provider, model, and image/t
 
 ## Known boundary
 
-Mock/test responses short-circuit before an actual provider HTTP round-trip, so the transport observer does not invent provider-call rows for them. `is_mock` remains in the schema for direct/synthetic telemetry fixtures and future mock instrumentation, but the spend report filters it out. This is intentional: the durable ledger's primary invariant is **one row per real provider round-trip**.
+Mock image-render paths that deliberately choose a local collage do not write an `image` row, because no provider call was attempted. A test that needs to exercise the image-row schema can call `logAiCall({ isMock: true, isImage: true, callKind: 'image' })` directly; production accounting remains one row per actual paid provider round-trip.
 
 The implementation does not yet distinguish internal `/ask` sub-profiles such as capsule-roster selection as separate `flow` values; they remain under `flow='ask'` and are separable by `call_kind` plus the existing freeform diagnostics. If that distinction proves necessary for spend attribution, add an explicit subflow field rather than parsing prompt text.
