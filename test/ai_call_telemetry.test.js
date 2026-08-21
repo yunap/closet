@@ -87,14 +87,14 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
   await waitForRows(2)
   assert.equal(syntheticCalls.length, 2, 'both SDK calls used the synthetic global fetch')
 
-  const rows = db.prepare('SELECT * FROM ai_call_log ORDER BY id').all()
+  const rows = db.prepare('SELECT * FROM ai_call_log').all()
   assert.equal(rows.length, 2)
 
-  const anthropicRow = rows[0]
+  const anthropicRow = rows.find(row => row.provider === 'anthropic')
+  assert.ok(anthropicRow)
   assert.equal(anthropicRow.flow, 'outfit_feedback')
   assert.equal(anthropicRow.endpoint, '/outfit-feedback')
   assert.equal(anthropicRow.session_id, 'thread_test')
-  assert.equal(anthropicRow.provider, 'anthropic')
   assert.equal(anthropicRow.model, 'claude-sonnet-4-6')
   assert.equal(anthropicRow.call_kind, 'text')
   assert.equal(anthropicRow.input_tokens, 12)
@@ -104,10 +104,10 @@ test('installed Anthropic and OpenAI SDK clients cross the telemetry transport b
   assert.equal(anthropicRow.success, 1)
   assert.equal(anthropicRow.is_mock, 0)
 
-  const openaiRow = rows[1]
+  const openaiRow = rows.find(row => row.provider === 'openai')
+  assert.ok(openaiRow)
   assert.equal(openaiRow.flow, 'compare_outfits')
   assert.equal(openaiRow.endpoint, '/compare-outfits')
-  assert.equal(openaiRow.provider, 'openai')
   assert.equal(openaiRow.model, 'gpt-4o')
   assert.equal(openaiRow.input_tokens, 10)
   assert.equal(openaiRow.output_tokens, 2)
@@ -123,7 +123,7 @@ test('mock rows are flagged and excluded from real spend semantics', async () =>
     })
   )
   await waitForRows(3)
-  const row = db.prepare('SELECT * FROM ai_call_log ORDER BY id DESC LIMIT 1').get()
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE provider = 'mock' ORDER BY id DESC LIMIT 1").get()
   assert.equal(row.flow, 'tag_piece')
   assert.equal(row.is_mock, 1)
   assert.equal(row.estimated_cost_usd, null)
