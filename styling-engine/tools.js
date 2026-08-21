@@ -11,6 +11,7 @@ import { resolveOccasionProfile } from './occasions.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
+import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import {
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
@@ -280,13 +281,32 @@ export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId
 // Nested bounded composers make a real provider call outside askStylistWithTools. Before this
 // helper, generate_outfits returned that usage in its own debug payload but the parent freeform row
 // omitted it — making the proposed cost path look cheaper by exactly its largest call.
+//
+// It also used to be invisible in tool_sequence specifically (recordFreeformToolIteration is only
+// ever called from inside askStylistWithTools's own loop and the router/compact call sites in
+// routes/ai.js — never from here) even though it counted toward provider_iterations: a turn could
+// read "4 iterations" with only 3 named in the sequence. Folding the recordFreeformToolIteration
+// call in here, at the one place all nested composer usage already flows through, closes that gap
+// for every caller rather than requiring each call site to remember it separately.
 export function recordNestedFreeformUsage(toolContext, usage = null) {
   if (!toolContext || !usage) return
+  recordFreeformToolIteration(toolContext, ['nested_composer'])
   bumpFreeformDiagnostic(toolContext, 'providerIterations')
   bumpFreeformDiagnostic(toolContext, 'providerInputTokens', Number(usage.inputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheReadInputTokens', Number(usage.cacheReadInputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheCreationInputTokens', Number(usage.cacheCreationInputTokens) || 0)
+}
+
+// Sequential call number within a freeform turn, for ai_call_log.iteration_index — covers every
+// provider call the turn makes (router, each tool-loop iteration, a nested composer call), not just
+// the tool-loop's own iterations. Kept directly on toolContext rather than inside freeformDiagnostics:
+// it is pure call-sequencing state for the telemetry ledger, not a turn-summary count that belongs
+// in the freeform_generation_runs row.
+export function nextFreeformCallIndex(toolContext) {
+  if (!toolContext) return 1
+  toolContext._freeformCallIndex = (toolContext._freeformCallIndex || 0) + 1
+  return toolContext._freeformCallIndex
 }
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
@@ -2773,6 +2793,23 @@ async function executeToolInternal(name, args, toolContext = {}) {
         toolContext.mood = intent.mood
         toolContext.mission = intent.mission
         toolContext.activity = resolvedActivity
+
+        // generateOutfitsForPieceInternal / generateWholeWardrobeOutfitsVisualInternal each make a
+        // real provider call of their own (recordNestedFreeformUsage above covers that once this
+        // returns). Stage the attribution on the shared telemetry context immediately before firing
+        // it, same as every other freeform provider-call site — only when this tool is actually
+        // running inside an /ask turn (freeformTurnToken is set there and nowhere else this tool is
+        // reachable from), so an unrelated caller of this same tool case is never mistagged.
+        if (toolContext.freeformTurnToken) {
+          updateAiTelemetryContext({
+            freeformTurnToken: toolContext.freeformTurnToken,
+            subflow: 'nested_composer',
+            iterationIndex: nextFreeformCallIndex(toolContext),
+            isRetry: false,
+            retryReason: '',
+            isNested: true,
+          })
+        }
 
         let result
         if (piece_id) {

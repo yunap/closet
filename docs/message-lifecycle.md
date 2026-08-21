@@ -250,10 +250,14 @@ const system = prompts.STYLIST_SYSTEM + [
 ].join('\n')
 ```
 
-`systemToAnthropicBlocks` ([:906](../styling-engine/provider.js#L906)) splits on the marker and puts
-`cache_control: {type:'ephemeral'}` on the stable block. `withMovingCacheBreakpoint`
-([:926](../styling-engine/provider.js#L926)) puts a second one on the last block of the last message,
-so growth within the tool loop is also cached. **Two of Anthropic's four breakpoints are in use.**
+`systemToAnthropicBlocks` ([:907](../styling-engine/provider.js#L907)) splits on the marker and puts
+`cache_control: {type:'ephemeral', ttl:'1h'}` on the stable block — moved from the default 5-minute
+TTL 2026-08-21, since the block only changes when the wardrobe itself changes and idles across an
+ordinary chat cadence far more often than it sits within 5 minutes. `withMovingCacheBreakpoint`
+([:926](../styling-engine/provider.js#L926)) puts a second one, on the *default* 5-minute TTL, on the
+last block of the last message, so growth within the tool loop is also cached — Anthropic requires a
+longer-TTL breakpoint to precede any shorter one in the same request, which this ordering already
+satisfies. **Two of Anthropic's four breakpoints are in use.**
 
 Anthropic's cached prefix is ordered **tools → system → messages**. The tool schemas sit *ahead* of
 the system block, so a single varying byte in a tool description invalidates the whole prefix. This

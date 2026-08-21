@@ -15,7 +15,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
@@ -1907,6 +1907,37 @@ test('nested composer usage is included in the parent freeform diagnostics', () 
   assert.equal(toolContext.freeformDiagnostics.providerOutputTokens, 340)
   assert.equal(toolContext.freeformDiagnostics.providerCacheReadInputTokens, 900)
   assert.equal(toolContext.freeformDiagnostics.providerCacheCreationInputTokens, 50)
+})
+
+// Cache-efficiency investigation (2026-08-21): a turn's tool_sequence used to be able to say
+// "declare_intent;generate_outfits" while provider_iterations said 4 — the nested composer call
+// generate_outfits triggers internally counted toward the total but never appeared in the ordered
+// sequence, so the 4th call's identity had to be guessed. recordNestedFreeformUsage is the one place
+// all nested composer usage flows through (styling-engine/tools.js's generate_outfits case), so this
+// pins that it now also records its own step in tool_sequence.
+test('nested composer usage also records its own step in tool_sequence', () => {
+  const toolContext = {}
+  recordFreeformToolIteration(toolContext, ['execution_router'])
+  recordFreeformToolIteration(toolContext, ['declare_intent'])
+  recordFreeformToolIteration(toolContext, ['generate_outfits'])
+  recordNestedFreeformUsage(toolContext, {
+    inputTokens: 1200, outputTokens: 340, cacheReadInputTokens: 900, cacheCreationInputTokens: 50
+  })
+  assert.equal(
+    toolContext.freeformDiagnostics.toolSequence,
+    'execution_router;declare_intent;generate_outfits;nested_composer'
+  )
+  assert.equal(toolContext.freeformDiagnostics.providerIterations, 1)
+})
+
+// recordNestedFreeformUsage is a no-op guard (usage is null/falsy) when generate_outfits's internal
+// call never happened at all — that must not fabricate a tool_sequence entry for a call that was
+// never made.
+test('recordNestedFreeformUsage does not touch tool_sequence when there is no usage to record', () => {
+  const toolContext = {}
+  recordFreeformToolIteration(toolContext, ['declare_intent'])
+  recordNestedFreeformUsage(toolContext, null)
+  assert.equal(toolContext.freeformDiagnostics.toolSequence, 'declare_intent')
 })
 
 test('bounded batch contract uses the server-resolved new-request mode when declaration omits it', async () => {

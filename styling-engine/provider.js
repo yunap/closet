@@ -5,7 +5,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
-import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration } from './tools.js'
+import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
+import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
@@ -909,7 +910,17 @@ export function systemToAnthropicBlocks(system) {
   if (markerAt === -1) return text
   const stable = text.slice(0, markerAt)
   const volatileTail = text.slice(markerAt + PROMPT_CACHE_BREAKPOINT.length)
-  const blocks = [{ type: 'text', text: stable, cache_control: { type: 'ephemeral' } }]
+  // docs' cache-efficiency investigation (2026-08-21): this block (tools + wardrobe manifest +
+  // occasion profiles + style constitution) only changes when the wardrobe itself changes, so it
+  // sits idle across an ordinary chat cadence (5-20+ minutes between turns) far more often than it
+  // sits within the default 5-minute ephemeral window — every such gap forces a full 1.25x rewrite
+  // instead of a 0.1x read. The 1-hour TTL trades a one-time 2x (vs 1.25x) write for a 0.1x read on
+  // every turn that lands inside the hour, which pays for itself after a single avoided rewrite.
+  // Anthropic requires a longer-TTL breakpoint to precede any shorter one in the same request; this
+  // block already precedes the moving message-tail breakpoint below (withMovingCacheBreakpoint),
+  // which deliberately stays on the default 5-minute TTL — that tail changes every iteration within
+  // a turn, so a longer TTL there would not be read back before the turn itself already moved past it.
+  const blocks = [{ type: 'text', text: stable, cache_control: { type: 'ephemeral', ttl: '1h' } }]
   if (volatileTail.trim()) blocks.push({ type: 'text', text: volatileTail })
   return blocks
 }
@@ -1265,6 +1276,22 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     ? Math.min(10, Number(toolContext.maxProviderIterations))
     : 10
   for (let iter = 0; iter < maxProviderIterations; iter++) {
+    // Stage this call's attribution on the shared telemetry context immediately before it fires —
+    // installAiCallTelemetry.js reads it off the context at the SDK transport boundary. Guarded on
+    // freeformTurnToken because this same loop also runs from styling-engine/core.js for the outfit-
+    // evaluation follow-up flow, which is not a freeform turn and must not be tagged as one.
+    if (toolContext.freeformTurnToken) {
+      const pendingRetryReason = toolContext._pendingFreeformRetryReason || ''
+      updateAiTelemetryContext({
+        freeformTurnToken: toolContext.freeformTurnToken,
+        subflow: 'stylist_tool_loop',
+        iterationIndex: nextFreeformCallIndex(toolContext),
+        isRetry: Boolean(pendingRetryReason),
+        retryReason: pendingRetryReason,
+        isNested: false,
+      })
+      toolContext._pendingFreeformRetryReason = ''
+    }
     if (AI_PROVIDER === 'openai') {
       const client = new OpenAI({ apiKey: resolveOpenAiKey() })
       const availableTools = stylistToolsForTurn(toolContext)
@@ -1371,6 +1398,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          toolContext._pendingFreeformRetryReason = check.blockType
           supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
@@ -1471,6 +1499,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
+          toolContext._pendingFreeformRetryReason = check.blockType
           supersedeNarrationOnRetry(narration)
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
