@@ -14,7 +14,7 @@ No prompt, model-selection, provider-routing, gate, or response behavior is chan
 
 ## `ai_call_log`
 
-The table is created additively on first logged call in each per-user database:
+The table is additive. `lib/installAiCallTelemetry.js` ensures it for the default database during server bootstrap, and `runWithAiTelemetryContext` ensures it again on the first authenticated API request for each user while that user's request-scoped database context is active. `logAiCall` also ensures it defensively before writing. The schema therefore exists before the first paid model call rather than appearing only as a side effect of spend.
 
 - `flow`, `endpoint`, `session_id`
 - `call_kind`: `text`, `structured`, `tool_loop`, or `image`
@@ -27,7 +27,7 @@ The table is created additively on first logged call in each per-user database:
 - bounded JSON `context`
 - `created_at`
 
-`freeform_generation_runs`, `generation_runs`, feedback-synthesis accounting, and importer spend remain untouched. They keep their narrower diagnostic/product responsibilities.
+`freeform_generation_runs`, `generation_runs`, feedback-synthesis accounting, and importer spend remain untouched. They keep their narrower diagnostic/product responsibilities. `scratch/feedback_surface_inventory.json` classifies `ai_call_log` as operational telemetry rather than user memory, alongside the two existing generation diagnostic tables.
 
 ## Attribution
 
@@ -69,4 +69,4 @@ The report groups non-mock calls by flow, endpoint, provider, model, and image/t
 
 Mock image-render paths that deliberately choose a local collage do not write an `image` row, because no provider call was attempted. A test that needs to exercise the image-row schema can call `logAiCall({ isMock: true, isImage: true, callKind: 'image' })` directly; production accounting remains one row per actual paid provider round-trip.
 
-The implementation does not yet distinguish internal `/ask` sub-profiles such as capsule-roster selection as separate `flow` values; they remain under `flow='ask'` and are separable by `call_kind` plus the existing freeform diagnostics. If that distinction proves necessary for spend attribution, add an explicit subflow field rather than parsing prompt text.
+Transport-level flow attribution follows the visible HTTP route. Internal sub-calls therefore remain grouped under their parent route unless code explicitly adds a nested subflow later: `/ask`'s internal profiles remain `flow='ask'`, and crop verification/relocation performed inside the importer detect route remain `flow='importer_detect'`. This is deliberate; add an explicit subflow field if that distinction becomes important rather than parsing prompt text.
