@@ -892,11 +892,26 @@ test('pieceWarmthTier: shoes and accessories are always unknown, even with a tag
   assert.equal(pieceWarmthTier({ category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fabric_category: 'wool' }), 'heavy')
 })
 
-test('pieceHasOcclusiveFit: only a close, skin-tight construction counts', () => {
-  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy' }), true)
-  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_drapey' }), true)
-  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'skims' }), false)
-  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'drapes' }), false)
+test('pieceHasOcclusiveFit: requires BOTH a close fit AND no natural fiber — a fitted cotton tee is not occlusive', () => {
+  // Real regression in the other direction: piece 223 "ivory graphic print crew tee" is 100%
+  // cotton, tagged fit_on_body: clings_stretchy (an ordinary fitted tee) — an earlier version of
+  // this function flagged fit alone, which wrongly caught it and 25 other real cotton/knit
+  // tops/bottoms, demoting plain hot-weather basics out of the "good for heat" bucket.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['cotton'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['cotton', 'polyester'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['viscose', 'spandex'] }), false)
+  // No fiber_content and no fabric_category signal at all -> unknown, don't guess occlusive.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy' }), false)
+
+  // Fully synthetic fiber_content (no natural fiber at all) + a close fit -> occlusive.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }), true)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_drapey', fiber_content: ['spandex'] }), true)
+  // fabric_category: technical/performance is a fallback when fiber_content isn't tagged.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fabric_category: 'technical/performance' }), true)
+
+  // A loose/relaxed fit is never occlusive regardless of fabric.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'skims', fiber_content: ['polyester', 'nylon', 'spandex'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'drapes', fiber_content: ['polyester'] }), false)
   assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'hangs_straight' }), false)
   assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'structured' }), false)
   assert.equal(pieceHasOcclusiveFit({}), false)
@@ -938,6 +953,11 @@ test('pieceHeatSuitability: a practical hot/cold/versatile readout built on weat
   // clearly the better hot-weather pick than a medium/heavy piece — reads 'hot', just without the
   // extra bareness bonus a sleeveless light piece would additionally get.
   assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fabric_category: 'rayon', fit_on_body: 'hangs_straight', sleeve_length: 'long', fiber_content: ['rayon'] }), 'hot')
+
+  // A fitted cotton tee (real wardrobe piece 223 shape: cotton, fit_on_body: clings_stretchy)
+  // is NOT occlusive — plain cotton still breathes fine when fitted — so it keeps the full hot
+  // bonus and reads 'hot', not 'versatile'.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'clings_stretchy', fiber_content: ['cotton'] }), 'hot')
 
   // No warmth signal at all -> honest unknown, not a guess.
   assert.equal(pieceHeatSuitability({ category: 'top' }), null)
