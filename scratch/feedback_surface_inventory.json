@@ -9,38 +9,131 @@
     "A store must be exactly one of the two — never both."
   ],
   "sqlite": {
-    "pieces": { "disposition": "category", "category": 1, "note": "garment truth + favorite + provenance" },
-    "outfits": { "disposition": "category", "category": 2 },
-    "outfit_pieces": { "disposition": "category", "category": 2 },
-    "saved_boards": { "disposition": "category", "category": 3 },
-    "saved_board_pieces": { "disposition": "category", "category": 3, "note": "board->piece link rows" },
-    "calibration_images": { "disposition": "category", "category": 4 },
-    "stylist_feedback": { "disposition": "category", "category": "5+6", "note": "split by meaning: owner rules vs reactions" },
-    "feedback_synthesis_batches": { "disposition": "category", "category": 6, "note": "explicitly authorized paid synthesis run; cost estimate, input snapshot, usage and failure state" },
-    "feedback_synthesis_drafts": { "disposition": "category", "category": 6, "note": "reviewable model proposals; no prompt authority until owner acceptance" },
-    "product_quality_findings": { "disposition": "category", "category": 6, "note": "provenance-linked review queue for general product/styling failures; never prompt authority" },
-    "owner_constraints": { "disposition": "category", "category": 6, "note": "owner-confirmed structured hard constraints; source prose is archived to avoid duplicate prompt authority" },
-    "chat_threads": { "disposition": "category", "category": 7 },
-    "stylist_conversation_state": { "disposition": "category", "category": 7, "note": "thread-only context, including normalized resolved weather physics for follow-up precedence" },
-    "whole_wardrobe_sessions": { "disposition": "category", "category": 8 },
-    "todos": { "disposition": "category", "category": 9 },
-    "style_constitution": { "disposition": "category", "category": 10 },
-    "app_meta": { "disposition": "category", "category": 10, "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in §8" },
-    "import_sessions": { "disposition": "category", "category": 12 },
-    "import_clusters": { "disposition": "category", "category": 12 },
-    "import_garments": { "disposition": "category", "category": 12 },
-    "import_images": { "disposition": "category", "category": 12 },
-    "piece_import_evidence": { "disposition": "category", "category": 12, "note": "provenance-only: written, no production reader" },
-    "constitution_history": { "disposition": "category", "category": 12, "note": "provenance-only: displayed, feeds no prompt, no restore action" },
-    "generation_runs": { "disposition": "excluded", "reason": "engine telemetry; no user-authored content, no production reader" },
-    "freeform_generation_runs": { "disposition": "excluded", "reason": "engine telemetry; no user-authored content, no production reader" },
-    "ai_call_log": { "disposition": "excluded", "reason": "provider-call spend/usage telemetry; no user-authored content, no production behavioral reader" }
+    "pieces": {
+      "disposition": "category",
+      "category": 1,
+      "note": "garment truth + favorite + provenance"
+    },
+    "outfits": {
+      "disposition": "category",
+      "category": 2
+    },
+    "outfit_pieces": {
+      "disposition": "category",
+      "category": 2
+    },
+    "saved_boards": {
+      "disposition": "category",
+      "category": 3
+    },
+    "saved_board_pieces": {
+      "disposition": "category",
+      "category": 3,
+      "note": "board->piece link rows"
+    },
+    "calibration_images": {
+      "disposition": "category",
+      "category": 4
+    },
+    "stylist_feedback": {
+      "disposition": "category",
+      "category": "5+6",
+      "note": "split by meaning: owner rules vs reactions"
+    },
+    "feedback_synthesis_batches": {
+      "disposition": "category",
+      "category": 6,
+      "note": "explicitly authorized paid synthesis run; cost estimate, input snapshot, usage and failure state"
+    },
+    "feedback_synthesis_drafts": {
+      "disposition": "category",
+      "category": 6,
+      "note": "reviewable model proposals; no prompt authority until owner acceptance"
+    },
+    "product_quality_findings": {
+      "disposition": "category",
+      "category": 6,
+      "note": "provenance-linked review queue for general product/styling failures; never prompt authority"
+    },
+    "owner_constraints": {
+      "disposition": "category",
+      "category": 6,
+      "note": "owner-confirmed structured hard constraints; source prose is archived to avoid duplicate prompt authority"
+    },
+    "chat_threads": {
+      "disposition": "category",
+      "category": 7
+    },
+    "stylist_conversation_state": {
+      "disposition": "category",
+      "category": 7,
+      "note": "thread-only context, including normalized resolved weather physics for follow-up precedence"
+    },
+    "whole_wardrobe_sessions": {
+      "disposition": "category",
+      "category": 8
+    },
+    "todos": {
+      "disposition": "category",
+      "category": 9
+    },
+    "style_constitution": {
+      "disposition": "category",
+      "category": 10
+    },
+    "app_meta": {
+      "disposition": "category",
+      "category": 10,
+      "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in §8"
+    },
+    "import_sessions": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_clusters": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_garments": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_images": {
+      "disposition": "category",
+      "category": 12
+    },
+    "piece_import_evidence": {
+      "disposition": "category",
+      "category": 12,
+      "note": "provenance-only: written, no production reader"
+    },
+    "constitution_history": {
+      "disposition": "category",
+      "category": 12,
+      "note": "provenance-only: displayed, feeds no prompt, no restore action"
+    },
+    "generation_runs": {
+      "disposition": "excluded",
+      "reason": "engine telemetry; no user-authored content, no production reader"
+    },
+    "freeform_generation_runs": {
+      "disposition": "excluded",
+      "reason": "engine telemetry; no user-authored content, no production reader"
+    },
+    "ai_call_log": {
+      "disposition": "excluded",
+      "reason": "provider-call spend/usage telemetry; no user-authored content, no production behavioral reader"
+    }
   },
   "feedback_semantics": {
     "_comment": "Every accepted stylist_feedback type and scopedEvidence kind must have an explicit destination. Conditional types are named separately rather than forced into one destination.",
     "types_by_destination": {
-      "owner_prompt": ["owner_rule"],
-      "owner_or_styling_prompt_by_target": ["preference_reaction"],
+      "owner_prompt": [
+        "owner_rule"
+      ],
+      "owner_or_styling_prompt_by_target": [
+        "preference_reaction"
+      ],
       "styling_prompt": [
         "signature", "works", "almost", "not_me",
         "too_safe", "too_polished", "too_soft", "too_generic", "too_formal", "too_casual",
@@ -51,22 +144,32 @@
         "style_direction", "shape_balance", "good_formula", "good_pieces", "bad_occasion",
         "fit_issue", "too_boho", "wrong_silhouette", "wrong_energy", "strong_direction", "close_but_off"
       ],
-      "provisional_context_or_display_by_evidence": ["wrong_item_read"],
-      "renderer": ["wrong_length", "wrong_garment_details", "body_proportions_drift", "identity_drift", "bad_reference"],
-      "display_only": ["piece_rule_receipt"]
+      "provisional_context_or_display_by_evidence": [
+        "wrong_item_read"
+      ],
+      "renderer": [
+        "wrong_length", "wrong_garment_details", "body_proportions_drift", "identity_drift", "bad_reference"
+      ],
+      "display_only": [
+        "piece_rule_receipt"
+      ]
     },
     "legacy_aliases": {
       "catalog_drift": "catalog_like",
       "wrong_proportions": "body_proportions_drift",
       "proportion_problem": "body_proportions_drift"
     },
-    "retired_target_types": { "renderer_calibration": "retired before any feedback-type routing" },
+    "retired_target_types": {
+      "renderer_calibration": "retired before any feedback-type routing"
+    },
     "scoped_evidence_kinds": {
       "outfit_logic": "styling_prompt",
       "legacy_outfit_snapshot": "lower-confidence provenance; synthesis eligible only after owner preview and paid-call authorization",
       "garment_context_suitability": "legacy context-score evidence; no current writer or reader"
     },
-    "feedback_evidence_actions": { "wrong_piece_for_outfit": "explicit contextual reaction evidence; weak contextual authority" },
+    "feedback_evidence_actions": {
+      "wrong_piece_for_outfit": "explicit contextual reaction evidence; weak contextual authority"
+    },
     "synthesis_dispositions": {
       "personal_contextual_lesson": "draft; prompt authority only after owner acceptance",
       "garment_fact_correction": "review record; never silently edits garment truth",
@@ -76,32 +179,89 @@
     }
   },
   "browser": {
-    "stylist_chat_threads": { "disposition": "excluded", "reason": "non-canonical client cache, reconciled against chat_threads" },
-    "stylist_chat_messages": { "disposition": "excluded", "reason": "legacy migration source into chat_threads" },
-    "stylist_chat_history": { "disposition": "excluded", "reason": "legacy migration source into chat_threads" },
-    "stylist_thread_memory": { "disposition": "excluded", "reason": "legacy migration source into chat_threads" },
-    "stylist_current_thread_id": { "disposition": "excluded", "reason": "navigation only" },
-    "stylist_rail_collapsed": { "disposition": "excluded", "reason": "presentation only" },
-    "stylist_rail_view_mode": { "disposition": "excluded", "reason": "presentation only" },
-    "importSessionId": { "disposition": "excluded", "reason": "in-flight workflow handle" }
+    "stylist_chat_threads": {
+      "disposition": "excluded",
+      "reason": "non-canonical client cache, reconciled against chat_threads"
+    },
+    "stylist_chat_messages": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_chat_history": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_thread_memory": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_current_thread_id": {
+      "disposition": "excluded",
+      "reason": "navigation only"
+    },
+    "stylist_rail_collapsed": {
+      "disposition": "excluded",
+      "reason": "presentation only"
+    },
+    "stylist_rail_view_mode": {
+      "disposition": "excluded",
+      "reason": "presentation only"
+    },
+    "importSessionId": {
+      "disposition": "excluded",
+      "reason": "in-flight workflow handle"
+    }
   },
   "files": {
-    "uploads/<piece photo>": { "disposition": "category", "category": 11, "referenced_by": "pieces.photo" },
-    "uploads/<worn photo>": { "disposition": "category", "category": 11, "referenced_by": "pieces.worn_photo" },
-    "uploads/<outfit photo>": { "disposition": "category", "category": 11, "referenced_by": "outfits.photo" },
-    "uploads/<calibration image>": { "disposition": "category", "category": 11, "referenced_by": "calibration_images.filename" },
-    "uploads/generated-boards/": { "disposition": "excluded", "reason": "derived artifact: model-generated board images, not user input" },
-    "uploads/<import evidence>": { "disposition": "category", "category": 12, "referenced_by": "piece_import_evidence" },
+    "uploads/<piece photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "pieces.photo"
+    },
+    "uploads/<worn photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "pieces.worn_photo"
+    },
+    "uploads/<outfit photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "outfits.photo"
+    },
+    "uploads/<calibration image>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "calibration_images.filename"
+    },
+    "uploads/generated-boards/": {
+      "disposition": "excluded",
+      "reason": "derived artifact: model-generated board images, not user input"
+    },
+    "uploads/<import evidence>": {
+      "disposition": "category",
+      "category": 12,
+      "referenced_by": "piece_import_evidence"
+    },
     "uploads/import/": {
-      "disposition": "category", "category": 12, "referenced_by": "import_* staging, per session directory (importer.js:46)",
+      "disposition": "category",
+      "category": 12,
+      "referenced_by": "import_* staging, per session directory (importer.js:46)",
       "note": "user-uploaded source images awaiting review; accepted crops are promoted into pieces"
     },
-    "uploads/untitled folder/": { "disposition": "excluded", "reason": "empty stray directory, not created by the app — no writer in the codebase" }
+    "uploads/untitled folder/": {
+      "disposition": "excluded",
+      "reason": "empty stray directory, not created by the app — no writer in the codebase"
+    }
   },
   "runtime": {
     "promptRuntime per-user prompt cache": {
-      "disposition": "category", "category": 10,
-      "built_from": ["style_constitution", "app_meta.profile_display_name", "app_meta.profile_pronouns"],
+      "disposition": "category",
+      "category": 10,
+      "built_from": [
+        "style_constitution",
+        "app_meta.profile_display_name",
+        "app_meta.profile_pronouns"
+      ],
       "invalidated_by": "refreshPrompts on any constitution or profile write",
       "note": "no row count; medium 4. buildForUser interpolates layers into the SYSTEM prompts."
     }
