@@ -16,8 +16,8 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
-const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
-const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier } = await import('../styling-engine/attributes.js')
+const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
@@ -890,4 +890,59 @@ test('pieceWarmthTier: shoes and accessories are always unknown, even with a tag
   assert.equal(pieceWarmthTier({ category: 'accessory', name: 'wool scarf', fabric_weight: 'heavy', fabric_category: 'wool' }), null)
   // Garments in the same weight/material tier are unaffected.
   assert.equal(pieceWarmthTier({ category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fabric_category: 'wool' }), 'heavy')
+})
+
+test('pieceHasOcclusiveFit: only a close, skin-tight construction counts', () => {
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy' }), true)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_drapey' }), true)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'skims' }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'drapes' }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'hangs_straight' }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'structured' }), false)
+  assert.equal(pieceHasOcclusiveFit({}), false)
+})
+
+test('weatherFitForPiece: real-world regression — skin-tight technical leggings lose the hot-weather bonus a loose light piece gets', () => {
+  // "floral botanical print active leggings" (real wardrobe piece 996784): fabric_weight: light,
+  // fabric_category: technical/performance, fit_on_body: clings_stretchy. Tier alone said 'light',
+  // so it scored the full +10 "good for heat" bonus despite being skin-tight synthetic fabric with
+  // essentially no airflow.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }
+  const looseLightTop = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'drapes', fiber_content: ['cotton'] }
+  assert.equal(weatherFitForPiece(leggings, { isHot: true }).score, 0)
+  assert.equal(weatherFitForPiece(looseLightTop, { isHot: true }).score, 10)
+  // Cold-weather scoring is untouched by fit_on_body — a light fabric still needs layering in the
+  // cold regardless of how close it sits to skin.
+  assert.equal(weatherFitForPiece(leggings, { isCold: true }).score, -12)
+})
+
+test('pieceHeatSuitability: a practical hot/cold/versatile readout built on weatherFitForPiece\'s own scores', () => {
+  // Real regression: the leggings above were unambiguously bucketed "good for heat" by tier alone.
+  // They now land as 'versatile' — not a claim that they're great for both extremes, just an
+  // honest result once the occlusive fit costs them the hot-weather advantage without picking up
+  // a cold-weather one either.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }
+  assert.equal(pieceHeatSuitability(leggings), 'versatile')
+
+  // A loose, light, non-insulating piece still reads as the clear hot-weather pick.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fit_on_body: 'drapes', fiber_content: ['cotton'] }), 'hot')
+
+  // A heavy insulating piece reads as the clear cold-weather pick.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'heavy', fabric_category: 'wool', fiber_content: ['wool'] }), 'cold')
+
+  // A plain medium-weight piece with no strong signal either way is genuinely versatile — no
+  // adjustments fire in either direction.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'medium', fiber_content: ['cotton'] }), 'versatile')
+
+  // A relaxed-fit, long-sleeve light rayon blouse: no bare-cut credit (it has sleeves), but still
+  // clearly the better hot-weather pick than a medium/heavy piece — reads 'hot', just without the
+  // extra bareness bonus a sleeveless light piece would additionally get.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fabric_category: 'rayon', fit_on_body: 'hangs_straight', sleeve_length: 'long', fiber_content: ['rayon'] }), 'hot')
+
+  // No warmth signal at all -> honest unknown, not a guess.
+  assert.equal(pieceHeatSuitability({ category: 'top' }), null)
+
+  // Shoes/accessories are out of scope, same as pieceWarmthTier/weatherFitForPiece.
+  assert.equal(pieceHeatSuitability({ category: 'shoes', fabric_weight: 'heavy' }), null)
+  assert.equal(pieceHeatSuitability({ category: 'accessory', fabric_weight: 'heavy' }), null)
 })

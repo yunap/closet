@@ -6,8 +6,7 @@ import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { prompts, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
-import { collectPieceIdsFromSavedBoardRow, getPieceUsageStats } from '../styling-engine/rules.js'
-import { pieceWarmthTier } from '../styling-engine/attributes.js'
+import { collectPieceIdsFromSavedBoardRow, getPieceUsageStats, pieceHeatSuitability } from '../styling-engine/rules.js'
 import { ownKeyStatus, setOwnKey } from '../lib/apiKeys.js'
 import {
   mergeWithManualOverrides,
@@ -172,11 +171,11 @@ router.get('/pieces', (req, res) => {
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
   let rows = db.prepare(q).all(...params)
-  // Warmth is derived (pieceWarmthTier composes fabric_weight + fiber_content, the same two
-  // signals weatherFitForPiece weighs against hot/cold in rules.js) — not a stored column, so it
-  // filters here in JS rather than in the query above.
+  // "Weather fit" is derived (pieceHeatSuitability — a hot/cold/versatile readout built directly
+  // on weatherFitForPiece's own hot/cold scores, rules.js) rather than the raw fabric_weight tier —
+  // not a stored column, so it filters here in JS rather than in the query above.
   if (warmth) {
-    rows = rows.filter(row => pieceWarmthTier({ ...row, fiber_content: safeJsonParse(row.fiber_content, []) }) === warmth)
+    rows = rows.filter(row => pieceHeatSuitability({ ...row, fiber_content: safeJsonParse(row.fiber_content, []) }) === warmth)
   }
   const suggestions = retagSuggestionsForPieces(rows.map(row => row.id))
   res.json(rows.map(row => withRetagSuggestions(row, suggestions)))

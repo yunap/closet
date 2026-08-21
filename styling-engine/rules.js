@@ -27,6 +27,7 @@ import {
   pieceCoverage,
   pieceWarmthTier,
   pieceHasInsulatingMaterial,
+  pieceHasOcclusiveFit,
   pieceHasWetSensitiveFootwearMaterial,
   pieceFormality,
   formalityRank,
@@ -167,7 +168,16 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
 
   if (weatherProfile?.isHot) {
     if (tier === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
-    if (tier === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
+    if (tier === 'light') {
+      // Real regression: skin-tight synthetic leggings (fabric_weight: light, fit_on_body:
+      // clings_stretchy) got the full "good for heat" bonus purely from tier — the same fabric
+      // substance ventilates very differently depending on how close it sits to skin. A close,
+      // occlusive fit gets none of the bonus rather than a flipped penalty: it's still genuinely
+      // lightweight fabric, just not the strong hot-weather pick a loose/drapey light piece is.
+      if (!pieceHasOcclusiveFit(piece)) {
+        adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
+      }
+    }
   } else if (weatherProfile?.isCold) {
     if (tier === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
     if (tier === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
@@ -178,6 +188,33 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
     label: adjustments[0]?.label || 'neutral',
     adjustments
   }
+}
+
+// A practical, user-facing readout on top of weatherFitForPiece — "is this an option for hot
+// weather / cold weather / does it work either way" — rather than the raw substance tier
+// (pieceWarmthTier). Owner's own framing: a piece tagged fabric_weight 'light' isn't automatically
+// "good for heat" if a close, occlusive fit kills its ventilation (the leggings case above), and
+// isn't automatically "not good for heat" either if it's just moderate rather than exceptional (a
+// long-sleeve rayon blouse — light fabric, relaxed fit, but sleeves mean it doesn't also earn the
+// bareness credit a sleeveless light piece gets). Deliberately reuses weatherFitForPiece's existing
+// hot/cold scores rather than a second, parallel scoring system — this bucket is just the SIGN of
+// signal that already drives every other weather decision in the app, so a change there (like the
+// occlusive-fit fix) automatically improves this classification too, with nothing to keep in sync.
+// 'versatile' is not a positive claim that a piece is great for both extremes — it's the honest
+// result whenever neither direction has a clear, standalone advantage (a medium-tier piece with no
+// adjustments at all, or a light-but-occlusive piece that lost its heat bonus without gaining a
+// cold one). Returns null — an honest "unknown," not a guess — for shoes/accessories (the same
+// exclusion pieceWarmthTier/weatherFitForPiece already draw) and for pieces with no warmth signal
+// at all (pieceWarmthTier itself returns null).
+export function pieceHeatSuitability(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return null
+  if (pieceWarmthTier(piece) === null) return null
+  const hotScore = weatherFitForPiece(piece, { isHot: true }).score
+  const coldScore = weatherFitForPiece(piece, { isCold: true }).score
+  if (hotScore > 0 && hotScore > coldScore) return 'hot'
+  if (coldScore > 0 && coldScore > hotScore) return 'cold'
+  return 'versatile'
 }
 
 function isLightweightLinenBottom(piece = {}) {
