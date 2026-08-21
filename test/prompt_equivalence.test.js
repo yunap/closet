@@ -48,6 +48,27 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
         )
       : snapshot[key]
+    // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
+    // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
+    // ground is dark") instead of actually comparing the two photos. Strengthens pattern
+    // discipline from a bare rule into an instruction to look and a named trap to avoid.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        '- Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.',
+        '- Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print\'s ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.'
+      )
+    }
+    // 2026-08-21: a smart-casual request with no stated activity came back with three outfits
+    // whose bestFor read "walking-heavy day" / "all-day walking" — the composer was inflating the
+    // city_smart_casual occasion profile's "walk-friendly" VIBE text (a footwear/register quality)
+    // into an unstated ACTIVITY claim. Structural activity gating was unaffected (activitySource
+    // stayed "none"); this was purely a prose overclaim.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        '- Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.',
+        '- Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.\n- Do not invent a physical activity. An occasion\'s vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in `bestFor`/`silhouette`/`watchFor` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").'
+      )
+    }
     // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a
     // tag is missing, low-confidence, or visibly contradicted. Automatic composition remains
     // conservative, and hem shape alone still cannot decide. Keep this deliberate delta explicit.

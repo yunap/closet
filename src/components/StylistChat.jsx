@@ -4399,6 +4399,20 @@ export default function StylistChat({
     if (!ids.length) return
     const loadingKey = `evaluate:${resultKey}`
     const outfitTitle = outfit?.label || outfit?.title || 'this outfit'
+    // A rendered board lives only in boardResults state, keyed by the same resultKey the
+    // "Generate outfit image" button uses — outfit itself is never mutated with it. Without this,
+    // evaluating after rendering silently critiqued the isolated garment photos instead of the
+    // actual composed image the render call already paid for.
+    const renderedBoard = boardResults[resultKey]?.[0]
+    const renderedImageUrl = renderedBoard && !renderedBoard.error
+      ? (renderedBoard.imageUrl || renderedBoard.image_url || renderedBoard.photo || '')
+      : ''
+    // visualEvidenceType only means something when there is actually a rendered image to label —
+    // sending it unconditionally previously made the server assume a board photo preceded the
+    // per-garment reference images even when none existed, mislabeling their numbering.
+    const outfitForEvaluation = renderedImageUrl
+      ? { ...outfit, imageUrl: renderedImageUrl, visualEvidenceType: 'generated_board' }
+      : { ...outfit }
 
     setBoardLoadingIndex(loadingKey)
 
@@ -4407,7 +4421,7 @@ export default function StylistChat({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          outfit: { ...outfit, visualEvidenceType: 'generated_board' },
+          outfit: outfitForEvaluation,
           pieceIds: ids,
           occasion: wardrobeOutfitOccasion,
           season: wardrobeOutfitSeason,

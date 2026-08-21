@@ -64,6 +64,20 @@ walking flats, flat rugged boots
   **[HARD]**
 - [x] Ratify
 
+**Amendment (Yuna, 2026-08-21):** bare `market` over-matched — this profile was written for
+kid graduations, garden parties, wineries, and crafts/wine festivals, not an ordinary grocery
+farmers-market run. Surfaced by a live trace of thread `thread_1787288298461` ("What should I
+wear to the farmers' market"), where the model read `keywords` in the injected
+`OCCASION_PROFILES` JSON as if it were a literal, exhaustive trigger list and matched `market`
+without weighing register. Rejected fix: enumerating more literal phrases (`farmers market`,
+`grocery`, `craft market`...) in the keyword arrays — that's the same failure mode one clause
+later, since real requests will keep using wording nothing on the list anticipated. Instead the
+classification instruction in `core.js` (right before `OCCASION_PROFILES` is serialized into the
+system prompt) now states explicitly that `keywords` are illustrative examples, not an exhaustive
+match list, and that ambiguous nouns like "market" should be classified by the register/setting
+the request actually implies — defaulting to the permissive `casual`/`city` profiles absent real
+festival/social/event framing. `occasions.js`'s keyword lists are unchanged.
+
 ## Profile: city_smart_casual
 
 - [x] CUT keyword `work` (matches "workout") — replace with `office` only (already present)

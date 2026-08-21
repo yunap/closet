@@ -78,6 +78,22 @@ test('whole-wardrobe composer labels expose authoritative opacity and explicit b
   assert.equal(composerPieceLineSuffix({ opacity: 'sheer', needs_base: 'yes' }), '; opacity: sheer; needs_base: yes')
 })
 
+test('whole-wardrobe composer labels expose a piece\'s own do-not-pair rules', () => {
+  const piece = {
+    fabric_category: 'jersey',
+    style_profile_json: {
+      garment_intelligence: {
+        do_not_pair_rules: ['avoid another loud pattern']
+      }
+    }
+  }
+  assert.equal(
+    composerPieceLineSuffix(piece),
+    '; fabric: jersey; do not pair: avoid another loud pattern'
+  )
+  assert.equal(composerPieceLineSuffix({ fabric_category: 'cotton' }), '; fabric: cotton')
+})
+
 test('compact answer profiles expose only bounded card and garment context', () => {
   const context = compactFreeformContext({
     body: { generatedOutfits: [{ label: 'browser echo', pieceIds: [11, 12, 13] }] },
