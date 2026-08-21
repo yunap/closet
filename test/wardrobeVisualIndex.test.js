@@ -33,7 +33,7 @@ test('Wardrobe search is debounced without issuing an immediate duplicate fetch'
 })
 
 test('Wardrobe filtered empty states provide a complete recovery action', () => {
-  assert.match(inventory, /filterFabric \|\| favOnly/)
+  assert.match(inventory, /filterFabric \|\| filterWarmth \|\| favOnly/)
   assert.match(inventory, /No matching pieces/)
   assert.match(inventory, /className="btn-secondary wardrobe-clear-empty"/)
   assert.match(inventory, /Clear filters/)

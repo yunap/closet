@@ -25,7 +25,8 @@ import {
   FORMALITY_VALUES,
   pieceBareness,
   pieceCoverage,
-  pieceHasInsulatingFiber,
+  pieceWarmthTier,
+  pieceHasInsulatingMaterial,
   pieceHasWetSensitiveFootwearMaterial,
   pieceFormality,
   formalityRank,
@@ -142,23 +143,37 @@ export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js
 
 export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   const adjustments = []
-  const fw = pieceFabricWeight(piece)
+  // fabric_weight/coverage/bareness/insulating-material on a shoe or accessory describe
+  // construction (a chunky-heel sandal tagged 'heavy'), not body-thermal insulation — an
+  // open-toe sandal isn't cold-weather-appropriate for being sturdily built, and scoring it that
+  // way is exactly what put a "heavy" sandal in the wardrobe page's warmth-filter results before
+  // pieceWarmthTier (attributes.js) drew this same boundary. Same fix here: skip the fabric-weight
+  // read entirely for shoes/accessories rather than treating their tag as thermal signal.
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') {
+    return { score: 0, label: 'neutral', adjustments }
+  }
+  // pieceWarmthTier is the single derived warmth interpretation (attributes.js) — fabric_weight,
+  // bumped by an insulating material, with coverage/bareness folded in ONLY as a gap-filling
+  // secondary signal when fabric_weight itself is untagged. This function used to recompute a
+  // slightly different version of the same logic independently, including scoring coverage and
+  // insulating-material as their OWN separate terms on top of fabric_weight — which is what let a
+  // directly-tagged medium-weight piece get bumped an extra, unwarranted step from its hemline
+  // alone (real wardrobe piece 129: twill/medium/full-length pants). Bareness is kept as its own,
+  // smaller adjustment here — unlike coverage, skin exposure is a genuine independent comfort
+  // factor even once the fabric's own tier is already known (a heavy wool sleeveless vest is
+  // still less warm overall than a heavy wool long-sleeve sweater).
+  const tier = pieceWarmthTier(piece)
   const bare = pieceBareness(piece)
-  const cov = pieceCoverage(piece)
-  const hasInsulatingFiber = pieceHasInsulatingFiber(piece)
 
   if (weatherProfile?.isHot) {
-    if (fw === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
-    if (fw === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
+    if (tier === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
+    if (tier === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
     if (bare === 'high') adjustments.push({ score: 8, label: 'skin-friendly cut', reason: 'hot weather: skin-friendly cut' })
-    if (cov === 'full-insulating') adjustments.push({ score: -8, label: 'insulating - too warm', reason: 'hot weather: insulating coverage' })
-    if (hasInsulatingFiber && fw !== 'light') adjustments.push({ score: -12, label: 'insulating fiber - too warm', reason: 'hot weather: insulating fiber' })
   } else if (weatherProfile?.isCold) {
-    if (fw === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
-    if (fw === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
+    if (tier === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
+    if (tier === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
     if (bare === 'high') adjustments.push({ score: -8, label: 'skin-friendly cut - too bare for cold', reason: 'cold weather: skin-friendly cut' })
-    if (cov === 'full-insulating') adjustments.push({ score: 8, label: 'insulating - good for cold', reason: 'cold weather: insulating coverage' })
-    if (hasInsulatingFiber && cov !== 'full-insulating') adjustments.push({ score: 8, label: 'insulating fiber - good for cold', reason: 'cold weather: insulating fiber' })
   }
 
   return {
@@ -2051,17 +2066,12 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (moodProfile?.id === 'modern_bohemian_restraint') score += bohoSignalForPiece(piece) * 5
   }
 
-  // Weather adjustments added to piece priority
-  if (weatherProfile && weatherProfile.isHot) {
-    if (pieceFabricWeight(piece) === 'heavy') score -= 12
-    if (pieceFabricWeight(piece) === 'light') score += 10
-    if (pieceBareness(piece) === 'high')      score += 8
-    if (pieceCoverage(piece) === 'full-insulating') score -= 8
-  } else if (weatherProfile && weatherProfile.isCold) {
-    if (pieceFabricWeight(piece) === 'heavy') score += 10
-    if (pieceFabricWeight(piece) === 'light') score -= 12
-    if (pieceBareness(piece) === 'high')      score -= 8
-    if (pieceCoverage(piece) === 'full-insulating') score += 8
+  // Weather adjustments added to piece priority — delegates to weatherFitForPiece (the single
+  // warmth interpretation, via pieceWarmthTier) instead of recomputing fabric_weight/coverage
+  // independently; this used to duplicate a slightly different, since-corrected version of that
+  // same scoring.
+  if (weatherProfile && (weatherProfile.isHot || weatherProfile.isCold)) {
+    score += weatherFitForPiece(piece, weatherProfile).score
   }
 
   // Occasion adjustments added to piece priority
@@ -2401,11 +2411,11 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     const weight = pieceFabricWeight(piece)
     const isHeavy = weight === 'heavy'
     const isUpperBodyPiece = piece.category === 'outerwear' || wardrobeCategoryGroup(piece) === 'outerwear' || piece.category === 'top' || piece.category === 'dress'
-    const hasInsulatingCoverage = pieceCoverage(piece) === 'full-insulating'
+    const hasInsulatingCoverage = pieceCoverage(piece) === 'full'
     const hasWarmNeckline = necklineWarmth(piece) === 'warm'
     const hasWarmSleeves = sleeveCoverage(piece) === 'long'
     const isMediumOrHeavy = weight === 'medium' || weight === 'heavy'
-    const hasHotInsulatingFiber = pieceHasInsulatingFiber(piece) && weight !== 'light'
+    const hasHotInsulatingFiber = pieceHasInsulatingMaterial(piece) && weight !== 'light'
 
     // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer
     // maxi dress as insulating purely because length 'maxi' derives full-insulating
@@ -2860,9 +2870,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
         ensureMetadataTodo(p, missingField)
-      } else if (pieceHasInsulatingFiber(p) && pieceFabricWeight(p) !== 'light') {
+      } else if (pieceHasInsulatingMaterial(p) && pieceFabricWeight(p) !== 'light') {
         exclude(p, 'hot weather: insulating fiber')
-      } else if (((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') || (wardrobeCategoryGroup(p) === 'bottom' && pieceCoverage(p) === 'full-insulating' && (fabricWeight(p) === 'medium' || fabricWeight(p) === 'heavy'))) {
+      } else if (((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') || (wardrobeCategoryGroup(p) === 'bottom' && pieceCoverage(p) === 'full' && (fabricWeight(p) === 'medium' || fabricWeight(p) === 'heavy'))) {
         exclude(p, 'hot weather: insulating piece')
       } else if (isOuterwear(p)) {
         outerwearCandidates.push(p)
@@ -3502,6 +3512,28 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     })
     if (!hasWarmLayer) {
       add(-14, 'cold weather: no warm layer in ensemble')
+    }
+  }
+
+  // Cross-piece warmth consistency — independent of the isHot/isCold buckets above, which only
+  // score a piece against the two temperature EXTREMES and stay silent in between (e.g. a 76°F
+  // day is neither >=80 hot nor <=45 cold, so weatherFitForPiece never runs for it at all). A
+  // heavy or insulating-fiber top/bottom paired with bare warm-weather footwear (sandals,
+  // open-toe) is an internal contradiction regardless of which bucket the day falls into: bare
+  // feet imply the day reads warm enough for that, so the rest of the outfit should track the
+  // same read, not a cooler morning/evening low. Cold days are exempt — a warm layer with boots
+  // or closed shoes is the point there, and this check only fires alongside bare footwear anyway.
+  if (!weather.isCold) {
+    const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+    const shoeIsBareWarmWeather = shoe && /\b(sandal|sandals|open[- ]toe|flip[- ]flop|flip[- ]flops|slide|slides)\b/i.test(pieceTextBlob(shoe))
+    if (shoeIsBareWarmWeather) {
+      const heavyOrInsulatingPiece = pieces.find(piece =>
+        wardrobeCategoryGroup(piece) !== 'shoes' &&
+        (pieceFabricWeight(piece) === 'heavy' || pieceHasInsulatingMaterial(piece))
+      )
+      if (heavyOrInsulatingPiece) {
+        add(-20, `${heavyOrInsulatingPiece.name} is a heavy/insulating piece paired with bare warm-weather footwear (${shoe.name}) — garment weight should track the day, not a cooler low`)
+      }
     }
   }
 

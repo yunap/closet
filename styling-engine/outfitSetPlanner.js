@@ -46,7 +46,7 @@ import {
   hasSleevelessConstruction,
   formalityRank,
   pieceFormality,
-  pieceHasInsulatingFiber,
+  pieceHasInsulatingMaterial,
   pieceBareness,
   pieceCoverage,
   shoeCoverage,
@@ -1572,7 +1572,7 @@ function isCapsuleIndoorKnitLayer(piece = {}) {
 function isCapsuleColdTransitionLayer(piece = {}) {
   return wardrobeCategoryGroup(piece) === 'outerwear' &&
     ['coat', 'jacket'].includes(garmentKind(piece)) &&
-    (fabricWeight(piece) === 'heavy' || pieceHasInsulatingFiber(piece))
+    (fabricWeight(piece) === 'heavy' || pieceHasInsulatingMaterial(piece))
 }
 
 function ensureWinterLayerRole(roster = [], groups = {}, predicate, scoreOf = new Map(), protectedPieces = new Set()) {
@@ -2525,10 +2525,10 @@ export function extremeHeatPieceAdvisory(piece = {}, weatherProfile = {}) {
         : 'full-leg coverage plus non-light fabric is a poor first choice for active triple-digit heat'
     }
   }
-  if ((group === 'dress' || group === 'bottom') && coverage === 'full-insulating') {
+  if ((group === 'dress' || group === 'bottom') && coverage === 'full') {
     return { tier: 'discouraged', score: -18, reason: 'full-length coverage is a heat-retention tradeoff in active triple-digit heat' }
   }
-  if (weight === 'heavy' || pieceHasInsulatingFiber(piece)) {
+  if (weight === 'heavy' || pieceHasInsulatingMaterial(piece)) {
     return { tier: 'prohibited', score: -100, reason: 'heavy or insulating main is incompatible with triple-digit heat' }
   }
   if (weight === 'light' && bareness === 'high') {
