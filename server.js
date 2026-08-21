@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import './lib/installAiCallTelemetry.js'
 import express from 'express'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -8,6 +9,8 @@ import { getSessionToken } from './lib/cookies.js'
 import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI, mockAiEnabled } from './styling-engine/provider.js'
+import { runWithAiTelemetryContext } from './lib/aiCallTelemetry.js'
+import { installMockAiCallTelemetry } from './lib/mockAiCallTelemetry.js'
 import { ensureCachedThumbnail, sourcePathFromCachedThumbnail } from './lib/subjectThumbnails.js'
 import { installMockAiHandler } from './styling-engine/mockAiHandler.js'
 import { tagPieceWithProvider } from './routes/ai.js'
@@ -66,6 +69,15 @@ app.use('/api', (req, res, next) => {
   next()
 })
 
+// Bind the visible API request to any downstream provider calls. AsyncLocalStorage preserves this
+// attribution through awaited helpers and long-running importer continuations without threading a
+// telemetry argument through every model-facing function.
+app.use('/api', (req, res, next) => {
+  const importerSession = String(req.originalUrl || '').match(/^\/api\/import\/sessions\/([^/?]+)/)?.[1] || ''
+  const sessionId = String(req.body?.sessionId || req.body?.session_id || importerSession || '')
+  return runWithAiTelemetryContext({ originalUrl: req.originalUrl, sessionId }, next)
+})
+
 // Photos are private per-user data. 404 (not 401) so an unauthenticated probe can't even
 // confirm a file exists. No fallback to any default user's uploads dir is possible here —
 // userUploadsDir() is only ever called once req.wardrobeSession has already gated entry.
@@ -115,6 +127,7 @@ if (process.env.NODE_ENV === 'production') {
 
 if (mockAiEnabled()) {
   installMockAiHandler(db)
+  installMockAiCallTelemetry()
   console.log('🧪 WARDROBE_MOCK_AI is on — stylist responses are canned, no billed AI calls will be made')
 }
 

@@ -119,6 +119,10 @@
     "freeform_generation_runs": {
       "disposition": "excluded",
       "reason": "engine telemetry; no user-authored content, no production reader"
+    },
+    "ai_call_log": {
+      "disposition": "excluded",
+      "reason": "provider-call spend/usage telemetry; no user-authored content, no production behavioral reader"
     }
   },
   "feedback_semantics": {
