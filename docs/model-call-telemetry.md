@@ -6,15 +6,13 @@ This is the durable, call-level spend ledger for model-facing flows. It was adde
 
 ## Boundary
 
-Telemetry is installed once at the provider HTTP boundary in `lib/aiCallTelemetry.js` and `server.js`. It observes only requests to `api.anthropic.com` and `api.openai.com` and writes one `ai_call_log` row per actual provider round-trip.
+Telemetry is installed once at each SDK's shared `fetchWithTimeout` transport boundary by `lib/installAiCallTelemetry.js`. Both installed SDKs use their own Node runtime shim (`node-fetch`) rather than `globalThis.fetch`, so a global-fetch monkeypatch does not observe real production traffic. The SDK boundary sits immediately above that native transport: every actual provider HTTP attempt crosses it, including SDK retries, while the SDK keeps its normal networking implementation unchanged.
 
-This is deliberately below individual prompt builders and route-specific model wrappers. A new model-facing flow automatically appears in the ledger even if its author forgets to add a telemetry argument. It also means SDK/provider retries are visible as separate paid calls rather than being hidden inside one route-level aggregate.
-
-No prompt, model-selection, provider-routing, gate, or response behavior is changed by this layer.
+This is deliberately below individual prompt builders and route-specific model wrappers. A new model-facing flow automatically appears in the ledger if it uses the existing Anthropic/OpenAI SDK clients. No prompt, model-selection, provider-routing, gate, response contract, or retry policy is changed by this layer.
 
 ## `ai_call_log`
 
-The table is additive. `lib/installAiCallTelemetry.js` ensures it for the default database during server bootstrap, and `runWithAiTelemetryContext` ensures it again on the first authenticated API request for each user while that user's request-scoped database context is active. `logAiCall` also ensures it defensively before writing. The schema therefore exists before the first paid model call rather than appearing only as a side effect of spend.
+The table is additive. `lib/installAiCallTelemetry.js` ensures it for the default database during server bootstrap, `runWithAiTelemetryContext` ensures it again while each authenticated user's request-scoped database context is active, and `logAiCall` ensures it defensively before writing. `CREATE TABLE IF NOT EXISTS` is intentionally not cached by user id: a deleted/recreated test or user database must never inherit stale in-memory "already initialized" state.
 
 - `flow`, `endpoint`, `session_id`
 - `call_kind`: `text`, `structured`, `tool_loop`, or `image`
@@ -45,15 +43,19 @@ Provider response usage is normalized for:
 
 Text-call pricing delegates dynamically to `styling-engine/provider.js`'s existing `estimateAiUsageCost`, so this ledger does not create a second text-pricing table. Image-generation tool calls use a documented flat approximation (`$0.07` per paid image-provider call) because the image tool is not billed like ordinary response text tokens.
 
-Telemetry failures are swallowed and warned; they must never turn a successful stylist request into an application failure.
+A non-2xx provider response is logged as a failed call before the SDK decides whether to retry it. Because retries re-enter `fetchWithTimeout`, each retry is a separate ledger row. Network exceptions are logged and then rethrown unchanged. Telemetry failures themselves are swallowed and warned; they must never turn a successful stylist request into an application failure.
 
-## Mock verification
+## Verification without paid calls
 
-`WARDROBE_MOCK_AI` and ordinary test responses short-circuit before the provider HTTP boundary. `lib/mockAiCallTelemetry.js` wraps the existing canned-response handler and writes equivalent verification rows with `is_mock=1`, `provider='mock'`, zero tokens, and zero cost. Those rows prove route attribution and schema writes without pretending a provider was billed, and `scratch/report_ai_spend.js` excludes them from spend totals.
+`test/ai_call_telemetry.test.js` instantiates the real installed Anthropic and OpenAI SDK clients with an explicit synthetic `fetch` implementation. The telemetry patch is above that injected transport, so the test proves the same `fetchWithTimeout` boundary production uses without allowing any real network traffic. It covers Anthropic/OpenAI usage normalization, cache tokens, image-call classification, provider failures, and route attribution.
+
+`WARDROBE_MOCK_AI` still short-circuits before an SDK request. `lib/mockAiCallTelemetry.js` writes equivalent verification rows with `is_mock=1`, `provider='mock'`, zero tokens, and zero cost. Those rows are excluded from spend totals.
 
 ## Reporting
 
-`scratch/report_ai_spend.js` follows the database-safety convention used by the existing measurement scripts: it copies `wardrobe.db` plus WAL/SHM to a temporary directory before opening it read-only.
+`scratch/report_ai_spend.js` follows the database-safety convention used by the existing measurement scripts: every discovered wardrobe database is copied with its WAL/SHM files to a temporary directory before being opened read-only.
+
+Without `WARDROBE_DB_PATH`, it reports across both the legacy root `./wardrobe.db` and every `data/users/*/wardrobe.db` (or `WARDROBE_USERS_DIR/*/wardrobe.db`) and aggregates matching flow/provider/model rows across users. With `WARDROBE_DB_PATH`, it reports only that explicitly selected database.
 
 Examples:
 
@@ -63,10 +65,10 @@ node scratch/report_ai_spend.js --since '2026-08-20 00:00' --until '2026-08-21 0
 node scratch/report_ai_spend.js --flow outfit_feedback
 ```
 
-The report groups non-mock calls by flow, endpoint, provider, model, and image/text kind, summing calls, tokens, cache traffic, estimated cost, and failures.
+The report groups non-mock calls by flow, endpoint, provider, model, and image/text kind, summing calls, tokens, cache traffic, estimated cost, and failures. It also prints how many databases were scanned and how many contained the telemetry table.
 
 ## Known boundary
 
-Mock image-render paths that deliberately choose a local collage do not write an `image` row, because no provider call was attempted. A test that needs to exercise the image-row schema can call `logAiCall({ isMock: true, isImage: true, callKind: 'image' })` directly; production accounting remains one row per actual paid provider round-trip.
+Mock image-render paths that deliberately choose a local collage do not write an `image` row, because no provider call was attempted. Production accounting remains one row per actual provider HTTP attempt.
 
 Transport-level flow attribution follows the visible HTTP route. Internal sub-calls therefore remain grouped under their parent route unless code explicitly adds a nested subflow later: `/ask`'s internal profiles remain `flow='ask'`, and crop verification/relocation performed inside the importer detect route remain `flow='importer_detect'`. This is deliberate; add an explicit subflow field if that distinction becomes important rather than parsing prompt text.
