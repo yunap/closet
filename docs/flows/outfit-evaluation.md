@@ -63,8 +63,15 @@ Engineer notes:
   gathers up to 5 garment reference images + the outfit photo (saved, generated,
   or uploaded), and runs the critique. `evaluate-wardrobe-outfit` resolves a saved
   outfit's linked pieces first (`buildSavedOutfitEvaluationContext`); `outfit-feedback`
-  passes `allowPhotoOnly` and the active-wardrobe text so the model can identify
-  likely owned garments from the photo.
+  passes `allowPhotoOnly` since an uploaded photo has no linked pieces.
+  **[removed 2026-08-20]** It used to also dump the full active-wardrobe text into
+  the prompt so the model could guess which visible garments were already owned —
+  ~100K+ tokens on a large wardrobe, and premised on an ownership assumption the
+  uploaded-photo case explicitly does not have (see
+  [unfiled-garment-spec.md](../unfiled-garment-spec.md)). Ownership questions
+  ("do I own a tank for this?") are a `/ask` follow-up concern, answered by real
+  retrieval (`search_wardrobe`) once `/ask` can reach the persisted photo — see
+  the `[open]` note below. Turn 1 no longer guesses at ownership at all.
 - **`responseMode`** on evaluate controls depth — `full` for the structured
   critique template, `followup` for a short conversational reply (this is the same
   mode the freeform chat uses; see [freeform-stylist-chat.md](freeform-stylist-chat.md)).
@@ -80,8 +87,14 @@ Engineer notes:
   thread-scoped — `DELETE /chat-threads/:id` (`routes/crud.js`) unlinks each `uploadedPhoto` its
   messages cite, skipping any file still referenced by a `pieces` row, an `outfits` row, or
   another thread. A failed critique still unlinks, since nothing will hold a reference.
-- **[open] Follow-up turns still do not reach the saved photo.** The client picks the endpoint by
-  "is a file attached to this message" (`StylistChat.jsx`, the `fileToSend` branch), so message 1
-  reaches `/outfit-feedback` and every later turn goes to `/ask`, which has no access to the
-  upload. Persisting the file is the precondition for fixing that; the routing decision is not
-  made yet.
+- **Follow-up turns now reach the saved photo — closed 2026-08-20.** The client picks the endpoint
+  by "is a file attached to this message" (`StylistChat.jsx`, the `fileToSend` branch), so message 1
+  still reaches `/outfit-feedback` and every later turn still goes to `/ask` — that routing decision
+  itself is unchanged. What changed: `/ask`'s default branch now resends the thread's most recent
+  `messages[].uploadedPhoto` filename as `uploadedPhoto` in the request body (a second upload later
+  in the thread supersedes the first). `buildStylistConversationPayload` (`core.js:3877`) resolves it
+  and reattaches the image at the volatile tail, the same way an active outfit's photo attaches —
+  plus one line of context text warning the model the photo has no linked pieces, so it must use
+  `search_wardrobe` rather than guess ownership from the image. No new endpoint; this reuses the
+  existing `outfitImageContent`/`attachedImageInventory` mechanism `/ask` already had for active
+  outfits.

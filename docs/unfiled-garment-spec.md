@@ -199,9 +199,11 @@ search result. The moment it is findable by search, every count and coverage ans
 
 ## What this does not cover
 
-**Routing.** This spec assumes an `/ask` turn can already reach the uploaded photo. Today the
-client picks its endpoint from "is a file attached to *this* message" (`StylistChat.jsx`, the
-`fileToSend` branch at `:5210`), so message 1 reaches `/outfit-feedback` and every later turn goes
-to `/ask` with no access to the photo — see
-[message-lifecycle.md](message-lifecycle.md) §9. That decision is open and independent; the two
-changes can land in either order, but neither is useful alone.
+**Routing.** This spec assumes an `/ask` turn can already reach the uploaded photo — **now true as
+of 2026-08-20** (see [flows/outfit-evaluation.md](flows/outfit-evaluation.md)'s engineer notes):
+`/ask`'s default branch resends the thread's most recent `uploadedPhoto` filename and
+`buildStylistConversationPayload` reattaches the image, with a note that it has no linked pieces.
+The endpoint split itself is unchanged — message 1 still reaches `/outfit-feedback`
+(`StylistChat.jsx`, the `fileToSend` branch), every later turn still goes to `/ask` — only the
+blindness on turn 2+ is gone. This spec's own proposal (tag → SQL-narrow → ask-the-human, rather
+than a wardrobe-wide guess) is unaffected and still not built.
