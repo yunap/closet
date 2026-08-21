@@ -258,6 +258,52 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   await fetch(`${baseUrl}/api/pieces/${piece3.id}`, { method: 'DELETE' })
 })
 
+test('GET /api/pieces?warmth= filters on the same fabric_weight + insulating-fiber signal the styling engine uses', async () => {
+  // Light fabric, no insulating fiber -> stays 'light'.
+  const fdLight = new FormData()
+  fdLight.append('name', 'light cotton tank')
+  fdLight.append('category', 'top')
+  fdLight.append('fabric_weight', 'light')
+  fdLight.append('fiber_content', JSON.stringify(['cotton']))
+  const pieceLight = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdLight })).json()
+
+  // Light fabric BUT an insulating fiber -> bumped to 'medium' (a lightweight wool knit still
+  // runs warmer than a lightweight cotton one).
+  const fdBumped = new FormData()
+  fdBumped.append('name', 'lightweight wool knit top')
+  fdBumped.append('category', 'top')
+  fdBumped.append('fabric_weight', 'light')
+  fdBumped.append('fiber_content', JSON.stringify(['wool']))
+  const pieceBumped = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdBumped })).json()
+
+  // Heavy fabric with an insulating fiber -> stays 'heavy' (no double-bump past the ceiling).
+  const fdHeavy = new FormData()
+  fdHeavy.append('name', 'heavy wool sweater')
+  fdHeavy.append('category', 'top')
+  fdHeavy.append('fabric_weight', 'heavy')
+  fdHeavy.append('fiber_content', JSON.stringify(['wool']))
+  const pieceHeavy = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdHeavy })).json()
+
+  const light = await (await fetch(`${baseUrl}/api/pieces?warmth=light`)).json()
+  assert.ok(light.some(p => p.id === pieceLight.id))
+  assert.ok(!light.some(p => p.id === pieceBumped.id))
+  assert.ok(!light.some(p => p.id === pieceHeavy.id))
+
+  const medium = await (await fetch(`${baseUrl}/api/pieces?warmth=medium`)).json()
+  assert.ok(medium.some(p => p.id === pieceBumped.id))
+  assert.ok(!medium.some(p => p.id === pieceLight.id))
+  assert.ok(!medium.some(p => p.id === pieceHeavy.id))
+
+  const heavy = await (await fetch(`${baseUrl}/api/pieces?warmth=heavy`)).json()
+  assert.ok(heavy.some(p => p.id === pieceHeavy.id))
+  assert.ok(!heavy.some(p => p.id === pieceLight.id))
+  assert.ok(!heavy.some(p => p.id === pieceBumped.id))
+
+  await fetch(`${baseUrl}/api/pieces/${pieceLight.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${pieceBumped.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${pieceHeavy.id}`, { method: 'DELETE' })
+})
+
 test('CRUD operations for /api/chat-threads', async () => {
   const threadId = 'test_thread_' + Date.now()
   const pieceId = db.prepare(`

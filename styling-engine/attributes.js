@@ -84,6 +84,43 @@ export function fabricWeight(p) {
 
 export const pieceFabricWeight = fabricWeight
 
+const WARMTH_TIER_ORDER = ['light', 'medium', 'heavy']
+function stepWarmthTier(tier, delta) {
+  const idx = WARMTH_TIER_ORDER.indexOf(tier)
+  if (idx === -1) return tier
+  return WARMTH_TIER_ORDER[Math.min(WARMTH_TIER_ORDER.length - 1, Math.max(0, idx + delta))]
+}
+
+// The same four signals weatherFitForPiece (rules.js) already weighs against hot/cold, combined
+// into one tier: base fabric_weight; an insulating material — fiber_content (wool, cashmere...)
+// OR fabric_category (tweed, corduroy...), since either field alone can carry the signal — bumps
+// a tier up; full-length/long-sleeve coverage bumps a tier up; a high-bareness cut (sleeveless,
+// halter, mini/shorts) steps a tier down. fabric_weight and the insulating-material check are the
+// dominant signal (matches weatherFitForPiece's own ±10-12 vs ±8 relative weighting); coverage and
+// bareness are secondary nudges, capped at one step each so a single cut/hem detail cannot flip a
+// heavy wool coat into "light." Returns null only when fabric_weight AND the insulating-material
+// check both come back empty — an honest "unknown," not a guess from coverage alone.
+export function pieceWarmthTier(p) {
+  // fabric_weight on a shoe/accessory describes construction substance (a chunky-heel sandal
+  // tagged 'heavy'), not thermal insulation — an open-toe sandal doesn't run warmer for being
+  // sturdily built. This is the same category boundary missingGateFields already draws
+  // ("visual_weight supersedes fabric_weight for shoes/accessory"); warmth-as-body-insulation
+  // just isn't a real axis for footwear/accessories the way it is for garments, so this returns
+  // an honest unknown rather than reading a field tagged for a different purpose.
+  if (isShoePiece(p) || isAccessoryPiece(p)) return null
+  const fw = fabricWeight(p)
+  const insulatingMaterial = pieceHasInsulatingFiber(p)
+  if (!fw && !insulatingMaterial) return null
+  // No fabric_weight tag but an insulating material is still a real signal — start from a
+  // neutral 'medium' prior (not 'light') so the bump below lands at 'heavy', matching the old
+  // fiber-only behavior this composite replaces.
+  let tier = fw || 'medium'
+  if (insulatingMaterial) tier = stepWarmthTier(tier, 1)
+  if (pieceCoverage(p) === 'full-insulating') tier = stepWarmthTier(tier, 1)
+  if (pieceBareness(p) === 'high') tier = stepWarmthTier(tier, -1)
+  return tier
+}
+
 export function formalityRank(value) {
   const normalized = String(value || '').toLowerCase().trim()
   const idx = FORMALITY_VALUES.indexOf(normalized)
@@ -186,15 +223,27 @@ export function pieceCoverage(p) {
   // matches inside the new 'full_length'/'floor_length' pants values — there's
   // no \w/\W transition at the underscore for \b to anchor on. Match the
   // underscore-joined forms explicitly instead of relying on \b alone.
-  if (p?.length_hits_at && /\b(full[-_]length|ankle|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
+  // 'ankle' deliberately excluded (owner ruling): hem length alone isn't warmth — an ankle-length
+  // light silk skirt is still not a warm layer (it needs stockings in winter), and ankle is where
+  // ordinary trousers end anyway, not an exceptional length. Reserve this for genuinely long
+  // coverage (floor-length, maxi) where more fabric plausibly retains more heat.
+  if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
     return 'full-insulating'
   }
   return null
 }
 
+// fabric_category (tweed, corduroy, shearling, flannel — categories, not fiber names) and
+// fiber_content (wool, cashmere...) are tagged independently, and real wardrobe data has pieces
+// where one names the insulating material and the other reads "unknown" or omits it (a wool
+// cardigan tagged fiber_content: ["unknown"], a fleece hoodie tagged fiber_content: ["cotton"]).
+// Checking fiber_content alone silently missed those — this checks both, so a piece needs only
+// ONE of the two fields to correctly name the material.
+const INSULATING_FABRIC_CATEGORIES = new Set(['wool', 'cashmere', 'fleece', 'tweed', 'corduroy', 'shearling', 'flannel', 'sweatshirt fleece'])
 export function pieceHasInsulatingFiber(p) {
   const fibers = Array.isArray(p?.fiber_content) ? p.fiber_content : []
-  return fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))
+  if (fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))) return true
+  return INSULATING_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())
 }
 
 // Wet-exposure suitability is physical garment truth, not taste. Keep this reader

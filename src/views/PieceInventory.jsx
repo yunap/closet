@@ -85,6 +85,16 @@ const SEASONS = [
   { value: 'year-round', label: 'Year-Round' },
 ]
 
+// Same tiers pieceWarmthTier (styling-engine/attributes.js) derives from fabric_weight + an
+// insulating fiber (wool, cashmere, etc) — the same two signals the styling engine weighs
+// against hot/cold weather when composing outfits.
+const WARMTHS = [
+  { value: '',       label: 'All warmths' },
+  { value: 'light',  label: 'Light' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'heavy',  label: 'Heavy' },
+]
+
 const SORT_OPTIONS = [
   { value: 'mix',      label: 'Balanced mix' },
   { value: 'added',    label: 'Recently added' },
@@ -110,6 +120,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const filterColorFamily = searchParams.get('color_family') ?? ''
   const activeColorFamily = filterColorFamily || (filterColor ? colorTaxonomyEntry(filterColor).family : '')
   const filterFabric = searchParams.get('fabric')   ?? ''
+  const filterWarmth = searchParams.get('warmth')   ?? ''
   const favOnly      = searchParams.get('fav') === '1'
   const sort         = searchParams.get('sort')     || 'mix'
 
@@ -194,6 +205,7 @@ export default function PieceInventory({ onSendToStylist }) {
     if (filterColor)  params.set('color', filterColor)
     else if (filterColorFamily) params.set('color_family', filterColorFamily)
     if (filterFabric) params.set('fabric', filterFabric)
+    if (filterWarmth) params.set('warmth', filterWarmth)
     if (debouncedSearch) params.set('search', debouncedSearch)
     if (favOnly)      params.set('favorites', 'true')
     setLoading(true)
@@ -214,7 +226,7 @@ export default function PieceInventory({ onSendToStylist }) {
     } finally {
       if (piecesRequestRef.current.id === requestId) setLoading(false)
     }
-  }, [filterCat, filterSubtype, filterJewelryType, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
+  }, [filterCat, filterSubtype, filterJewelryType, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, filterWarmth, debouncedSearch, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => () => piecesRequestRef.current.controller?.abort(), [])
@@ -223,7 +235,7 @@ export default function PieceInventory({ onSendToStylist }) {
     return () => clearTimeout(timer)
   }, [search])
 
-  const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterColorFamily && !filterFabric && !favOnly
+  const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterColorFamily && !filterFabric && !filterWarmth && !favOnly
 
   useEffect(() => {
     if (loading || pieces.length > 0 || !isUnfilteredWardrobe) return
@@ -354,6 +366,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
   const occasionLabel = OCCASIONS.find(o => o.value === filterOcc)?.label
   const seasonLabel   = SEASONS.find(s => s.value === filterSeason)?.label
+  const warmthLabel   = WARMTHS.find(w => w.value === filterWarmth)?.label
   // Category chip resting labels collapse the hierarchy: a jewelry_type selection reads
   // "Accessories · Necklaces", never "Accessories · Jewelry · Necklaces" — the intermediate
   // level is only meaningful inside the open menu, not in the closed-state label.
@@ -372,9 +385,10 @@ export default function PieceInventory({ onSendToStylist }) {
     filterSeason ? { key: 'season',   label: seasonLabel,   clear: () => setFilter({ season: '' }) } : null,
     (filterColor || filterColorFamily) ? { key: 'color', label: filterColor ? `${COLOR_FAMILY_LABELS[activeColorFamily]} · ${filterColor}` : COLOR_FAMILY_LABELS[filterColorFamily], clear: () => setFilter({ color: '', color_family: '' }) } : null,
     filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
+    filterWarmth ? { key: 'warmth',   label: warmthLabel,   clear: () => setFilter({ warmth: '' }) } : null,
   ].filter(Boolean)
-  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', color_family: '', fabric: '' })
-  const hasActiveFilters = Boolean(search || filterCat || filterSubtype || filterJewelryType || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
+  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', color_family: '', fabric: '', warmth: '' })
+  const hasActiveFilters = Boolean(search || filterCat || filterSubtype || filterJewelryType || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || filterWarmth || favOnly)
   const clearWardrobeFilters = () => setFilter({
     q: '',
     category: '',
@@ -385,6 +399,7 @@ export default function PieceInventory({ onSendToStylist }) {
     color: '',
     color_family: '',
     fabric: '',
+    warmth: '',
     fav: false,
   })
   const resultLabel = loading || search !== debouncedSearch
@@ -792,6 +807,35 @@ export default function PieceInventory({ onSendToStylist }) {
                   >
                     <span>{s.label}</span>
                     {filterSeason === s.value && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="wardrobe-filter-menu">
+            <button
+              className={`filter-menu-btn ${openFilterMenu === 'warmth' || filterWarmth ? 'active' : ''}`}
+              onClick={() => setOpenFilterMenu(openFilterMenu === 'warmth' ? null : 'warmth')}
+              aria-expanded={openFilterMenu === 'warmth'}
+              aria-haspopup="listbox"
+              data-filter-trigger="warmth"
+            >
+              <span>{filterWarmth ? `Warmth: ${warmthLabel}` : 'Warmth'}</span>
+              <span className="filter-menu-chevron">⌄</span>
+            </button>
+            {openFilterMenu === 'warmth' && (
+              <div className="filter-menu-popover" role="listbox" aria-label="Warmth" data-filter-menu="warmth" onKeyDown={handleFilterMenuKeyDown}>
+                {WARMTHS.map(w => (
+                  <button
+                    key={w.value}
+                    className={`custom-select-option ${filterWarmth === w.value ? 'active' : ''}`}
+                    onClick={() => selectFilterOption('warmth', { warmth: w.value })}
+                    role="option"
+                    aria-selected={filterWarmth === w.value}
+                  >
+                    <span>{w.label}</span>
+                    {filterWarmth === w.value && <span aria-hidden="true">✓</span>}
                   </button>
                 ))}
               </div>

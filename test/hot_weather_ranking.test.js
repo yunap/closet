@@ -17,7 +17,7 @@ const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
 const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
-const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } = await import('../styling-engine/attributes.js')
+const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
@@ -90,6 +90,32 @@ test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weathe
   assert.equal(denimFit.label, 'heavy - too warm for the heat')
   assert.ok(linenFit.score > denimFit.score)
   assert.equal(linenFit.label, 'lightweight - good for heat')
+})
+
+test('weatherFitForPiece is neutral for shoes and accessories regardless of fabric_weight', () => {
+  const cold = weatherProfileFromContext({ season: 'winter, 30F' })
+  assert.equal(cold.isCold, true)
+  const hot = weatherProfileFromContext({ season: 'highs 80-90F' })
+  assert.equal(hot.isHot, true)
+
+  // Real wardrobe data: "beige leather chunky heel sandals" is tagged fabric_weight: 'heavy' — a
+  // real value describing shoe construction, not thermal insulation. Scoring it the same way as
+  // a garment would rank an open-toe sandal as cold-weather-appropriate footwear.
+  const heavySandal = { id: 1, name: 'chunky heel sandals', category: 'shoes', fabric_category: 'leather', fabric_weight: 'heavy' }
+  const lightFlat = { id: 2, name: 'light canvas flats', category: 'shoes', fabric_weight: 'light' }
+  const woolScarf = { id: 3, name: 'wool scarf', category: 'accessory', fabric_category: 'wool', fabric_weight: 'heavy', fiber_content: ['wool'] }
+
+  for (const weather of [cold, hot]) {
+    for (const piece of [heavySandal, lightFlat, woolScarf]) {
+      const fit = weatherFitForPiece(piece, weather)
+      assert.deepEqual(fit, { score: 0, label: 'neutral', adjustments: [] }, `${piece.name} in ${weather.isCold ? 'cold' : 'hot'} weather must be neutral`)
+    }
+  }
+
+  // A garment in the same weight/material tier is unaffected — still scored normally.
+  const woolSweater = { id: 4, name: 'wool sweater', category: 'top', fabric_category: 'wool', fabric_weight: 'heavy', fiber_content: ['wool'] }
+  assert.ok(weatherFitForPiece(woolSweater, cold).score > 0)
+  assert.ok(weatherFitForPiece(woolSweater, hot).score < 0)
 })
 
 test('weatherProfileFromContext treats indoor season as weather-agnostic even with hot mood text', () => {
@@ -337,6 +363,47 @@ test('scoreWholeWardrobeCandidate applies weather penalties and boosts correctly
   // 2. Light fabrics should be boosted in hot weather
   const lightRes = scoreWholeWardrobeCandidate([lightShorts], hotOptions)
   assert.ok(lightRes.reasons.includes('hot weather: lightweight fabric'), 'Must boost lightweight fabric')
+})
+
+test('scoreWholeWardrobeCandidate flags a heavy/insulating top paired with sandals on a day that is neither isHot nor isCold', () => {
+  // Anchored on the real "Emerald Ground" incident: a live 76.4°F/57.3°F forecast reads as
+  // neither isHot (>=80) nor isCold (<=45), so weatherFitForPiece never runs for it at all —
+  // olive textured mock neck top + emerald corduroy pants + brown leather strap sandals sailed
+  // through with zero warmth-consistency signal.
+  const mildOptions = { weatherProfile: { isHot: false, isCold: false, highF: 76.4, lowF: 57.3 } }
+  const knitTop = { id: 2001, name: 'olive textured mock neck top', category: 'top', fabric_weight: 'medium', fiber_content: ['wool'] }
+  const corduroyPants = { id: 2002, name: 'emerald corduroy pants', category: 'bottom', fabric_weight: 'medium' }
+  const strapSandals = { id: 2003, name: 'brown leather strap sandals', category: 'shoes' }
+
+  const mismatched = scoreWholeWardrobeCandidate([knitTop, corduroyPants, strapSandals], mildOptions)
+  assert.ok(
+    mismatched.reasons.some(r => r.includes('heavy/insulating piece paired with bare warm-weather footwear')),
+    `expected a warmth-consistency penalty, got reasons: ${mismatched.reasons.join('; ')}`
+  )
+
+  // A closed, non-bare shoe with the same top/bottom is not a contradiction — no penalty.
+  const closedShoe = { id: 2004, name: 'brown leather loafers', category: 'shoes' }
+  const consistent = scoreWholeWardrobeCandidate([knitTop, corduroyPants, closedShoe], mildOptions)
+  assert.ok(
+    !consistent.reasons.some(r => r.includes('bare warm-weather footwear')),
+    `closed shoes must not trigger the check, got reasons: ${consistent.reasons.join('; ')}`
+  )
+
+  // A light, non-insulating top with sandals is a consistent warm-weather outfit — no penalty.
+  const lightTop = { id: 2005, name: 'white cotton tee', category: 'top', fabric_weight: 'light' }
+  const consistentWarm = scoreWholeWardrobeCandidate([lightTop, corduroyPants, strapSandals], mildOptions)
+  assert.ok(
+    !consistentWarm.reasons.some(r => r.includes('bare warm-weather footwear')),
+    `light top + sandals must not trigger the check, got reasons: ${consistentWarm.reasons.join('; ')}`
+  )
+
+  // Cold days are exempt — a warm layer with sandals is a different (already-covered) problem.
+  const coldOptions = { weatherProfile: { isHot: false, isCold: true, highF: 40, lowF: 28 } }
+  const coldException = scoreWholeWardrobeCandidate([knitTop, corduroyPants, strapSandals], coldOptions)
+  assert.ok(
+    !coldException.reasons.some(r => r.includes('bare warm-weather footwear')),
+    `cold weather must not trigger this specific check, got reasons: ${coldException.reasons.join('; ')}`
+  )
 })
 
 test('scoreWholeWardrobeCandidate applies occasion mismatch penalty and outerwear hot-weather penalty correctly', () => {
@@ -677,4 +744,77 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   const repairedNoShoes = repairWholeWardrobeOutfit(mockOutfit, testPoolNoShoes, 'casual', '', { activity: 'hiking' })
   assert.ok(repairedNoShoes.pieceIds.includes(30), 'Should keep canvas slip-ons if no alternative exists')
   assert.ok(repairedNoShoes.watchFor.includes('footwear is not trail-rated — closest available match.'), 'Should append warning to watchFor')
+})
+
+test('pieceWarmthTier: fabric_weight + insulating fiber, the same two signals weatherFitForPiece weighs', () => {
+  assert.equal(pieceWarmthTier({ fabric_weight: 'light', fiber_content: ['cotton'] }), 'light')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fiber_content: ['cotton'] }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fiber_content: ['cotton'] }), 'heavy')
+  // An insulating fiber bumps light up one tier — a lightweight wool knit still runs warmer
+  // than a lightweight cotton one — but does not push past 'heavy'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'light', fiber_content: ['wool'] }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fiber_content: ['cashmere'] }), 'heavy')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fiber_content: ['wool'] }), 'heavy')
+  // No fabric_weight tag but an insulating fiber is still a real warmth signal.
+  assert.equal(pieceWarmthTier({ fiber_content: ['wool'] }), 'heavy')
+  // Neither signal tagged -> an honest unknown, not a guess.
+  assert.equal(pieceWarmthTier({}), null)
+  assert.equal(pieceWarmthTier({ fiber_content: ['polyester'] }), null)
+})
+
+test('pieceWarmthTier: an insulating fabric_category counts even when fiber_content misses or contradicts it', () => {
+  // Real wardrobe data: a wool cardigan tagged fiber_content ["unknown"], a fleece hoodie tagged
+  // fiber_content ["cotton"] — fiber_content alone missed both. fabric_category is the more
+  // reliable signal here and must count on its own.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['unknown'] }), 'heavy')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fabric_category: 'fleece', fiber_content: ['cotton'] }), 'heavy')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fabric_category: 'corduroy' }), 'heavy')
+  // A non-insulating category with no fabric_weight tag stays unknown — fabric_category alone
+  // isn't enough unless it's specifically an insulating one.
+  assert.equal(pieceWarmthTier({ fabric_category: 'cotton' }), null)
+})
+
+test('pieceWarmthTier: coverage and bareness nudge one tier, but never override fabric substance', () => {
+  // Full-length/long-sleeve coverage bumps a tier up.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'long' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'maxi' }), 'heavy')
+  // A high-bareness cut (sleeveless, mini) steps a tier down.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'light')
+  // Capped at one step each way: a heavy wool piece that's also sleeveless steps down to
+  // 'medium' (bareness is real, but doesn't erase heavy insulating fabric down to 'light'), and a
+  // light sleeveless cotton tank has nowhere lower to go and stays 'light'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'sleeveless' }), 'light')
+})
+
+test('pieceCoverage: ankle-length is not treated as full-insulating coverage', () => {
+  // Owner ruling: hem length alone isn't warmth — a light silk ankle-length skirt is still not a
+  // warm layer (needs stockings in winter), and 'ankle' is just where ordinary trousers end, not
+  // an exceptional length. Only genuinely long coverage (floor-length, maxi) counts.
+  assert.equal(pieceCoverage({ length_hits_at: 'ankle' }), null)
+  assert.equal(pieceCoverage({ length_hits_at: 'floor_length' }), 'full-insulating')
+  assert.equal(pieceCoverage({ length_hits_at: 'maxi' }), 'full-insulating')
+})
+
+test('pieceWarmthTier: real-data regression — cream wide-leg terry drawstring pants (cotton, medium, ankle) stays medium', () => {
+  // Was landing in the "Heavy" warmth filter purely because length_hits_at: 'ankle' triggered
+  // pieceCoverage's full-insulating bump — nothing about the fabric (cotton, medium weight, no
+  // insulating fiber) actually supports 'heavy'.
+  assert.equal(
+    pieceWarmthTier({ category: 'bottom', name: 'cream wide-leg terry drawstring pants', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], length_hits_at: 'ankle' }),
+    'medium'
+  )
+})
+
+test('pieceWarmthTier: shoes and accessories are always unknown, even with a tagged fabric_weight', () => {
+  // Real wardrobe data: "beige leather chunky heel sandals" is tagged fabric_weight: 'heavy' —
+  // a real value describing the shoe's construction/substance, not thermal insulation. An
+  // open-toe sandal does not run warmer for being sturdily built, so reading fabric_weight for
+  // footwear the same way as a garment put sandals in the "Heavy" warmth filter, which is wrong.
+  assert.equal(pieceWarmthTier({ category: 'shoes', name: 'chunky heel sandals', fabric_weight: 'heavy', fabric_category: 'leather' }), null)
+  assert.equal(pieceWarmthTier({ category: 'shoes', name: 'wool-lined winter boots', fabric_weight: 'heavy', fabric_category: 'wool' }), null)
+  assert.equal(pieceWarmthTier({ category: 'accessory', name: 'wool scarf', fabric_weight: 'heavy', fabric_category: 'wool' }), null)
+  // Garments in the same weight/material tier are unaffected.
+  assert.equal(pieceWarmthTier({ category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fabric_category: 'wool' }), 'heavy')
 })

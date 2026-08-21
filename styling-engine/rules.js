@@ -142,6 +142,16 @@ export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js
 
 export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   const adjustments = []
+  // fabric_weight/coverage/bareness/insulating-fiber on a shoe or accessory describe
+  // construction (a chunky-heel sandal tagged 'heavy'), not body-thermal insulation — an
+  // open-toe sandal isn't cold-weather-appropriate for being sturdily built, and scoring it that
+  // way is exactly what put a "heavy" sandal in the wardrobe page's warmth-filter results before
+  // pieceWarmthTier (attributes.js) drew this same boundary. Same fix here: skip the fabric-weight
+  // read entirely for shoes/accessories rather than treating their tag as thermal signal.
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') {
+    return { score: 0, label: 'neutral', adjustments }
+  }
   const fw = pieceFabricWeight(piece)
   const bare = pieceBareness(piece)
   const cov = pieceCoverage(piece)
@@ -3502,6 +3512,28 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     })
     if (!hasWarmLayer) {
       add(-14, 'cold weather: no warm layer in ensemble')
+    }
+  }
+
+  // Cross-piece warmth consistency — independent of the isHot/isCold buckets above, which only
+  // score a piece against the two temperature EXTREMES and stay silent in between (e.g. a 76°F
+  // day is neither >=80 hot nor <=45 cold, so weatherFitForPiece never runs for it at all). A
+  // heavy or insulating-fiber top/bottom paired with bare warm-weather footwear (sandals,
+  // open-toe) is an internal contradiction regardless of which bucket the day falls into: bare
+  // feet imply the day reads warm enough for that, so the rest of the outfit should track the
+  // same read, not a cooler morning/evening low. Cold days are exempt — a warm layer with boots
+  // or closed shoes is the point there, and this check only fires alongside bare footwear anyway.
+  if (!weather.isCold) {
+    const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+    const shoeIsBareWarmWeather = shoe && /\b(sandal|sandals|open[- ]toe|flip[- ]flop|flip[- ]flops|slide|slides)\b/i.test(pieceTextBlob(shoe))
+    if (shoeIsBareWarmWeather) {
+      const heavyOrInsulatingPiece = pieces.find(piece =>
+        wardrobeCategoryGroup(piece) !== 'shoes' &&
+        (pieceFabricWeight(piece) === 'heavy' || pieceHasInsulatingFiber(piece))
+      )
+      if (heavyOrInsulatingPiece) {
+        add(-20, `${heavyOrInsulatingPiece.name} is a heavy/insulating piece paired with bare warm-weather footwear (${shoe.name}) — garment weight should track the day, not a cooler low`)
+      }
     }
   }
 

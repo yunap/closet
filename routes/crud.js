@@ -7,6 +7,7 @@ import { prompts, loadUserProfile, refreshPrompts } from '../styling-engine/prom
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
 import { collectPieceIdsFromSavedBoardRow, getPieceUsageStats } from '../styling-engine/rules.js'
+import { pieceWarmthTier } from '../styling-engine/attributes.js'
 import { ownKeyStatus, setOwnKey } from '../lib/apiKeys.js'
 import {
   mergeWithManualOverrides,
@@ -117,7 +118,7 @@ function withRetagSuggestions(piece, suggestionsByPiece = null) {
 
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
-  const { category, occasion, season, status, search, favorites, color, color_family, fabric, subtype, jewelry_type } = req.query
+  const { category, occasion, season, status, search, favorites, color, color_family, fabric, subtype, jewelry_type, warmth } = req.query
   let q = 'SELECT * FROM pieces WHERE 1=1'
   const params = []
   if (category)  { q += ' AND category = ?';              params.push(category) }
@@ -170,7 +171,13 @@ router.get('/pieces', (req, res) => {
   if (fabric)    { q += ' AND fabric_category = ?';       params.push(fabric) }
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
-  const rows = db.prepare(q).all(...params)
+  let rows = db.prepare(q).all(...params)
+  // Warmth is derived (pieceWarmthTier composes fabric_weight + fiber_content, the same two
+  // signals weatherFitForPiece weighs against hot/cold in rules.js) — not a stored column, so it
+  // filters here in JS rather than in the query above.
+  if (warmth) {
+    rows = rows.filter(row => pieceWarmthTier({ ...row, fiber_content: safeJsonParse(row.fiber_content, []) }) === warmth)
+  }
   const suggestions = retagSuggestionsForPieces(rows.map(row => row.id))
   res.json(rows.map(row => withRetagSuggestions(row, suggestions)))
 })
