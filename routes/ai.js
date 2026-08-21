@@ -132,7 +132,9 @@ import {
   rewriteWholeWardrobeOutfitWithArchetype,
   hasWholeWardrobePlaceholder,
   hasGenericWholeWardrobeText,
-  sortByStylisticStrength
+  sortByStylisticStrength,
+  pieceGarmentIntelligence,
+  wholeWardrobeOutfitLooksQuestionable
 } from '../styling-engine/rules.js'
 
 import {
@@ -179,7 +181,8 @@ import {
   getOpenAIImageSize,
   anchorFidelityInstructions,
   createPhotoPreservingCollageImage,
-  ownedInventorySummaryForEditorial
+  ownedInventorySummaryForEditorial,
+  reviewComposedWholeWardrobeOutfitsForClash
 } from '../styling-engine/core.js'
 
 const router = express.Router()
@@ -842,14 +845,17 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
-export const composerPieceLineSuffix = piece =>
-  `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
-  `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
-  `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
-  `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
-  `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
-  `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +
-  `${piece.needs_base ? `; needs_base: ${piece.needs_base}` : ''}`
+export const composerPieceLineSuffix = piece => {
+  const doNotPairRules = pieceGarmentIntelligence(piece).doNotPairRules
+  return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
+    `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
+    `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
+    `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
+    `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
+    `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +
+    `${piece.needs_base ? `; needs_base: ${piece.needs_base}` : ''}` +
+    `${doNotPairRules.length ? `; do not pair: ${doNotPairRules.join(', ')}` : ''}`
+}
 
 async function composeSelectedPieceVisualWardrobeOutfits({
   selectedPiece,
@@ -2028,6 +2034,54 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const structurallyRejectedModelOutfits = normalizedModelOutfits
       .filter(o => !isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
       .map(outfit => ({ outfit, reason: structuralRejectionReason(outfit) }))
+
+    // The composer above proposes from ISOLATED per-garment photos and never sees two pieces
+    // together — its own written "reason" can rationalize a pairing that the actual photos, side
+    // by side, show clashing (e.g. two busy prints it argued "share a warm palette"). This second
+    // pass shows it the composed outfits together and judges only the photos, not that prose.
+    // Gated to outfits that already look questionable on cheap tag/name signal — most outfits
+    // have no real clash risk, and reviewing all of them would just be paying for a second
+    // opinion nobody asked for. Non-fatal: a critic failure must never block the whole turn.
+    let visualClashDebug = null
+    let clashFlaggedByOutfit = new Map()
+    const structurallyValidForClashReview = normalizedModelOutfits.filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+    // normalizeWholeWardrobeOutfitObject trims outfit.pieces to {id, name, category, photo,
+    // worn_photo} — pattern_complexity and style_profile_json are gone by here, so the
+    // questionable-check would silently see nothing to flag. Rehydrate against allowedPieces by
+    // id for the check only; the outfit objects that ship to the client stay trimmed as-is.
+    const allowedPieceById = new Map(allowedPieces.map(piece => [Number(piece.id), piece]))
+    const questionableForClashReview = structurallyValidForClashReview.filter(outfit =>
+      wholeWardrobeOutfitLooksQuestionable({
+        pieces: (outfit.pieces || []).map(piece => allowedPieceById.get(Number(piece.id)) || piece)
+      })
+    )
+    if (questionableForClashReview.length) {
+      try {
+        const clashReview = await withTimeout(reviewComposedWholeWardrobeOutfitsForClash({
+          outfits: questionableForClashReview,
+          occasion,
+          season,
+          mood,
+          memoryText: wholeWardrobeFeedbackText
+        }), 20000, 'Whole-wardrobe clash critic')
+        if (clashReview?.flaggedByOutfit?.size) {
+          clashFlaggedByOutfit = clashReview.flaggedByOutfit
+        }
+        visualClashDebug = {
+          reviewedCount: clashReview?.reviewedCount || 0,
+          flaggedCount: clashFlaggedByOutfit.size,
+          skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length
+        }
+      } catch (err) {
+        console.warn('Whole-wardrobe clash critic fallback:', err.message)
+        visualClashDebug = { error: err.message }
+      }
+    } else if (structurallyValidForClashReview.length) {
+      visualClashDebug = { reviewedCount: 0, flaggedCount: 0, skippedNotQuestionable: structurallyValidForClashReview.length }
+    }
+    const visuallyRejectedModelOutfits = [...clashFlaggedByOutfit.entries()]
+      .map(([outfit, reason]) => ({ outfit, reason: `visual critic: ${reason}` }))
+
     const includesSavedMain = outfit => !savedMainPieceId
       || (outfit.pieceIds || outfit.pieces?.map(piece => piece?.id) || []).map(Number).includes(savedMainPieceId)
     const hasLayeredTopFormula = outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').length >= 2
@@ -2040,6 +2094,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let modelOutfits = normalizedModelOutfits
       .filter(includesSavedMain)
       .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+      .filter(o => !clashFlaggedByOutfit.has(o))
       .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
       .map(outfit => ({
         ...outfit,
@@ -2198,6 +2253,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const diagnostics = []
         const rejectedModelDiagnostics = [
           ...structurallyRejectedModelOutfits,
+          ...visuallyRejectedModelOutfits,
           ...gatedModel.rejected
             .filter(item => item?.outfit)
             .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' }))
@@ -2252,6 +2308,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // only visible by opening the resulting broken diagnostic card in the UI, one at a time.
     visualDebugLog.structurallyRejectedCount = structurallyRejectedModelOutfits.length
     visualDebugLog.structurallyRejectedReasons = rejectionSummary(structurallyRejectedModelOutfits)
+    visualDebugLog.visualClashReview = visualClashDebug
+    visualDebugLog.visuallyRejectedCount = visuallyRejectedModelOutfits.length
+    visualDebugLog.visuallyRejectedReasons = rejectionSummary(visuallyRejectedModelOutfits)
     visualDebugLog.localFillGateOutfits = gatedLocal.outfits.length
     visualDebugLog.localFillGateRejected = gatedLocal.rejected.length
     visualDebugLog.localFillGateRejectedReasons = rejectionSummary(gatedLocal.rejected)

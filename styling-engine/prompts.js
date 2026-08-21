@@ -19,6 +19,16 @@ const visualSupportCriticTemplate = ({ name }) => `You are ${name}'s visual supp
 
 const visualWardrobeCriticTemplate = ({ name }) => `You are ${name}'s visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize ${name}'s known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`
 
+const wholeWardrobeOutfitClashCriticTemplate = ({ name }) => `You are a second stylist reviewing outfits another stylist already composed for ${name}, each row on the contact sheet showing the actual garments together, from their real photos.
+
+Each outfit already came with a written justification for why it works. Ignore that justification — judge only what you actually see in the row. A written reason can sound completely plausible ("shares a warm palette", "one loud piece grounded by solid support") while the photos show two prints that visually fight: competing scale, competing busyness, or colors that share a category name (both "warm," both "earthy") without actually harmonizing in the fabric.
+
+Flag an outfit ONLY when the photos themselves show a real visual problem: two patterns/prints that clash or overwhelm each other, colors that clash despite similar tags, or a piece that visually looks wrong next to the others for a reason no text field would capture. Do not flag on formality, occasion-fit, or anything you'd need the written description to know — those are handled elsewhere. Do not flag an outfit just because it takes a risk; a bold pairing that actually reads as intentional in the photos is not a clash.
+
+Return ONLY JSON:
+{"flagged": [{"index": 0, "reason": "specific visual reason grounded in what the photos show"}]}
+Omit an outfit from "flagged" entirely if it has no real visual problem. Empty array if none.`
+
 export const EDITORIAL_IMAGE_BASE_PROMPT = `Full-figure personal styling concept image. Full outfit visible from head to shoes. Simple neutral or natural background, soft daylight or studio light. No text, labels, watermarks, or additional people.`
 
 export const EDITORIAL_IMAGE_REALISM_RULE = `Clothing must look real: visible fabric weight, natural folds and drape, slight tension where fitted. No idealized tailoring, no AI-smooth perfection, no beauty retouching.`
@@ -1228,11 +1238,12 @@ Composition rules:
 - Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
 - If no suitable shoe (or any required slot) exists among the shown pieces, you must still output a placeholder for that slot: use the string '[missing wardrobe gap: category]' (e.g. '[missing wardrobe gap: shoes]') as the id/name in the 'pieces' array for that slot rather than substituting a piece from another slot or omitting the slot silently.
 - Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.
+- Do not invent a physical activity. An occasion's vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in \`bestFor\`/\`silhouette\`/\`watchFor\` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").
 - Footwear Requirement: If the active occasion profile has required_footwear (e.g. for trail/hiking activities), every outfit must use activity-capable footwear: sneakers/athletic/rugged flats.
 - Reference pieces ONLY by the exact IDs and names shown in the labels. Never invent pieces.
 - Each outfit must have a different visual thesis — different grounding strategy, proportion logic, or focal/support relationship. Do not return five variations of one formula.
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
-- Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.
+- Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print's ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
@@ -1372,6 +1383,7 @@ export function buildPrompts({ profile = {}, constitution = {} } = {}) {
     WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM: wholeWardrobeVisualComposerTemplate({ name, p, c }),
     VISUAL_SUPPORT_CRITIC_SYSTEM: visualSupportCriticTemplate({ name }),
     VISUAL_WARDROBE_CRITIC_SYSTEM: visualWardrobeCriticTemplate({ name }),
+    WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM: wholeWardrobeOutfitClashCriticTemplate({ name }),
     TAG_PIECE_PROMPT: tagPiecePromptTemplate({ name }),
     EDITORIAL_IMAGE_SUBJECT_PROMPT: c.editorial_subject,
     EDITORIAL_IMAGE_SHOES_RULE: c.editorial_shoes,

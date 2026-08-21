@@ -1409,6 +1409,77 @@ export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], c
   }
 }
 
+// The composer above proposes outfits from ISOLATED per-garment photos — it never sees two
+// pieces together, so its own written "reason" can rationalize a pairing (shared color-family
+// words, "one loud piece grounded by support") that the actual photos, side by side, show
+// clashing. This builds one contact sheet of the outfits it already composed and asks a second
+// pass to judge only what the row actually shows, ignoring the first pass's own prose.
+export async function makeComposedOutfitClashContactSheet(outfits = [], maxOutfits = 12) {
+  const shown = outfits.slice(0, maxOutfits)
+  const width = 1120
+  const rowHeight = 196
+  const headerHeight = 76
+  const height = headerHeight + shown.length * rowHeight + 28
+  const composites = []
+  const rowSvgs = []
+
+  for (const [index, outfit] of shown.entries()) {
+    const y = headerHeight + index * rowHeight
+    const pieces = (Array.isArray(outfit.pieces) ? outfit.pieces : []).slice(0, 5)
+    const title = `${index}: ${outfit.label || pieces.map(piece => piece.name).join(' + ')}`
+    rowSvgs.push(`
+      <rect x="24" y="${y}" width="${width - 48}" height="${rowHeight - 14}" rx="18" fill="#fffaf7" stroke="#ddd1c6"/>
+      <text x="44" y="${y + 30}" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#3f352e">${escapeSvgText(title)}</text>
+    `)
+    composites.push(...await Promise.all(pieces.map(async (piece, pieceIndex) => ({
+      input: await makeGarmentTile(piece, 150, 132),
+      left: 44 + pieceIndex * 166,
+      top: y + 44
+    }))))
+  }
+
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#f4efe8"/>
+    <text x="32" y="38" font-family="Georgia, serif" font-size="30" fill="#2f2924">Composed outfit clash review</text>
+    <text x="32" y="62" font-family="Arial, sans-serif" font-size="14" fill="#786d63">Each row is one already-composed outfit. Judge only what the photos show — ignore any written justification.</text>
+    ${rowSvgs.join('')}
+  </svg>`
+  const buffer = await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 84 }).toBuffer()
+  return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCount: shown.length }
+}
+
+export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '' } = {}) {
+  const reviewable = outfits.filter(outfit => (outfit.pieces || []).some(piece => piece.photo || piece.worn_photo))
+  if (reviewable.length < 1) return null
+
+  const sheet = await makeComposedOutfitClashContactSheet(reviewable, 12)
+  const raw = await askStylist({
+    system: prompts.WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM,
+    maxTokens: 700,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: sheet.mime, data: sheet.base64 } },
+        { type: 'text', text: [
+          `Occasion: ${occasion || 'casual'}`,
+          `Season: ${season || 'current season'}`,
+          mood ? `Mood: ${mood}` : '',
+          memoryText ? `Taste memory:\n${memoryText.slice(0, 3000)}` : ''
+        ].filter(Boolean).join('\n') }
+      ]
+    }]
+  })
+  const parsed = safeJsonFromModel(raw)
+  const flagged = Array.isArray(parsed.flagged) ? parsed.flagged : []
+  const flaggedByOutfit = new Map()
+  for (const item of flagged) {
+    const index = Number(item?.index)
+    if (!Number.isInteger(index) || index < 0 || index >= reviewable.length) continue
+    flaggedByOutfit.set(reviewable[index], String(item?.reason || 'visual critic flagged a clash in the photos').trim())
+  }
+  return { flaggedByOutfit, reviewedCount: reviewable.length }
+}
+
 export function getOpenAIImageModel() {
   const configured = String(process.env.OPENAI_IMAGE_MODEL || '').trim()
   const unsupported = new Set(['dall-e-2', 'dall-e-3', 'dalle-2', 'dalle-3'])
@@ -4263,7 +4334,7 @@ export async function buildStylistConversationPayload(body) {
   const system = prompts.STYLIST_SYSTEM + [
     '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
-    'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud.',
+    'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud. Each profile\'s `keywords` are illustrative examples of the kind of request it covers, not an exhaustive or literal match list — real requests will use wording none of them anticipated. Classify by the social register and setting the request actually implies, not by matching a surface noun: the same noun can describe very different registers (e.g. "market" spans a routine grocery/farmers-market errand, which is casual/city, versus a craft fair, wine festival, or artisan market outing, which is outdoor_daytime_social). When a request is a plain errand or everyday task with no festival/social/event framing, default to the permissive casual or city profiles rather than a narrower one.',
     JSON.stringify(OCCASION_PROFILES, null, 2),
     '',
     'CURRENT WARDROBE TRUTH:',

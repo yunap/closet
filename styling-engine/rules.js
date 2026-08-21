@@ -1692,6 +1692,24 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
+// Cheap, tag-based pre-filter for whether a composed outfit is worth the extra visual-critic
+// call — not a replacement for it. Deliberately over-inclusive: pattern_complexity/do_not_pair_rules
+// may be missing or wrong (the tagger or the user may never have set them), so this also falls back
+// to scanning each piece's own name/notes text for pattern words, the same signal a human would
+// have if the tags did not exist.
+const QUESTIONABLE_PATTERN_WORD_RE = /\b(floral|paisley|botanical|abstract|graphic|print|printed|pattern|patterned|stripe|striped|animal print|tropical|tie-dye|camo)\b/i
+export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const patternedCount = pieces.filter(piece => {
+    const complexity = String(piece.pattern_complexity || '').toLowerCase().trim()
+    if (complexity === 'loud' || complexity === 'medium') return true
+    if (complexity) return false // explicitly tagged solid/quiet — trust the tag over the name scan
+    return QUESTIONABLE_PATTERN_WORD_RE.test(pieceNameBlob(piece))
+  }).length
+  if (patternedCount >= 2) return true
+  return pieces.some(piece => pieceGarmentIntelligence(piece).doNotPairRules.length > 0)
+}
+
 export function inferWholeWardrobePieceRoles(piece = {}) {
   const profile = pieceStyleProfile(piece)
   const intelligence = pieceGarmentIntelligence(piece)

@@ -392,6 +392,74 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
   }
 })
 
+test('9. Whole-wardrobe clash critic drops a questionable outfit its own prose rationalized but the photos would not', async () => {
+  // Two loud-pattern pieces in the same outfit is what makes this "questionable" enough to spend
+  // the critic call on — see wholeWardrobeOutfitLooksQuestionable.
+  db.prepare('UPDATE pieces SET pattern_complexity = ? WHERE id = ?').run('loud', seeded.top)
+  db.prepare('UPDATE pieces SET pattern_complexity = ? WHERE id = ?').run('loud', seeded.bottom)
+
+  const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = (args) => {
+    const text = String(args.system || '')
+    if (text.includes('second stylist reviewing outfits')) {
+      return { flagged: [{ index: 0, reason: 'two competing prints fight in the photo despite the shared warm palette' }] }
+    }
+    return defaultHandler(args)
+  }
+
+  try {
+    const result = await generateWholeWardrobeOutfitsVisualInternal({
+      occasion: 'casual',
+      season: 'current season',
+      limit: 1
+    })
+
+    assert.ok(Array.isArray(result.structuredOutfits))
+    // The critic's flag must actually remove the outfit from the model-accepted pool, whatever
+    // the pipeline does afterward (backfill from local candidates, or a diagnostic card) to make
+    // up the requested count — that downstream behavior is exercised by other tests.
+    assert.equal(result.debug.finalSelection.visuallyRejectedCount, 1)
+    assert.ok(result.debug.finalSelection.visualClashReview.flaggedCount >= 1)
+    assert.deepEqual(result.debug.finalSelection.visuallyRejectedReasons, {
+      'visual critic: two competing prints fight in the photo despite the shared warm palette': 1
+    })
+  } finally {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
+  }
+})
+
+test('9b. Whole-wardrobe clash critic leaves outfits alone when it does not flag anything', async () => {
+  db.prepare('UPDATE pieces SET pattern_complexity = ? WHERE id = ?').run('loud', seeded.top)
+  db.prepare('UPDATE pieces SET pattern_complexity = ? WHERE id = ?').run('loud', seeded.bottom)
+  const result = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'casual',
+    season: 'current season',
+    limit: 1
+  })
+  assert.equal(result.debug.finalSelection.visuallyRejectedCount, 0)
+  assert.ok(result.structuredOutfits.some(outfit => !outfit.broken))
+})
+
+test('9c. Whole-wardrobe clash critic is skipped entirely for an outfit with no pattern-clash signal', async () => {
+  const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = (args) => {
+    const text = String(args.system || '')
+    assert.ok(!text.includes('second stylist reviewing outfits'), 'the clash critic must not be called for a plain solid-color outfit')
+    return defaultHandler(args)
+  }
+  try {
+    const result = await generateWholeWardrobeOutfitsVisualInternal({
+      occasion: 'casual',
+      season: 'current season',
+      limit: 1
+    })
+    assert.equal(result.debug.finalSelection.visualClashReview.reviewedCount, 0)
+    assert.equal(result.debug.finalSelection.visualClashReview.skippedNotQuestionable, 1)
+  } finally {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
+  }
+})
+
 test('bounded whole-wardrobe execution honors live weather and adaptive image sizing end to end', async () => {
   // Force one garment into the complex branch; the remaining photographed fixtures stay plain.
   db.prepare('UPDATE pieces SET formality = ?').run('everyday')
