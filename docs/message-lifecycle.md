@@ -411,21 +411,21 @@ Consequences worth stating plainly:
 These are not bugs found by inspection; each one is visible in a live thread. They are collected
 here because no per-flow document can show them — they exist *between* flows.
 
-**1. An attached photo permanently changes the feature.**
+**1. An attached photo permanently changes the feature — partially fixed 2026-08-20.**
 Branch 9 sends the turn to `/outfit-feedback`, which has no tools, no `search_wardrobe`, no verified
-piece ids, and cannot produce a card. It compensates by pasting **every active piece** into the
-prompt as text:
+piece ids, and cannot produce a card. It used to compensate by pasting **every active piece** into
+the prompt as text — measured at **79,766 tokens**, the most expensive single call in the app, pure
+text with no visual-grounding tradeoff, and premised on an ownership assumption the uploaded-photo
+case does not have (see [unfiled-garment-spec.md](unfiled-garment-spec.md)). That dump is gone
+(`routes/ai.js`'s `/outfit-feedback` handler no longer queries the wardrobe at all).
 
-```js
-const activeWardrobeText = db.prepare("SELECT * FROM pieces WHERE status = 'active'")
-  .all().map(parsePiece).map(buildPieceText).join('\n')
-```
-
-Measured at **79,766 tokens** — the most expensive single call in the app, and pure text with no
-visual-grounding tradeoff. Meanwhile the composer clears `imageFile` after one turn and history is
-text-only, so **turn two about the same garment is blind**. The user asked five questions about one
-dress and got an editorial critique, then blind advice about a neckline the model could no longer
-see.
+The blindness half is also fixed: the composer still clears `imageFile` after one turn, but
+`messages[].uploadedPhoto` persists client-side and `/ask`'s default branch now resends the thread's
+most recent one as `uploadedPhoto`, which `buildStylistConversationPayload` reattaches as an image at
+the volatile tail (see [flows/outfit-evaluation.md](flows/outfit-evaluation.md)). History itself is
+still text-only — the image is resent by filename, not replayed from history — so turn two about the
+same garment can see it again, with a note that it has no linked pieces and ownership questions need
+`search_wardrobe`, not a guess from the picture.
 
 **2. The same question costs 20× depending on the sentence before it.**
 "What should I wear tomorrow?" as a first message is `new_request` ⇒ router ⇒ possibly

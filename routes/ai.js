@@ -2833,7 +2833,6 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
   const tempPath = savedPhoto ? path.join(userUploadsDir(), savedPhoto) : ''
   try {
     const { question, outfitName, outfitNotes } = req.body
-    const activeWardrobeText = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece).map(buildPieceText).join('\n')
     const result = await evaluateOutfitThroughSharedPipeline({
       outfit: { label: outfitName || 'Uploaded outfit photo', notes: outfitNotes || '' },
       question: question || 'What do you think of this outfit? Does it work well together?',
@@ -2842,8 +2841,7 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
       allowPhotoOnly: true,
       extraContextText: [
         outfitName ? `Outfit: "${outfitName}"` : '',
-        outfitNotes ? `User notes / corrected truth: ${outfitNotes}` : '',
-        activeWardrobeText ? `Active wardrobe truth, for identifying likely saved garments and avoiding wrong guesses:\n${activeWardrobeText}` : ''
+        outfitNotes ? `User notes / corrected truth: ${outfitNotes}` : ''
       ].filter(Boolean).join('\n\n')
     })
     res.json({ ...result, photo: savedPhoto })

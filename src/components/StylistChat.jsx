@@ -5416,6 +5416,11 @@ export default function StylistChat({
           : []
         const conversationMode = classifyChatTurn(q, { hasThreadMemory: Boolean(threadMemory || activeContext) })
         const threadContext = compactThreadContext(threadMemory, activeContext)
+        // An uploaded outfit photo has no linked pieces and no activeContext/threadMemory of its
+        // own (see the fileToSend branch above), so a follow-up question about it lands here with
+        // no way to see the photo again unless we hand it back explicitly. Most recent upload in
+        // the thread wins — a second upload later in the same thread supersedes the first.
+        const latestUploadedPhoto = [...messages].reverse().find(m => m.uploadedPhoto)?.uploadedPhoto || ''
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5429,6 +5434,7 @@ export default function StylistChat({
             conversationMode,
             threadContext,
             activeContext,
+            uploadedPhoto: latestUploadedPhoto,
             ...stylingContextFromMemory(threadMemory, activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity),
             ...currentChatDateContext(),
           })

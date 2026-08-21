@@ -3888,6 +3888,7 @@ export async function buildStylistConversationPayload(body) {
     threadContext,
     outfit,
     pieceIds,
+    uploadedPhoto,
     sessionId = 'default',
     activeContext,
     occasion,
@@ -4028,6 +4029,23 @@ export async function buildStylistConversationPayload(body) {
       pieceLines ? `Linked garments:\n${pieceLines}` : '',
       linkedFitCautionsText ? `Linked fit/trust cautions:\n${linkedFitCautionsText}` : '',
     ].filter(Boolean).join('\n\n')
+  } else {
+    // An outfit photo uploaded via /outfit-feedback has no linked pieces and no activeOutfit —
+    // it survives in `messages[].uploadedPhoto` client-side (see message-lifecycle.md's
+    // "attached photo permanently changes the feature" discontinuity) but every follow-up in the
+    // thread used to be blind to it. The client resends the thread's most recent upload filename;
+    // reattach it here the same way an active outfit's photo attaches, at the volatile tail.
+    const uploadedPhotoName = String(uploadedPhoto || '').trim()
+    if (uploadedPhotoName) {
+      const uploadedPhotoFilePath = path.join(userUploadsDir(), path.basename(uploadedPhotoName))
+      const contentImages = []
+      const uploadedPhotoIncluded = await addEvaluationImage(contentImages, uploadedPhotoFilePath)
+      if (uploadedPhotoIncluded) {
+        outfitImageContent = contentImages
+        attachedImageInventory.push('uploaded outfit photo from earlier in this thread')
+        extraContextText = 'An outfit photo was uploaded earlier in this thread and is attached again for this turn. It has no linked wardrobe pieces — do not assume any visible garment is already owned. If the user asks whether they own something like it, use search_wardrobe rather than guessing from the image.'
+      }
+    }
   }
 
   const hasThreadContext = Boolean(
