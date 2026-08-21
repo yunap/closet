@@ -4,9 +4,9 @@
     "Checked by scratch/audit_feedback_surface_completeness.js, which fails when a store exists",
     "in the running system but is absent here, or is listed here but no longer exists.",
     "",
-    "disposition: 'category' = documented in feedback-and-memory-map.md §1 with writer/action/",
-    "reader/authority.  'excluded' = deliberately out of scope, reason recorded in §8.",
-    "A store must be exactly one of the two — never both."
+    "disposition: 'category' = documented in feedback-and-memory-map.md \u00a71 with writer/action/",
+    "reader/authority.  'excluded' = deliberately out of scope, reason recorded in \u00a78.",
+    "A store must be exactly one of the two \u2014 never both."
   ],
   "sqlite": {
     "pieces": {
@@ -84,7 +84,7 @@
     "app_meta": {
       "disposition": "category",
       "category": 10,
-      "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in §8"
+      "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in \u00a78"
     },
     "import_sessions": {
       "disposition": "category",
@@ -250,7 +250,7 @@
     },
     "uploads/untitled folder/": {
       "disposition": "excluded",
-      "reason": "empty stray directory, not created by the app — no writer in the codebase"
+      "reason": "empty stray directory, not created by the app \u2014 no writer in the codebase"
     }
   },
   "runtime": {
