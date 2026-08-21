@@ -240,6 +240,20 @@ export function pieceBareness(p) {
   return null
 }
 
+// Real regression: "floral botanical print active leggings" — fabric_weight: light,
+// fabric_category: technical/performance, fit_on_body: clings_stretchy — scored a full hot-weather
+// "lightweight, good for heat" bonus in weatherFitForPiece despite being skin-tight synthetic
+// fabric with essentially no airflow. Coverage/insulating-material (pieceCoverage,
+// pieceHasInsulatingMaterial) already capture fabric substance and hem/sleeve extent; neither one
+// captures how CLOSE the fabric sits to skin, which is a real, independent factor in whether a
+// lightweight piece actually ventilates. 'clings_drapey' is included too even though it's rarer
+// (fluid drape can still sit close against skin) — 'skims'/'hangs_straight'/'drapes'/'structured'
+// all leave real air space and are not treated as occlusive.
+export function pieceHasOcclusiveFit(p) {
+  const fit = String(p?.fit_on_body || '').toLowerCase().trim()
+  return fit === 'clings_stretchy' || fit === 'clings_drapey'
+}
+
 // Physical coverage — how much body area the garment's sleeve/hem extends over. Deliberately NOT
 // a warmth conclusion: whether "full" coverage actually means anything for warmth depends on the
 // fabric it's made of (a full-length silk skirt is not a warm layer), so callers that care about

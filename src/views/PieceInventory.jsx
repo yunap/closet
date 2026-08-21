@@ -85,14 +85,15 @@ const SEASONS = [
   { value: 'year-round', label: 'Year-Round' },
 ]
 
-// Same tiers pieceWarmthTier (styling-engine/attributes.js) derives from fabric_weight + an
-// insulating fiber (wool, cashmere, etc) — the same two signals the styling engine weighs
-// against hot/cold weather when composing outfits.
+// pieceHeatSuitability (styling-engine/rules.js) — a practical "is this an option for hot/cold
+// weather" readout, not the raw fabric_weight tier. Built on the same weatherFitForPiece scoring
+// the styling engine uses when composing outfits, so this filter always matches what the engine
+// itself would recommend, not just what a garment's fabric substance happens to be tagged.
 const WARMTHS = [
-  { value: '',       label: 'All warmths' },
-  { value: 'light',  label: 'Light' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'heavy',  label: 'Heavy' },
+  { value: '',          label: 'All pieces' },
+  { value: 'hot',       label: 'Good for heat' },
+  { value: 'cold',      label: 'Good for cold' },
+  { value: 'versatile', label: 'Versatile' },
 ]
 
 const SORT_OPTIONS = [
@@ -821,11 +822,11 @@ export default function PieceInventory({ onSendToStylist }) {
               aria-haspopup="listbox"
               data-filter-trigger="warmth"
             >
-              <span>{filterWarmth ? `Warmth: ${warmthLabel}` : 'Warmth'}</span>
+              <span>{filterWarmth ? `Weather fit: ${warmthLabel}` : 'Weather fit'}</span>
               <span className="filter-menu-chevron">⌄</span>
             </button>
             {openFilterMenu === 'warmth' && (
-              <div className="filter-menu-popover" role="listbox" aria-label="Warmth" data-filter-menu="warmth" onKeyDown={handleFilterMenuKeyDown}>
+              <div className="filter-menu-popover" role="listbox" aria-label="Weather fit" data-filter-menu="warmth" onKeyDown={handleFilterMenuKeyDown}>
                 {WARMTHS.map(w => (
                   <button
                     key={w.value}
