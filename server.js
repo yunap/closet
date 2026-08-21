@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import './lib/installAiCallTelemetry.js'
 import express from 'express'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -8,7 +9,7 @@ import { getSessionToken } from './lib/cookies.js'
 import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI, mockAiEnabled } from './styling-engine/provider.js'
-import { installAiFetchTelemetry, runWithAiTelemetryContext } from './lib/aiCallTelemetry.js'
+import { runWithAiTelemetryContext } from './lib/aiCallTelemetry.js'
 import { installMockAiCallTelemetry } from './lib/mockAiCallTelemetry.js'
 import { ensureCachedThumbnail, sourcePathFromCachedThumbnail } from './lib/subjectThumbnails.js'
 import { installMockAiHandler } from './styling-engine/mockAiHandler.js'
@@ -25,11 +26,6 @@ const app = express()
 const PORT = process.env.PORT || 3001
 // Local HTTP is fine as-is. HTTPS/secure-cookie flags activate behind TRUST_PROXY once a
 // reverse proxy (Caddy) appears — deployment note, not v1 scope.
-
-// Install one transport-level observer before any route can issue a provider call. It watches only
-// api.openai.com/api.anthropic.com and records one row per actual HTTP round-trip, so model-call
-// telemetry stays independent of individual prompt builders and flow implementations.
-installAiFetchTelemetry()
 
 // Middlewares
 app.use(express.json({ limit: '25mb' }))
