@@ -8,6 +8,7 @@ import { getSessionToken } from './lib/cookies.js'
 import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI, mockAiEnabled } from './styling-engine/provider.js'
+import { installAiFetchTelemetry, runWithAiTelemetryContext } from './lib/aiCallTelemetry.js'
 import { ensureCachedThumbnail, sourcePathFromCachedThumbnail } from './lib/subjectThumbnails.js'
 import { installMockAiHandler } from './styling-engine/mockAiHandler.js'
 import { tagPieceWithProvider } from './routes/ai.js'
@@ -23,6 +24,11 @@ const app = express()
 const PORT = process.env.PORT || 3001
 // Local HTTP is fine as-is. HTTPS/secure-cookie flags activate behind TRUST_PROXY once a
 // reverse proxy (Caddy) appears — deployment note, not v1 scope.
+
+// Install one transport-level observer before any route can issue a provider call. It watches only
+// api.openai.com/api.anthropic.com and records one row per actual HTTP round-trip, so model-call
+// telemetry stays independent of individual prompt builders and flow implementations.
+installAiFetchTelemetry()
 
 // Middlewares
 app.use(express.json({ limit: '25mb' }))
@@ -64,6 +70,14 @@ app.use((req, res, next) => {
 app.use('/api', (req, res, next) => {
   if (!req.wardrobeSession) return res.status(401).json({ error: 'unauthorized' })
   next()
+})
+
+// Bind the visible API request to any downstream provider calls. AsyncLocalStorage preserves this
+// attribution through awaited helpers and long-running importer continuations without threading a
+// telemetry argument through every model-facing function.
+app.use('/api', (req, res, next) => {
+  const sessionId = String(req.body?.sessionId || req.body?.session_id || req.params?.id || '')
+  return runWithAiTelemetryContext({ originalUrl: req.originalUrl, sessionId }, next)
 })
 
 // Photos are private per-user data. 404 (not 401) so an unauthenticated probe can't even
@@ -115,7 +129,7 @@ if (process.env.NODE_ENV === 'production') {
 
 if (mockAiEnabled()) {
   installMockAiHandler(db)
-  console.log('🧪 WARDROBE_MOCK_AI is on — stylist responses are canned, no billed AI calls will be made')
+  console.log('🧪 WARDROBE_MOCK_AI is on — stylist responses are canned, no billed AI call will be made')
 }
 
 if (process.env.NODE_ENV !== 'test') {
