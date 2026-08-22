@@ -253,6 +253,46 @@ export function pieceBareness(p) {
   return null
 }
 
+// A graded 0..1 fraction of the garment's applicable body regions that are exposed — for
+// weatherFitForPiece/pieceWeatherScores only. pieceBareness above stays a binary high/null verdict
+// on purpose: the cold-weather hard gate, extremeHeatPieceAdvisory, and the composer roster's own
+// cold check all read it as a single flag and none of those are in scope here.
+//
+// Real regression: "multicolor striped knit maxi dress" — sleeveless, but midi-length (legs
+// covered) — was scoring the same flat bareness credit as a fully bare mini dress, because
+// pieceBareness ORs sleeve/neckline/hem into one high/null verdict regardless of how many of those
+// signals actually fire or how much of the body the OTHER regions still cover. This tracks two
+// regions — upper body (sleeve OR neckline) and lower body (hem) — each only counted when it's
+// actually applicable to the category AND tagged, and returns exposed/applicable rather than a
+// flat constant: a sleeveless piece that's also full-length reads as half-exposed, not fully bare;
+// a sleeveless top with no hem-exposure concept at all (tops don't have a leg-baring hem) still
+// reads fully exposed on its one applicable region, matching a plain tank top's real bareness.
+// Sleeve and neckline are combined into ONE region rather than two: they're largely the same
+// upper-body-exposure signal (an ordinary crew neckline on a sleeveless top doesn't mean "more
+// covered" just because it isn't ALSO halter/strapless), not independent evidence that should
+// dilute each other.
+export function pieceExposureDegree(p) {
+  const category = String(p?.category || '').toLowerCase().trim()
+  const upperApplicable = ['top', 'dress', 'outerwear'].includes(category)
+  const lowerApplicable = ['dress', 'bottom'].includes(category)
+
+  let exposed = 0
+  let applicable = 0
+
+  if (upperApplicable && (p?.sleeve_length || p?.neckline)) {
+    applicable++
+    const bareUpper = p.sleeve_length === 'sleeveless' || (p.neckline && /\b(halter|strapless)\b/i.test(p.neckline))
+    if (bareUpper) exposed++
+  }
+  if (lowerApplicable && p?.length_hits_at) {
+    applicable++
+    const bareLower = /\b(mini|shorts?)\b/i.test(p.length_hits_at)
+    if (bareLower) exposed++
+  }
+
+  return applicable ? exposed / applicable : null
+}
+
 // Fibers with essentially no natural/cellulosic breathability on their own — a garment made
 // ENTIRELY from these (no cotton/linen/wool/rayon/etc mixed in) runs close to airtight against
 // skin. Not the same list as INSULATING_FIBERS: spandex/nylon/polyester don't trap body heat the
@@ -292,12 +332,9 @@ export function pieceHasOcclusiveFit(p) {
 }
 
 // Breathable/known fibers with real natural or cellulosic airflow — the positive counterpart to
-// NON_BREATHABLE_ONLY_FIBERS. A garment's fiber_content is rarely one pure material, so this
-// returns a RATIO (-1..1) across whatever fibers are actually known, rather than a boolean:
-// entirely breathable fibers -> +1, entirely non-breathable -> -1, a genuine blend lands in
-// between, and an unknown/untagged/all-"unknown" fiber_content returns 0 (no opinion, not a guess
-// in either direction). This is graded evidence for weatherFitForPiece/pieceWeatherScores, not a
-// replacement for pieceHasOcclusiveFit's boolean gate above (kept as-is for its own call sites).
+// NON_BREATHABLE_ONLY_FIBERS. This is graded evidence for weatherFitForPiece/pieceWeatherScores,
+// not a replacement for pieceHasOcclusiveFit's boolean gate above (kept as-is for its own call
+// sites).
 //
 // Deliberately excludes INSULATING_FIBERS (wool, cashmere, alpaca...) even though wool genuinely
 // does breathe/wick moisture — real regression: a wool fleece vest scored breathability +1 on top
@@ -306,20 +343,28 @@ export function pieceHasOcclusiveFit(p) {
 // shouldn't argue "insulating, bad for heat" and "breathable, good for heat" from the same tag —
 // once a fiber's already counted as insulating evidence, it stops contributing to breathability
 // (treated as neutral there, not double-counted in the opposite direction).
+//
+// Returns one of exactly three values — +1 (breathable), -1 (non-breathable), 0 (mixed or
+// unknown) — never a fraction. fiber_content is an UNORDERED PRESENCE LIST, not composition
+// percentages: a piece tagged ["viscose", "polyester", "nylon"] does not mean "1/3 viscose" —
+// there is no data on how much of the actual fabric is which fiber. Second real regression: this
+// function used to return (breathableCount - nonBreathableCount) / knownCount, which manufactured
+// exactly that unsupported fraction — adding or removing a single fiber TAG swung the result by a
+// large amount regardless of the fabric's real composition, and that same invented fraction fed
+// BOTH this function's own heat term and pieceOcclusiveFitDegree's multiplier (the same guess
+// counted twice). Now: any presence of a known breathable fiber alongside a known non-breathable
+// one is 'mixed' — genuinely conflicting evidence, reported as neutral rather than averaged into a
+// fake in-between number.
 const BREATHABLE_FIBERS = new Set(['cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'hemp', 'denim'])
 export function pieceFiberBreathability(p) {
   const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
     .map(f => String(f).toLowerCase().trim())
     .filter(f => f && f !== 'unknown')
-  if (!fibers.length) return 0
-  let breathable = 0
-  let nonBreathable = 0
-  for (const f of fibers) {
-    if (BREATHABLE_FIBERS.has(f)) breathable++
-    else if (NON_BREATHABLE_ONLY_FIBERS.has(f)) nonBreathable++
-  }
-  const known = breathable + nonBreathable
-  return known ? (breathable - nonBreathable) / known : 0
+  const hasBreathable = fibers.some(f => BREATHABLE_FIBERS.has(f))
+  const hasNonBreathable = fibers.some(f => NON_BREATHABLE_ONLY_FIBERS.has(f))
+  if (hasBreathable && !hasNonBreathable) return 1
+  if (hasNonBreathable && !hasBreathable) return -1
+  return 0
 }
 
 // How much the CUT itself restricts airflow against skin, independent of the fabric it's made

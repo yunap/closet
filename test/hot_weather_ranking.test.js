@@ -17,7 +17,7 @@ const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
 const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, pieceWeatherScores, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
-const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit, pieceFiberBreathability, pieceOcclusiveFitDegree } = await import('../styling-engine/attributes.js')
+const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit, pieceFiberBreathability, pieceOcclusiveFitDegree, pieceExposureDegree } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
@@ -999,15 +999,26 @@ test('pieceHeatSuitability: a practical hot/cold/versatile readout built on weat
   assert.equal(pieceHeatSuitability({ category: 'accessory', fabric_weight: 'heavy' }), null)
 })
 
-test('pieceFiberBreathability: a graded ratio, not a name-based boolean — cotton/linen/rayon are not automatically breathable and polyester/nylon are not automatically unfriendly', () => {
+test('pieceFiberBreathability: categorical (+1/-1/0), never a composition fraction', () => {
   // Owner's design charter, explicit: "cotton/linen/rayon do not automatically mean breathable
   // or heat-safe... polyester/nylon do not automatically mean heat-unfriendly." This reads the
-  // actual tagged fiber mix and returns a RATIO across whatever's known, not a name lookup.
+  // actual tagged fiber mix, not a name lookup.
   assert.equal(pieceFiberBreathability({ fiber_content: ['cotton'] }), 1)
   assert.equal(pieceFiberBreathability({ fiber_content: ['polyester'] }), -1)
-  // A genuine blend lands in between rather than snapping to either extreme.
+
+  // Real regression: fiber_content is an UNORDERED PRESENCE LIST, not composition percentages —
+  // there is no data on how much of a garment tagged ["viscose","polyester","nylon"] is actually
+  // viscose. The previous version returned (breathableCount - nonBreathableCount) / knownCount,
+  // which invented exactly that unsupported fraction: adding or removing ONE fiber tag swung the
+  // result by a large amount regardless of the fabric's real composition (and that same invented
+  // fraction fed pieceOcclusiveFitDegree's multiplier too — the same guess counted twice). Any
+  // presence of a known breathable fiber alongside a known non-breathable one is now 'mixed' —
+  // genuinely conflicting evidence, reported as neutral (0) regardless of how many tags of each
+  // kind are listed, not averaged into a fake in-between number.
   assert.equal(pieceFiberBreathability({ fiber_content: ['cotton', 'polyester'] }), 0)
-  assert.ok(pieceFiberBreathability({ fiber_content: ['cotton', 'cotton', 'polyester'] }) > 0, 'majority-natural blend should lean breathable, not neutral')
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cotton', 'cotton', 'polyester'] }), 0, 'more breathable-fiber TAGS must not read as more breathable — count is not composition')
+  assert.equal(pieceFiberBreathability({ fiber_content: ['viscose', 'polyester', 'nylon'] }), 0)
+
   // Untagged/unknown fiber_content is a real "no opinion", not a guess in either direction.
   assert.equal(pieceFiberBreathability({}), 0)
   assert.equal(pieceFiberBreathability({ fiber_content: ['unknown'] }), 0)
@@ -1019,12 +1030,13 @@ test('pieceFiberBreathability: a graded ratio, not a name-based boolean — cott
   // trap sweat), but it's ALSO an insulating fiber — counting it on both axes double-counted the
   // same tag in opposite directions and let a wool fleece vest's breathability credit (+1) undo
   // 5 of its own insulating-material penalty's 6 points before anything else was even scored.
-  // Insulating fibers are excluded from this ratio entirely (neutral, not double-counted) rather
-  // than contributing a breathability bonus that partially cancels their own insulating evidence.
+  // Insulating fibers are excluded from breathability entirely (neutral, not double-counted)
+  // rather than contributing a breathability bonus that partially cancels their own insulating
+  // evidence.
   assert.equal(pieceFiberBreathability({ fiber_content: ['wool'] }), 0)
   assert.equal(pieceFiberBreathability({ fiber_content: ['cashmere'] }), 0)
-  // A blend of an insulating fiber with a genuinely non-breathable one still reads non-breathable
-  // — the insulating fiber just doesn't ALSO pull it back toward neutral/positive.
+  // wool doesn't count as a breathable fiber, so a wool+polyester blend reads unambiguously
+  // non-breathable (only one directional signal is present, not conflicting evidence).
   assert.equal(pieceFiberBreathability({ fiber_content: ['wool', 'polyester'] }), -1)
 })
 
@@ -1113,6 +1125,76 @@ test('pieceWeatherScores: real-data regression — a sleeveless insulated vest r
   // breathable substance alone.
   const lightCottonVest = { category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
   assert.equal(pieceHeatSuitability(lightCottonVest), 'hot')
+})
+
+test('pieceExposureDegree: a graded fraction of applicable, tagged regions that are bare — not one flat garment-wide constant', () => {
+  // Real regression: "multicolor striped knit maxi dress" (piece 163) — sleeveless but midi-length
+  // (legs covered) — scored the SAME flat exposure credit as a fully bare mini dress, because the
+  // old model ORed sleeve/neckline/hem into one high/null verdict regardless of how many of those
+  // signals actually fired or how much of the body other regions still covered.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi' }), 0.5, 'one exposed region (arms) out of two applicable, tagged regions (arms, legs)')
+
+  // A dress with BOTH regions bare reads fully exposed.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', length_hits_at: 'mini' }), 1)
+
+  // A dress with neither region bare reads fully covered.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'long', length_hits_at: 'maxi' }), 0)
+
+  // A plain sleeveless TOP has no leg-baring hem concept at all (tops don't have a leg-exposure
+  // vocabulary) — its one applicable region (upper body) being bare reads as fully exposed, same
+  // magnitude as a real bare tank top, not diluted by an inapplicable second region.
+  assert.equal(pieceExposureDegree({ category: 'top', sleeve_length: 'sleeveless', neckline: 'crew' }), 1)
+
+  // Sleeve and neckline are ONE region, not two — an ordinary crew neckline on a sleeveless top
+  // doesn't count as "more covered" just because it isn't ALSO halter/strapless.
+  assert.equal(pieceExposureDegree({ category: 'top', sleeve_length: 'long', neckline: 'halter' }), 1, 'a halter neckline alone is upper-body exposure, sleeve length aside')
+
+  // A bottom only has the hem region — no sleeve/neckline concept applies at all.
+  assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'shorts' }), 1)
+  assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'full_length' }), 0)
+
+  // No applicable regions tagged at all -> honest unknown, not a guess.
+  assert.equal(pieceExposureDegree({ category: 'top' }), null)
+  assert.equal(pieceExposureDegree({ category: 'accessory', sleeve_length: 'sleeveless' }), null, 'accessories have no applicable exposure region')
+})
+
+test('pieceWeatherScores/pieceHeatSuitability: owner-specified regression fixtures rerun under the revised evidence model', () => {
+  // 1. The dress that started this — piece 163, "multicolor striped knit maxi dress": medium
+  // weight knit, mixed fiber evidence (viscose is breathable, polyester/nylon are not — genuinely
+  // conflicting, not a 2/3-synthetic fraction), sleeveless but midi-length (half-exposed, not
+  // fully bare), clings_stretchy fit. No confidently non-breathable fiber reading -> no occlusion
+  // penalty either. The partial, real evidence nets to a genuine toss-up rather than a confident
+  // "Good for heat".
+  const dress163 = { category: 'dress', fabric_weight: 'medium', fiber_content: ['viscose', 'polyester', 'nylon'], sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi', fit_on_body: 'clings_stretchy' }
+  assert.equal(pieceHeatSuitability(dress163), 'versatile')
+
+  // 2. The synthetic leggings (piece 996784 shape) — unambiguously non-breathable (polyester,
+  // nylon, spandex — no breathable fiber present to make it 'mixed'), close-fitting, light weight,
+  // no bare region (bottoms have no upper-body exposure concept, and full-length leggings aren't a
+  // bare hem). Still reads worse than a neutral, loose, breathable light piece.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'], length_hits_at: 'full_length' }
+  const looseLightTop = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'drapes', fiber_content: ['cotton'] }
+  assert.ok(pieceWeatherScores(leggings).heat < pieceWeatherScores(looseLightTop).heat, 'occlusive synthetic leggings must still score below a loose breathable piece for heat')
+
+  // 3. A medium cotton tee (piece 223 shape) — light-to-medium weight, unambiguously breathable
+  // (cotton only), sleeveless. Fully exposed (its one applicable region, upper body, is bare) ->
+  // reads as a strong hot-weather pick, not demoted by fit alone.
+  const cottonTee = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'clings_stretchy', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(cottonTee), 'hot')
+
+  // 4. The loose rayon blouse — unambiguously breathable, long sleeves (covered, not bare), light
+  // weight, relaxed fit. Still a clear hot-weather pick on substance/breathability alone, just
+  // without the exposure credit a sleeveless piece would additionally earn.
+  const rayonBlouse = { category: 'top', fabric_weight: 'light', fabric_category: 'rayon', fit_on_body: 'hangs_straight', sleeve_length: 'long', fiber_content: ['rayon'] }
+  assert.equal(pieceHeatSuitability(rayonBlouse), 'hot')
+  assert.ok(pieceWeatherScores(rayonBlouse).heat < pieceWeatherScores(cottonTee).heat, 'a covered light piece must still score below a bare one of the same substance')
+
+  // 5. The original sleeveless medium-weight summer dress ("well this dress weight is medium, but
+  // it does not make it warm") — medium weight alone, cotton (breathable, not insulating),
+  // sleeveless, no length_hits_at tagged (so exposure is judged on the one applicable, tagged
+  // region: upper body, fully bare -> exposure degree 1, not diluted by an untagged hem field).
+  const summerDress = { category: 'dress', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(summerDress), 'hot')
 })
 
 test('wholeWardrobePieceTrustDecision and buildVisualComposerRoster share one hot-weather insulation model, with their pre-existing policy differences kept intentional and explicit', () => {
