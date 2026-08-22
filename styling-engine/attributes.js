@@ -298,7 +298,15 @@ export function pieceHasOcclusiveFit(p) {
 // between, and an unknown/untagged/all-"unknown" fiber_content returns 0 (no opinion, not a guess
 // in either direction). This is graded evidence for weatherFitForPiece/pieceWeatherScores, not a
 // replacement for pieceHasOcclusiveFit's boolean gate above (kept as-is for its own call sites).
-const BREATHABLE_FIBERS = new Set(['cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'tencel', 'modal', 'rayon', 'viscose', 'hemp', 'denim'])
+//
+// Deliberately excludes INSULATING_FIBERS (wool, cashmere, alpaca...) even though wool genuinely
+// does breathe/wick moisture — real regression: a wool fleece vest scored breathability +1 on top
+// of its own insulating-material penalty, undoing 5 of that penalty's 6 points before bareness
+// even applied, and the combination flipped a genuinely warm piece to "Good for heat". A fiber
+// shouldn't argue "insulating, bad for heat" and "breathable, good for heat" from the same tag —
+// once a fiber's already counted as insulating evidence, it stops contributing to breathability
+// (treated as neutral there, not double-counted in the opposite direction).
+const BREATHABLE_FIBERS = new Set(['cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'hemp', 'denim'])
 export function pieceFiberBreathability(p) {
   const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
     .map(f => String(f).toLowerCase().trim())

@@ -227,7 +227,7 @@ export function pieceWeatherEvidence(piece = {}) {
   if (massIndex === null && !insulatingMaterial && breathability === 0 && !coverage && !bareness && !warmNeckline && !longSleeves && !occlusion) {
     return null
   }
-  return { massIndex, insulatingMaterial, breathability, coverage, bareness, warmNeckline, longSleeves, occlusion }
+  return { group, massIndex, insulatingMaterial, breathability, coverage, bareness, warmNeckline, longSleeves, occlusion }
 }
 
 // Graded hot/cold numeric scores built from pieceWeatherEvidence — see that function's comment for
@@ -238,7 +238,7 @@ export function pieceWeatherEvidence(piece = {}) {
 export function pieceWeatherScores(piece = {}) {
   const evidence = pieceWeatherEvidence(piece)
   if (!evidence) return { heat: 0, cold: 0, evidence: null }
-  const { massIndex, insulatingMaterial, breathability, coverage, bareness, warmNeckline, longSleeves, occlusion } = evidence
+  const { group, massIndex, insulatingMaterial, breathability, coverage, bareness, warmNeckline, longSleeves, occlusion } = evidence
   const W = WEATHER_EVIDENCE_WEIGHTS
   const heatScale = heatCoverageScale(massIndex)
 
@@ -265,7 +265,15 @@ export function pieceWeatherScores(piece = {}) {
   if (longSleeves) {
     heat -= W.sleeveHeat * (heatScale / 2)
   }
-  if (bareness === 'high') {
+  // Real regression: a sleeveless wool/cashmere vest (outerwear) got the full heat-friendly
+  // bareness credit meant for a bare TOP or DRESS. A vest's missing sleeves aren't exposed skin —
+  // they're a layering choice (a vest is worn OVER a sleeved base, not against bare arms the way a
+  // tank top is), so "sleeveless" there says nothing about ventilation, and nothing about cold
+  // exposure either — the same reasoning applies to both directions: a sleeveless insulated vest
+  // isn't meaningfully less warm for cold weather than the same fabric with sleeves would be,
+  // because it's never worn as the only sleeve-bearing layer. Bareness is skipped entirely for
+  // outerwear rather than only on the heat side.
+  if (bareness === 'high' && group !== 'outerwear') {
     heat += W.bareHeat
     cold -= W.bareCold
   }

@@ -1014,6 +1014,18 @@ test('pieceFiberBreathability: a graded ratio, not a name-based boolean — cott
   // A material this function has no opinion on (e.g. metal, on a trim-heavy piece) doesn't count
   // as evidence either way.
   assert.equal(pieceFiberBreathability({ fiber_content: ['metal'] }), 0)
+
+  // Real regression: wool is genuinely breathable in the everyday sense (wicks moisture, doesn't
+  // trap sweat), but it's ALSO an insulating fiber — counting it on both axes double-counted the
+  // same tag in opposite directions and let a wool fleece vest's breathability credit (+1) undo
+  // 5 of its own insulating-material penalty's 6 points before anything else was even scored.
+  // Insulating fibers are excluded from this ratio entirely (neutral, not double-counted) rather
+  // than contributing a breathability bonus that partially cancels their own insulating evidence.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['wool'] }), 0)
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cashmere'] }), 0)
+  // A blend of an insulating fiber with a genuinely non-breathable one still reads non-breathable
+  // — the insulating fiber just doesn't ALSO pull it back toward neutral/positive.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['wool', 'polyester'] }), -1)
 })
 
 test('pieceOcclusiveFitDegree: graded by construction, with silhouette as a fallback where fit_on_body is untagged', () => {
@@ -1075,6 +1087,32 @@ test('pieceWeatherScores: graded, multi-factor evidence — no single property i
   // fabric itself is light, same direction as a loose natural-fiber piece of the same weight.
   const looseLightSynthetic = { category: 'top', fabric_weight: 'light', fit_on_body: 'drapes', fiber_content: ['polyester'] }
   assert.ok(pieceWeatherScores(looseLightSynthetic).heat > 0, 'a loose light synthetic piece must not be penalized to negative purely for fiber name')
+})
+
+test('pieceWeatherScores: real-data regression — a sleeveless insulated vest reads Good for cold, not Good for heat', () => {
+  // Real wardrobe pieces 990394 ("rust asymmetric zip fleece vest", wool, medium) and 142 ("dark
+  // grey open front vest", cashmere, medium) both landed in "Good for heat" before this fix, from
+  // two compounding bugs: (1) wool/cashmere's breathability credit was undoing most of their own
+  // insulating-material penalty (fixed above — insulating fibers no longer count toward
+  // breathability), and (2) the sleeveless-bareness heat credit meant for a bare TOP/DRESS was
+  // applying to a VEST, whose missing sleeves are a layering trait, not exposed skin — a vest is
+  // worn over a sleeved base, not against bare arms.
+  const woolVest = { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'sleeveless' }
+  const cashmereVest = { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cashmere', fiber_content: ['cashmere'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(woolVest), 'cold')
+  assert.equal(pieceHeatSuitability(cashmereVest), 'cold')
+
+  // Control: a genuinely bare-skin sleeveless piece (top/dress) is unaffected — it still gets the
+  // full bareness heat credit, since sleeveless there really does mean exposed skin.
+  const sleevelessLinenTop = { category: 'top', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(sleevelessLinenTop), 'hot')
+
+  // Control: a sleeveless LIGHT, non-insulating outerwear piece (a light vest with no warm fiber)
+  // correctly gets no bareness credit either way — the outerwear exemption applies to the
+  // category, not just to insulating pieces — but still reads on the strength of its light,
+  // breathable substance alone.
+  const lightCottonVest = { category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(lightCottonVest), 'hot')
 })
 
 test('wholeWardrobePieceTrustDecision and buildVisualComposerRoster share one hot-weather insulation model, with their pre-existing policy differences kept intentional and explicit', () => {
