@@ -7,7 +7,7 @@ import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { colorTaggerInstruction, sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
-import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
+import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, normalizeOuterwearRole, normalizeWeatherProtection, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
   prepareImageForClaude,
@@ -481,6 +481,8 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     tags.formality = normalizeFormality(tags.formality)
     tags.heel_height = normalizeHeelHeight(tags.heel_height)
     tags.walk_support = normalizeWalkSupport(tags.walk_support)
+    tags.outerwear_role = normalizeOuterwearRole(tags.outerwear_role)
+    tags.weather_protection = normalizeWeatherProtection(tags.weather_protection)
     tags.style_profile_json = {
       ...(tags.style_profile_json || {}),
       _confidence: confidence,
@@ -1162,6 +1164,8 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "opacity": "opaque|semi_sheer|sheer|open_weave",
       "stretch": "none|minimal|moderate|stretchy|null (clothing only; null/omit for shoes/accessory. Tag conservatively; omit if the photo does not show enough to judge)",
       "needs_base": "yes|no|null (omit unless clearly a construction that cannot be worn alone against skin — conservative default is null, not 'no')",
+      "outerwear_role": "indoor_layer|transition_layer|protective_shell|cold_weather_outerwear|null (outerwear only; null/omit for non-outerwear, and null when evidence is insufficient — do not guess). Functional judgment of what job this garment can do as an OUTER layer outdoors, independent of fabric weight: indoor_layer = modest warmth/styling layer, no real outdoor protection; transition_layer = primary outer layer for mild/cool conditions, not a true shell or winter coat; protective_shell = built to block wind/rain rather than insulate, can be thermally light; cold_weather_outerwear = genuine cold-weather layer with substantial insulation. Do not infer from fabric weight, wool, nylon, or the words coat/jacket/cardigan alone.",
+      "weather_protection": "array, 0-2 values from: rain, wind (outerwear only; empty array for non-outerwear or when evidence is insufficient — an empty array is common and normal, not a gap). SEPARATE from outerwear_role — a protective_shell is not automatically both, a transition/cold-weather piece is not automatically empty. Include 'rain' only with genuine construction evidence (coated/sealed face fabric, built as a rain shell) — nylon/polyester fiber alone is not evidence. Include 'wind' only with genuine construction evidence (tight wind-blocking weave, built as a windbreaker) — heavy fabric weight or wool alone is not evidence. A windbreaker is typically ['wind'] only; a raincoat is typically ['rain'] only.",
       "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, hemp, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, tweed, metal, stone, wood, ceramic, glass, horn, shell, resin, pearl, crystal, enamel, unknown. metal/stone/wood/ceramic/glass/horn/shell/resin/pearl/crystal/enamel are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. Use 'unknown' if not determinable."],
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",

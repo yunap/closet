@@ -23,6 +23,8 @@ const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat
 const VALID_BOTTOM_SUBTYPE = new Set(['pants', 'shorts', 'skirt', 'culottes', 'overalls', 'other', 'unknown'])
 const VALID_JEWELRY_TYPE = new Set(['necklace', 'earrings', 'bracelet', 'ring', 'pin'])
 const VALID_NECKLACE_LENGTH = new Set(['choker', 'short', 'long'])
+const VALID_OUTERWEAR_ROLE = new Set(['indoor_layer', 'transition_layer', 'protective_shell', 'cold_weather_outerwear'])
+const VALID_WEATHER_PROTECTION = new Set(['rain', 'wind'])
 
 export const CONFIDENCE_FIELDS = [
   'category',
@@ -56,7 +58,9 @@ export const CONFIDENCE_FIELDS = [
   'fit_on_body',
   'tuck_behavior',
   'waistband_type',
-  'needs_base'
+  'needs_base',
+  'outerwear_role',
+  'weather_protection'
 ]
 
 export function normalizeConfidenceMap(value = {}, fields = CONFIDENCE_FIELDS) {
@@ -108,6 +112,21 @@ export function normalizeJewelryType(value) {
 
 export function normalizeNecklaceLength(value) {
   return normalizeEnumValue(value, VALID_NECKLACE_LENGTH)
+}
+
+export function normalizeOuterwearRole(value) {
+  return normalizeEnumValue(value, VALID_OUTERWEAR_ROLE)
+}
+
+// Unlike normalizeFiberContent, an empty result is left as [] rather than defaulted to
+// ['unknown'] — "no reliable protection identified" is a legitimate, common answer (an ordinary
+// denim jacket has neither), not a gap to flag.
+export function normalizeWeatherProtection(value = []) {
+  const raw = Array.isArray(value) ? value : []
+  const normalized = raw
+    .map(v => String(v || '').toLowerCase().trim())
+    .filter(v => VALID_WEATHER_PROTECTION.has(v))
+  return [...new Set(normalized)]
 }
 
 export function normalizePhotoProperties(value = {}) {
@@ -310,6 +329,8 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   if ('bottom_subtype' in patch) patch.bottom_subtype = normalizeBottomSubtype(patch.bottom_subtype)
   if ('jewelry_type' in patch) patch.jewelry_type = normalizeJewelryType(patch.jewelry_type)
   if ('necklace_length' in patch) patch.necklace_length = normalizeNecklaceLength(patch.necklace_length)
+  if ('outerwear_role' in patch) patch.outerwear_role = normalizeOuterwearRole(patch.outerwear_role)
+  if ('weather_protection' in patch) patch.weather_protection = normalizeWeatherProtection(patch.weather_protection)
   delete patch._confidence
   delete patch.photo_properties
   delete patch.cross_photo_agreement_note

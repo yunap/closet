@@ -7,7 +7,9 @@ import {
   normalizeConfidenceMap,
   normalizeFormality,
   normalizeHeelHeight,
+  normalizeOuterwearRole,
   normalizeWalkSupport,
+  normalizeWeatherProtection,
   tagStateForTaggerResult
 } from '../styling-engine/taggerMerge.js'
 import {
@@ -83,6 +85,36 @@ test('formality and shoe support enums normalize without text guessing', () => {
   assert.equal(pieceHeelHeight({ name: 'wedge heel' }), null)
   assert.equal(pieceWalkSupport({ name: 'ballet flat', walk_support: 'low' }), 'low')
   assert.equal(pieceWalkSupport({ name: 'ballet flat' }), null)
+})
+
+test('normalizeOuterwearRole and normalizeWeatherProtection: strict enum vs multi-select with no fallback', () => {
+  assert.equal(normalizeOuterwearRole('protective_shell'), 'protective_shell')
+  assert.equal(normalizeOuterwearRole('Cold_Weather_Outerwear'), 'cold_weather_outerwear')
+  assert.equal(normalizeOuterwearRole('weatherproof'), null)
+  assert.equal(normalizeOuterwearRole(undefined), null)
+
+  // Unlike normalizeFiberContent, an unrecognized/empty result is [] — "no reliable protection
+  // identified" is a legitimate answer, never defaulted to a placeholder like ['unknown'].
+  assert.deepEqual(normalizeWeatherProtection(['rain', 'wind']), ['rain', 'wind'])
+  assert.deepEqual(normalizeWeatherProtection(['WIND']), ['wind'])
+  assert.deepEqual(normalizeWeatherProtection(['rain', 'rain']), ['rain'], 'dedupes')
+  assert.deepEqual(normalizeWeatherProtection(['rain', 'waterproof']), ['rain'], 'drops unrecognized values instead of nulling the whole field')
+  assert.deepEqual(normalizeWeatherProtection([]), [])
+  assert.deepEqual(normalizeWeatherProtection(undefined), [])
+  assert.deepEqual(normalizeWeatherProtection('rain'), [], 'a non-array input is not coerced — treated as no data')
+})
+
+test('applyTaggerResult normalizes outerwear_role and weather_protection', () => {
+  const merged = applyTaggerResult(
+    { id: 1, name: 'test jacket', category: 'outerwear', manual_overrides: [] },
+    {
+      outerwear_role: 'Protective_Shell',
+      weather_protection: ['WIND', 'not_a_hazard'],
+      _confidence: { outerwear_role: 'medium', weather_protection: 'high' }
+    }
+  )
+  assert.equal(merged.outerwear_role, 'protective_shell')
+  assert.deepEqual(merged.weather_protection, ['wind'])
 })
 
 test('applyTaggerResult normalizes formality and shoe support fields', () => {

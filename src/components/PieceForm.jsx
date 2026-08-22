@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
 import { ColorEditor } from './ColorSelector.jsx'
+import InfoTooltip from './InfoTooltip.jsx'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
@@ -175,6 +176,8 @@ const CONSTRUCTION_BY_CATEGORY = {
 
 const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','slip_on','other','unknown']
 const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
+const OUTERWEAR_ROLE_OPTIONS = ['indoor_layer','transition_layer','protective_shell','cold_weather_outerwear']
+const WEATHER_PROTECTION_OPTIONS = ['rain','wind']
 
 const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
 const BOTTOM_PANTS_SILHOUETTE_OPTIONS = ['straight_leg','wide_leg','bootcut','flare','tapered','barrel','relaxed']
@@ -458,6 +461,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Shoes
     shoe_type:          piece?.shoe_type          || null,
     toe_shape:          piece?.toe_shape          || null,
+    // Outerwear
+    outerwear_role:     piece?.outerwear_role     || null,
+    weather_protection: piece?.weather_protection || [],
     // Learned wisdom
     styling_rules_learned: piece?.styling_rules_learned || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
@@ -673,6 +679,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
       applyTagValue(next, 'shoe_type', tags.shoe_type)
       applyTagValue(next, 'toe_shape', tags.toe_shape)
+      applyTagValue(next, 'outerwear_role', tags.outerwear_role)
+      applyTagValue(next, 'weather_protection', tags.weather_protection)
       applyTagValue(next, 'jewelry_type', tags.jewelry_type)
       applyTagValue(next, 'necklace_length', tags.necklace_length)
       next.style_profile_json = mergeTagProfile(form.style_profile_json, tags.style_profile_json)
@@ -1271,6 +1279,37 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 <div className={`form-group ${suggestedFields.has('bottom_subtype') ? 'retag-field-highlight' : ''}`} data-piece-field="bottom_subtype">
                   <FieldLabel field="bottom_subtype">Bottom Type {suggestedFields.has('bottom_subtype') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
                   <ChipRow options={BOTTOM_SUBTYPE_OPTIONS} value={form.bottom_subtype} onChange={v => set('bottom_subtype', v)} />
+                </div>
+              )}
+
+              {cat === 'outerwear' && (
+                <div className={`form-group ${suggestedFields.has('outerwear_role') ? 'retag-field-highlight' : ''}`} data-piece-field="outerwear_role">
+                  <FieldLabel field="outerwear_role">
+                    Outerwear Role
+                    <InfoTooltip className="outerwear-info-tooltip" label="What outerwear role means" size="sm" align="left" width={260}>
+                      <div>Describes what this layer is functionally suited to do — not how warm it is.</div>
+                      <div><strong>Indoor layer</strong> — light layering, mostly indoors</div>
+                      <div><strong>Transition layer</strong> — outer layer for mild/cool weather</div>
+                      <div><strong>Protective shell</strong> — wind/rain protection, not necessarily warm</div>
+                      <div><strong>Cold-weather outerwear</strong> — substantial outer layer for genuinely cold weather</div>
+                    </InfoTooltip>
+                    {suggestedFields.has('outerwear_role') && <span className="retag-review-marker">Review suggested</span>}
+                  </FieldLabel>
+                  <ChipRow options={OUTERWEAR_ROLE_OPTIONS} value={form.outerwear_role} onChange={v => set('outerwear_role', v)} />
+                </div>
+              )}
+
+              {cat === 'outerwear' && (
+                <div className={`form-group ${suggestedFields.has('weather_protection') ? 'retag-field-highlight' : ''}`} data-piece-field="weather_protection">
+                  <FieldLabel field="weather_protection">
+                    Weather Protection
+                    <InfoTooltip className="outerwear-info-tooltip" label="What weather protection means" size="sm" align="left" width={260}>
+                      <div>Which specific hazard this layer reliably protects against, if any — separate from its role above.</div>
+                      <div>Leave both unchecked if the piece doesn't clearly protect against rain or wind (this is normal for most pieces).</div>
+                    </InfoTooltip>
+                    {suggestedFields.has('weather_protection') && <span className="retag-review-marker">Review suggested</span>}
+                  </FieldLabel>
+                  <ChipRow options={WEATHER_PROTECTION_OPTIONS} value={form.weather_protection} onChange={v => set('weather_protection', v)} multi />
                 </div>
               )}
 

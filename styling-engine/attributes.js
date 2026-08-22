@@ -8,6 +8,8 @@ export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', '
   'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown']
 export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'])
 export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
+export const OUTERWEAR_ROLE_VALUES = ['indoor_layer', 'transition_layer', 'protective_shell', 'cold_weather_outerwear']
+export const WEATHER_PROTECTION_VALUES = ['rain', 'wind']
 export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
 export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
@@ -144,6 +146,30 @@ export function pieceWarmthTier(p) {
   if (pieceCoverage(p) === 'full') return 'medium'
   if (bare) return 'light'
   return null
+}
+
+// outerwear-weather-capability-spec.md — a second, independent outerwear axis: what weather
+// function this outer layer can perform (indoor_layer/transition_layer/protective_shell/
+// cold_weather_outerwear), deliberately kept separate from pieceWeatherScores' thermal model (a
+// windbreaker can be thermally light while still being a protective_shell). category-gated, not
+// tag-gated — a stray value on a non-outerwear piece, or an unrecognized stored value, is an
+// honest null rather than trusted data. No consumer reads this yet (see spec §5/§7); this is the
+// shared read point so a future consumer never re-derives the category guard.
+export function pieceOuterwearRole(p) {
+  if (wardrobeCategoryGroup(p) !== 'outerwear') return null
+  return OUTERWEAR_ROLE_VALUES.includes(p?.outerwear_role) ? p.outerwear_role : null
+}
+
+// weather_protection — a second, independent outerwear axis alongside outerwear_role: which
+// specific hazard (rain/wind), if any, this layer reliably protects against. A protective_shell
+// role does not imply either value by itself (a windbreaker isn't automatically rain-protective,
+// a raincoat isn't automatically wind-protective) — see outerwear-weather-capability-spec.md §3.
+// Category-gated like pieceOuterwearRole; defensive against non-array/unrecognized stored data
+// rather than trusting it was already normalized.
+export function pieceWeatherProtection(p) {
+  if (wardrobeCategoryGroup(p) !== 'outerwear') return []
+  const raw = Array.isArray(p?.weather_protection) ? p.weather_protection : []
+  return raw.filter(v => WEATHER_PROTECTION_VALUES.includes(v))
 }
 
 export function formalityRank(value) {

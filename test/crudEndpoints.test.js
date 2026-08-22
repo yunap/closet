@@ -700,3 +700,56 @@ test('needs_base round-trips through piece create and update, distinguishing uns
 
   await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
 })
+
+test('outerwear_role round-trips for outerwear pieces and is strictly validated', async () => {
+  const fd = new FormData()
+  fd.append('name', 'insulated puffer coat')
+  fd.append('category', 'outerwear')
+  fd.append('outerwear_role', 'cold_weather_outerwear')
+  const createRes = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })
+  assert.equal(createRes.status, 200)
+  const created = await createRes.json()
+  assert.equal(created.outerwear_role, 'cold_weather_outerwear')
+
+  const updateFd = new FormData()
+  updateFd.append('name', 'insulated puffer coat')
+  updateFd.append('category', 'outerwear')
+  updateFd.append('outerwear_role', 'not_a_real_role')
+  const updateRes = await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: updateFd })
+  assert.equal(updateRes.status, 200)
+  const updated = await updateRes.json()
+  assert.equal(updated.outerwear_role, null, 'an unrecognized value must be silently nulled, the same strict-enum failure mode as formality/bottom_subtype')
+
+  await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
+})
+
+test('weather_protection round-trips as a multi-select array and drops unrecognized values', async () => {
+  const fd = new FormData()
+  fd.append('name', 'rain shell jacket')
+  fd.append('category', 'outerwear')
+  fd.append('weather_protection', JSON.stringify(['rain', 'wind']))
+  const createRes = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })
+  assert.equal(createRes.status, 200)
+  const created = await createRes.json()
+  assert.deepEqual(created.weather_protection, ['rain', 'wind'])
+
+  const updateFd = new FormData()
+  updateFd.append('name', 'rain shell jacket')
+  updateFd.append('category', 'outerwear')
+  updateFd.append('weather_protection', JSON.stringify(['rain', 'waterproof']))
+  const updateRes = await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: updateFd })
+  assert.equal(updateRes.status, 200)
+  const updated = await updateRes.json()
+  assert.deepEqual(updated.weather_protection, ['rain'], 'an unrecognized array member is dropped, not defaulted or nulling the whole field')
+
+  const clearFd = new FormData()
+  clearFd.append('name', 'rain shell jacket')
+  clearFd.append('category', 'outerwear')
+  clearFd.append('weather_protection', JSON.stringify([]))
+  const clearRes = await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: clearFd })
+  assert.equal(clearRes.status, 200)
+  const cleared = await clearRes.json()
+  assert.deepEqual(cleared.weather_protection, [], 'an empty array is a legitimate answer, not an error')
+
+  await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
+})
