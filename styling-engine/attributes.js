@@ -291,6 +291,49 @@ export function pieceHasOcclusiveFit(p) {
   return String(p?.fabric_category || '').toLowerCase().trim() === 'technical/performance'
 }
 
+// Breathable/known fibers with real natural or cellulosic airflow — the positive counterpart to
+// NON_BREATHABLE_ONLY_FIBERS. A garment's fiber_content is rarely one pure material, so this
+// returns a RATIO (-1..1) across whatever fibers are actually known, rather than a boolean:
+// entirely breathable fibers -> +1, entirely non-breathable -> -1, a genuine blend lands in
+// between, and an unknown/untagged/all-"unknown" fiber_content returns 0 (no opinion, not a guess
+// in either direction). This is graded evidence for weatherFitForPiece/pieceWeatherScores, not a
+// replacement for pieceHasOcclusiveFit's boolean gate above (kept as-is for its own call sites).
+const BREATHABLE_FIBERS = new Set(['cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'tencel', 'modal', 'rayon', 'viscose', 'hemp', 'denim'])
+export function pieceFiberBreathability(p) {
+  const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
+    .map(f => String(f).toLowerCase().trim())
+    .filter(f => f && f !== 'unknown')
+  if (!fibers.length) return 0
+  let breathable = 0
+  let nonBreathable = 0
+  for (const f of fibers) {
+    if (BREATHABLE_FIBERS.has(f)) breathable++
+    else if (NON_BREATHABLE_ONLY_FIBERS.has(f)) nonBreathable++
+  }
+  const known = breathable + nonBreathable
+  return known ? (breathable - nonBreathable) / known : 0
+}
+
+// How much the CUT itself restricts airflow against skin, independent of the fabric it's made
+// from — a graded degree (0..1) rather than pieceHasOcclusiveFit's boolean, so it can be combined
+// multiplicatively with breathability (a close cut in breathable cotton isn't penalized; a close
+// cut in non-breathable synthetic is) instead of needing its own hard-coded material check.
+// fit_on_body is well-tagged for bottoms (~97%) but sparse for top/dress/outerwear (35-52% —
+// docs/garment-field-reference.md field audit); silhouette is the inverse (weak for bottoms,
+// 85-95% for top/dress/outerwear) and carries the same "fitted vs relaxed" information in its own
+// vocabulary, so it's the natural fallback rather than leaving those categories with no signal.
+export function pieceOcclusiveFitDegree(p) {
+  const fit = String(p?.fit_on_body || '').toLowerCase().trim()
+  if (fit === 'clings_stretchy') return 1
+  if (fit === 'clings_drapey') return 0.6
+  if (fit === 'skims') return 0.25
+  if (fit) return 0
+  const silhouette = String(p?.silhouette || '').toLowerCase().trim()
+  if (silhouette === 'fitted' || silhouette === 'slim') return 0.6
+  if (silhouette === 'sheath' || silhouette === 'column') return 0.5
+  return 0
+}
+
 // Physical coverage — how much body area the garment's sleeve/hem extends over. Deliberately NOT
 // a warmth conclusion: whether "full" coverage actually means anything for warmth depends on the
 // fabric it's made of (a full-length silk skirt is not a warm layer), so callers that care about
