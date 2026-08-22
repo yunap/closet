@@ -93,7 +93,7 @@ const WARMTHS = [
   { value: '',          label: 'All pieces' },
   { value: 'hot',       label: 'Good for heat' },
   { value: 'cold',      label: 'Good for cold' },
-  { value: 'versatile', label: 'Versatile' },
+  { value: 'versatile', label: 'Mild weather' },
 ]
 
 const SORT_OPTIONS = [
