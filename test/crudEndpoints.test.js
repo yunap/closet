@@ -258,50 +258,52 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   await fetch(`${baseUrl}/api/pieces/${piece3.id}`, { method: 'DELETE' })
 })
 
-test('GET /api/pieces?warmth= filters on the same fabric_weight + insulating-fiber signal the styling engine uses', async () => {
-  // Light fabric, no insulating fiber -> stays 'light'.
-  const fdLight = new FormData()
-  fdLight.append('name', 'light cotton tank')
-  fdLight.append('category', 'top')
-  fdLight.append('fabric_weight', 'light')
-  fdLight.append('fiber_content', JSON.stringify(['cotton']))
-  const pieceLight = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdLight })).json()
+test('GET /api/pieces?warmth= filters on pieceHeatSuitability (the hot/cold/versatile weather-fit readout), not the raw fabric_weight tier', async () => {
+  // Light fabric, no insulating fiber, ordinary fit -> hot score outweighs cold -> 'hot'.
+  const fdHot = new FormData()
+  fdHot.append('name', 'light cotton tank')
+  fdHot.append('category', 'top')
+  fdHot.append('fabric_weight', 'light')
+  fdHot.append('fiber_content', JSON.stringify(['cotton']))
+  const pieceHot = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdHot })).json()
 
-  // Light fabric BUT an insulating fiber -> bumped to 'medium' (a lightweight wool knit still
-  // runs warmer than a lightweight cotton one).
-  const fdBumped = new FormData()
-  fdBumped.append('name', 'lightweight wool knit top')
-  fdBumped.append('category', 'top')
-  fdBumped.append('fabric_weight', 'light')
-  fdBumped.append('fiber_content', JSON.stringify(['wool']))
-  const pieceBumped = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdBumped })).json()
+  // Heavy fabric with an insulating fiber -> cold score outweighs hot -> 'cold'.
+  const fdCold = new FormData()
+  fdCold.append('name', 'heavy wool sweater')
+  fdCold.append('category', 'top')
+  fdCold.append('fabric_weight', 'heavy')
+  fdCold.append('fiber_content', JSON.stringify(['wool']))
+  const pieceCold = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdCold })).json()
 
-  // Heavy fabric with an insulating fiber -> stays 'heavy' (no double-bump past the ceiling).
-  const fdHeavy = new FormData()
-  fdHeavy.append('name', 'heavy wool sweater')
-  fdHeavy.append('category', 'top')
-  fdHeavy.append('fabric_weight', 'heavy')
-  fdHeavy.append('fiber_content', JSON.stringify(['wool']))
-  const pieceHeavy = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdHeavy })).json()
+  // Light fabric BUT a skin-tight, occlusive fit -> loses the hot-weather bonus (real regression:
+  // "floral botanical print active leggings", fit_on_body: clings_stretchy) without picking up a
+  // cold-weather one either -> 'versatile', not 'hot'.
+  const fdVersatile = new FormData()
+  fdVersatile.append('name', 'fitted technical leggings')
+  fdVersatile.append('category', 'bottom')
+  fdVersatile.append('fabric_weight', 'light')
+  fdVersatile.append('fiber_content', JSON.stringify(['polyester', 'spandex']))
+  fdVersatile.append('fit_on_body', 'clings_stretchy')
+  const pieceVersatile = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdVersatile })).json()
 
-  const light = await (await fetch(`${baseUrl}/api/pieces?warmth=light`)).json()
-  assert.ok(light.some(p => p.id === pieceLight.id))
-  assert.ok(!light.some(p => p.id === pieceBumped.id))
-  assert.ok(!light.some(p => p.id === pieceHeavy.id))
+  const hot = await (await fetch(`${baseUrl}/api/pieces?warmth=hot`)).json()
+  assert.ok(hot.some(p => p.id === pieceHot.id))
+  assert.ok(!hot.some(p => p.id === pieceCold.id))
+  assert.ok(!hot.some(p => p.id === pieceVersatile.id))
 
-  const medium = await (await fetch(`${baseUrl}/api/pieces?warmth=medium`)).json()
-  assert.ok(medium.some(p => p.id === pieceBumped.id))
-  assert.ok(!medium.some(p => p.id === pieceLight.id))
-  assert.ok(!medium.some(p => p.id === pieceHeavy.id))
+  const cold = await (await fetch(`${baseUrl}/api/pieces?warmth=cold`)).json()
+  assert.ok(cold.some(p => p.id === pieceCold.id))
+  assert.ok(!cold.some(p => p.id === pieceHot.id))
+  assert.ok(!cold.some(p => p.id === pieceVersatile.id))
 
-  const heavy = await (await fetch(`${baseUrl}/api/pieces?warmth=heavy`)).json()
-  assert.ok(heavy.some(p => p.id === pieceHeavy.id))
-  assert.ok(!heavy.some(p => p.id === pieceLight.id))
-  assert.ok(!heavy.some(p => p.id === pieceBumped.id))
+  const versatile = await (await fetch(`${baseUrl}/api/pieces?warmth=versatile`)).json()
+  assert.ok(versatile.some(p => p.id === pieceVersatile.id))
+  assert.ok(!versatile.some(p => p.id === pieceHot.id))
+  assert.ok(!versatile.some(p => p.id === pieceCold.id))
 
-  await fetch(`${baseUrl}/api/pieces/${pieceLight.id}`, { method: 'DELETE' })
-  await fetch(`${baseUrl}/api/pieces/${pieceBumped.id}`, { method: 'DELETE' })
-  await fetch(`${baseUrl}/api/pieces/${pieceHeavy.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${pieceHot.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${pieceCold.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${pieceVersatile.id}`, { method: 'DELETE' })
 })
 
 test('CRUD operations for /api/chat-threads', async () => {

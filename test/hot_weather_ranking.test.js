@@ -16,8 +16,8 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
-const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
-const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier } = await import('../styling-engine/attributes.js')
+const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, pieceWeatherScores, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit, pieceFiberBreathability, pieceOcclusiveFitDegree, pieceExposureDegree } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
@@ -776,23 +776,63 @@ test('pieceWarmthTier: an insulating fabric_category counts even when fiber_cont
   assert.equal(pieceWarmthTier({ fabric_category: 'cotton' }), null)
 })
 
-test('pieceWarmthTier: a directly-tagged fabric_weight is authoritative — coverage/bareness add nothing once it is known', () => {
-  // Owner ruling: length/sleeve/hem data describes how much body area the fabric covers, not what
-  // the fabric itself weighs. Once fabric_weight is directly tagged, it speaks for itself — full
-  // coverage does not additionally promote a medium-weight piece to 'heavy', and a bare cut does
-  // not additionally demote it. This is the general fix for a real regression that "ankle" alone
-  // did not fully resolve: a directly-tagged medium-weight piece was still getting bumped to
-  // 'heavy' by maxi/floor/full-length coverage (real wardrobe piece 129: twill wide-leg pants,
-  // fabric_weight: medium, length_hits_at: full_length — wrongly read as 'heavy').
+test('pieceWarmthTier: a directly-tagged fabric_weight is the starting point — coverage adds nothing once it is known, but a bare cut still moves it', () => {
+  // Owner ruling: hem/sleeve LENGTH data describes how much body area the fabric covers, not what
+  // the fabric itself weighs. Once fabric_weight is directly tagged, full coverage does not
+  // additionally promote a medium-weight piece to 'heavy' — this is the general fix for a real
+  // regression that "ankle" alone did not fully resolve: a directly-tagged medium-weight piece was
+  // still getting bumped to 'heavy' by maxi/floor/full-length coverage (real wardrobe piece 129:
+  // twill wide-leg pants, fabric_weight: medium, length_hits_at: full_length — wrongly read as
+  // 'heavy').
   assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'long' }), 'light')
   assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'maxi' }), 'medium')
   assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'full_length' }), 'medium')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'heavy')
-  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'medium')
+  // 'mini' is bareness evidence (pieceBareness), not coverage — it's a bare cut, not a long hem,
+  // so it moves the tier the same way sleeveless does: medium steps down to light.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', length_hits_at: 'mini' }), 'light')
   // Insulating MATERIAL is still real, additional evidence fabric_weight alone can miss — it
-  // keeps bumping a tier, capped at 'heavy', regardless of coverage/bareness.
-  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'heavy')
+  // keeps bumping a tier, capped at 'heavy'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'long' }), 'heavy')
+  // A bare CUT (as opposed to a long hem) is a different signal — unlike coverage, skin exposure
+  // is real evidence about warmth even once fabric_weight is known, so it still steps the tier
+  // down by one, same shape as the insulating-material bump but in the other direction. This is
+  // the owner-flagged fix for the sleeveless-dress case: fabric_weight: medium alone does not mean
+  // "warm" for a bare-cut garment.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', sleeve_length: 'sleeveless' }), 'medium')
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', sleeve_length: 'sleeveless' }), 'light')
+  // Already at the floor/ceiling -> the step has nowhere further to go.
   assert.equal(pieceWarmthTier({ fabric_weight: 'light', sleeve_length: 'sleeveless' }), 'light')
+  // Insulating material (+1) and a bare cut (-1) on the same piece roughly cancel: a medium wool
+  // sleeveless dress is genuinely less warm than a medium wool long-sleeve top, but the wool still
+  // keeps it from reading as merely 'light'.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'medium', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'medium')
+  // A heavy sleeveless wool dress: the insulating-material bump (+1) and the bare-cut step (-1)
+  // are computed together before clamping, so they net to zero here and it stays 'heavy' — already
+  // at the ceiling, so there's no room left for the bump to register before the bare cut cancels
+  // it. Still well short of 'light' — the wool keeps it far warmer than a bare unlined cotton
+  // garment, which is the case that actually matters.
+  assert.equal(pieceWarmthTier({ fabric_weight: 'heavy', fabric_category: 'wool', sleeve_length: 'sleeveless' }), 'heavy')
+})
+
+test('pieceWarmthTier: real-world dress example — fabric_weight medium does not mean warm when the cut is bare', () => {
+  // Owner's exact pushback: "this dress weight is medium, but it does not make it warm." A
+  // sleeveless medium-weight cotton dress with no insulating material should read as 'light', the
+  // same as a light-weight non-bare piece — the bare cut is doing real thermal work here that
+  // fabric_weight alone can't see.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }),
+    'light'
+  )
+  // Same fabric, long sleeves instead: no bare cut to pull it down, stays medium.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'cotton', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'long' }),
+    'medium'
+  )
+  // A genuinely light fabric, sleeveless, maxi-length dress: nothing to bump it, stays light.
+  assert.equal(
+    pieceWarmthTier({ category: 'dress', fabric_category: 'linen', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless', length_hits_at: 'maxi' }),
+    'light'
+  )
 })
 
 test('pieceWarmthTier: coverage/bareness are a weak, gap-filling fallback only when fabric_weight is completely untagged', () => {
@@ -820,6 +860,31 @@ test('pieceCoverage: physical coverage only — no warmth conclusion baked in, a
   assert.equal(pieceCoverage({ length_hits_at: 'maxi' }), 'full')
   assert.equal(pieceCoverage({ length_hits_at: 'full_length' }), 'full')
   assert.equal(pieceCoverage({ sleeve_length: 'long' }), 'full')
+})
+
+test('pieceBareness: length_hits_at bare-hemline check is scoped to values that actually mean short/exposing, not every category\'s vocabulary', () => {
+  // Real regression: "light grey and brown knit cardigan" (piece 131, category outerwear) —
+  // cashmere, fabric_weight: medium, length_hits_at: mid_thigh — read as bareness: 'high', which
+  // cancelled out the insulating-material tier bump and landed it in "Versatile" instead of
+  // "Good for cold". length_hits_at is a genuinely per-category vocabulary
+  // (docs/garment-field-reference.md): 'mid_thigh' is valid ONLY for outerwear, where it means how
+  // far DOWN a coat/cardigan extends (waist < hip < mid_thigh < knee) — the opposite direction from
+  // bareness. A mid-thigh cardigan is longer/more covering than a hip-length one, not bare (real
+  // data: piece 996760 "fleece coat", length_hits_at: mid_thigh — clearly a long, covering coat).
+  assert.equal(pieceBareness({ category: 'outerwear', length_hits_at: 'mid_thigh' }), null)
+  assert.equal(pieceBareness({ category: 'outerwear', length_hits_at: 'knee' }), null)
+  // 'upper_thigh' isn't a valid length_hits_at value in any current category's schema — dead
+  // legacy text, not a real bare-hemline signal.
+  assert.equal(pieceBareness({ length_hits_at: 'upper_thigh' }), null)
+  // 'mini' (dress/skirt) and 'shorts' (pants) remain real, current bare-hemline values.
+  assert.equal(pieceBareness({ category: 'dress', length_hits_at: 'mini' }), 'high')
+  assert.equal(pieceBareness({ category: 'bottom', length_hits_at: 'shorts' }), 'high')
+})
+
+test('pieceWarmthTier: real-data regression — cashmere cardigan (medium, mid_thigh outerwear length) reads warm, not cancelled out by a false bareness signal', () => {
+  const cardigan = { category: 'outerwear', name: 'light grey and brown knit cardigan', fabric_category: 'cashmere', fabric_weight: 'medium', fiber_content: ['cashmere'], sleeve_length: 'long', neckline: 'none', length_hits_at: 'mid_thigh' }
+  assert.equal(pieceWarmthTier(cardigan), 'heavy')
+  assert.equal(pieceHeatSuitability(cardigan), 'cold')
 })
 
 test('pieceWarmthTier: real-data regression — cream wide-leg terry drawstring pants (cotton, medium, ankle) stays medium', () => {
@@ -850,4 +915,402 @@ test('pieceWarmthTier: shoes and accessories are always unknown, even with a tag
   assert.equal(pieceWarmthTier({ category: 'accessory', name: 'wool scarf', fabric_weight: 'heavy', fabric_category: 'wool' }), null)
   // Garments in the same weight/material tier are unaffected.
   assert.equal(pieceWarmthTier({ category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fabric_category: 'wool' }), 'heavy')
+})
+
+test('pieceHasOcclusiveFit: requires BOTH a close fit AND no natural fiber — a fitted cotton tee is not occlusive', () => {
+  // Real regression in the other direction: piece 223 "ivory graphic print crew tee" is 100%
+  // cotton, tagged fit_on_body: clings_stretchy (an ordinary fitted tee) — an earlier version of
+  // this function flagged fit alone, which wrongly caught it and 25 other real cotton/knit
+  // tops/bottoms, demoting plain hot-weather basics out of the "good for heat" bucket.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['cotton'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['cotton', 'polyester'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['viscose', 'spandex'] }), false)
+  // No fiber_content and no fabric_category signal at all -> unknown, don't guess occlusive.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy' }), false)
+
+  // Fully synthetic fiber_content (no natural fiber at all) + a close fit -> occlusive.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }), true)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_drapey', fiber_content: ['spandex'] }), true)
+  // fabric_category: technical/performance is a fallback when fiber_content isn't tagged.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'clings_stretchy', fabric_category: 'technical/performance' }), true)
+
+  // A loose/relaxed fit is never occlusive regardless of fabric.
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'skims', fiber_content: ['polyester', 'nylon', 'spandex'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'drapes', fiber_content: ['polyester'] }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'hangs_straight' }), false)
+  assert.equal(pieceHasOcclusiveFit({ fit_on_body: 'structured' }), false)
+  assert.equal(pieceHasOcclusiveFit({}), false)
+})
+
+test('weatherFitForPiece: real-world regression — skin-tight technical leggings score below a loose light piece for heat', () => {
+  // "floral botanical print active leggings" (real wardrobe piece 996784): fabric_weight: light,
+  // fabric_category: technical/performance, fit_on_body: clings_stretchy, fully synthetic
+  // fiber_content. Under the graded evidence-combination model (owner design charter — fabric
+  // weight, breathability, and fit/air-space are independent, additive terms, not a single
+  // boolean), the light-fabric credit (+8) is more than offset by the non-breathable fiber (-5)
+  // and the occlusive fit acting on that same non-breathability (-6): net negative, genuinely
+  // worse for heat than neutral, not just "loses a bonus." A loose, breathable light piece stacks
+  // all three terms the other way and scores well above it.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }
+  const looseLightTop = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'drapes', fiber_content: ['cotton'] }
+  const leggingsHot = weatherFitForPiece(leggings, { isHot: true }).score
+  const looseTopHot = weatherFitForPiece(looseLightTop, { isHot: true }).score
+  assert.ok(leggingsHot < 0, `expected leggings to score below neutral for heat, got ${leggingsHot}`)
+  assert.ok(looseTopHot > 0, `expected the loose cotton top to score above neutral for heat, got ${looseTopHot}`)
+  assert.ok(looseTopHot > leggingsHot + 10, 'the loose breathable piece must score well above the occlusive synthetic one')
+  // Cold-weather scoring is untouched by fit_on_body/breathability — a light fabric still needs
+  // layering in the cold regardless of how close it sits to skin or how it breathes.
+  assert.ok(weatherFitForPiece(leggings, { isCold: true }).score < 0)
+})
+
+test('pieceHeatSuitability: a practical hot/cold/versatile readout built on weatherFitForPiece\'s own scores', () => {
+  // Real regression: the leggings above were unambiguously bucketed "good for heat" by tier alone.
+  // They now land as 'versatile' — not a claim that they're great for both extremes, just an
+  // honest result once the occlusive fit costs them the hot-weather advantage without picking up
+  // a cold-weather one either.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }
+  assert.equal(pieceHeatSuitability(leggings), 'versatile')
+
+  // A loose, light, non-insulating piece still reads as the clear hot-weather pick.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fit_on_body: 'drapes', fiber_content: ['cotton'] }), 'hot')
+
+  // A heavy insulating piece reads as the clear cold-weather pick.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'heavy', fabric_category: 'wool', fiber_content: ['wool'] }), 'cold')
+
+  // A plain medium-weight piece with no strong signal either way is genuinely versatile — no
+  // adjustments fire in either direction.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'medium', fiber_content: ['cotton'] }), 'versatile')
+
+  // A relaxed-fit, long-sleeve light rayon blouse: no bare-cut credit (it has sleeves), but still
+  // clearly the better hot-weather pick than a medium/heavy piece — reads 'hot', just without the
+  // extra bareness bonus a sleeveless light piece would additionally get.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fabric_category: 'rayon', fit_on_body: 'hangs_straight', sleeve_length: 'long', fiber_content: ['rayon'] }), 'hot')
+
+  // A fitted cotton tee (real wardrobe piece 223 shape: cotton, fit_on_body: clings_stretchy)
+  // is NOT occlusive — plain cotton still breathes fine when fitted — so it keeps the full hot
+  // bonus and reads 'hot', not 'versatile'.
+  assert.equal(pieceHeatSuitability({ category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'clings_stretchy', fiber_content: ['cotton'] }), 'hot')
+
+  // No warmth signal at all -> honest unknown, not a guess.
+  assert.equal(pieceHeatSuitability({ category: 'top' }), null)
+
+  // Shoes/accessories are out of scope, same as pieceWarmthTier/weatherFitForPiece.
+  assert.equal(pieceHeatSuitability({ category: 'shoes', fabric_weight: 'heavy' }), null)
+  assert.equal(pieceHeatSuitability({ category: 'accessory', fabric_weight: 'heavy' }), null)
+})
+
+test('pieceFiberBreathability: categorical (+1/-1/0), never a composition fraction', () => {
+  // Owner's design charter, explicit: "cotton/linen/rayon do not automatically mean breathable
+  // or heat-safe... polyester/nylon do not automatically mean heat-unfriendly." This reads the
+  // actual tagged fiber mix, not a name lookup.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cotton'] }), 1)
+  assert.equal(pieceFiberBreathability({ fiber_content: ['polyester'] }), -1)
+
+  // Real regression: fiber_content is an UNORDERED PRESENCE LIST, not composition percentages —
+  // there is no data on how much of a garment tagged ["viscose","polyester","nylon"] is actually
+  // viscose. The previous version returned (breathableCount - nonBreathableCount) / knownCount,
+  // which invented exactly that unsupported fraction: adding or removing ONE fiber tag swung the
+  // result by a large amount regardless of the fabric's real composition (and that same invented
+  // fraction fed pieceOcclusiveFitDegree's multiplier too — the same guess counted twice). Any
+  // presence of a known breathable fiber alongside a known non-breathable one is now 'mixed' —
+  // genuinely conflicting evidence, reported as neutral (0) regardless of how many tags of each
+  // kind are listed, not averaged into a fake in-between number.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cotton', 'polyester'] }), 0)
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cotton', 'cotton', 'polyester'] }), 0, 'more breathable-fiber TAGS must not read as more breathable — count is not composition')
+  assert.equal(pieceFiberBreathability({ fiber_content: ['viscose', 'polyester', 'nylon'] }), 0)
+
+  // Untagged/unknown fiber_content is a real "no opinion", not a guess in either direction.
+  assert.equal(pieceFiberBreathability({}), 0)
+  assert.equal(pieceFiberBreathability({ fiber_content: ['unknown'] }), 0)
+  // A material this function has no opinion on (e.g. metal, on a trim-heavy piece) doesn't count
+  // as evidence either way.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['metal'] }), 0)
+
+  // Real regression: wool is genuinely breathable in the everyday sense (wicks moisture, doesn't
+  // trap sweat), but it's ALSO an insulating fiber — counting it on both axes double-counted the
+  // same tag in opposite directions and let a wool fleece vest's breathability credit (+1) undo
+  // 5 of its own insulating-material penalty's 6 points before anything else was even scored.
+  // Insulating fibers are excluded from breathability entirely (neutral, not double-counted)
+  // rather than contributing a breathability bonus that partially cancels their own insulating
+  // evidence.
+  assert.equal(pieceFiberBreathability({ fiber_content: ['wool'] }), 0)
+  assert.equal(pieceFiberBreathability({ fiber_content: ['cashmere'] }), 0)
+  // wool doesn't count as a breathable fiber, so a wool+polyester blend reads unambiguously
+  // non-breathable (only one directional signal is present, not conflicting evidence).
+  assert.equal(pieceFiberBreathability({ fiber_content: ['wool', 'polyester'] }), -1)
+})
+
+test('pieceOcclusiveFitDegree: graded by construction, with silhouette as a fallback where fit_on_body is untagged', () => {
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'clings_stretchy' }), 1)
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'clings_drapey' }), 0.6)
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'skims' }), 0.25)
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'drapes' }), 0)
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'hangs_straight' }), 0)
+  // fit_on_body is sparsely tagged outside bottoms (docs/garment-field-reference.md field audit —
+  // 35-52% for dress/outerwear/top vs 97% for bottom); silhouette carries the same "fitted vs
+  // relaxed" information in its own vocabulary and is much better populated there (85-95%).
+  assert.equal(pieceOcclusiveFitDegree({ silhouette: 'fitted' }), 0.6)
+  assert.equal(pieceOcclusiveFitDegree({ silhouette: 'slim' }), 0.6)
+  assert.equal(pieceOcclusiveFitDegree({ silhouette: 'relaxed' }), 0)
+  // fit_on_body wins when both are tagged.
+  assert.equal(pieceOcclusiveFitDegree({ fit_on_body: 'drapes', silhouette: 'fitted' }), 0)
+  assert.equal(pieceOcclusiveFitDegree({}), 0)
+})
+
+test('pieceWeatherScores: graded, multi-factor evidence — no single property is sufficient on its own to declare a garment good or bad for heat/cold', () => {
+  // Owner's design charter, point by point:
+
+  // "fabric_weight: light does not automatically mean good for heat" — a light, fully-synthetic,
+  // occlusive piece (the leggings shape) nets NEGATIVE for heat despite the light tag.
+  const occlusiveSynthetic = { category: 'bottom', fabric_weight: 'light', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'] }
+  assert.ok(pieceWeatherScores(occlusiveSynthetic).heat < 0, 'light fabric_weight alone must not guarantee a positive heat score')
+
+  // "fabric_weight: medium does not automatically mean mild/versatile" — a medium piece with a
+  // clearly bare cut still leans toward heat, not a flat neutral/versatile default.
+  const bareMedium = { category: 'top', fabric_weight: 'medium', sleeve_length: 'sleeveless' }
+  assert.ok(pieceWeatherScores(bareMedium).heat > 0, 'medium fabric_weight + a bare cut must not be forced to a flat neutral score')
+
+  // "close fit is relevant, but should not by itself make a garment occlusive" — a close-fitting
+  // piece in breathable natural fiber gets no occlusion penalty (the fitted-cotton-tee case).
+  const closeButBreathable = { category: 'top', fabric_weight: 'light', fit_on_body: 'clings_stretchy', fiber_content: ['cotton'] }
+  const looseButSynthetic = { category: 'top', fabric_weight: 'light', fit_on_body: 'drapes', fiber_content: ['polyester'] }
+  assert.ok(pieceWeatherScores(closeButBreathable).heat > pieceWeatherScores(looseButSynthetic).heat - 0.01,
+    'a close breathable fit must not score worse for heat than a loose non-breathable one purely for being close')
+
+  // "full coverage is relevant, but should not by itself make a garment warm" — full coverage on
+  // a LIGHT fabric costs far less heat-score than the same coverage on a HEAVY fabric (graded by
+  // mass, not a flat penalty), and a light full-coverage piece can still net positive for heat.
+  const lightFullCoverage = { category: 'top', fabric_weight: 'light', sleeve_length: 'long', fiber_content: ['linen'] }
+  const heavyFullCoverage = { category: 'top', fabric_weight: 'heavy', sleeve_length: 'long', fiber_content: ['wool'] }
+  assert.ok(pieceWeatherScores(lightFullCoverage).heat > 0, 'light full-coverage linen must still net positive for heat')
+  assert.ok(pieceWeatherScores(heavyFullCoverage).heat < pieceWeatherScores(lightFullCoverage).heat,
+    'the same coverage costs more heat-score on a heavier fabric than a lighter one')
+
+  // "exposed skin is relevant, but should not erase genuinely insulating material" — a sleeveless
+  // wool piece still scores positive for cold (the insulating bump survives bareness pulling the
+  // other way), even though a sleeveless non-insulating piece of the same weight would not.
+  const sleevelessWool = { category: 'top', fabric_weight: 'medium', sleeve_length: 'sleeveless', fabric_category: 'wool', fiber_content: ['wool'] }
+  const sleevelessCotton = { category: 'top', fabric_weight: 'medium', sleeve_length: 'sleeveless', fiber_content: ['cotton'] }
+  assert.ok(pieceWeatherScores(sleevelessWool).cold > pieceWeatherScores(sleevelessCotton).cold,
+    'exposed skin must not erase the insulating material bump entirely')
+
+  // "polyester/nylon do not automatically mean heat-unfriendly" — a LOOSE synthetic piece (no
+  // occlusive fit to combine with the non-breathability) still nets positive for heat if the
+  // fabric itself is light, same direction as a loose natural-fiber piece of the same weight.
+  const looseLightSynthetic = { category: 'top', fabric_weight: 'light', fit_on_body: 'drapes', fiber_content: ['polyester'] }
+  assert.ok(pieceWeatherScores(looseLightSynthetic).heat > 0, 'a loose light synthetic piece must not be penalized to negative purely for fiber name')
+})
+
+test('pieceWeatherScores: real-data regression — a sleeveless insulated vest reads Good for cold, not Good for heat', () => {
+  // Real wardrobe pieces 990394 ("rust asymmetric zip fleece vest", wool, medium) and 142 ("dark
+  // grey open front vest", cashmere, medium) both landed in "Good for heat" before this fix, from
+  // two compounding bugs: (1) wool/cashmere's breathability credit was undoing most of their own
+  // insulating-material penalty (fixed above — insulating fibers no longer count toward
+  // breathability), and (2) the sleeveless-bareness heat credit meant for a bare TOP/DRESS was
+  // applying to a VEST, whose missing sleeves are a layering trait, not exposed skin — a vest is
+  // worn over a sleeved base, not against bare arms.
+  const woolVest = { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'sleeveless' }
+  const cashmereVest = { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cashmere', fiber_content: ['cashmere'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(woolVest), 'cold')
+  assert.equal(pieceHeatSuitability(cashmereVest), 'cold')
+
+  // Control: a genuinely bare-skin sleeveless piece (top/dress) is unaffected — it still gets the
+  // full bareness heat credit, since sleeveless there really does mean exposed skin.
+  const sleevelessLinenTop = { category: 'top', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(sleevelessLinenTop), 'hot')
+
+  // Control: a sleeveless LIGHT, non-insulating outerwear piece (a light vest with no warm fiber)
+  // correctly gets no bareness credit either way — the outerwear exemption applies to the
+  // category, not just to insulating pieces — but still reads on the strength of its light,
+  // breathable substance alone.
+  const lightCottonVest = { category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(lightCottonVest), 'hot')
+})
+
+test('pieceExposureDegree: a graded fraction of the garment\'s category-applicable regions confirmed bare — missing data weakens, never strengthens, the reading', () => {
+  // Real regression: "multicolor striped knit maxi dress" (piece 163) — sleeveless but midi-length
+  // (legs covered) — scored the SAME flat exposure credit as a fully bare mini dress, because the
+  // old model ORed sleeve/neckline/hem into one high/null verdict regardless of how many of those
+  // signals actually fired or how much of the body other regions still covered.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi' }), 0.5, 'one exposed region (arms) out of two applicable regions (arms, legs)')
+
+  // A dress with BOTH regions bare reads fully exposed.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', length_hits_at: 'mini' }), 1)
+
+  // A dress with neither region bare reads fully covered.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'long', length_hits_at: 'maxi' }), 0)
+
+  // Second real regression: a dress's lower-body region used to count as "applicable" only when
+  // length_hits_at happened to be TAGGED, so a MISSING length reading made a sleeveless dress look
+  // MORE confidently exposed (1/1) than the exact same dress with a known, covering length (1/2) —
+  // missing evidence strengthened the bareness conclusion instead of weakening it. A dress always
+  // intrinsically has a lower body, tagged or not, so the untagged case now still counts toward the
+  // denominator and defaults to "not confirmed exposed" — same reading as if the length were known
+  // and covering, never stronger than that.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless' }), 0.5, 'an untagged lower region must not read as more exposed than a known, covered one')
+
+  // A plain sleeveless TOP has no leg-baring hem concept at all (tops don't have a lower-body
+  // region in the first place) — its one applicable region (upper body) being bare reads as fully
+  // exposed, same magnitude as a real bare tank top.
+  assert.equal(pieceExposureDegree({ category: 'top', sleeve_length: 'sleeveless', neckline: 'crew' }), 1)
+
+  // Sleeve and neckline are ONE region, not two — an ordinary crew neckline on a sleeveless top
+  // doesn't count as "more covered" just because it isn't ALSO halter/strapless.
+  assert.equal(pieceExposureDegree({ category: 'top', sleeve_length: 'long', neckline: 'halter' }), 1, 'a halter neckline alone is upper-body exposure, sleeve length aside')
+
+  // A bottom only has the hem region — no sleeve/neckline concept applies at all.
+  assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'shorts' }), 1)
+  assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'full_length' }), 0)
+
+  // A category with an applicable region but nothing at all tagged for it defaults to "not
+  // exposed" (0), not an unknown null — consistent with every other untagged field in this model
+  // defaulting to no effect rather than a favorable guess.
+  assert.equal(pieceExposureDegree({ category: 'top' }), 0)
+  // Accessories have no applicable exposure region at all -> genuinely null, not zero.
+  assert.equal(pieceExposureDegree({ category: 'accessory', sleeve_length: 'sleeveless' }), null)
+})
+
+test('pieceWeatherScores/pieceHeatSuitability: owner-specified regression fixtures rerun under the revised evidence model', () => {
+  // 1. The dress that started this — piece 163, "multicolor striped knit maxi dress": medium
+  // weight knit, mixed fiber evidence (viscose is breathable, polyester/nylon are not — genuinely
+  // conflicting, not a 2/3-synthetic fraction), sleeveless but midi-length (half-exposed, not
+  // fully bare), clings_stretchy fit. The clingy fit still costs a small base heat penalty on its
+  // own (fit is independent evidence — see the dedicated test below) even without a confidently
+  // non-breathable fiber reading to amplify it. The partial, real evidence nets to a genuine
+  // toss-up rather than a confident "Good for heat".
+  const dress163 = { category: 'dress', fabric_weight: 'medium', fiber_content: ['viscose', 'polyester', 'nylon'], sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi', fit_on_body: 'clings_stretchy' }
+  assert.equal(pieceHeatSuitability(dress163), 'versatile')
+
+  // 2. The synthetic leggings (piece 996784 shape) — unambiguously non-breathable (polyester,
+  // nylon, spandex — no breathable fiber present to make it 'mixed'), close-fitting, light weight,
+  // no bare region (bottoms have no upper-body exposure concept, and full-length leggings aren't a
+  // bare hem). Still reads worse than a neutral, loose, breathable light piece.
+  const leggings = { category: 'bottom', fabric_weight: 'light', fabric_category: 'technical/performance', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon', 'spandex'], length_hits_at: 'full_length' }
+  const looseLightTop = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'drapes', fiber_content: ['cotton'] }
+  assert.ok(pieceWeatherScores(leggings).heat < pieceWeatherScores(looseLightTop).heat, 'occlusive synthetic leggings must still score below a loose breathable piece for heat')
+
+  // 3. A medium cotton tee (piece 223 shape) — light-to-medium weight, unambiguously breathable
+  // (cotton only), sleeveless. Fully exposed (its one applicable region, upper body, is bare) ->
+  // reads as a strong hot-weather pick, not demoted by fit alone.
+  const cottonTee = { category: 'top', fabric_weight: 'light', fabric_category: 'cotton', fit_on_body: 'clings_stretchy', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(cottonTee), 'hot')
+
+  // 4. The loose rayon blouse — unambiguously breathable, long sleeves (covered, not bare), light
+  // weight, relaxed fit. Still a clear hot-weather pick on substance/breathability alone, just
+  // without the exposure credit a sleeveless piece would additionally earn.
+  const rayonBlouse = { category: 'top', fabric_weight: 'light', fabric_category: 'rayon', fit_on_body: 'hangs_straight', sleeve_length: 'long', fiber_content: ['rayon'] }
+  assert.equal(pieceHeatSuitability(rayonBlouse), 'hot')
+  assert.ok(pieceWeatherScores(rayonBlouse).heat < pieceWeatherScores(cottonTee).heat, 'a covered light piece must still score below a bare one of the same substance')
+
+  // 5. The original sleeveless medium-weight summer dress ("well this dress weight is medium, but
+  // it does not make it warm") — medium weight alone, cotton (breathable, not insulating),
+  // sleeveless, no length_hits_at tagged. A dress always has an intrinsic lower-body region, so
+  // the untagged length still counts toward the denominator (defaulting to "not confirmed
+  // exposed") -> exposure degree 0.5, not the inflated 1.0 an untagged region used to produce.
+  // Breathability + a real (if partial) exposure credit are still enough to land this "hot".
+  const summerDress = { category: 'dress', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
+  assert.equal(pieceHeatSuitability(summerDress), 'hot')
+})
+
+test('pieceWeatherScores: fit is independent evidence — a close cut costs some heat-score always, amplified (not switched on) by confident non-breathability', () => {
+  // Real regression (review of the first version of this fix): occlusion only applied when
+  // breathability was confidently -1, so a clingy fit on MIXED or unknown fiber evidence — like
+  // the striped dress's viscose/polyester/nylon blend — contributed nothing at all. "This fabric
+  // sits tightly against a large portion of the body" is a real, known physical fact regardless of
+  // whether the fiber evidence is conclusive, so it must cost something on its own.
+  const baseline = { category: 'top', fabric_weight: 'medium' }
+  const clingyMixedFiber = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy', fiber_content: ['viscose', 'polyester'] }
+  const clingyUnknownFiber = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy' }
+  assert.ok(pieceWeatherScores(clingyMixedFiber).heat < pieceWeatherScores(baseline).heat, 'a clingy fit must cost heat-score even with mixed fiber evidence')
+  assert.ok(pieceWeatherScores(clingyUnknownFiber).heat < pieceWeatherScores(baseline).heat, 'a clingy fit must cost heat-score even with no fiber evidence at all')
+
+  // Confident non-breathability AMPLIFIES the same fit penalty rather than being the only thing
+  // that turns it on — a clingy synthetic piece must cost strictly more than an equally clingy
+  // mixed-fiber piece, not the same amount and not zero for the mixed one.
+  const clingyConfidentlySynthetic = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon'] }
+  assert.ok(pieceWeatherScores(clingyConfidentlySynthetic).heat < pieceWeatherScores(clingyMixedFiber).heat, 'confident non-breathability must amplify the fit penalty beyond the base amount')
+
+  // A loose fit costs nothing regardless of fiber — the penalty is about the CUT, not a fiber
+  // verdict wearing a fit-shaped disguise.
+  const looseConfidentlySynthetic = { category: 'top', fabric_weight: 'medium', fit_on_body: 'drapes', fiber_content: ['polyester', 'nylon'] }
+  assert.equal(pieceWeatherScores(looseConfidentlySynthetic).heat, pieceWeatherScores({ category: 'top', fabric_weight: 'medium', fiber_content: ['polyester', 'nylon'] }).heat)
+})
+
+test('pieceWeatherScores: sleeve coverage and hem coverage are independent, non-overlapping evidence — a single sleeve_length tag must not activate both terms', () => {
+  // Real regression: pieceWeatherScores used to read pieceCoverage (which returns 'full' for
+  // EITHER long sleeves OR a long hem) as one coverage term, and separately added a longSleeves
+  // term from sleeveCoverage — so a single sleeve_length: 'long' tag fed both terms, double-
+  // counting the same physical fact. A long-sleeve, otherwise-untagged-hem top must cost the same
+  // as a piece with ONLY a sleeve-coverage term, not sleeve-coverage-plus-hem-coverage.
+  // A long-sleeve TOP (sleeve term only — tops have no hem-coverage concept at all, so the old
+  // combined pieceCoverage() check could only ever have fired via the sleeve half here) costs
+  // exactly the same as a bottom-half-only hem check of equivalent magnitude would, confirming
+  // it's a single term, not the sleeve term plus a phantom second hit from the same tag.
+  const longSleeveOnly = { category: 'top', fabric_weight: 'medium', sleeve_length: 'long' }
+  const noSleeveNoHem = { category: 'top', fabric_weight: 'medium' }
+  const sleeveOnlyPenalty = pieceWeatherScores(noSleeveNoHem).heat - pieceWeatherScores(longSleeveOnly).heat
+  assert.ok(sleeveOnlyPenalty > 0, 'long sleeves must cost some heat-score')
+  const maxiHemOnlyBottom = { category: 'bottom', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const noHemBottom = { category: 'bottom', fabric_weight: 'medium' }
+  const hemOnlyPenaltyOnBottom = pieceWeatherScores(noHemBottom).heat - pieceWeatherScores(maxiHemOnlyBottom).heat
+  assert.equal(sleeveOnlyPenalty, hemOnlyPenaltyOnBottom, 'the sleeve term alone must match the hem term alone in magnitude — same coverage-weight class, one term each')
+
+  // A separately maxi-length DRESS (hem coverage, no sleeve tag) costs its own, independent
+  // amount — not zero because "coverage" was already spent on a sleeve check that never fired.
+  const maxiNoSleeve = { category: 'dress', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const noHemNoSleeve = { category: 'dress', fabric_weight: 'medium' }
+  assert.ok(pieceWeatherScores(maxiNoSleeve).heat < pieceWeatherScores(noHemNoSleeve).heat, 'hem coverage must cost heat-score on its own')
+
+  // A piece with BOTH long sleeves AND a maxi hem costs the SUM of the two independent terms —
+  // confirms they're additive, not still secretly sharing one combined flag.
+  const bothCovered = { category: 'dress', fabric_weight: 'medium', sleeve_length: 'long', length_hits_at: 'maxi' }
+  const sleeveOnlyDress = { category: 'dress', fabric_weight: 'medium', sleeve_length: 'long' }
+  const hemOnlyDress = { category: 'dress', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const bareDress = { category: 'dress', fabric_weight: 'medium' }
+  assert.ok(Math.abs((pieceWeatherScores(bareDress).heat - pieceWeatherScores(bothCovered).heat) -
+    ((pieceWeatherScores(bareDress).heat - pieceWeatherScores(sleeveOnlyDress).heat) + (pieceWeatherScores(bareDress).heat - pieceWeatherScores(hemOnlyDress).heat))) < 1e-9)
+})
+
+test('wholeWardrobePieceTrustDecision and buildVisualComposerRoster share one hot-weather insulation model, with their pre-existing policy differences kept intentional and explicit', () => {
+  // Model consolidation, not a policy change (owner instruction): both gates now read the same
+  // hotWeatherInsulationReason() facts (fabric_weight, insulating material, coverage, neckline,
+  // sleeves) instead of independently re-deriving them — but the two gates' OWN thresholds already
+  // differed before this consolidation (the roster never checked dress/neckline/sleeve coverage or
+  // applied the heavy-weight check outside outerwear/top), and that difference is preserved
+  // verbatim, not silently widened or narrowed.
+  const hot = { occasion: 'casual', weatherProfile: { isHot: true } }
+
+  const rosterOptions = { occasion: 'casual', weatherProfile: { isHot: true }, maxImages: 90 }
+  // formality/occasions/heel-support fields keep these fixtures past the roster's earlier,
+  // unrelated register/footwear gates so the hot-weather insulation check is what's actually
+  // being exercised below.
+  const passesEarlierGates = { formality: 'everyday', occasions: ['casual'], photo: 'x.jpg' }
+
+  // Case the two gates agree on: a heavy top is insulating everywhere.
+  const heavyTop = { id: 1, category: 'top', name: 'heavy wool sweater', fabric_weight: 'heavy' }
+  assert.equal(wholeWardrobePieceTrustDecision(heavyTop, hot).allowed, false)
+  const rosterHeavyTop = buildVisualComposerRoster([{ ...heavyTop, ...passesEarlierGates }], rosterOptions)
+  assert.equal(rosterHeavyTop.excluded.find(e => e.pieceId === 1)?.reason, 'hot weather: insulating piece', 'roster must also exclude a heavy top, for the same reason')
+
+  // Case that has always differed: a heavy DRESS. trust-decision's heavy-weight check applies to
+  // every non-shoe/accessory category; the roster's has only ever applied to outerwear/top.
+  const heavyDress = { id: 2, category: 'dress', name: 'heavy wool dress', fabric_weight: 'heavy' }
+  assert.equal(wholeWardrobePieceTrustDecision(heavyDress, hot).allowed, false, 'trust-decision rejects a heavy dress')
+  const rosterHeavyDress = buildVisualComposerRoster([{ ...heavyDress, ...passesEarlierGates }], rosterOptions)
+  assert.ok(rosterHeavyDress.roster.some(p => p.id === 2), 'roster has never rejected a heavy dress on weight alone — preserved, not a new gap')
+
+  // Case that has always differed: a medium dress with a warm (turtleneck) neckline. trust-decision
+  // checks upper-body coverage/neckline/sleeves; the roster never has.
+  const turtleneckDress = { id: 3, category: 'dress', name: 'medium turtleneck dress', fabric_weight: 'medium', neckline: 'turtle' }
+  assert.equal(wholeWardrobePieceTrustDecision(turtleneckDress, hot).allowed, false, 'trust-decision rejects a medium turtleneck dress in hot weather')
+  const rosterTurtleneckDress = buildVisualComposerRoster([{ ...turtleneckDress, ...passesEarlierGates }], rosterOptions)
+  assert.ok(rosterTurtleneckDress.roster.some(p => p.id === 3), 'roster has never checked neckline coverage — preserved, not a new gap')
+
+  // Case that has always differed: an open-front cardigan with full coverage + warm neckline.
+  // trust-decision exempts open-front layers from the coverage/neckline/sleeve checks; the roster
+  // has no such exemption but also never runs those checks on tops in the first place, so a
+  // MEDIUM open-front cardigan passes both — the exemption and the narrower roster policy land on
+  // the same outcome here, which is exactly why the roster gate never needed an explicit exemption.
+  const openFrontCardigan = { id: 4, category: 'top', name: 'open cardigan', reads_as: 'open-front cardigan', fabric_weight: 'medium', sleeve_length: 'long' }
+  assert.equal(wholeWardrobePieceTrustDecision(openFrontCardigan, hot).allowed, true, 'trust-decision exempts an open-front cardigan from the sleeve-coverage check')
 })

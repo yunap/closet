@@ -24,9 +24,12 @@ import {
   pieceFabricWeight,
   FORMALITY_VALUES,
   pieceBareness,
+  pieceExposureDegree,
   pieceCoverage,
-  pieceWarmthTier,
+  pieceHemCoverage,
   pieceHasInsulatingMaterial,
+  pieceFiberBreathability,
+  pieceOcclusiveFitDegree,
   pieceHasWetSensitiveFootwearMaterial,
   pieceFormality,
   formalityRank,
@@ -141,6 +144,178 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
 
 export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js'
 
+// Numeric mass index for fabric_weight: light=-1, medium=0, heavy=1, untagged=null. A small
+// internal helper so the weight terms below read as arithmetic instead of string comparisons.
+function fabricMassIndex(piece) {
+  const fw = fabricWeight(piece)
+  if (fw === 'light') return -1
+  if (fw === 'heavy') return 1
+  if (fw === 'medium') return 0
+  return null
+}
+
+// How strongly coverage/neckline/sleeve terms should weigh in for HEAT specifically: 0 for a
+// light/untagged substance, 1 for medium, 2 for heavy. A full-coverage light linen shirt is real
+// summer clothing (near-zero penalty); the same coverage on a medium or heavy fabric is a
+// genuinely different, warmer garment. Untagged weight is treated like medium (1) rather than 0 —
+// matching the standing rule that an unknown fabric_weight should never read as confidently
+// summer-safe as a fabric we've actually confirmed is light.
+function heatCoverageScale(massIndex) {
+  if (massIndex === null) return 1
+  return massIndex <= -1 ? 0 : massIndex >= 1 ? 2 : 1
+}
+
+const WEATHER_EVIDENCE_WEIGHTS = {
+  mass: 8,
+  insulatingMaterialHeat: 6,
+  insulatingMaterialCold: 6,
+  breathability: 5,
+  hemCoverageHeat: 5,
+  hemCoverageCold: 6,
+  necklineHeat: 3,
+  necklineCold: 3,
+  sleeveHeat: 5,
+  sleeveCold: 6,
+  bareHeat: 8,
+  bareCold: 8,
+  occlusionBaseHeat: 2,
+  occlusionNonBreathableAmplifyHeat: 4,
+}
+
+// The single graded weather-fit assessment — every consumer that judges hot/cold suitability
+// (the soft weatherFitForPiece/pieceHeatSuitability scores below, and the hard composer/generation
+// gates in wholeWardrobePieceTrustDecision and buildVisualComposerRoster) reads from this, instead
+// of each re-deriving fabric_weight/coverage/material facts independently and drifting apart the
+// way those two gates already had (one checked dress/neckline/sleeve coverage, the other didn't).
+//
+// Owner's explicit design charter: no single property — fabric_weight, fiber identity, coverage,
+// fit, or exposure — is sufficient on its own to call a garment good or bad for heat/cold. Each is
+// graded, independent evidence that can reinforce or counteract the others. Rules the model
+// specifically must NOT break, each broken once by a real regression and fixed here:
+//   - Do not turn an unordered fiber_content PRESENCE LIST into a composition fraction. A piece
+//     tagged ["viscose","polyester","nylon"] is not "1/3 viscose" — there is no data on how much of
+//     the fabric is which fiber. pieceFiberBreathability (attributes.js) is categorical: +1
+//     (breathable), -1 (non-breathable), 0 (mixed evidence or none) — never an invented ratio.
+//   - Do not let skin exposure act as one flat, garment-wide credit regardless of how much of the
+//     body stays covered, and do not let a MISSING region look more confidently exposed than a
+//     known, covered one. pieceExposureDegree (attributes.js) is a 0..1 fraction of the garment's
+//     category-applicable regions (upper body: sleeve/neckline; lower body: hem) that are
+//     CONFIRMED exposed — untagged regions count toward the denominator but default to "not
+//     exposed," so missing data can only weaken the exposure reading, never strengthen it.
+//   - Do not gate fit evidence away entirely just because fiber evidence is inconclusive. A close,
+//     clingy cut genuinely restricts airflow against skin regardless of what the fabric is made
+//     of — pieceOcclusiveFitDegree contributes its own small, independent penalty always, with
+//     confident non-breathability AMPLIFYING (not switching on) that penalty, rather than the
+//     fabric evidence gating the fit evidence to zero whenever it's inconclusive.
+//   - Do not count the same physical fact twice. sleeve_length: 'long'/'extra_long' is upper-body
+//     coverage; length_hits_at: full/floor-length/maxi is lower-body coverage — two independent
+//     regions, not one 'full' coverage flag fed by either. pieceHemCoverage reports the hem half
+//     only; sleeve coverage is read directly from sleeveCoverage() as its own term.
+//
+// The terms:
+//   - substance (fabric_weight, when tagged): the base term, ±1 per mass-index step.
+//   - insulating material (fiber_content/fabric_category): a real, ADDITIVE bump — a lightweight
+//     wool knit still runs warmer than lightweight cotton — not a hard override of substance.
+//   - breathability (pieceFiberBreathability, categorical): cotton/linen/rayon are not
+//     automatically breathable and polyester/nylon are not automatically heat-unfriendly. Only
+//     affects HEAT — breathability is about ventilating body heat outward, not a cold-weather
+//     insulation mechanism the way an insulating material is.
+//   - hem coverage (pieceHemCoverage) / long sleeves (sleeveCoverage): independent upper- and
+//     lower-body coverage terms, each scaled by substance mass for heat (heatCoverageScale) so a
+//     light full-length linen piece isn't penalized the way a medium/heavy one is, but always
+//     counted toward cold.
+//   - warm neckline: smaller, same-shaped term as coverage — real but secondary evidence, also
+//     mass-scaled for heat.
+//   - exposure (pieceExposureDegree): skin exposure is real, independent thermal evidence, graded
+//     by how much of the garment is actually bare rather than a flat constant, and doesn't erase
+//     an insulating material's own bump — a separate additive term, not a multiplier that can zero
+//     another term out. Not applied to outerwear (see below).
+//   - occlusive fit (pieceOcclusiveFitDegree): always contributes its own small heat penalty when
+//     the cut is close, amplified further when the fiber evidence is confidently non-breathable —
+//     "fit + fit×non-breathable interaction," not "fit only if the fabric is confidently bad."
+//
+// Returns null for shoes/accessories (fabric_weight there describes construction substance, not
+// body insulation — the same boundary pieceWarmthTier already draws) and when NOTHING is known at
+// all (every term silent) — an honest "unknown," never a guess.
+export function pieceWeatherEvidence(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return null
+  const massIndex = fabricMassIndex(piece)
+  const insulatingMaterial = pieceHasInsulatingMaterial(piece)
+  const breathability = pieceFiberBreathability(piece)
+  const hemCoverage = pieceHemCoverage(piece)
+  const exposure = pieceExposureDegree(piece)
+  const warmNeckline = necklineWarmth(piece) === 'warm'
+  const longSleeves = sleeveCoverage(piece) === 'long'
+  const occlusion = pieceOcclusiveFitDegree(piece)
+
+  if (massIndex === null && !insulatingMaterial && breathability === 0 && !hemCoverage && !exposure && !warmNeckline && !longSleeves && !occlusion) {
+    return null
+  }
+  return { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion }
+}
+
+// Graded hot/cold numeric scores built from pieceWeatherEvidence — see that function's comment for
+// the evidence model. Both scores are sums of independent, signed terms (never a single
+// determinative field), matching real behavior: fabric weight, material, coverage, fit, and
+// exposure all contribute and can offset one another rather than any one of them deciding the
+// outcome alone.
+export function pieceWeatherScores(piece = {}) {
+  const evidence = pieceWeatherEvidence(piece)
+  if (!evidence) return { heat: 0, cold: 0, evidence: null }
+  const { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion } = evidence
+  const W = WEATHER_EVIDENCE_WEIGHTS
+  const heatScale = heatCoverageScale(massIndex)
+
+  let heat = 0
+  let cold = 0
+
+  if (massIndex !== null) {
+    heat += -massIndex * W.mass
+    cold += massIndex * W.mass
+  }
+  if (insulatingMaterial) {
+    heat -= W.insulatingMaterialHeat
+    cold += W.insulatingMaterialCold
+  }
+  heat += breathability * W.breathability
+  if (hemCoverage === 'full') {
+    heat -= W.hemCoverageHeat * (heatScale / 2)
+    cold += W.hemCoverageCold
+  }
+  if (warmNeckline) {
+    heat -= W.necklineHeat * (heatScale / 2)
+    cold += W.necklineCold
+  }
+  if (longSleeves) {
+    heat -= W.sleeveHeat * (heatScale / 2)
+    cold += W.sleeveCold
+  }
+  // Real regression: a sleeveless wool/cashmere vest (outerwear) got the same heat-friendly
+  // exposure credit as a bare TOP or DRESS. A vest's missing sleeves aren't exposed skin — they're
+  // a layering choice (a vest is worn OVER a sleeved base, not against bare arms the way a tank top
+  // is), so "sleeveless" there says nothing about ventilation, and nothing about cold exposure
+  // either — the same reasoning applies to both directions: a sleeveless insulated vest isn't
+  // meaningfully less warm for cold weather than the same fabric with sleeves would be, because
+  // it's never worn as the only sleeve-bearing layer. Exposure is skipped entirely for outerwear.
+  if (exposure && group !== 'outerwear') {
+    heat += exposure * W.bareHeat
+    cold -= exposure * W.bareCold
+  }
+  // Fit is independent evidence — a close, clingy cut genuinely restricts airflow regardless of
+  // what the fabric is made of, so it always costs some heat-score. Confident non-breathability
+  // (breathability === -1, not merely "mixed" or unknown) AMPLIFIES that cost on top of the base
+  // penalty rather than being the only thing that switches it on — "fit + fit×non-breathable
+  // interaction," matching a close synthetic cut being worse than a close natural-fiber one
+  // without a close natural-fiber cut costing nothing at all.
+  heat -= occlusion * W.occlusionBaseHeat
+  if (breathability < 0) {
+    heat -= occlusion * W.occlusionNonBreathableAmplifyHeat
+  }
+
+  return { heat, cold, evidence }
+}
+
 export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   const adjustments = []
   // fabric_weight/coverage/bareness/insulating-material on a shoe or accessory describe
@@ -153,27 +328,21 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   if (group === 'shoes' || group === 'accessory') {
     return { score: 0, label: 'neutral', adjustments }
   }
-  // pieceWarmthTier is the single derived warmth interpretation (attributes.js) — fabric_weight,
-  // bumped by an insulating material, with coverage/bareness folded in ONLY as a gap-filling
-  // secondary signal when fabric_weight itself is untagged. This function used to recompute a
-  // slightly different version of the same logic independently, including scoring coverage and
-  // insulating-material as their OWN separate terms on top of fabric_weight — which is what let a
-  // directly-tagged medium-weight piece get bumped an extra, unwarranted step from its hemline
-  // alone (real wardrobe piece 129: twill/medium/full-length pants). Bareness is kept as its own,
-  // smaller adjustment here — unlike coverage, skin exposure is a genuine independent comfort
-  // factor even once the fabric's own tier is already known (a heavy wool sleeveless vest is
-  // still less warm overall than a heavy wool long-sleeve sweater).
-  const tier = pieceWarmthTier(piece)
-  const bare = pieceBareness(piece)
 
-  if (weatherProfile?.isHot) {
-    if (tier === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
-    if (tier === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
-    if (bare === 'high') adjustments.push({ score: 8, label: 'skin-friendly cut', reason: 'hot weather: skin-friendly cut' })
-  } else if (weatherProfile?.isCold) {
-    if (tier === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
-    if (tier === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
-    if (bare === 'high') adjustments.push({ score: -8, label: 'skin-friendly cut - too bare for cold', reason: 'cold weather: skin-friendly cut' })
+  const { heat, cold } = pieceWeatherScores(piece)
+
+  if (weatherProfile?.isHot && heat !== 0) {
+    adjustments.push({
+      score: heat,
+      label: heat > 0 ? 'lightweight - good for heat' : 'heavy - too warm for the heat',
+      reason: heat > 0 ? 'hot weather: lightweight fabric' : 'hot weather: heavy fabric',
+    })
+  } else if (weatherProfile?.isCold && cold !== 0) {
+    adjustments.push({
+      score: cold,
+      label: cold > 0 ? 'heavy - good for cool weather' : 'lightweight - needs layering',
+      reason: cold > 0 ? 'cold weather: heavy fabric' : 'cold weather: lightweight fabric',
+    })
   }
 
   return {
@@ -181,6 +350,40 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
     label: adjustments[0]?.label || 'neutral',
     adjustments
   }
+}
+
+// A practical, user-facing readout on top of pieceWeatherScores — "is this an option for hot
+// weather / cold weather / does it work either way" — rather than the raw substance tier
+// (pieceWarmthTier) or a single field. Owner's own framing: a piece tagged fabric_weight 'light'
+// isn't automatically "good for heat" if a close, occlusive fit kills its ventilation (the
+// leggings case), and isn't automatically "not good for heat" either if it's just moderate rather
+// than exceptional (a long-sleeve rayon blouse — light fabric, relaxed fit, but sleeves mean it
+// doesn't also earn the bareness credit a sleeveless light piece gets). 'versatile' is not a claim
+// that a piece is great for both extremes — it's the honest result whenever neither direction has
+// a clear, standalone advantage. Returns null for shoes/accessories and for pieces with no weather
+// signal at all (pieceWeatherEvidence itself returns null).
+//
+// HEAT_COLD_MEANINGFUL_MARGIN exists because pieceWeatherScores sums several independently weaker
+// terms (breathability, coverage, neckline...) alongside two strong, direct ones (mass, exposure):
+// a single weak signal — e.g. a plain medium-weight cotton top, mass-neutral, with nothing else
+// tagged — would otherwise net a small positive heat score from breathability alone and get called
+// "hot" outright, which is exactly the "no one property should be sufficient on its own" trap the
+// owner's design charter warns against. Real regression: exposure itself is now graded (0..1, not
+// a flat constant — see pieceExposureDegree), so a piece that's only PARTIALLY exposed (a
+// sleeveless-but-midi dress, degree 0.5, diff 8) is comparably weak evidence to breathability alone
+// (diff 5) and must not unilaterally decide the bucket either — only genuinely strong, direct
+// evidence should: a fully-tagged fabric_weight alone (diff 16), full exposure alone (diff 16), or
+// a known insulating material alone (diff 12). The margin sits at 10 — above the two weak,
+// secondary signals (breathability 5, half-exposure 8) and below the three strong, direct ones
+// (12, 16, 16) — so a lone weak signal can nudge an already-leaning piece but can't unilaterally
+// decide a neutral one.
+const HEAT_COLD_MEANINGFUL_MARGIN = 10
+export function pieceHeatSuitability(piece = {}) {
+  const { heat, cold, evidence } = pieceWeatherScores(piece)
+  if (!evidence) return null
+  if (heat > cold + HEAT_COLD_MEANINGFUL_MARGIN) return 'hot'
+  if (cold > heat + HEAT_COLD_MEANINGFUL_MARGIN) return 'cold'
+  return 'versatile'
 }
 
 function isLightweightLinenBottom(piece = {}) {
@@ -2067,9 +2270,9 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
   }
 
   // Weather adjustments added to piece priority — delegates to weatherFitForPiece (the single
-  // warmth interpretation, via pieceWarmthTier) instead of recomputing fabric_weight/coverage
-  // independently; this used to duplicate a slightly different, since-corrected version of that
-  // same scoring.
+  // graded weather-fit assessment, pieceWeatherScores) instead of recomputing fabric_weight/
+  // coverage independently; this used to duplicate a slightly different, since-corrected version
+  // of that same scoring.
   if (weatherProfile && (weatherProfile.isHot || weatherProfile.isCold)) {
     score += weatherFitForPiece(piece, weatherProfile).score
   }
@@ -2332,6 +2535,51 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
   return { tier: 'neutral', label: 'neutral' }
 }
 
+// Consolidation of the hot-weather insulation-exclusion check that used to be duplicated,
+// independently, inside wholeWardrobePieceTrustDecision and buildVisualComposerRoster — the exact
+// class of "parallel weather heuristic" that had already drifted between the two call sites before
+// this: the roster never checked dress/neckline/sleeve coverage or applied the heavy-weight check
+// to bottoms/dresses, while the trust-decision gate did both. Model consolidation, not a policy
+// change — the underlying facts (fabric_weight, insulating material, coverage, neckline, sleeves)
+// are read exactly once here, using the same primitives as everywhere else in this file, but WHICH
+// of those facts apply to a given caller is an explicit parameter, preserving each gate's own
+// pre-existing, already-audited threshold rather than forcing them onto one identical rule (that
+// would be a real behavior change — a deliberate widening of the roster's exclusions — and is
+// explicitly out of scope for this pass; see the commit message for the parameter-by-parameter
+// audit against both gates' pre-existing test coverage).
+function hotWeatherInsulationReason(piece, {
+  heavyAppliesToAllCategories,       // trust-decision: true (any non-shoe/accessory category). roster: false (outerwear/top only).
+  checkUpperBodyCoverageNeckSleeve,  // trust-decision only — roster never checked dress/neckline/sleeve coverage.
+  checkBottomCoverage,               // both gates check this.
+  openFrontExemption,                // trust-decision only — roster never exempted open-front layers.
+} = {}) {
+  const weight = pieceFabricWeight(piece)
+  const isHeavy = weight === 'heavy'
+  const isMediumOrHeavy = weight === 'medium' || weight === 'heavy'
+  const hasHotInsulatingFiber = pieceHasInsulatingMaterial(piece) && weight !== 'light'
+  if (hasHotInsulatingFiber) return 'hot weather: insulating fiber'
+
+  const isShoeOrAccessoryPiece = wardrobeCategoryGroup(piece) === 'shoes' || isAccessory(piece)
+  if (isHeavy && !isShoeOrAccessoryPiece && (heavyAppliesToAllCategories || isOuterwear(piece) || isTop(piece))) {
+    return 'hot weather: insulating piece'
+  }
+
+  const hasInsulatingCoverage = pieceCoverage(piece) === 'full'
+  if (checkUpperBodyCoverageNeckSleeve) {
+    const isOpenFrontLayer = openFrontExemption && isWholeWardrobeLayerableTop(piece)
+    const isUpperBodyPiece = piece.category === 'outerwear' || wardrobeCategoryGroup(piece) === 'outerwear' || piece.category === 'top' || piece.category === 'dress'
+    const hasWarmNeckline = necklineWarmth(piece) === 'warm'
+    const hasWarmSleeves = sleeveCoverage(piece) === 'long'
+    if (isUpperBodyPiece && !isOpenFrontLayer && isMediumOrHeavy && (hasInsulatingCoverage || hasWarmNeckline || hasWarmSleeves)) {
+      return 'hot weather: insulating piece'
+    }
+  }
+  if (checkBottomCoverage && wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy) {
+    return 'hot weather: insulating piece'
+  }
+  return null
+}
+
 export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const { occasion = 'casual', explorationMode = 'moderate', weatherProfile = {} } = options
 
@@ -2408,46 +2656,21 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const reasons = decision.reasons ? [...decision.reasons] : []
 
   if (weatherProfile.isHot) {
-    const weight = pieceFabricWeight(piece)
-    const isHeavy = weight === 'heavy'
-    const isUpperBodyPiece = piece.category === 'outerwear' || wardrobeCategoryGroup(piece) === 'outerwear' || piece.category === 'top' || piece.category === 'dress'
-    const hasInsulatingCoverage = pieceCoverage(piece) === 'full'
-    const hasWarmNeckline = necklineWarmth(piece) === 'warm'
-    const hasWarmSleeves = sleeveCoverage(piece) === 'long'
-    const isMediumOrHeavy = weight === 'medium' || weight === 'heavy'
-    const hasHotInsulatingFiber = pieceHasInsulatingMaterial(piece) && weight !== 'light'
-
-    // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer
-    // maxi dress as insulating purely because length 'maxi' derives full-insulating
-    // coverage. Weight-qualified now: light full-length pieces are summer clothing.
-    // Open-front layer pieces (cardigans, kimonos, overshirts — detected by
-    // isWholeWardrobeLayerableTop) are exempt from the sleeve/coverage clauses:
-    // ratified by Yuna 2026-07-12 after summer layering requests kept dying on
-    // knit cardigans. They remain subject to the heavy-weight and insulating-fiber
-    // checks. Shoes and accessories are never "insulating pieces" (composer parity —
-    // a shoe's fabric_weight describes the shoe's substance, not body insulation;
-    // live-tested: 'sleek black cutout flats: hot weather: insulating piece').
-    const isOpenFrontLayer = isWholeWardrobeLayerableTop(piece)
-    const isShoeOrAccessoryPiece = wardrobeCategoryGroup(piece) === 'shoes' || isAccessory(piece)
-    const isInsulatingTopOrDress = isUpperBodyPiece && !isOpenFrontLayer && (
-      (hasInsulatingCoverage && isMediumOrHeavy) ||
-      (hasWarmNeckline && isMediumOrHeavy) ||
-      (hasWarmSleeves && isMediumOrHeavy)
-    )
-    // 2026-07-12: corrected to composer parity. The previous version also treated ANY
-    // medium-weight pants as insulating (bottomKind === 'pants'), which false-positived
-    // normal summer clothing — medium cotton/linen cargos, chinos, and cropped pants —
-    // and made freeform reject the very pants the user asked to style. The composer
-    // reference blocks bottoms only on authored full-insulating coverage; genuinely warm
-    // pants are still caught by the heavy-weight check (isHeavy) and the insulating-fiber
-    // check (wool/fleece etc.) above.
-    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy
-
-    if (hasHotInsulatingFiber) {
-      reasons.push('hot weather: insulating fiber')
-    } else if ((isHeavy && !isShoeOrAccessoryPiece) || isInsulatingTopOrDress || isInsulatingBottom) {
-      reasons.push('hot weather: insulating piece')
-    }
+    // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer maxi dress as
+    // insulating purely because length 'maxi' derives full-insulating coverage. Weight-qualified
+    // now: light full-length pieces are summer clothing. Open-front layer pieces (cardigans,
+    // kimonos, overshirts) are exempt from the coverage/neckline/sleeve clauses (ratified by Yuna
+    // 2026-07-12 after summer layering requests kept dying on knit cardigans) but remain subject
+    // to the heavy-weight and insulating-fiber checks. 2026-07-12 also corrected the bottom check
+    // to authored full-insulating coverage only, not ANY medium-weight pants (that false-positived
+    // normal cotton/linen cargos/chinos/cropped pants).
+    const reason = hotWeatherInsulationReason(piece, {
+      heavyAppliesToAllCategories: true,
+      checkUpperBodyCoverageNeckSleeve: true,
+      checkBottomCoverage: true,
+      openFrontExemption: true,
+    })
+    if (reason) reasons.push(reason)
   }
 
   if (weatherProfile.isCold) {
@@ -2858,6 +3081,16 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       const missingField = missingWeatherGateField(p)
       const registerReason = registerGateReason(p)
       const footwearReason = footwearGateReason(p)
+      // Roster policy, preserved as-is (see hotWeatherInsulationReason's own comment): unlike
+      // wholeWardrobePieceTrustDecision, the roster's heavy-weight check has never applied outside
+      // outerwear/top, and it has never checked dress/neckline/sleeve coverage or exempted
+      // open-front layers — narrower on purpose here, not a bug to widen in this pass.
+      const insulationReason = hotWeatherInsulationReason(p, {
+        heavyAppliesToAllCategories: false,
+        checkUpperBodyCoverageNeckSleeve: false,
+        checkBottomCoverage: true,
+        openFrontExemption: false,
+      })
       if (isSelected(p)) {
         afterStep3.push(p)
       } else if (registerReason) {
@@ -2870,10 +3103,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
         ensureMetadataTodo(p, missingField)
-      } else if (pieceHasInsulatingMaterial(p) && pieceFabricWeight(p) !== 'light') {
-        exclude(p, 'hot weather: insulating fiber')
-      } else if (((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') || (wardrobeCategoryGroup(p) === 'bottom' && pieceCoverage(p) === 'full' && (fabricWeight(p) === 'medium' || fabricWeight(p) === 'heavy'))) {
-        exclude(p, 'hot weather: insulating piece')
+      } else if (insulationReason) {
+        exclude(p, insulationReason)
       } else if (isOuterwear(p)) {
         outerwearCandidates.push(p)
       } else {

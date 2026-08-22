@@ -93,21 +93,35 @@ function stepWarmthTier(tier, delta) {
 
 // The single derived garment-warmth interpretation — used by both the wardrobe page's Warmth
 // filter and weatherFitForPiece (rules.js), which used to duplicate a slightly different version
-// of this same logic. Two tiers of evidence, not four independent ones:
+// of this same logic.
 //
-// 1. PRIMARY, authoritative: fabric_weight, if directly tagged. An insulating MATERIAL — fiber
-//    content (wool, cashmere...) or fabric_category (tweed, corduroy...) naming it, since either
-//    field alone can carry the signal — is real additional evidence fabric_weight can miss (a
-//    lightweight wool knit still runs warmer than lightweight cotton), so it still bumps a tier.
-// 2. SECONDARY, gap-filling only: coverage (full-length/long-sleeve) and bareness (sleeveless,
-//    mini) — consulted ONLY when fabric_weight is untagged and there's no insulating material
-//    either. Once a piece has a real, directly-tagged fabric_weight, length/sleeve/hem data adds
-//    no further information about the FABRIC — a medium-weight ankle-length cotton pant is not
-//    heavier for reaching the ankle rather than being cropped; it's the same fabric covering more
-//    leg. This is the owner-ruled fix for a real regression: "full-insulating" coverage was
-//    treated as independent evidence and could push an already medium-weight piece to "heavy"
-//    purely for its hemline (twill wide-leg pants, real wardrobe piece 129) — the same flaw
-//    already fixed for 'ankle' specifically was still live for maxi/floor/full-length.
+// fabric_weight is textile SUBSTANCE, not a warmth verdict on its own — a medium-weight cotton
+// knit made into a sleeveless summer dress is not the same thermal garment as the same fabric
+// made into a long-sleeve top. When fabric_weight is directly tagged, it is the starting point,
+// then two independent, physically-real signals can move it by a tier each:
+//   +1 for an insulating MATERIAL — fiber content (wool, cashmere...) or fabric_category (tweed,
+//      corduroy...), since either field alone can carry the signal. A lightweight wool knit still
+//      runs warmer than lightweight cotton.
+//   -1 for a bare cut (sleeveless, halter/strapless, mini/thigh-length) — skin exposure genuinely
+//      reduces how insulating a garment is regardless of the cloth it's cut from. This is the
+//      owner-flagged fix for a real gap: a medium-weight sleeveless dress was reading as "medium"
+//      warmth with no way for its bare cut to pull that down, the same shape of bug as the
+//      hemline-inflates-warmth issue below, just on the low side instead of the high side.
+// The two offset when both apply (a medium wool sleeveless dress nets back to medium — the
+// insulating fabric and the bare cut roughly cancel), and stepWarmthTier clamps at light/heavy
+// either way, so a heavy sleeveless wool dress lands at medium, not light — the exposed skin
+// makes it less warm than a heavy long-sleeve wool piece, not as cool as an unlined cotton one.
+//
+// Coverage (full-length/long-sleeve) and bareness together are consulted as a full FALLBACK only
+// when fabric_weight is completely untagged — there is no fabric substance to start from, so hem
+// and sleeve length are the only evidence available at all. Once fabric_weight is tagged, coverage
+// specifically adds nothing further: a medium-weight ankle-length cotton pant is not heavier for
+// reaching the ankle rather than being cropped; it's the same fabric covering more leg. This is
+// the owner-ruled fix for a real regression: "full-insulating" coverage was treated as independent
+// evidence and could push an already medium-weight piece to "heavy" purely for its hemline (twill
+// wide-leg pants, real wardrobe piece 129) — the same flaw already fixed for 'ankle' specifically
+// was still live for maxi/floor/full-length. Bareness, unlike coverage, keeps working as a tier
+// modifier even once fabric_weight is known, per above — only coverage becomes moot at that point.
 //
 // Returns null only when fabric_weight, insulating material, coverage, AND bareness are all
 // silent — an honest "unknown," never a guess.
@@ -121,10 +135,14 @@ export function pieceWarmthTier(p) {
   if (isShoePiece(p) || isAccessoryPiece(p)) return null
   const fw = fabricWeight(p)
   const insulatingMaterial = pieceHasInsulatingMaterial(p)
-  if (fw) return insulatingMaterial ? stepWarmthTier(fw, 1) : fw
+  const bare = pieceBareness(p) === 'high'
+  if (fw) {
+    const delta = (insulatingMaterial ? 1 : 0) - (bare ? 1 : 0)
+    return delta ? stepWarmthTier(fw, delta) : fw
+  }
   if (insulatingMaterial) return 'heavy'
   if (pieceCoverage(p) === 'full') return 'medium'
-  if (pieceBareness(p) === 'high') return 'light'
+  if (bare) return 'light'
   return null
 }
 
@@ -209,17 +227,173 @@ export function missingGateFields(piece = {}) {
 // were never actually valid sleeve_type values, so only "sleeveless" itself ever matched in
 // practice. Now that halter/strapless are real neckline values (not sleeve values), check both
 // fields on their own terms instead of hoping one field's free text contains another axis's word.
+//
+// Real regression: "light grey and brown knit cardigan" (piece 131, category outerwear) — cashmere,
+// fabric_weight: medium, length_hits_at: mid_thigh — landed in the "Versatile" weather-fit bucket
+// instead of "Good for cold" because this match used to include 'mid_thigh', flipping bareness to
+// 'high' and cancelling out the insulating-material tier bump. length_hits_at is a genuinely
+// PER-CATEGORY vocabulary (docs/garment-field-reference.md, 2026-08-14 taxonomy split): for
+// dress/skirt and pants, a short value like 'mini'/'shorts' means a hem that exposes leg skin, but
+// 'mid_thigh' isn't even in that vocabulary — it's outerwear-only, where length_hits_at describes
+// how far DOWN a coat/cardigan extends (waist < hip < mid_thigh < knee), the opposite direction
+// from bareness — a mid-thigh-length cardigan is a LONGER, more covering piece than a hip-length
+// one, not a bare one (confirmed by real data: piece 996760 "fleece coat", length_hits_at:
+// mid_thigh). 'upper_thigh' isn't a valid value in any current category's schema at all — dead
+// text from before the per-category split. Only 'mini'/'shorts' remain: both are still real,
+// current bare-hemline values in the dress/skirt and pants vocabularies respectively.
 export function pieceBareness(p) {
   if (p?.sleeve_length === 'sleeveless') return 'high'
   if (p?.neckline && /\b(halter|strapless)\b/i.test(p.neckline)) return 'high'
-  // 'shorts' (new pants vocab, plural) and 'mid_thigh' (new outerwear vocab,
-  // underscore) don't match a strict word-boundary regex tuned for the old
-  // singular/hyphenated spellings — 'short' with a trailing \b never matches
-  // inside "shorts" since both are word characters. Match the stem instead.
-  if (p?.length_hits_at && /\b(mini|shorts?|mid[-_]thigh|upper[-_]thigh)\b/i.test(p.length_hits_at)) {
+  // 'shorts' (pants vocab, plural) doesn't match a strict word-boundary regex tuned for the
+  // singular spelling — 'short' with a trailing \b never matches inside "shorts" since both are
+  // word characters. Match the stem instead.
+  if (p?.length_hits_at && /\b(mini|shorts?)\b/i.test(p.length_hits_at)) {
     return 'high'
   }
   return null
+}
+
+// A graded 0..1 fraction of the garment's applicable body regions that are exposed — for
+// weatherFitForPiece/pieceWeatherScores only. pieceBareness above stays a binary high/null verdict
+// on purpose: the cold-weather hard gate, extremeHeatPieceAdvisory, and the composer roster's own
+// cold check all read it as a single flag and none of those are in scope here.
+//
+// Real regression: "multicolor striped knit maxi dress" — sleeveless, but midi-length (legs
+// covered) — was scoring the same flat bareness credit as a fully bare mini dress, because
+// pieceBareness ORs sleeve/neckline/hem into one high/null verdict regardless of how many of those
+// signals actually fire or how much of the body the OTHER regions still cover. This tracks two
+// regions — upper body (sleeve OR neckline) and lower body (hem) — and returns exposed/applicable
+// rather than a flat constant: a sleeveless piece that's also full-length reads as half-exposed,
+// not fully bare. Sleeve and neckline are combined into ONE region rather than two: they're
+// largely the same upper-body-exposure signal (an ordinary crew neckline on a sleeveless top
+// doesn't mean "more covered" just because it isn't ALSO halter/strapless), not independent
+// evidence that should dilute each other.
+//
+// Second real regression: a region used to count as "applicable" only when it happened to be
+// TAGGED, so an untagged region simply vanished from the denominator instead of being treated as
+// unconfirmed. For a dress, that meant a MISSING length_hits_at made the garment look MORE
+// confidently exposed than a dress with a known, covering length (1/1 vs 1/2) — missing evidence
+// strengthened the bareness conclusion instead of weakening it. Applicability is now determined
+// purely by category (a dress always HAS an upper body and a lower body, whether or not either is
+// tagged); an untagged region still counts toward the denominator but defaults to "not confirmed
+// exposed" for the numerator, so missing data can only pull the degree toward less-exposed, never
+// more — consistent with how every other untagged field in this model defaults to no effect rather
+// than a favorable guess.
+export function pieceExposureDegree(p) {
+  const category = String(p?.category || '').toLowerCase().trim()
+  const upperApplicable = ['top', 'dress', 'outerwear'].includes(category)
+  const lowerApplicable = ['dress', 'bottom'].includes(category)
+  if (!upperApplicable && !lowerApplicable) return null
+
+  let exposed = 0
+  let applicable = 0
+
+  if (upperApplicable) {
+    applicable++
+    const bareUpper = p?.sleeve_length === 'sleeveless' || (p?.neckline && /\b(halter|strapless)\b/i.test(p.neckline))
+    if (bareUpper) exposed++
+  }
+  if (lowerApplicable) {
+    applicable++
+    const bareLower = p?.length_hits_at && /\b(mini|shorts?)\b/i.test(p.length_hits_at)
+    if (bareLower) exposed++
+  }
+
+  return exposed / applicable
+}
+
+// Fibers with essentially no natural/cellulosic breathability on their own — a garment made
+// ENTIRELY from these (no cotton/linen/wool/rayon/etc mixed in) runs close to airtight against
+// skin. Not the same list as INSULATING_FIBERS: spandex/nylon/polyester don't trap body heat the
+// way wool does, they just don't wick or breathe — a fully-synthetic piece can be cool in
+// substance (fabric_weight: light) and still poor at ventilating a close-fitting cut.
+const NON_BREATHABLE_ONLY_FIBERS = new Set(['polyester', 'nylon', 'acrylic', 'spandex', 'leather', 'suede'])
+
+function pieceFiberIsAllNonBreathable(p) {
+  const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
+    .map(f => String(f).toLowerCase().trim())
+    .filter(f => f && f !== 'unknown')
+  if (!fibers.length) return false
+  return fibers.every(f => NON_BREATHABLE_ONLY_FIBERS.has(f))
+}
+
+// Real regression: "floral botanical print active leggings" — fabric_weight: light,
+// fabric_category: technical/performance, fiber_content: polyester/nylon/spandex, fit_on_body:
+// clings_stretchy — scored a full hot-weather "lightweight, good for heat" bonus in
+// weatherFitForPiece despite being skin-tight synthetic fabric with essentially no airflow.
+// Coverage/insulating-material (pieceCoverage, pieceHasInsulatingMaterial) already capture fabric
+// substance and hem/sleeve extent; neither one captures how CLOSE the fabric sits to skin, which
+// is a real, independent factor in whether a lightweight piece actually ventilates.
+//
+// A close fit ALONE is not enough — 26 of the 30 real wardrobe tops/bottoms tagged
+// fit_on_body: clings_stretchy/clings_drapey are ordinary cotton tees and knits (a fitted cotton
+// crew tee genuinely clings, but cotton still breathes fine). What actually made the leggings
+// occlusive was the fabric having NO natural fiber at all — fully synthetic construction, not
+// closeness of fit by itself. So this requires both: a close cut, AND either an all-synthetic
+// fiber_content or fabric_category: technical/performance (the fallback for pieces where
+// fiber_content is untagged but the category itself already says activewear).
+export function pieceHasOcclusiveFit(p) {
+  const fit = String(p?.fit_on_body || '').toLowerCase().trim()
+  const closeFit = fit === 'clings_stretchy' || fit === 'clings_drapey'
+  if (!closeFit) return false
+  if (pieceFiberIsAllNonBreathable(p)) return true
+  return String(p?.fabric_category || '').toLowerCase().trim() === 'technical/performance'
+}
+
+// Breathable/known fibers with real natural or cellulosic airflow — the positive counterpart to
+// NON_BREATHABLE_ONLY_FIBERS. This is graded evidence for weatherFitForPiece/pieceWeatherScores,
+// not a replacement for pieceHasOcclusiveFit's boolean gate above (kept as-is for its own call
+// sites).
+//
+// Deliberately excludes INSULATING_FIBERS (wool, cashmere, alpaca...) even though wool genuinely
+// does breathe/wick moisture — real regression: a wool fleece vest scored breathability +1 on top
+// of its own insulating-material penalty, undoing 5 of that penalty's 6 points before bareness
+// even applied, and the combination flipped a genuinely warm piece to "Good for heat". A fiber
+// shouldn't argue "insulating, bad for heat" and "breathable, good for heat" from the same tag —
+// once a fiber's already counted as insulating evidence, it stops contributing to breathability
+// (treated as neutral there, not double-counted in the opposite direction).
+//
+// Returns one of exactly three values — +1 (breathable), -1 (non-breathable), 0 (mixed or
+// unknown) — never a fraction. fiber_content is an UNORDERED PRESENCE LIST, not composition
+// percentages: a piece tagged ["viscose", "polyester", "nylon"] does not mean "1/3 viscose" —
+// there is no data on how much of the actual fabric is which fiber. Second real regression: this
+// function used to return (breathableCount - nonBreathableCount) / knownCount, which manufactured
+// exactly that unsupported fraction — adding or removing a single fiber TAG swung the result by a
+// large amount regardless of the fabric's real composition, and that same invented fraction fed
+// BOTH this function's own heat term and pieceOcclusiveFitDegree's multiplier (the same guess
+// counted twice). Now: any presence of a known breathable fiber alongside a known non-breathable
+// one is 'mixed' — genuinely conflicting evidence, reported as neutral rather than averaged into a
+// fake in-between number.
+const BREATHABLE_FIBERS = new Set(['cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'hemp', 'denim'])
+export function pieceFiberBreathability(p) {
+  const fibers = (Array.isArray(p?.fiber_content) ? p.fiber_content : [])
+    .map(f => String(f).toLowerCase().trim())
+    .filter(f => f && f !== 'unknown')
+  const hasBreathable = fibers.some(f => BREATHABLE_FIBERS.has(f))
+  const hasNonBreathable = fibers.some(f => NON_BREATHABLE_ONLY_FIBERS.has(f))
+  if (hasBreathable && !hasNonBreathable) return 1
+  if (hasNonBreathable && !hasBreathable) return -1
+  return 0
+}
+
+// How much the CUT itself restricts airflow against skin, independent of the fabric it's made
+// from — a graded degree (0..1) rather than pieceHasOcclusiveFit's boolean, so it can be combined
+// multiplicatively with breathability (a close cut in breathable cotton isn't penalized; a close
+// cut in non-breathable synthetic is) instead of needing its own hard-coded material check.
+// fit_on_body is well-tagged for bottoms (~97%) but sparse for top/dress/outerwear (35-52% —
+// docs/garment-field-reference.md field audit); silhouette is the inverse (weak for bottoms,
+// 85-95% for top/dress/outerwear) and carries the same "fitted vs relaxed" information in its own
+// vocabulary, so it's the natural fallback rather than leaving those categories with no signal.
+export function pieceOcclusiveFitDegree(p) {
+  const fit = String(p?.fit_on_body || '').toLowerCase().trim()
+  if (fit === 'clings_stretchy') return 1
+  if (fit === 'clings_drapey') return 0.6
+  if (fit === 'skims') return 0.25
+  if (fit) return 0
+  const silhouette = String(p?.silhouette || '').toLowerCase().trim()
+  if (silhouette === 'fitted' || silhouette === 'slim') return 0.6
+  if (silhouette === 'sheath' || silhouette === 'column') return 0.5
+  return 0
 }
 
 // Physical coverage — how much body area the garment's sleeve/hem extends over. Deliberately NOT
@@ -237,6 +411,21 @@ export function pieceCoverage(p) {
   // 'ankle' deliberately excluded (owner ruling): hem length alone isn't coverage evidence worth
   // acting on — ankle is where ordinary trousers end, not an exceptional length. Reserve this for
   // genuinely long coverage (floor-length, maxi).
+  if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
+    return 'full'
+  }
+  return null
+}
+
+// The length_hits_at-only half of pieceCoverage above, deliberately WITHOUT the sleeve_length
+// half — for weather scoring only (pieceWeatherEvidence), which needs upper-body coverage
+// (sleeves) and lower-body coverage (hem) as two independent, non-overlapping signals rather than
+// one combined 'full' verdict. Real regression: pieceWeatherScores used to read pieceCoverage
+// (which returns 'full' for EITHER long sleeves OR a long hem) as its coverage term, and ALSO
+// added a separate longSleeves term from sleeveCoverage — so a single sleeve_length: 'long' tag
+// activated both terms, double-counting the same physical fact. This function reports only the
+// hem half; sleeve coverage is read directly from sleeveCoverage() wherever this is used.
+export function pieceHemCoverage(p) {
   if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
     return 'full'
   }
