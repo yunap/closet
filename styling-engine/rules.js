@@ -26,6 +26,7 @@ import {
   pieceBareness,
   pieceExposureDegree,
   pieceCoverage,
+  pieceHemCoverage,
   pieceHasInsulatingMaterial,
   pieceFiberBreathability,
   pieceOcclusiveFitDegree,
@@ -169,14 +170,16 @@ const WEATHER_EVIDENCE_WEIGHTS = {
   insulatingMaterialHeat: 6,
   insulatingMaterialCold: 6,
   breathability: 5,
-  coverageHeat: 5,
-  coverageCold: 6,
+  hemCoverageHeat: 5,
+  hemCoverageCold: 6,
   necklineHeat: 3,
   necklineCold: 3,
-  sleeveHeat: 3,
+  sleeveHeat: 5,
+  sleeveCold: 6,
   bareHeat: 8,
   bareCold: 8,
-  occlusionHeat: 6,
+  occlusionBaseHeat: 2,
+  occlusionNonBreathableAmplifyHeat: 4,
 }
 
 // The single graded weather-fit assessment — every consumer that judges hot/cold suitability
@@ -187,16 +190,27 @@ const WEATHER_EVIDENCE_WEIGHTS = {
 //
 // Owner's explicit design charter: no single property — fabric_weight, fiber identity, coverage,
 // fit, or exposure — is sufficient on its own to call a garment good or bad for heat/cold. Each is
-// graded, independent evidence that can reinforce or counteract the others. Two rules the model
-// specifically must NOT do, both broken by real regressions and fixed here:
+// graded, independent evidence that can reinforce or counteract the others. Rules the model
+// specifically must NOT break, each broken once by a real regression and fixed here:
 //   - Do not turn an unordered fiber_content PRESENCE LIST into a composition fraction. A piece
 //     tagged ["viscose","polyester","nylon"] is not "1/3 viscose" — there is no data on how much of
 //     the fabric is which fiber. pieceFiberBreathability (attributes.js) is categorical: +1
 //     (breathable), -1 (non-breathable), 0 (mixed evidence or none) — never an invented ratio.
 //   - Do not let skin exposure act as one flat, garment-wide credit regardless of how much of the
-//     body stays covered. pieceExposureDegree (attributes.js) is a 0..1 fraction of the garment's
-//     actually-applicable, actually-tagged regions (upper body: sleeve/neckline; lower body: hem)
-//     that are exposed — a sleeveless-but-midi dress reads as half-exposed, not fully bare.
+//     body stays covered, and do not let a MISSING region look more confidently exposed than a
+//     known, covered one. pieceExposureDegree (attributes.js) is a 0..1 fraction of the garment's
+//     category-applicable regions (upper body: sleeve/neckline; lower body: hem) that are
+//     CONFIRMED exposed — untagged regions count toward the denominator but default to "not
+//     exposed," so missing data can only weaken the exposure reading, never strengthen it.
+//   - Do not gate fit evidence away entirely just because fiber evidence is inconclusive. A close,
+//     clingy cut genuinely restricts airflow against skin regardless of what the fabric is made
+//     of — pieceOcclusiveFitDegree contributes its own small, independent penalty always, with
+//     confident non-breathability AMPLIFYING (not switching on) that penalty, rather than the
+//     fabric evidence gating the fit evidence to zero whenever it's inconclusive.
+//   - Do not count the same physical fact twice. sleeve_length: 'long'/'extra_long' is upper-body
+//     coverage; length_hits_at: full/floor-length/maxi is lower-body coverage — two independent
+//     regions, not one 'full' coverage flag fed by either. pieceHemCoverage reports the hem half
+//     only; sleeve coverage is read directly from sleeveCoverage() as its own term.
 //
 // The terms:
 //   - substance (fabric_weight, when tagged): the base term, ±1 per mass-index step.
@@ -206,18 +220,19 @@ const WEATHER_EVIDENCE_WEIGHTS = {
 //     automatically breathable and polyester/nylon are not automatically heat-unfriendly. Only
 //     affects HEAT — breathability is about ventilating body heat outward, not a cold-weather
 //     insulation mechanism the way an insulating material is.
-//   - coverage (pieceCoverage): scaled by substance mass for heat (heatCoverageScale) so a light
-//     full-length linen piece isn't penalized the way a medium/heavy one is, but always counts
-//     toward cold.
-//   - warm neckline / long sleeves: smaller, same-shaped terms as coverage — real but secondary
-//     evidence, also mass-scaled for heat.
+//   - hem coverage (pieceHemCoverage) / long sleeves (sleeveCoverage): independent upper- and
+//     lower-body coverage terms, each scaled by substance mass for heat (heatCoverageScale) so a
+//     light full-length linen piece isn't penalized the way a medium/heavy one is, but always
+//     counted toward cold.
+//   - warm neckline: smaller, same-shaped term as coverage — real but secondary evidence, also
+//     mass-scaled for heat.
 //   - exposure (pieceExposureDegree): skin exposure is real, independent thermal evidence, graded
 //     by how much of the garment is actually bare rather than a flat constant, and doesn't erase
 //     an insulating material's own bump — a separate additive term, not a multiplier that can zero
 //     another term out. Not applied to outerwear (see below).
-//   - occlusive fit (pieceOcclusiveFitDegree, gated by confident non-breathability): a close cut
-//     only costs heat-score when the fiber evidence is UNAMBIGUOUSLY non-breathable (not "mostly,"
-//     since we don't have composition data) — categorical gate, graded degree.
+//   - occlusive fit (pieceOcclusiveFitDegree): always contributes its own small heat penalty when
+//     the cut is close, amplified further when the fiber evidence is confidently non-breathable —
+//     "fit + fit×non-breathable interaction," not "fit only if the fabric is confidently bad."
 //
 // Returns null for shoes/accessories (fabric_weight there describes construction substance, not
 // body insulation — the same boundary pieceWarmthTier already draws) and when NOTHING is known at
@@ -228,16 +243,16 @@ export function pieceWeatherEvidence(piece = {}) {
   const massIndex = fabricMassIndex(piece)
   const insulatingMaterial = pieceHasInsulatingMaterial(piece)
   const breathability = pieceFiberBreathability(piece)
-  const coverage = pieceCoverage(piece)
+  const hemCoverage = pieceHemCoverage(piece)
   const exposure = pieceExposureDegree(piece)
   const warmNeckline = necklineWarmth(piece) === 'warm'
   const longSleeves = sleeveCoverage(piece) === 'long'
   const occlusion = pieceOcclusiveFitDegree(piece)
 
-  if (massIndex === null && !insulatingMaterial && breathability === 0 && !coverage && !exposure && !warmNeckline && !longSleeves && !occlusion) {
+  if (massIndex === null && !insulatingMaterial && breathability === 0 && !hemCoverage && !exposure && !warmNeckline && !longSleeves && !occlusion) {
     return null
   }
-  return { group, massIndex, insulatingMaterial, breathability, coverage, exposure, warmNeckline, longSleeves, occlusion }
+  return { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion }
 }
 
 // Graded hot/cold numeric scores built from pieceWeatherEvidence — see that function's comment for
@@ -248,7 +263,7 @@ export function pieceWeatherEvidence(piece = {}) {
 export function pieceWeatherScores(piece = {}) {
   const evidence = pieceWeatherEvidence(piece)
   if (!evidence) return { heat: 0, cold: 0, evidence: null }
-  const { group, massIndex, insulatingMaterial, breathability, coverage, exposure, warmNeckline, longSleeves, occlusion } = evidence
+  const { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion } = evidence
   const W = WEATHER_EVIDENCE_WEIGHTS
   const heatScale = heatCoverageScale(massIndex)
 
@@ -264,9 +279,9 @@ export function pieceWeatherScores(piece = {}) {
     cold += W.insulatingMaterialCold
   }
   heat += breathability * W.breathability
-  if (coverage === 'full') {
-    heat -= W.coverageHeat * (heatScale / 2)
-    cold += W.coverageCold
+  if (hemCoverage === 'full') {
+    heat -= W.hemCoverageHeat * (heatScale / 2)
+    cold += W.hemCoverageCold
   }
   if (warmNeckline) {
     heat -= W.necklineHeat * (heatScale / 2)
@@ -274,6 +289,7 @@ export function pieceWeatherScores(piece = {}) {
   }
   if (longSleeves) {
     heat -= W.sleeveHeat * (heatScale / 2)
+    cold += W.sleeveCold
   }
   // Real regression: a sleeveless wool/cashmere vest (outerwear) got the same heat-friendly
   // exposure credit as a bare TOP or DRESS. A vest's missing sleeves aren't exposed skin — they're
@@ -286,11 +302,15 @@ export function pieceWeatherScores(piece = {}) {
     heat += exposure * W.bareHeat
     cold -= exposure * W.bareCold
   }
-  // Only a confidently non-breathable fiber reading gates this — a 'mixed' or unknown reading
-  // isn't strong enough evidence to also penalize the CUT on top of already scoring the fiber
-  // itself; see pieceFiberBreathability's comment on why this used to be a continuous multiplier.
+  // Fit is independent evidence — a close, clingy cut genuinely restricts airflow regardless of
+  // what the fabric is made of, so it always costs some heat-score. Confident non-breathability
+  // (breathability === -1, not merely "mixed" or unknown) AMPLIFIES that cost on top of the base
+  // penalty rather than being the only thing that switches it on — "fit + fit×non-breathable
+  // interaction," matching a close synthetic cut being worse than a close natural-fiber one
+  // without a close natural-fiber cut costing nothing at all.
+  heat -= occlusion * W.occlusionBaseHeat
   if (breathability < 0) {
-    heat -= occlusion * W.occlusionHeat
+    heat -= occlusion * W.occlusionNonBreathableAmplifyHeat
   }
 
   return { heat, cold, evidence }

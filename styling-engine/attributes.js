@@ -262,35 +262,44 @@ export function pieceBareness(p) {
 // covered) — was scoring the same flat bareness credit as a fully bare mini dress, because
 // pieceBareness ORs sleeve/neckline/hem into one high/null verdict regardless of how many of those
 // signals actually fire or how much of the body the OTHER regions still cover. This tracks two
-// regions — upper body (sleeve OR neckline) and lower body (hem) — each only counted when it's
-// actually applicable to the category AND tagged, and returns exposed/applicable rather than a
-// flat constant: a sleeveless piece that's also full-length reads as half-exposed, not fully bare;
-// a sleeveless top with no hem-exposure concept at all (tops don't have a leg-baring hem) still
-// reads fully exposed on its one applicable region, matching a plain tank top's real bareness.
-// Sleeve and neckline are combined into ONE region rather than two: they're largely the same
-// upper-body-exposure signal (an ordinary crew neckline on a sleeveless top doesn't mean "more
-// covered" just because it isn't ALSO halter/strapless), not independent evidence that should
-// dilute each other.
+// regions — upper body (sleeve OR neckline) and lower body (hem) — and returns exposed/applicable
+// rather than a flat constant: a sleeveless piece that's also full-length reads as half-exposed,
+// not fully bare. Sleeve and neckline are combined into ONE region rather than two: they're
+// largely the same upper-body-exposure signal (an ordinary crew neckline on a sleeveless top
+// doesn't mean "more covered" just because it isn't ALSO halter/strapless), not independent
+// evidence that should dilute each other.
+//
+// Second real regression: a region used to count as "applicable" only when it happened to be
+// TAGGED, so an untagged region simply vanished from the denominator instead of being treated as
+// unconfirmed. For a dress, that meant a MISSING length_hits_at made the garment look MORE
+// confidently exposed than a dress with a known, covering length (1/1 vs 1/2) — missing evidence
+// strengthened the bareness conclusion instead of weakening it. Applicability is now determined
+// purely by category (a dress always HAS an upper body and a lower body, whether or not either is
+// tagged); an untagged region still counts toward the denominator but defaults to "not confirmed
+// exposed" for the numerator, so missing data can only pull the degree toward less-exposed, never
+// more — consistent with how every other untagged field in this model defaults to no effect rather
+// than a favorable guess.
 export function pieceExposureDegree(p) {
   const category = String(p?.category || '').toLowerCase().trim()
   const upperApplicable = ['top', 'dress', 'outerwear'].includes(category)
   const lowerApplicable = ['dress', 'bottom'].includes(category)
+  if (!upperApplicable && !lowerApplicable) return null
 
   let exposed = 0
   let applicable = 0
 
-  if (upperApplicable && (p?.sleeve_length || p?.neckline)) {
+  if (upperApplicable) {
     applicable++
-    const bareUpper = p.sleeve_length === 'sleeveless' || (p.neckline && /\b(halter|strapless)\b/i.test(p.neckline))
+    const bareUpper = p?.sleeve_length === 'sleeveless' || (p?.neckline && /\b(halter|strapless)\b/i.test(p.neckline))
     if (bareUpper) exposed++
   }
-  if (lowerApplicable && p?.length_hits_at) {
+  if (lowerApplicable) {
     applicable++
-    const bareLower = /\b(mini|shorts?)\b/i.test(p.length_hits_at)
+    const bareLower = p?.length_hits_at && /\b(mini|shorts?)\b/i.test(p.length_hits_at)
     if (bareLower) exposed++
   }
 
-  return applicable ? exposed / applicable : null
+  return exposed / applicable
 }
 
 // Fibers with essentially no natural/cellulosic breathability on their own — a garment made
@@ -402,6 +411,21 @@ export function pieceCoverage(p) {
   // 'ankle' deliberately excluded (owner ruling): hem length alone isn't coverage evidence worth
   // acting on — ankle is where ordinary trousers end, not an exceptional length. Reserve this for
   // genuinely long coverage (floor-length, maxi).
+  if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
+    return 'full'
+  }
+  return null
+}
+
+// The length_hits_at-only half of pieceCoverage above, deliberately WITHOUT the sleeve_length
+// half — for weather scoring only (pieceWeatherEvidence), which needs upper-body coverage
+// (sleeves) and lower-body coverage (hem) as two independent, non-overlapping signals rather than
+// one combined 'full' verdict. Real regression: pieceWeatherScores used to read pieceCoverage
+// (which returns 'full' for EITHER long sleeves OR a long hem) as its coverage term, and ALSO
+// added a separate longSleeves term from sleeveCoverage — so a single sleeve_length: 'long' tag
+// activated both terms, double-counting the same physical fact. This function reports only the
+// hem half; sleeve coverage is read directly from sleeveCoverage() wherever this is used.
+export function pieceHemCoverage(p) {
   if (p?.length_hits_at && /\b(full[-_]length|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
     return 'full'
   }

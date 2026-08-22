@@ -1127,12 +1127,12 @@ test('pieceWeatherScores: real-data regression — a sleeveless insulated vest r
   assert.equal(pieceHeatSuitability(lightCottonVest), 'hot')
 })
 
-test('pieceExposureDegree: a graded fraction of applicable, tagged regions that are bare — not one flat garment-wide constant', () => {
+test('pieceExposureDegree: a graded fraction of the garment\'s category-applicable regions confirmed bare — missing data weakens, never strengthens, the reading', () => {
   // Real regression: "multicolor striped knit maxi dress" (piece 163) — sleeveless but midi-length
   // (legs covered) — scored the SAME flat exposure credit as a fully bare mini dress, because the
   // old model ORed sleeve/neckline/hem into one high/null verdict regardless of how many of those
   // signals actually fired or how much of the body other regions still covered.
-  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi' }), 0.5, 'one exposed region (arms) out of two applicable, tagged regions (arms, legs)')
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi' }), 0.5, 'one exposed region (arms) out of two applicable regions (arms, legs)')
 
   // A dress with BOTH regions bare reads fully exposed.
   assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless', length_hits_at: 'mini' }), 1)
@@ -1140,9 +1140,18 @@ test('pieceExposureDegree: a graded fraction of applicable, tagged regions that 
   // A dress with neither region bare reads fully covered.
   assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'long', length_hits_at: 'maxi' }), 0)
 
-  // A plain sleeveless TOP has no leg-baring hem concept at all (tops don't have a leg-exposure
-  // vocabulary) — its one applicable region (upper body) being bare reads as fully exposed, same
-  // magnitude as a real bare tank top, not diluted by an inapplicable second region.
+  // Second real regression: a dress's lower-body region used to count as "applicable" only when
+  // length_hits_at happened to be TAGGED, so a MISSING length reading made a sleeveless dress look
+  // MORE confidently exposed (1/1) than the exact same dress with a known, covering length (1/2) —
+  // missing evidence strengthened the bareness conclusion instead of weakening it. A dress always
+  // intrinsically has a lower body, tagged or not, so the untagged case now still counts toward the
+  // denominator and defaults to "not confirmed exposed" — same reading as if the length were known
+  // and covering, never stronger than that.
+  assert.equal(pieceExposureDegree({ category: 'dress', sleeve_length: 'sleeveless' }), 0.5, 'an untagged lower region must not read as more exposed than a known, covered one')
+
+  // A plain sleeveless TOP has no leg-baring hem concept at all (tops don't have a lower-body
+  // region in the first place) — its one applicable region (upper body) being bare reads as fully
+  // exposed, same magnitude as a real bare tank top.
   assert.equal(pieceExposureDegree({ category: 'top', sleeve_length: 'sleeveless', neckline: 'crew' }), 1)
 
   // Sleeve and neckline are ONE region, not two — an ordinary crew neckline on a sleeveless top
@@ -1153,18 +1162,22 @@ test('pieceExposureDegree: a graded fraction of applicable, tagged regions that 
   assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'shorts' }), 1)
   assert.equal(pieceExposureDegree({ category: 'bottom', length_hits_at: 'full_length' }), 0)
 
-  // No applicable regions tagged at all -> honest unknown, not a guess.
-  assert.equal(pieceExposureDegree({ category: 'top' }), null)
-  assert.equal(pieceExposureDegree({ category: 'accessory', sleeve_length: 'sleeveless' }), null, 'accessories have no applicable exposure region')
+  // A category with an applicable region but nothing at all tagged for it defaults to "not
+  // exposed" (0), not an unknown null — consistent with every other untagged field in this model
+  // defaulting to no effect rather than a favorable guess.
+  assert.equal(pieceExposureDegree({ category: 'top' }), 0)
+  // Accessories have no applicable exposure region at all -> genuinely null, not zero.
+  assert.equal(pieceExposureDegree({ category: 'accessory', sleeve_length: 'sleeveless' }), null)
 })
 
 test('pieceWeatherScores/pieceHeatSuitability: owner-specified regression fixtures rerun under the revised evidence model', () => {
   // 1. The dress that started this — piece 163, "multicolor striped knit maxi dress": medium
   // weight knit, mixed fiber evidence (viscose is breathable, polyester/nylon are not — genuinely
   // conflicting, not a 2/3-synthetic fraction), sleeveless but midi-length (half-exposed, not
-  // fully bare), clings_stretchy fit. No confidently non-breathable fiber reading -> no occlusion
-  // penalty either. The partial, real evidence nets to a genuine toss-up rather than a confident
-  // "Good for heat".
+  // fully bare), clings_stretchy fit. The clingy fit still costs a small base heat penalty on its
+  // own (fit is independent evidence — see the dedicated test below) even without a confidently
+  // non-breathable fiber reading to amplify it. The partial, real evidence nets to a genuine
+  // toss-up rather than a confident "Good for heat".
   const dress163 = { category: 'dress', fabric_weight: 'medium', fiber_content: ['viscose', 'polyester', 'nylon'], sleeve_length: 'sleeveless', neckline: 'V', length_hits_at: 'midi', fit_on_body: 'clings_stretchy' }
   assert.equal(pieceHeatSuitability(dress163), 'versatile')
 
@@ -1191,10 +1204,71 @@ test('pieceWeatherScores/pieceHeatSuitability: owner-specified regression fixtur
 
   // 5. The original sleeveless medium-weight summer dress ("well this dress weight is medium, but
   // it does not make it warm") — medium weight alone, cotton (breathable, not insulating),
-  // sleeveless, no length_hits_at tagged (so exposure is judged on the one applicable, tagged
-  // region: upper body, fully bare -> exposure degree 1, not diluted by an untagged hem field).
+  // sleeveless, no length_hits_at tagged. A dress always has an intrinsic lower-body region, so
+  // the untagged length still counts toward the denominator (defaulting to "not confirmed
+  // exposed") -> exposure degree 0.5, not the inflated 1.0 an untagged region used to produce.
+  // Breathability + a real (if partial) exposure credit are still enough to land this "hot".
   const summerDress = { category: 'dress', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'sleeveless' }
   assert.equal(pieceHeatSuitability(summerDress), 'hot')
+})
+
+test('pieceWeatherScores: fit is independent evidence — a close cut costs some heat-score always, amplified (not switched on) by confident non-breathability', () => {
+  // Real regression (review of the first version of this fix): occlusion only applied when
+  // breathability was confidently -1, so a clingy fit on MIXED or unknown fiber evidence — like
+  // the striped dress's viscose/polyester/nylon blend — contributed nothing at all. "This fabric
+  // sits tightly against a large portion of the body" is a real, known physical fact regardless of
+  // whether the fiber evidence is conclusive, so it must cost something on its own.
+  const baseline = { category: 'top', fabric_weight: 'medium' }
+  const clingyMixedFiber = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy', fiber_content: ['viscose', 'polyester'] }
+  const clingyUnknownFiber = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy' }
+  assert.ok(pieceWeatherScores(clingyMixedFiber).heat < pieceWeatherScores(baseline).heat, 'a clingy fit must cost heat-score even with mixed fiber evidence')
+  assert.ok(pieceWeatherScores(clingyUnknownFiber).heat < pieceWeatherScores(baseline).heat, 'a clingy fit must cost heat-score even with no fiber evidence at all')
+
+  // Confident non-breathability AMPLIFIES the same fit penalty rather than being the only thing
+  // that turns it on — a clingy synthetic piece must cost strictly more than an equally clingy
+  // mixed-fiber piece, not the same amount and not zero for the mixed one.
+  const clingyConfidentlySynthetic = { category: 'top', fabric_weight: 'medium', fit_on_body: 'clings_stretchy', fiber_content: ['polyester', 'nylon'] }
+  assert.ok(pieceWeatherScores(clingyConfidentlySynthetic).heat < pieceWeatherScores(clingyMixedFiber).heat, 'confident non-breathability must amplify the fit penalty beyond the base amount')
+
+  // A loose fit costs nothing regardless of fiber — the penalty is about the CUT, not a fiber
+  // verdict wearing a fit-shaped disguise.
+  const looseConfidentlySynthetic = { category: 'top', fabric_weight: 'medium', fit_on_body: 'drapes', fiber_content: ['polyester', 'nylon'] }
+  assert.equal(pieceWeatherScores(looseConfidentlySynthetic).heat, pieceWeatherScores({ category: 'top', fabric_weight: 'medium', fiber_content: ['polyester', 'nylon'] }).heat)
+})
+
+test('pieceWeatherScores: sleeve coverage and hem coverage are independent, non-overlapping evidence — a single sleeve_length tag must not activate both terms', () => {
+  // Real regression: pieceWeatherScores used to read pieceCoverage (which returns 'full' for
+  // EITHER long sleeves OR a long hem) as one coverage term, and separately added a longSleeves
+  // term from sleeveCoverage — so a single sleeve_length: 'long' tag fed both terms, double-
+  // counting the same physical fact. A long-sleeve, otherwise-untagged-hem top must cost the same
+  // as a piece with ONLY a sleeve-coverage term, not sleeve-coverage-plus-hem-coverage.
+  // A long-sleeve TOP (sleeve term only — tops have no hem-coverage concept at all, so the old
+  // combined pieceCoverage() check could only ever have fired via the sleeve half here) costs
+  // exactly the same as a bottom-half-only hem check of equivalent magnitude would, confirming
+  // it's a single term, not the sleeve term plus a phantom second hit from the same tag.
+  const longSleeveOnly = { category: 'top', fabric_weight: 'medium', sleeve_length: 'long' }
+  const noSleeveNoHem = { category: 'top', fabric_weight: 'medium' }
+  const sleeveOnlyPenalty = pieceWeatherScores(noSleeveNoHem).heat - pieceWeatherScores(longSleeveOnly).heat
+  assert.ok(sleeveOnlyPenalty > 0, 'long sleeves must cost some heat-score')
+  const maxiHemOnlyBottom = { category: 'bottom', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const noHemBottom = { category: 'bottom', fabric_weight: 'medium' }
+  const hemOnlyPenaltyOnBottom = pieceWeatherScores(noHemBottom).heat - pieceWeatherScores(maxiHemOnlyBottom).heat
+  assert.equal(sleeveOnlyPenalty, hemOnlyPenaltyOnBottom, 'the sleeve term alone must match the hem term alone in magnitude — same coverage-weight class, one term each')
+
+  // A separately maxi-length DRESS (hem coverage, no sleeve tag) costs its own, independent
+  // amount — not zero because "coverage" was already spent on a sleeve check that never fired.
+  const maxiNoSleeve = { category: 'dress', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const noHemNoSleeve = { category: 'dress', fabric_weight: 'medium' }
+  assert.ok(pieceWeatherScores(maxiNoSleeve).heat < pieceWeatherScores(noHemNoSleeve).heat, 'hem coverage must cost heat-score on its own')
+
+  // A piece with BOTH long sleeves AND a maxi hem costs the SUM of the two independent terms —
+  // confirms they're additive, not still secretly sharing one combined flag.
+  const bothCovered = { category: 'dress', fabric_weight: 'medium', sleeve_length: 'long', length_hits_at: 'maxi' }
+  const sleeveOnlyDress = { category: 'dress', fabric_weight: 'medium', sleeve_length: 'long' }
+  const hemOnlyDress = { category: 'dress', fabric_weight: 'medium', length_hits_at: 'maxi' }
+  const bareDress = { category: 'dress', fabric_weight: 'medium' }
+  assert.ok(Math.abs((pieceWeatherScores(bareDress).heat - pieceWeatherScores(bothCovered).heat) -
+    ((pieceWeatherScores(bareDress).heat - pieceWeatherScores(sleeveOnlyDress).heat) + (pieceWeatherScores(bareDress).heat - pieceWeatherScores(hemOnlyDress).heat))) < 1e-9)
 })
 
 test('wholeWardrobePieceTrustDecision and buildVisualComposerRoster share one hot-weather insulation model, with their pre-existing policy differences kept intentional and explicit', () => {
