@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS } from '../../styling-engine/attributes.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 import { ColorEditor } from './ColorSelector.jsx'
+import InfoTooltip from './InfoTooltip.jsx'
 
 const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
@@ -90,7 +91,7 @@ function emptyForm() {
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
-    shoe_type: null, toe_shape: null,
+    shoe_type: null, toe_shape: null, outerwear_role: null, weather_protection: [],
     style_profile_json: {},
     tagger_version: null,
     manual_overrides: [],
@@ -542,7 +543,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
     'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
     'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
     'stretch', 'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
-    'shoe_type', 'toe_shape'
+    'shoe_type', 'toe_shape', 'outerwear_role', 'weather_protection'
   ]
   const hasLowConfidencePatternConst = patternConstFields.some(field => 
     String(confidence[field] || '').toLowerCase() === 'low'
@@ -996,6 +997,53 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
               </div>
             )}
 
+            {/* Outerwear Role */}
+            {form.category === 'outerwear' && (
+              <div className="form-group">
+                <FieldLabel field="outerwear_role">
+                  Outerwear Role
+                  <InfoTooltip className="outerwear-info-tooltip" label="What outerwear role means" size="sm" align="left" width={260}>
+                    <div>Describes what this layer is functionally suited to do — not how warm it is.</div>
+                    <div><strong>Indoor layer</strong> — light layering, mostly indoors</div>
+                    <div><strong>Transition layer</strong> — outer layer for mild/cool weather</div>
+                    <div><strong>Protective shell</strong> — wind/rain protection, not necessarily warm</div>
+                    <div><strong>Cold-weather outerwear</strong> — substantial outer layer for genuinely cold weather</div>
+                  </InfoTooltip>
+                </FieldLabel>
+                <select className="form-select" value={form.outerwear_role || ''} onChange={e => set('outerwear_role', e.target.value || null)}>
+                  <option value="">-- Select Outerwear Role --</option>
+                  {['indoor_layer','transition_layer','protective_shell','cold_weather_outerwear'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Weather Protection */}
+            {form.category === 'outerwear' && (
+              <div className="form-group">
+                <FieldLabel field="weather_protection">
+                  Weather Protection
+                  <InfoTooltip className="outerwear-info-tooltip" label="What weather protection means" size="sm" align="left" width={260}>
+                    <div>Which specific hazard this layer reliably protects against, if any — separate from its role above.</div>
+                    <div>Leave both unchecked if the piece doesn't clearly protect against rain or wind (this is normal for most pieces).</div>
+                  </InfoTooltip>
+                </FieldLabel>
+                <div className="chip-grid">
+                  {['rain','wind'].map(opt => (
+                    <button
+                      key={opt}
+                      className={`chip-toggle ${form.weather_protection && form.weather_protection.includes(opt) ? 'active' : ''}`}
+                      onClick={() => toggleArr('weather_protection', opt)}
+                      style={{ textTransform: 'capitalize' }}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Silhouette */}
             {(form.category === 'bottom' || REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions) && (
               <div className="form-group">
@@ -1386,6 +1434,8 @@ export default function BatchAdd({ onDone }) {
             bottom_subtype:     tags.bottom_subtype     || null,
             shoe_type:          tags.shoe_type          || null,
             toe_shape:          tags.toe_shape          || null,
+            outerwear_role:     tags.outerwear_role     || null,
+            weather_protection: tags.weather_protection || [],
             jewelry_type:       tags.jewelry_type       || null,
             necklace_length:    tags.necklace_length    || null,
             style_profile_json: tags.style_profile_json || {},

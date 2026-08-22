@@ -411,6 +411,15 @@ function initDb(dbPath) {
     // backing concept. fabric_weight is kept (never dropped) and is now
     // clothing-only going forward; see the one-time backfill below.
     'visual_weight TEXT',
+    // outerwear_role: indoor_layer|transition_layer|protective_shell|cold_weather_outerwear.
+    // NULL for all non-outerwear categories. A second, independent outerwear axis (what weather
+    // function this layer can perform) — deliberately kept separate from fabric_weight/warmth
+    // thermal scoring. See docs/outerwear-weather-capability-spec.md.
+    'outerwear_role TEXT',
+    // weather_protection: JSON array subset of rain|wind. NULL/'[]' for all non-outerwear
+    // categories, and a legitimate, common answer for outerwear too (an ordinary denim jacket
+    // protects against neither). See docs/outerwear-weather-capability-spec.md §3.
+    'weather_protection TEXT DEFAULT "[]"',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -1040,6 +1049,7 @@ export const parsePiece = p => p ? ({
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
   style_profile_json:    safeJsonParse(p.style_profile_json, {}) || {},
   fiber_content:         safeJsonParse(p.fiber_content, [])      || [],
+  weather_protection:    safeJsonParse(p.weather_protection, []) || [],
   formality:             p.formality             || null,
   heel_height:           p.heel_height           || null,
   walk_support:          p.walk_support          || null,

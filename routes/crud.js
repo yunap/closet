@@ -17,7 +17,9 @@ import {
   normalizeJewelryType,
   normalizeNecklaceLength,
   normalizeManualOverrides,
+  normalizeOuterwearRole,
   normalizeWalkSupport,
+  normalizeWeatherProtection,
   pinManualConfidence,
   tagStateForPhotos
 } from '../styling-engine/taggerMerge.js'
@@ -281,7 +283,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
     fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape, outerwear_role, weather_protection,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
@@ -302,15 +304,15 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
-      fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
+      fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape, outerwear_role, weather_protection,
       styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
       tag_state, manual_overrides)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null,
+    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     finalTagState, JSON.stringify(finalManualOverrides))
   queueColorTaxonomyReviews(db, {
@@ -329,7 +331,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
     fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape, outerwear_role, weather_protection,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
@@ -360,7 +362,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_length=?,sleeve_shape=?,length_hits_at=?,silhouette=?,
-      fabric_category=?,fabric_weight=?,visual_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,accessory_subtype=?,jewelry_type=?,necklace_length=?,bottom_subtype=?,shoe_type=?,toe_shape=?,
+      fabric_category=?,fabric_weight=?,visual_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,accessory_subtype=?,jewelry_type=?,necklace_length=?,bottom_subtype=?,shoe_type=?,toe_shape=?,outerwear_role=?,weather_protection=?,
       styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?,
       tag_state=?,manual_overrides=?
     WHERE id=?
@@ -369,7 +371,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null,
+    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)

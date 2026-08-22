@@ -1081,6 +1081,8 @@ img { display: block; max-width: 100%; }
   background: #F5F0E9;
   color: var(--text-light);
   line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1136,6 +1138,12 @@ img { display: block; max-width: 100%; }
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Reset text-transform/letter-spacing/text-align explicitly: this trigger commonly sits inside
+     a .form-label (uppercase, letter-spacing: 0.08em) or similar styled heading, and without this
+     the popover content silently inherits that instead of reading as normal body text. */
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
 }
 
 .info-tooltip-popover > div + div {
@@ -1527,6 +1535,21 @@ img { display: block; max-width: 100%; }
 .wardrobe-sort-info-row strong {
   color: var(--accent);
   font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+/* outerwear_role / weather_protection field tooltips — the same boxed-row treatment as
+   .wardrobe-sort-info-row above, so a multi-line explanation reads as distinct chunks instead of
+   one flat paragraph sharing the popover's plain background. */
+.outerwear-info-tooltip .info-tooltip-popover > div {
+  padding: 8px 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface));
+  color: var(--text-muted);
+}
+
+.outerwear-info-tooltip .info-tooltip-popover strong {
+  color: var(--accent);
   font-weight: 650;
 }
 
