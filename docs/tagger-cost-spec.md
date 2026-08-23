@@ -1,6 +1,9 @@
 # Spec: tagger cost and cold-start quality
 
-**Status:** draft for owner ratification, 2026-07-26. Not implemented.
+**Status:** Phase 2 (model-tier screening) executed and decided 2026-08-23 — see §6b. Phases 0/1
+(caching, content reordering, dead-field cleanup, cost-gate fixes) were independently implemented
+between this spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4
+remain undecided.
 **Author's note:** every number here is measured against the real 236-piece wardrobe by a read-only
 script, named inline. Nothing in this spec was estimated.
 
@@ -296,6 +299,129 @@ scales linearly regardless. The larger prize is wall-clock: a 200-garment onboar
 
 ---
 
+## 6b. Phase 2 — executed 2026-08-23: results and decision
+
+**This is a revised, smaller version of §6's design, run under a tighter budget.** By the time this
+ran, Phases 0/1 were already independently implemented (`docs/tagger-audit-findings.md`): caching
+and content-reordering are live, `cross_photo_agreement_note` and `setPath` are gone, and the
+garment-field taxonomy had since split by category (shoes/accessories no longer share
+`silhouette`/`fabric_weight` with clothing — see `docs/garment-field-reference.md`). None of that
+invalidated the core Phase 2 question, which had not been touched: tagging still always ran on
+`claude-sonnet-4-6`; the haiku-vs-sonnet A/B had never been run.
+
+### What changed from §6's design
+
+- **One arm, not two.** §6 called for a clean-photo arm plus an import-crop arm, with Arm B named
+  as "the one that decides adoption." The import-crop files on disk from the prior import session
+  turned out to be poor material for this screening round (owner judgment call, not a
+  measurement) and were dropped. **This run only covers the clean hanger/worn-photo distribution.**
+  The import-crop arm is still unrun and is the largest remaining gap — see "What this doesn't
+  answer" below.
+- **10 cases, not 30+10+30.** Budget-driven. §6's Arm A also leaned on pieces with ≥2 owner
+  corrections as a ground-truth proxy; this run explicitly avoided that (99.6% of active pieces now
+  carry *some* manual override, so "has corrections" no longer discriminates, and correction
+  history spans several tagger generations so isn't clean ground truth regardless). Cases were
+  picked for category/silhouette/fabric-weight/formality diversity instead.
+- **Noise floor measured narrowly, not broadly.** Instead of §6's flat 10-piece repeat-everything
+  step, only the two cases that showed disagreement were repeated (2 extra Sonnet calls), after the
+  first pass identified which cases needed it. Cheaper, and it's what actually settled the
+  ambiguous cases (below).
+- **Cold start achieved via an isolated DB copy** (`manual_overrides` cleared), not a code change —
+  `buildAnchorBlock` already returns empty with no matching overrides. `existingPiece` was passed as
+  `null` for every case, so the per-piece Ground-Truth-Overrides block was suppressed too. One small
+  additive repo change was needed: `tagPieceWithProvider` (`routes/ai.js`) gained an optional `model`
+  key so the harness could pin Sonnet/Haiku per call without relying on the module-load-time
+  `ANTHROPIC_STYLIST_MODEL` env var. No existing caller passes it; production behavior is unchanged.
+
+### Manifest (10 cases, all clean hanger/worn photos, owner's real wardrobe)
+
+| case | piece | category | fabric_weight | formality | silhouette/type | length |
+|---|---|---|---|---|---|---|
+| c1 | 996780 | dress | medium | elevated | sheath | midi |
+| c2 | 996778 | dress | light | dressy | shift | below_knee |
+| c3 | 996783 | top | light | everyday | straight | hip |
+| c4 | 990446 | top | medium | everyday | fitted | waist |
+| c5 | 996784 | bottom | light | lounge | tapered | floor_length |
+| c6 | 990390 | bottom | heavy | everyday | relaxed | full_length |
+| c7 | 996760 | outerwear | heavy | everyday | oversized | mid_thigh |
+| c8 | 996759 | outerwear | medium | elevated | structured | knee |
+| c9 | 996776 | accessory | slim (jewelry) | elevated | fitted | above-knee |
+| c10 | 205 | shoes | medium | dressy | pump/pointed | below_ankle |
+
+### Results
+
+22 calls total (10 cases × 2 models, plus 2 targeted Sonnet repeats). **100% JSON-parse success**,
+zero retries, zero malformed output, zero missed-garment cases, on both models. **Total spend
+$0.6294** — Sonnet $0.3882 (10 calls), Haiku $0.1346 (10 calls), noise-floor repeats $0.1066 (2
+calls) — against a quoted ceiling of $0.80 and well under §6's original $2.70 budget. Haiku ran
+**~65% cheaper and ~46% faster** per call (avg 19.3s vs 35.9s), consistent with §6's projection.
+
+### Field-level findings and adjudication
+
+Comparing Sonnet vs Haiku on Tier-1 fields (category-aware — shoes/accessories compared on their
+own current field set, not `fabric_weight`/`silhouette`), most cases were exact or near-exact
+matches; two showed real disagreement (c2, c7). Both were run down to a verdict:
+
+- **c7 (996760, a heavy oversized sherpa-fleece pullover hoodie):** Sonnet called it `category:
+  top` on two independent runs (fully reproducible, not noise); Haiku called it `outerwear`,
+  matching the piece's stored value. **Owner ruling: the fabric is too warm to read as a top** —
+  this is a real Sonnet miss, not an ambiguous garment. **Verdict: `haiku_better`.**
+- **c2 (996778, a silk abstract-print dress with sequin shoulder detail):** the two stable
+  disagreements were `silhouette` (Sonnet: sheath, Haiku: wrap) and `fabric_weight` (Sonnet: medium,
+  Haiku: light). A one-call Sonnet repeat showed the *other* two apparent disagreements on this case
+  (`length_hits_at`, `formality`) were pure sampling noise — Sonnet didn't even agree with itself,
+  and its second `formality` answer matched Haiku's. On the two stable fields, **owner ruling: the
+  hanger-photo folds do read as a wrap, and the fabric is silk** (consistent with Haiku's "light,"
+  not Sonnet's "medium") — the worn photo was partly occluded by a phone, which plausibly explains
+  why this was a harder case for both models. **Verdict: `haiku_better`.**
+- All other 8 cases: **`equivalent`** — either full agreement, or differences confined to soft
+  formality/length judgment calls with no clear winner.
+
+**0 of 10 cases showed a Haiku regression of any severity. 2 of 10 showed Haiku correcting a
+Sonnet error.** The decision rule's stop condition ("2+ clear material regressions") did not
+trigger — the opposite happened.
+
+### Decision
+
+**Adopt `claude-haiku-4-5` for cold-start tagging.** On this screening set Haiku matched or beat
+Sonnet on every field checked, at ~65% lower cost and ~46% lower latency, with identical schema
+reliability. Nothing has been changed in production routing yet — `ACTIVE_STYLIST_MODEL` and
+`tagPieceWithProvider`'s default still resolve to Sonnet everywhere. This section records the
+result the routing change should cite; the routing change itself is separate, deliberate work (see
+"Next" below).
+
+### What this doesn't answer
+
+- **The import-crop distribution is untested.** §6 named this "the one that decides adoption" —
+  crops and fallback-to-full-photo cases are still the harder, cold-start-relevant path this spec
+  exists for, and this run says nothing about it. Re-running the import arm (with better source
+  material than what was on disk from the prior session) is the most important follow-up before
+  treating this as a full adoption decision rather than a promising screen.
+- **10 cases is a screening sample, not a powered study.** It caught two real errors, which is a
+  good sign for Haiku, but it cannot bound a rare-failure rate the way a larger run could.
+- **Warm-wardrobe (calibration-anchor) tagging was not tested.** This run was cold-start only, by
+  design (§3.1) — a warm user's tag calls, which carry the anchor block, are a different prompt
+  shape and haven't been checked against Haiku at all.
+- **Batching was not tested** (§6, "also worth testing in the same run") — out of scope for this
+  pass.
+
+### Next (not yet done, not yet approved)
+
+1. Decide whether to gate the import-crop follow-up on new import test material, or accept the
+   cold-start clean-photo result as sufficient for the add/edit path only (leaving import on Sonnet
+   for now).
+2. If proceeding: wire the `model` param already added to `tagPieceWithProvider` into an actual
+   routing decision (env-gated cold-start-only Haiku routing, most likely), behind explicit owner
+   approval — this spec's Phase 2 answers "does Haiku tag well enough," not "route production
+   traffic to it," and that remains a separate step per this doc's own non-reopenable constraint
+   (§2: "never make a billed call without explicit approval" applies to routing changes' blast
+   radius too, even though routing itself isn't a billed call).
+3. Raw output for all 22 calls, plus the isolated cold-start DB copy used to produce them, are
+   scratch artifacts from this run and were not committed; re-running this harness is cheap (~$0.63)
+   if the results need to be reproduced or extended.
+
+---
+
 ## 7. Phase 3 — cold-start calibration (conditional on Phase 2)
 
 Only if the cold-start configuration proves weak — which is the likeliest failure, since it is the
@@ -321,10 +447,11 @@ bucket (38 corrections → 31 near-unique anchors). Revisit after cold start is 
 
 ## 8. Open questions for the owner
 
-1. **Approve ~$2.70 of billed evaluation** (§6)? Nothing is written without a second explicit
-   approval.
-2. **Certify a ~20-piece gold set?** Cheaper and cleaner than inferring ground truth from
-   correction history.
+1. ~~Approve ~$2.70 of billed evaluation (§6)?~~ **Answered 2026-08-23** — a smaller $0.63 run was
+   approved and executed instead; see §6b.
+2. ~~Certify a ~20-piece gold set?~~ **Superseded** — §6b adjudicated the two disagreement cases
+   directly with the owner rather than pre-certifying a gold set; correction history was confirmed
+   unusable as ground truth (99.6% of active pieces now carry some override).
 3. **Worn-photo scope** — ratify or defer. The engine's authority map already scopes worn photos to
    fit, drape, length, tuck, waistband and on-body silhouette, which matches the stated preference;
    the product decision is still open and a prompt rewrite could settle it by accident.

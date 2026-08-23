@@ -375,7 +375,7 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
-export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage } = {}) {
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model } = {}) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
@@ -439,6 +439,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     // spec 22 fixed the 400 the truncated body caused on the Anthropic
     // path, but the underlying truncation itself was still live.
     maxTokens: 2500,
+    ...(model ? { model } : {}),
     messages: [{
       role: 'user',
       content
