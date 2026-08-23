@@ -131,7 +131,8 @@ how to check a given spec against the sources that *are* maintained.
 [board-feedback-desync-spec.md](board-feedback-desync-spec.md) ·
 [compact-wardrobe-filters-v1.md](compact-wardrobe-filters-v1.md) ·
 [usage-tracking follow-up](compact-wardrobe-filters-followup-usage-tracking.md) ·
-[wardrobe-color-controls-spec.md](wardrobe-color-controls-spec.md)
+[wardrobe-color-controls-spec.md](wardrobe-color-controls-spec.md) ·
+[freeform-openai-persistent-conversation-investigation.md](freeform-openai-persistent-conversation-investigation.md) — CLOSED, no migration: a live benchmark showed OpenAI's persisted-conversation billing and cache TTL both landing worse than Closet's current Anthropic architecture
 
 ---
 

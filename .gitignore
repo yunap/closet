@@ -87,3 +87,9 @@ scratch/*
 # isolated WARDROBE_DB_PATH).
 !scratch/measure_history_budget.js
 !scratch/measure_freeform_turns.js
+
+# Minimal live-provider benchmark cited by
+# docs/freeform-openai-persistent-conversation-investigation.md §8. Talks to the OpenAI API
+# directly, gated behind CONFIRM_SPEND=yes. Its output directory stays ignored -- raw run
+# results are local/ephemeral, not meant to be committed.
+!scratch/openai_persistence_benchmark.mjs

@@ -14,6 +14,7 @@
     "test:capsule:compare": "node scratch/compare_capsule_rosters.js",
     "inspect:piece": "node scratch/inspect_piece.js",
     "apply:soft-score-floors": "node scratch/apply_soft_score_floors.js",
+    "bench:openai-persistence": "node scratch/openai_persistence_benchmark.mjs",
     "start": "node server.js"
   },
   "dependencies": {
