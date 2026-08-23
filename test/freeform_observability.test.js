@@ -122,6 +122,99 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(generalMessage, 'Question: What is smart casual?')
 })
 
+test('explicit "ID N" garment mentions resolve into compact context, and recent history reaches existing_card_explanation and garment_fact but not general_advice', async () => {
+  const { explicitPieceIdMentionsFromQuestion, compactGarmentFactSubjectsIncomplete, compactRecentHistory } = await import('../routes/ai.js')
+
+  // thread_1787387145601 msg 7: "about black blouson top (ID 136) did you try it with ID 127?"
+  // Neither ID has a name in the question text for exactNamedPieceIdsFromQuestion to find.
+  assert.deepEqual(explicitPieceIdMentionsFromQuestion('about black blouson top (ID 136) did you try it with ID 127?'), [136, 127])
+  assert.deepEqual(explicitPieceIdMentionsFromQuestion('what is the fabric on this piece?'), [])
+  assert.deepEqual(explicitPieceIdMentionsFromQuestion('ID 136 and ID 136 again'), [136])
+
+  const context = compactFreeformContext({
+    body: { generatedOutfits: [{ label: 'lilac cardigan look', pieceIds: [136] }] },
+    state: {}
+  })
+  const explicitMentions = explicitPieceIdMentionsFromQuestion('about black blouson top (ID 136) did you try it with ID 127?')
+  const resolvedAgainstActivePieces = explicitMentions.filter(id => [136].includes(id)) // 127 does not resolve
+  const merged = compactFreeformContext({
+    body: { generatedOutfits: [{ label: 'lilac cardigan look', pieceIds: [136] }] },
+    state: {},
+    namedPieceIds: resolvedAgainstActivePieces
+  })
+  assert.deepEqual(merged.pieceIds, [136])
+  // Two garments cited by ID, only one resolves — the compact call must not fire on this.
+  assert.equal(compactGarmentFactSubjectsIncomplete('about black blouson top (ID 136) did you try it with ID 127?', merged.pieceIds), true)
+  // Both resolve — a genuine two-subject garment_fact comparison proceeds.
+  assert.equal(compactGarmentFactSubjectsIncomplete('compare ID 136 and ID 127', [136, 127]), false)
+  // One subject cited — no completeness concern.
+  assert.equal(compactGarmentFactSubjectsIncomplete('is ID 136 breathable?', [136]), false)
+  assert.equal(compactGarmentFactSubjectsIncomplete('is ID 136 breathable?', []), false)
+  void context
+
+  // thread_1787387145601 msg 5: "hmm, but you had something in mind when you proposed it?" needed
+  // the immediately preceding exchange, which the stateless compact call never carried.
+  const history = [
+    { role: 'user', content: 'can you tell me why Graphic Stripe, Warm Sole did not clear the engine?' },
+    { role: 'assistant', content: 'The rejection reason is recorded directly on the card...' },
+  ]
+  assert.equal(compactRecentHistory(history, 4), [
+    'user: can you tell me why Graphic Stripe, Warm Sole did not clear the engine?',
+    'assistant: The rejection reason is recorded directly on the card...'
+  ].join('\n'))
+  assert.equal(compactRecentHistory([], 4), '')
+  const cardMessage = compactFreeformAnswerMessage({
+    profile: 'existing_card_explanation', question: 'hmm, but you had something in mind when you proposed it?',
+    context: { outfits: [] }, history
+  })
+  assert.match(cardMessage, /Recent conversation \(most recent last\):/)
+  assert.match(cardMessage, /The rejection reason is recorded directly on the card/)
+  // garment_fact carries the same small window now (thread_1787435527800 msg 16's "these shorts"
+  // needed it too) — general_advice still doesn't, since it answers from general knowledge, not
+  // from what was just said.
+  const garmentMessage = compactFreeformAnswerMessage({
+    profile: 'garment_fact', question: 'is this breathable?', context: {}, pieces: [], history
+  })
+  assert.match(garmentMessage, /Recent conversation \(most recent last\):/)
+  const generalAdviceMessage = compactFreeformAnswerMessage({
+    profile: 'general_advice', question: 'what is smart casual?', context: {}, pieces: [], history
+  })
+  assert.doesNotMatch(generalAdviceMessage, /Recent conversation/)
+})
+
+test('a vague "these shorts" reference resolves against the immediately preceding exchange, not every bottom in the current cards', async () => {
+  const { recentReferentPieceIds } = await import('../routes/ai.js')
+
+  // thread_1787435527800: msg 15 named "the tan shorts" specifically as part of Abstract City Walk;
+  // msg 16 then said "These shorts are a bit large" one turn later. Four bottoms existed across the
+  // accumulated current-card set (tan straight shorts, olive cargo shorts, beige capris, olive
+  // cropped pants) — msg 17 listed all four and asked which one, instead of using the one just named.
+  const pieces = [
+    { id: 601, name: 'tan straight shorts' },
+    { id: 602, name: 'olive cargo drawstring shorts' },
+    { id: 603, name: 'beige capris' },
+    { id: 604, name: 'olive utility cropped pants' },
+  ]
+  const history = [
+    { role: 'user', content: 'which one looks more put together?' },
+    { role: 'assistant', content: 'Abstract City Walk looks more put together. The abstract print tank is a clear hero, the tan shorts are a clean, quiet base, and the light grey sneakers connect back to the grey in the print.' },
+  ]
+  assert.deepEqual(recentReferentPieceIds('These shorts are a bit large. Can I wear a belt?', history, pieces), [601])
+
+  // Both "shorts" candidates named in the recent exchange — ambiguous, no override.
+  const bothNamedHistory = [
+    { role: 'user', content: 'compare the two' },
+    { role: 'assistant', content: 'the tan straight shorts read cleaner than the olive cargo drawstring shorts.' },
+  ]
+  assert.deepEqual(recentReferentPieceIds('These shorts are a bit large.', bothNamedHistory, pieces), [])
+
+  // Nothing recent to resolve against — no override, existing fallback applies.
+  assert.deepEqual(recentReferentPieceIds('These shorts are a bit large.', [], pieces), [])
+
+  // No category word in the question — not this mechanism's job.
+  assert.deepEqual(recentReferentPieceIds('is this comfortable?', history, pieces), [])
+})
+
 // Batched discovery acceptance case 1. The coverage arc failed twice on this: thread_1787127928718
 // discussed only the four visually sampled shoes, and thread_1787128659041 dropped deserving
 // candidates before visual refinement. A piece without a photograph must stay a candidate.
@@ -1767,6 +1860,161 @@ test('stored weather physics survive echoed display prose but yield to explicit 
     weather: '95°F and sunny'
   })
   assert.equal('weather_profile' in superseded.threadState, false)
+})
+
+test('historical outfit-set addressability: pure resolver functions', async () => {
+  const {
+    isBackwardOutfitSetReference,
+    extractHistoricalOutfitSets,
+    resolveHistoricalReferenceByGarment,
+    resolveHistoricalOutfitContext,
+    formatHistoricalOutfitSetsForPrompt
+  } = await import('../styling-engine/core.js')
+
+  // thread_1787435527800 shape: an early rejected set ("Botanical Drift" / "Patchwork Artisan",
+  // critiqued as too elevated), then a regenerated Walnut Creek set that superseded it.
+  const threadMessages = [
+    { role: 'user', text: 'Use my wardrobe to create outfits for casual, artful, lots of walking.' },
+    {
+      role: 'assistant',
+      text: 'Here are the strongest wardrobe outfits.',
+      structuredOutfits: [
+        { label: 'Botanical Drift', strength: 'signature', reason: 'earns an elevated read from the black crochet lace tank', pieceIds: [901, 902] },
+        { label: 'Patchwork Artisan', strength: 'strong', reason: 'reads more elevated than casual', pieceIds: [903, 904] }
+      ]
+    },
+    { role: 'user', text: 'Botanical Drift and Patchwork Artisan read more elevated than casual.' },
+    { role: 'assistant', text: 'You are not wrong — here is why.' },
+    { role: 'user', text: 'The trail is paved, but none of your proposed outfits work. What else can I wear?' },
+    {
+      role: 'assistant',
+      text: 'For Walnut Creek, CA, I’d compare these 5 directions.',
+      structuredOutfits: [
+        { label: 'Red Crow on the Trail', strength: 'signature', reason: 'paved trail walk, casual hot-weather outing', pieceIds: [350, 245, 990397] },
+        { label: 'Brown Crew and Tan', strength: 'usable', reason: 'tone-on-tone earthy separates', pieceIds: [350, 127] }
+      ]
+    }
+  ]
+  const currentPieceIds = [350, 245, 990397, 127] // the Walnut Creek set
+
+  // 1. A vague, forward-looking reference ("add a layer") is not a backward reference at all —
+  //    current_outfit_set stays the sole subject, nothing historical gets pulled in.
+  assert.equal(isBackwardOutfitSetReference('nice! can I have a layer just in case?'), false)
+  const noSignal = resolveHistoricalOutfitContext('can I have a layer just in case?', extractHistoricalOutfitSets(threadMessages), currentPieceIds)
+  assert.equal(noSignal.kind, 'none')
+  assert.equal(formatHistoricalOutfitSetsForPrompt(noSignal), '')
+
+  // extractHistoricalOutfitSets excludes the latest card-bearing turn (the current set) by default.
+  const historicalSets = extractHistoricalOutfitSets(threadMessages)
+  assert.equal(historicalSets.length, 1)
+  assert.equal(historicalSets[0].outfits[0].label, 'Botanical Drift')
+  assert.equal(historicalSets[0].introText, 'Here are the strongest wardrobe outfits.')
+
+  // 3. Keyword-based: "what was wrong with the first set?" resolves the historical set and its
+  //    own critique text, without needing to name a specific garment.
+  assert.equal(isBackwardOutfitSetReference('what was wrong with the first set?'), true)
+  const keywordResolution = resolveHistoricalOutfitContext('what was wrong with the first set?', historicalSets, currentPieceIds)
+  assert.equal(keywordResolution.kind, 'keyword')
+  assert.equal(keywordResolution.sets.length, 1)
+  const keywordText = formatHistoricalOutfitSetsForPrompt(keywordResolution)
+  assert.match(keywordText, /HISTORICAL OUTFIT SETS/)
+  assert.match(keywordText, /Botanical Drift/)
+  assert.match(keywordText, /elevated read from the black crochet lace tank/)
+  assert.match(keywordText, /must NOT be applied to current_outfit_set/)
+
+  // 4. Garment-based: naming a piece that is in a historical set but not the current one resolves
+  //    that set directly, even with no keyword present ("olive cargo shorts" alone, no "first"/
+  //    "earlier"/"before" — resolveHistoricalReferenceByGarment must find it on its own).
+  const gSets = extractHistoricalOutfitSets([
+    ...threadMessages.slice(0, 2).map(m => m.role === 'assistant'
+      ? { ...m, structuredOutfits: [{ label: 'Piranha and Olive', reason: 'earthy tone', pieceIds: [601], pieces: [{ id: 601, name: 'olive cargo drawstring shorts' }] }] }
+      : m),
+    threadMessages[threadMessages.length - 1]
+  ])
+  const garmentResolution = resolveHistoricalOutfitContext('go back to the outfit with the olive cargo shorts', gSets, currentPieceIds)
+  assert.equal(garmentResolution.kind, 'garment')
+  assert.equal(garmentResolution.sets[0].outfits[0].label, 'Piranha and Olive')
+
+  // 5. The same garment appears in two different historical sets — must not silently pick one.
+  const ambiguousSets = [
+    { setIndex: 0, introText: 'first pass', outfits: [{ label: 'Set A', pieceIds: [700], pieceNames: ['tan straight shorts'], reason: '', strength: '', watchFor: '', bestFor: '' }] },
+    { setIndex: 1, introText: 'second pass', outfits: [{ label: 'Set B', pieceIds: [700], pieceNames: ['tan straight shorts'], reason: '', strength: '', watchFor: '', bestFor: '' }] }
+  ]
+  const ambiguousResolution = resolveHistoricalOutfitContext('go back to the outfit with the tan straight shorts', ambiguousSets, [])
+  assert.equal(ambiguousResolution.kind, 'ambiguous')
+  assert.equal(ambiguousResolution.setCount, 2)
+  const ambiguousText = formatHistoricalOutfitSetsForPrompt(ambiguousResolution)
+  assert.match(ambiguousText, /AMBIGUOUS HISTORICAL REFERENCE/)
+  assert.match(ambiguousText, /do not silently pick one/i)
+
+  // Direct unit coverage of the garment resolver's own ambiguous/none branches.
+  assert.equal(resolveHistoricalReferenceByGarment('what should I wear today?', historicalSets, currentPieceIds).kind, 'none')
+})
+
+test('historical outfit-set addressability wired into buildStylistConversationPayload', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `historical-set-${Date.now()}`
+  const threadMessages = [
+    { role: 'user', text: 'Use my wardrobe to create outfits for casual, artful, lots of walking.' },
+    {
+      role: 'assistant',
+      text: 'Here are the strongest wardrobe outfits.',
+      structuredOutfits: [
+        { label: 'Botanical Drift', strength: 'signature', reason: 'too elevated for casual, per the lace tank', pieceIds: [901, 902] }
+      ]
+    },
+    { role: 'user', text: 'That reads more elevated than casual.' },
+    { role: 'assistant', text: 'You are not wrong — here is why.' },
+    { role: 'user', text: 'None of your proposed outfits work. What else can I wear?' },
+    {
+      role: 'assistant',
+      text: 'For Walnut Creek, CA, I’d compare these 5 directions.',
+      structuredOutfits: [
+        { label: 'Red Crow on the Trail', strength: 'signature', reason: 'paved trail walk, casual hot-weather outing', pieceIds: [350, 245] }
+      ]
+    }
+  ]
+  db.prepare('INSERT INTO chat_threads (id, title, payload) VALUES (?, ?, ?)')
+    .run(sessionId, 'test thread', JSON.stringify({ messages: threadMessages }))
+
+  // 6/7. Durable constraints (established styling context) carry forward regardless of whether
+  // this turn triggers a historical lookup — confirmed on both branches below.
+  const commonBody = {
+    sessionId,
+    conversationMode: 'followup',
+    occasion: 'casual',
+    season: 'warm; hot weather',
+    generatedOutfits: [{ label: 'Red Crow on the Trail', pieceIds: [350, 245] }]
+  }
+
+  // 1/2. An ordinary follow-up ("can I have a layer") carries no backward-reference signal: no
+  // historical block is injected, and current_outfit_set is exactly the new Walnut Creek set —
+  // the old "too elevated" critique of Botanical Drift is nowhere in this turn's fresh context.
+  const forwardTurn = await buildStylistConversationPayload({
+    ...commonBody,
+    question: 'nice! can I have a layer just in case?'
+  })
+  // The authority rule's own text mentions "HISTORICAL OUTFIT SETS" by name (a pointer to the block
+  // below, when present), so check the block's actual superseded-set heading, not the bare phrase.
+  assert.doesNotMatch(forwardTurn.system, /HISTORICAL OUTFIT SETS \(superseded/)
+  assert.doesNotMatch(forwardTurn.system, /too elevated for casual/)
+  assert.equal(forwardTurn.threadState.current_outfit_set[0].label, 'Red Crow on the Trail')
+  assert.equal(forwardTurn.threadState.established.occasion, 'casual')
+  // The authority rule itself is always present, whether or not a historical block fires this turn.
+  assert.match(forwardTurn.system, /CURRENT-SET AUTHORITY/)
+  assert.match(forwardTurn.system, /must NOT be applied to current_outfit_set unless the user states or repeats/)
+
+  // 3. An explicit backward reference pulls in the historical set and its own critique text, and
+  // still keeps current_outfit_set as the new Walnut Creek set underneath it.
+  const backwardTurn = await buildStylistConversationPayload({
+    ...commonBody,
+    question: 'what was wrong with the first set?'
+  })
+  assert.match(backwardTurn.system, /HISTORICAL OUTFIT SETS/)
+  assert.match(backwardTurn.system, /Botanical Drift/)
+  assert.match(backwardTurn.system, /too elevated for casual/)
+  assert.equal(backwardTurn.threadState.current_outfit_set[0].label, 'Red Crow on the Trail')
+  assert.equal(backwardTurn.threadState.established.occasion, 'casual')
 })
 
 test('bounded multi-look discloses unavailable destination weather instead of claiming a season temperature', () => {

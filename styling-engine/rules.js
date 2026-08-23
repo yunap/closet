@@ -1916,6 +1916,15 @@ export function pieceGarmentIntelligence(piece = {}) {
 // to scanning each piece's own name/notes text for pattern words, the same signal a human would
 // have if the tags did not exist.
 const QUESTIONABLE_PATTERN_WORD_RE = /\b(floral|paisley|botanical|abstract|graphic|print|printed|pattern|patterned|stripe|striped|animal print|tropical|tie-dye|camo)\b/i
+// A do-not-pair rule about patterns/prints (e.g. "avoid another loud pattern") is only ever
+// actually implicated when a second patterned piece is present — that risk is already covered
+// by the patternedCount check above. Counting it on its own presence, regardless of whether
+// anything else in the outfit is patterned, flagged nearly every outfit containing a single
+// printed hero piece as "questionable" (most wardrobe pieces carry some do_not_pair_rule) and
+// sent it to the visual critic with nothing for the critic to actually judge — it then had to
+// invent a clash to justify the call. Non-pattern rules (silhouette, texture, color, formality)
+// still count on presence alone; those need the photo to verify and can't be cheaply checked.
+const PATTERN_DO_NOT_PAIR_RE = /\b(pattern|print|printed|patterned)\b/i
 export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const patternedCount = pieces.filter(piece => {
@@ -1925,7 +1934,9 @@ export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
     return QUESTIONABLE_PATTERN_WORD_RE.test(pieceNameBlob(piece))
   }).length
   if (patternedCount >= 2) return true
-  return pieces.some(piece => pieceGarmentIntelligence(piece).doNotPairRules.length > 0)
+  return pieces.some(piece =>
+    pieceGarmentIntelligence(piece).doNotPairRules.some(rule => !PATTERN_DO_NOT_PAIR_RE.test(rule))
+  )
 }
 
 export function inferWholeWardrobePieceRoles(piece = {}) {

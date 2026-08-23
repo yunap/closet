@@ -722,6 +722,74 @@ export function exactNamedPieceIdsFromQuestion(question = '', pieces = []) {
   return matches.length === 1 ? [Number(matches[0].id)].filter(Boolean) : []
 }
 
+// A user citing "ID 127" is naming a garment as precisely as a name match would, but no name text
+// is present for exactNamedPieceIdsFromQuestion to find. Every distinct numeral is returned here,
+// resolved or not — compactGarmentFactSubjectsIncomplete below needs the unresolved ones too, to
+// tell "the user cited one garment" apart from "the user cited two and only one exists."
+export function explicitPieceIdMentionsFromQuestion(question = '') {
+  const matches = [...String(question || '').matchAll(/\bID\s*#?\s*(\d+)\b/gi)]
+  return [...new Set(matches.map(match => Number(match[1])).filter(Number.isFinite))]
+}
+
+// garment_fact compares supplied subjects; a question naming two garments by ID where only one
+// resolves to an active piece is missing half its evidence, not answerable-with-a-caveat. Scoped to
+// explicit ID citations only — the failure this guards against (routes/ai.js:4145) is a user typing
+// "ID 127" for a piece never in the current outfit set, not the pre-existing ambiguous-name-match
+// miss in exactNamedPieceIdsFromQuestion, which is a separate, already-accepted gap.
+export function compactGarmentFactSubjectsIncomplete(question = '', resolvedPieceIds = []) {
+  const mentioned = explicitPieceIdMentionsFromQuestion(question)
+  if (mentioned.length < 2) return false
+  const resolvedSet = new Set((Array.isArray(resolvedPieceIds) ? resolvedPieceIds : []).map(Number))
+  return mentioned.some(id => !resolvedSet.has(id))
+}
+
+// Last couple of exchanges only — enough for "what did you mean by that?" to resolve, not a second
+// copy of the conversation. Originally scoped to existing_card_explanation for thread_1787387145601
+// msg 5 (a question referring back to the model's OWN prior turn, unanswerable from outfit-card
+// JSON alone). thread_1787435527800 msg 16 showed garment_fact needs the same window for a
+// different reason — see recentReferentPieceIds below — so both profiles use it now; general_advice
+// still doesn't, since it answers from general knowledge, not from what was just said.
+export function compactRecentHistory(history = [], limit = 4) {
+  const entries = (Array.isArray(history) ? history : [])
+    .filter(entry => entry?.role === 'user' || entry?.role === 'assistant')
+    .slice(-limit)
+  if (!entries.length) return ''
+  return entries.map(entry => `${entry.role}: ${String(entry.content || '').trim()}`).join('\n')
+}
+
+// A vague reference like "these shorts" or "this top" names a garment CATEGORY, not an exact piece
+// or ID — exactNamedPieceIdsFromQuestion and explicitPieceIdMentionsFromQuestion both miss it, so it
+// previously fell through to every piece across the whole accumulated current-card set (see
+// compactFreeformContext). thread_1787435527800 msg 16 ("These shorts are a bit large") came one
+// turn after msg 15 named "the tan shorts" specifically — the referent is almost always whatever the
+// assistant most recently called by that same category word. Resolve against just the last exchange
+// before falling back to the full card set; an ambiguous or absent match returns no override, and
+// the existing fallback in compactFreeformContext still applies.
+const GARMENT_CATEGORY_WORDS = ['shorts', 'pants', 'jeans', 'shoes', 'sneakers', 'sandals', 'boots', 'heels', 'flats', 'dress', 'skirt', 'jacket', 'cardigan', 'sweater', 'coat', 'vest', 'blouse', 'shirt', 'tee', 'tank', 'top', 'hoodie', 'blazer']
+export function recentReferentPieceIds(question = '', history = [], pieces = []) {
+  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const questionNorm = normalize(question)
+  const categoryWord = GARMENT_CATEGORY_WORDS.find(word => new RegExp(`\\b${word}\\b`).test(questionNorm))
+  if (!categoryWord) return []
+  const recentText = normalize(compactRecentHistory(history, 2))
+  if (!recentText) return []
+  const recentWords = new Set(recentText.split(' ').filter(Boolean))
+  // Assistant prose abbreviates ("the tan shorts" for "tan straight shorts"), so an exact full-name
+  // substring match misses the real case — allow at most one of the piece's other name words to be
+  // absent from the recent exchange. Two candidates both fully present (both explicitly compared,
+  // e.g. "the tan ones vs. the olive ones") tie and neither wins — genuinely ambiguous stays ambiguous.
+  const candidates = (Array.isArray(pieces) ? pieces : [])
+    .map(piece => {
+      const nameWords = normalize(piece?.name).split(' ').filter(Boolean)
+      if (!nameWords.includes(categoryWord)) return null
+      const matchedCount = nameWords.filter(word => recentWords.has(word)).length
+      if (matchedCount < 2 || nameWords.length - matchedCount > 1) return null
+      return Number(piece.id)
+    })
+    .filter(id => Number.isFinite(id))
+  return candidates.length === 1 ? candidates : []
+}
+
 // This is request-shape routing, not garment-semantic inference. It stays deliberately narrow:
 // exact identity and saved visual evidence must already exist, while pairing, outfit-building,
 // general fit critique, and ambiguous references remain with the full stylist.
@@ -795,9 +863,11 @@ export function formatWardrobeInventoryAnswer(counts = {}) {
   ].join('\n')
 }
 
-export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {} } = {}) {
+export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {}, history = [] } = {}) {
+  const recentHistory = (profile === 'existing_card_explanation' || profile === 'garment_fact') ? compactRecentHistory(history) : ''
   return [
     `Question: ${question}`,
+    recentHistory ? `Recent conversation (most recent last):\n${recentHistory}` : '',
     profile === 'existing_card_explanation' && context.outfits?.length ? `Verified current cards:\n${JSON.stringify(context.outfits)}` : '',
     profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
     profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
@@ -4071,7 +4141,19 @@ router.post('/ask', async (req, res) => {
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
     const activePieceIdentities = db.prepare("SELECT id, name, photo, worn_photo FROM pieces WHERE status = 'active'").all()
     const exactNamedPieceIds = exactNamedPieceIdsFromQuestion(currentQuestion, activePieceIdentities)
-    const compactContext = compactFreeformContext({ body: req.body, state: compactState, namedPieceIds: exactNamedPieceIds })
+    // A garment cited as "ID 127" never has a name for exactNamedPieceIdsFromQuestion to find, and
+    // was previously invisible to the compact path unless it happened to already be in the current
+    // outfit set — see thread_1787387145601 msg 7. Resolve only against real active pieces; an
+    // unresolved mention is caught below by compactGarmentFactSubjectsIncomplete, not silently added.
+    const explicitPieceIdMentions = explicitPieceIdMentionsFromQuestion(currentQuestion)
+    const explicitResolvedPieceIds = explicitPieceIdMentions.filter(id =>
+      activePieceIdentities.some(piece => Number(piece.id) === id)
+    )
+    const compactContext = compactFreeformContext({
+      body: req.body,
+      state: compactState,
+      namedPieceIds: [...exactNamedPieceIds, ...explicitResolvedPieceIds]
+    })
     const compactPieceIdSet = new Set(compactContext.pieceIds.map(Number))
     const compactSavedPhotoCount = activePieceIdentities.filter(piece =>
       compactPieceIdSet.has(Number(piece.id)) && (piece.photo || piece.worn_photo)
@@ -4145,25 +4227,42 @@ router.post('/ask', async (req, res) => {
         if (['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile)) {
           const profileHasContext = compactProfileHasContext(compactProfile, compactContext)
           if (profileHasContext) {
-            const compactPieces = compactContext.pieceIds.length
-              ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${compactContext.pieceIds.map(() => '?').join(',')})`).all(...compactContext.pieceIds).map(parsePiece)
+            // "These shorts" names a category, not an exact piece or ID, so it never reaches
+            // exactNamedPieceIds/explicitResolvedPieceIds — only try the recent-exchange referent
+            // when the question alone gave nothing to go on, and only for garment_fact, where an
+            // unresolved vague reference otherwise falls back to every piece in the accumulated
+            // current-card set (thread_1787435527800 msg 16/17).
+            const referentPieceIds = compactProfile === 'garment_fact' && !exactNamedPieceIds.length && !explicitResolvedPieceIds.length
+              ? recentReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities)
+              : []
+            const scopedPieceIds = referentPieceIds.length ? referentPieceIds : compactContext.pieceIds
+            const compactPieces = scopedPieceIds.length
+              ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${scopedPieceIds.map(() => '?').join(',')})`).all(...scopedPieceIds).map(parsePiece)
               : []
             // Every requested verified id must resolve. A deleted/resting/ambiguous subject falls
-            // through to the full stylist rather than letting the compact model fill the gap.
-            const pieceScopeComplete = compactProfile !== 'garment_fact' || compactPieces.length === compactContext.pieceIds.length
+            // through to the full stylist rather than letting the compact model fill the gap. A
+            // question naming two garments by ID where only one exists is the same kind of
+            // incomplete evidence — see thread_1787387145601 msg 7: paying for a compact call that
+            // can only ever say "I don't have the other one" is a predictably broken answer, not a
+            // narrower one.
+            const pieceScopeComplete = compactProfile !== 'garment_fact'
+              || (compactPieces.length === scopedPieceIds.length
+                && !compactGarmentFactSubjectsIncomplete(currentQuestion, scopedPieceIds))
             if (pieceScopeComplete) {
               const answerText = compactFreeformAnswerMessage({
-                profile: compactProfile, question: currentQuestion, context: compactContext,
-                pieces: compactPieces, state: compactState
+                profile: compactProfile, question: currentQuestion, context: { ...compactContext, pieceIds: scopedPieceIds },
+                pieces: compactPieces, state: compactState, history: req.body.history
               })
               const activeVisualPieceId = Number(req.body?.activeContext?.type === 'piece'
                 ? req.body.activeContext.id
                 : req.body?.pieceId)
               const preferredVisualIds = exactNamedPieceIds.length
                 ? new Set(exactNamedPieceIds)
-                : (Number.isFinite(activeVisualPieceId) && activeVisualPieceId > 0
-                    ? new Set([activeVisualPieceId])
-                    : null)
+                : (referentPieceIds.length
+                    ? new Set(referentPieceIds)
+                    : (Number.isFinite(activeVisualPieceId) && activeVisualPieceId > 0
+                        ? new Set([activeVisualPieceId])
+                        : null))
               const visualPieces = preferredVisualIds
                 ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
                 : compactPieces

@@ -3945,6 +3945,120 @@ function isGeneratedSetCoverageAudit(question = '') {
   return /\b(coverage|cover|enough|same outfit|only one|backup|laundry|repeat|re-wear|rewear|additional|another|more options?)\b/.test(q) // ratchet-allow: user intent routing for multi-outfit coverage audits
 }
 
+// Historical outfit-set addressability (docs: current_outfit_set stays the default referent;
+// earlier sets and their critiques are historical and surface only on an explicit backward
+// reference — see the spec discussed against thread_1787435527800). Ordinal/positional ("the first
+// set"), temporal ("earlier", "before", "originally"), and direct-recall ("what was wrong with",
+// "go back to") phrasing. Deliberately narrow: an unrelated correction or a fresh request must not
+// trip this and pull old, superseded critique into a turn that never asked for it.
+const BACKWARD_OUTFIT_REFERENCE_RE = /\b(earlier|previous(?:ly)?|first|original(?:ly)?|older?|prior|before|last time|go back to|what (?:was|were) wrong with|the (?:other|last) (?:set|option|round))\b/i
+export function isBackwardOutfitSetReference(question = '') {
+  return BACKWARD_OUTFIT_REFERENCE_RE.test(String(question || ''))
+}
+
+// Every assistant turn that returned outfit cards is one "set." The current_outfit_set already
+// tracks the latest one (see currentOutfitSet below), so everything earlier is historical by
+// definition — excludeLatest drops the most recent card-bearing turn so callers never double up.
+// A turn that only edits an existing set (adds a layer, swaps one piece) still gets its own entry
+// here; we don't try to detect "same set, revised" because the label/reason text a backward
+// reference actually needs is already carried per-turn, and merging risks conflating two distinct
+// critiques into one.
+export function extractHistoricalOutfitSets(threadMessages = [], { excludeLatest = true } = {}) {
+  const cardTurns = (Array.isArray(threadMessages) ? threadMessages : [])
+    .filter(message => message?.role === 'assistant' && Array.isArray(message.structuredOutfits) && message.structuredOutfits.length)
+  const historical = excludeLatest ? cardTurns.slice(0, -1) : cardTurns
+  return historical.map((message, index) => ({
+    setIndex: index,
+    introText: String(message.text || '').trim(),
+    outfits: message.structuredOutfits.map(outfit => {
+      const pieceIds = (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+        ? outfit.pieceIds
+        : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
+      ).map(Number).filter(Boolean)
+      return {
+        label: outfit?.label || outfit?.title || '',
+        strength: outfit?.strength || '',
+        reason: outfit?.reason || '',
+        watchFor: outfit?.watchFor || '',
+        bestFor: outfit?.bestFor || '',
+        pieceIds,
+        pieceNames: (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.name).filter(Boolean) : [])
+      }
+    })
+  }))
+}
+
+// A garment named in the question that is not part of current_outfit_set but names exactly one
+// historical set resolves that set deterministically — "go back to the outfit with the olive cargo
+// shorts." Appearing in two or more historical sets must not be silently resolved to either one
+// (spec rule: ambiguous garment references stay ambiguous); the caller surfaces that instead of
+// guessing which set the user means.
+export function resolveHistoricalReferenceByGarment(question = '', historicalSets = [], currentPieceIds = []) {
+  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const questionNorm = normalize(question)
+  const questionWords = new Set(questionNorm.split(' ').filter(Boolean))
+  const currentSet = new Set((Array.isArray(currentPieceIds) ? currentPieceIds : []).map(Number))
+  const matchingSetIndexes = new Set()
+  let matchedPieceName = ''
+  ;(Array.isArray(historicalSets) ? historicalSets : []).forEach((set, setIndex) => {
+    (set.outfits || []).forEach(outfit => {
+      (outfit.pieceNames || []).forEach((name, pieceIndex) => {
+        // "olive cargo shorts" for a piece actually named "olive cargo drawstring shorts" — same
+        // prose-abbreviation gap as recentReferentPieceIds in routes/ai.js: require at least 2
+        // words match and at most 1 be missing, not an exact full-name substring.
+        const nameWords = normalize(name).split(' ').filter(Boolean)
+        const matchedCount = nameWords.filter(word => questionWords.has(word)).length
+        if (matchedCount < 2 || nameWords.length - matchedCount > 1) return
+        const pieceId = outfit.pieceIds?.[pieceIndex]
+        if (pieceId && currentSet.has(pieceId)) return // already in the current set, not a backward reference
+        matchingSetIndexes.add(setIndex)
+        matchedPieceName = name
+      })
+    })
+  })
+  if (!matchedPieceName) return { kind: 'none' }
+  if (matchingSetIndexes.size > 1) return { kind: 'ambiguous', pieceName: matchedPieceName, setCount: matchingSetIndexes.size }
+  const [onlyIndex] = matchingSetIndexes
+  return { kind: 'resolved', pieceName: matchedPieceName, set: historicalSets[onlyIndex] }
+}
+
+// Top-level resolver: garment-named references resolve or flag ambiguous deterministically; a
+// keyword-only reference ("what was wrong with the earlier set?") hands the model bounded candidate
+// sets and lets it match the ordinal/location language itself, which is what a language model is
+// for — hand-rolling "first" vs "second" vs "the Walnut Creek one" parsing here would just be a
+// worse copy of what the full stylist already does with real conversational text. 'none' means no
+// backward reference was detected at all, so the caller injects nothing extra this turn.
+export function resolveHistoricalOutfitContext(question = '', historicalSets = [], currentPieceIds = []) {
+  const garmentResult = resolveHistoricalReferenceByGarment(question, historicalSets, currentPieceIds)
+  if (garmentResult.kind === 'resolved') return { kind: 'garment', sets: [garmentResult.set], pieceName: garmentResult.pieceName }
+  if (garmentResult.kind === 'ambiguous') return { kind: 'ambiguous', pieceName: garmentResult.pieceName, setCount: garmentResult.setCount }
+  if (isBackwardOutfitSetReference(question) && historicalSets.length) {
+    return { kind: 'keyword', sets: historicalSets.slice(-4) }
+  }
+  return { kind: 'none' }
+}
+
+export function formatHistoricalOutfitSetsForPrompt(resolution) {
+  if (!resolution || resolution.kind === 'none') return ''
+  if (resolution.kind === 'ambiguous') {
+    return `AMBIGUOUS HISTORICAL REFERENCE: "${resolution.pieceName}" appears in ${resolution.setCount} different earlier outfit sets in this thread. Do not silently pick one — ask the user which set they mean before answering.`
+  }
+  const body = (resolution.sets || []).map((set, index) => {
+    const outfitLines = (set.outfits || []).map(outfit => [
+      `- ${outfit.label || 'Outfit'}${outfit.strength ? ` (${outfit.strength})` : ''}`,
+      outfit.bestFor ? `  Best for: ${outfit.bestFor}` : '',
+      outfit.reason ? `  Reason: ${outfit.reason}` : '',
+      outfit.watchFor ? `  Watch: ${outfit.watchFor}` : ''
+    ].filter(Boolean).join('\n')).join('\n')
+    return [`Historical set ${index + 1}${set.introText ? `: ${set.introText}` : ''}`, outfitLines].filter(Boolean).join('\n')
+  }).join('\n\n')
+  return [
+    'HISTORICAL OUTFIT SETS (superseded — for this backward reference ONLY, this is NOT current_outfit_set):',
+    body,
+    'These are earlier, replaced outfit sets, shown because the user explicitly referred back to one. Any critique or judgment recorded here belongs to that earlier set alone and must NOT be applied to current_outfit_set unless the user restates or repeats it about the current set now.'
+  ].join('\n\n')
+}
+
 export async function buildStylistConversationPayload(body) {
   const {
     question,
@@ -4231,6 +4345,36 @@ export async function buildStylistConversationPayload(body) {
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
+  // Historical outfit-set addressability: current_outfit_set stays the default referent (nothing
+  // below fires without a signal), and older sets/critiques surface only when the user gives one.
+  // Reuses the thread's own persisted messages rather than a parallel history store — the same
+  // chat_threads row the client already reads/writes for this session. Gated cheaply: a keyword
+  // match needs no DB read to detect; a garment-name match needs the manifest we already just
+  // loaded above, so this runs after it rather than earlier in the function.
+  const currentOutfitPieceIds = currentOutfitSet.flatMap(entry => Array.isArray(entry?.piece_ids) ? entry.piece_ids : []).map(Number).filter(Boolean)
+  const questionNormForHistorical = String(question || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  // Same word-overlap tolerance as resolveHistoricalReferenceByGarment (a user drops a word, e.g.
+  // "olive cargo shorts" for "olive cargo drawstring shorts") — an exact-substring gate here would
+  // silently under-trigger relative to what the resolver could actually find once loaded.
+  const questionWordsForHistorical = new Set(questionNormForHistorical.split(' ').filter(Boolean))
+  const questionMayNameHistoricalGarment = activeManifestPieces.some(piece => {
+    const nameWords = String(piece?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+    const matchedCount = nameWords.filter(word => questionWordsForHistorical.has(word)).length
+    return matchedCount >= 2 && nameWords.length - matchedCount <= 1 && !currentOutfitPieceIds.includes(Number(piece.id))
+  })
+  let historicalOutfitContextText = ''
+  if (isBackwardOutfitSetReference(question) || questionMayNameHistoricalGarment) {
+    try {
+      const threadRow = sessionId ? db.prepare('SELECT payload FROM chat_threads WHERE id = ?').get(sessionId) : null
+      const threadMessages = threadRow ? (safeJsonParse(threadRow.payload, {})?.messages || []) : []
+      const historicalSets = extractHistoricalOutfitSets(threadMessages)
+      const historicalResolution = resolveHistoricalOutfitContext(question, historicalSets, currentOutfitPieceIds)
+      historicalOutfitContextText = formatHistoricalOutfitSetsForPrompt(historicalResolution)
+    } catch (err) {
+      console.warn('Historical outfit-set lookup failed:', err.message)
+    }
+  }
+
   const activeWardrobeText = wardrobeManifestText
     ? [
       `WARDROBE MANIFEST — all ${activeManifestPieces.length} active pieces, grouped by category. A "?" suffix marks a low-confidence tag value; [flags] mark trust limits (do not auto-style flagged pieces without checking).`,
@@ -4363,7 +4507,9 @@ export async function buildStylistConversationPayload(body) {
     'THREAD STATE (STRUCTURED):',
     JSON.stringify(threadState, null, 1),
     'THREAD STATE is the single source of truth for established styling context and the current outfit set. Reuse its values for follow-ups unless the user changes them; when it conflicts with older prose context, THREAD STATE wins. When the user references outfits by position ("the first one", "#2"), resolve against current_outfit_set. For a one-slot variant request against a current outfit, prefer suggest_slot_swaps so the alternatives stay tied to the existing card instead of restarting full outfit composition.',
+    'CURRENT-SET AUTHORITY: current_outfit_set is the default referent for unqualified discussion ("these outfits", "the second one", "add a layer", "which works best?") — always reason from it, not from an earlier turn\'s conversational framing. Earlier outfit sets and critiques of them are historical context, discussable only when the user explicitly refers back (see HISTORICAL OUTFIT SETS below if supplied this turn). A critique or rejection recorded against an earlier set — "these don\'t work," "too elevated," any objection — must NOT be applied to current_outfit_set unless the user states or repeats that same critique about the current set now. Regenerating the set resolves the earlier objection; do not re-litigate it from memory of the prior turn.',
     '',
+    historicalOutfitContextText,
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
     extraContextText ? `OUTFIT CONTEXT UNDER DISCUSSION:\n${extraContextText}` : '',
