@@ -780,7 +780,11 @@ function initDb(dbPath) {
     // whether the server search ran, and whether compatibility fallback restored the full catalog.
     // Which tools ran in which provider iteration, ';'-separated per iteration. Without it a turn's
     // shape can only be inferred from the model's prose.
-    'tool_sequence TEXT DEFAULT \'\''
+    'tool_sequence TEXT DEFAULT \'\'',
+    // Which of the 6 execution-router profiles (or 'full_stylist') this turn actually took. Computed
+    // per-turn in routes/ai.js since the router shipped, but never persisted until now — cost/latency
+    // by profile was previously only inferable from tool_sequence and the count-only router columns.
+    'execution_profile TEXT DEFAULT \'\''
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

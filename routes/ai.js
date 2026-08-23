@@ -580,8 +580,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -620,7 +620,8 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       diagnostics.weatherSource || '',
       Number(diagnostics.historyMessagesReceived) || 0,
       Number(diagnostics.historyMessagesIncluded) || 0,
-      Number(diagnostics.historyCharsRemoved) || 0
+      Number(diagnostics.historyCharsRemoved) || 0,
+      diagnostics.executionProfile || ''
     )
     // Every ai_call_log row this turn's provider calls wrote already carries freeformTurnToken
     // (staged before each call, before this row's real id existed). Correlate them now in one
@@ -4310,6 +4311,8 @@ router.post('/ask', async (req, res) => {
         }
         if (String(req.body.conversationMode || 'new_request') === 'new_request' && routed.value?.profile === 'bounded_multi' && routedLimit >= 2 && routedLimit <= 5) {
           toolContext.turnMode = 'new_request'
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.executionProfile = 'bounded_multi'
           recordFreeformToolIteration(toolContext, ['generate_outfits'])
           await executeTool('generate_outfits', {
             occasion: routed.value.occasion,
@@ -4379,6 +4382,9 @@ router.post('/ask', async (req, res) => {
     // initializer sits inside a compact-profile branch. With the router flags off nothing has
     // bumped a counter yet, so this is the first touch on the default path.
     toolContext.freeformDiagnostics ||= {}
+    // Router-eligible turns that fell through here (incomplete piece scope, router error) already
+    // set executionProfile above and it must stand; router-ineligible turns never touched it.
+    toolContext.freeformDiagnostics.executionProfile ||= 'full_stylist'
     Object.assign(toolContext.freeformDiagnostics, payload.historyDiagnostics || {})
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
