@@ -945,6 +945,7 @@ export const composerPieceLineSuffix = piece => {
   return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
     `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
     `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
+    `${piece.fit_on_body ? `; fit_on_body: ${piece.fit_on_body}` : ''}` +
     `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
     `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
     `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +

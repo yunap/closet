@@ -706,6 +706,16 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
     const cat = wardrobeCategoryGroup(piece)
     if (byCategory[cat]) byCategory[cat].push(piece)
   }
+  // This fallback only ever picks one piece per category and has no concept
+  // of adding a base layer underneath — unlike the composer paths, which
+  // either add one (core.js:2075) or exclude needs_base pieces outright
+  // (tools.js:1913). Prefer standalone-wearable pieces first within each
+  // affected category so a dependent piece only surfaces here when it's the
+  // only option, never displacing a standalone piece that needed no layering
+  // this fallback can't provide.
+  for (const cat of ['top', 'dress', 'outerwear']) {
+    byCategory[cat].sort((a, b) => (a.needs_base === 'yes' ? 1 : 0) - (b.needs_base === 'yes' ? 1 : 0))
+  }
 
   const pick = (cat, used = new Set(), predicate = null) => (byCategory[cat] || []).find(p => {
     if (used.has(Number(p.id))) return false
