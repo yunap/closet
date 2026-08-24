@@ -367,3 +367,25 @@ sandbox testing, not by reading the code.
   2026-08-15 hem_finish/tuck_behavior fix (see below) since it's cheap to do and a future reader
   grepping for the function shouldn't find two implementations disagreeing, but it is still dead
   code with zero callers. Worth deleting at some point, not done here.
+- **`fiber_content` confidence-blindness (found 2026-08-23, tagger semantic-consistency cleanup)**:
+  every downstream consumer of `fiber_content` — `pieceHasInsulatingMaterial()`, the hot-weather
+  missing-evidence check (`rules.js` ~2903), the structured-material check (`rules.js` ~2629), and
+  `GATE_CRITICAL_FIELDS` generally — reads the array value alone; none of them branch on
+  `_confidence.fiber_content` (manual vs. low-confidence AI guess are treated identically). This
+  matters more now that the tagger prompt legitimately emits `fiber_content: ["unknown"]` for
+  uncertain textile composition instead of guessing a specific fiber at low confidence — an
+  `unknown` array already reads as "no insulating/structured-material evidence" everywhere above,
+  so the behavior change is a strict improvement (fewer confident-looking wrong guesses feeding
+  gates), not a regression, but it was not verified consumer-by-consumer that a
+  previously-low-confidence specific-fiber guess and the new `unknown` produce identical downstream
+  scores in every gate. Flagged as a follow-up design decision (a confidence-aware evidence rule),
+  not implemented as part of this pass per the tagger semantic-consistency spec's explicit
+  scoping.
+- **`style_profile_json.coverage`/`style_profile_json.bareness` removed from the tagger prompt
+  (2026-08-23)**: both were audited and found dead — `pieceBareness()`/`pieceExposureDegree()` in
+  `attributes.js` deliberately derive their own bareness from `sleeve_length`/`neckline`/
+  `length_hits_at` instead of reading the authored `bareness` value (audit found it unreliable
+  wardrobe-wide, see the comment above `pieceBareness()`), and no production code reads the
+  authored `coverage` value either (`pieceWarmthTier()`'s "coverage" fallback is its own derived
+  function, not this field). No DB migration needed — existing stored pieces keep whatever value
+  they have, it is simply never read; the tagger just stops being asked to produce new ones.
