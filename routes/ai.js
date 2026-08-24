@@ -375,7 +375,7 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
-export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model } = {}) {
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model, excludeAnchorPieceId } = {}) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
@@ -389,8 +389,11 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
   // cache_control. See docs/tagger-audit-findings.md Q5.
   const content = [{ type: 'text', text: prompts.TAG_PIECE_PROMPT }]
 
+  const anchorPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece)
   const anchorBlock = buildAnchorBlock({
-    pieces: db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece),
+    pieces: excludeAnchorPieceId
+      ? anchorPieces.filter(p => Number(p.id) !== Number(excludeAnchorPieceId))
+      : anchorPieces,
     fields: ['formality', 'fabric_weight']
   })
   if (anchorBlock.text) {

@@ -1,9 +1,12 @@
 # Spec: tagger cost and cold-start quality
 
-**Status:** Phase 2 (model-tier screening) executed and decided 2026-08-23 — see §6b. Phases 0/1
-(caching, content reordering, dead-field cleanup, cost-gate fixes) were independently implemented
-between this spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4
-remain undecided.
+**Status:** Phase 2 (model-tier screening) executed and decided 2026-08-23 for both cold-start
+(§6b) and warm/anchored (§6c) tagging — adopt `claude-haiku-4-5` for normal tagging. The
+import-crop distribution is the one arm still untested (§6b). Phases 0/1 (caching, content
+reordering, dead-field cleanup, cost-gate fixes) were independently implemented between this
+spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4 remain
+undecided. **No production routing has been changed** — this spec records the decision; the
+routing change is separate, unapproved work.
 **Author's note:** every number here is measured against the real 236-piece wardrobe by a read-only
 script, named inline. Nothing in this spec was estimated.
 
@@ -399,9 +402,7 @@ result the routing change should cite; the routing change itself is separate, de
   treating this as a full adoption decision rather than a promising screen.
 - **10 cases is a screening sample, not a powered study.** It caught two real errors, which is a
   good sign for Haiku, but it cannot bound a rare-failure rate the way a larger run could.
-- **Warm-wardrobe (calibration-anchor) tagging was not tested.** This run was cold-start only, by
-  design (§3.1) — a warm user's tag calls, which carry the anchor block, are a different prompt
-  shape and haven't been checked against Haiku at all.
+- ~~Warm-wardrobe (calibration-anchor) tagging was not tested.~~ **Addressed 2026-08-23** — see §6c.
 - **Batching was not tested** (§6, "also worth testing in the same run") — out of scope for this
   pass.
 
@@ -419,6 +420,77 @@ result the routing change should cite; the routing change itself is separate, de
 3. Raw output for all 22 calls, plus the isolated cold-start DB copy used to produce them, are
    scratch artifacts from this run and were not committed; re-running this harness is cheap (~$0.63)
    if the results need to be reproduced or extended.
+
+---
+
+## 6c. Phase 2 follow-up — warm/anchored tagging, executed 2026-08-23
+
+§6b only tested the cold-start prompt shape (no calibration anchors). This follow-up asked the
+same haiku-vs-sonnet question with the real dynamic anchor block **enabled**, since a warm user's
+tag calls (the majority of this wardrobe's actual tagging traffic) carry that block and it changes
+the prompt shape materially — a tier decision for cold start doesn't automatically transfer.
+
+### Design
+
+- **4 garments, 2 models each = 8 calls**, chosen so the anchor block was actually relevant: at
+  least two touching `formality`-anchor buckets and two touching `fabric_weight`-anchor buckets in
+  the real wardrobe's current anchor pool (which, checked directly, covers all four formality values
+  and three of four fabric_weight values already — so the more useful selection axis turned out to
+  be thin buckets and historically-tricky pieces, not raw coverage).
+- **Three of the four cases were reused from §6b** (996760, 996778, 996784) specifically to get a
+  direct within-garment cold-vs-warm comparison, not just four new unrelated data points. The
+  fourth (126, a tweed vest) was picked fresh to stress the thinnest `fabric_weight=heavy` bucket
+  (7 source pieces) alongside `formality=elevated` (88 sources).
+- **`existingPiece` stayed `null` for all 8 calls**, same as §6b — this isolates the calibration-
+  anchor mechanism as the only new variable. It does not exercise the separate per-piece
+  Ground-Truth-Overrides block, which only fires when an existing piece is passed in.
+- **A real DB copy (uncleared)** was used instead of the cold run's overrides-wiped copy, so
+  `buildAnchorBlock`'s pool reflects the actual, current wardrobe.
+
+### A methodology bug caught before running: self-leaking anchors
+
+`buildAnchorBlock` has no way to exclude "the piece currently being tagged" from its own anchor
+pool — `tagPieceWithProvider` doesn't receive a piece id when `existingPiece` is `null`. Checking
+the 4 candidates' own `manual_overrides` found that **two of the four were already anchor sources
+for the exact field being tested**: piece 996778 already had `fabric_weight` in its own overrides,
+and piece 126 already had `formality` in its own. Confirmed directly: the anchor block generated
+for 996778 included the line `fabric_weight=light: 996778 abstract brushstroke print sheath dress
+... reads_as: dramatic black-ivory brushstroke print shift with sequin shoulder detail` — its own
+id, field value, *and* description, handed back to the model tagging it. Running the test unfixed
+would have measured "does showing a model its own labeled answer work," not "does warm anchoring
+help."
+
+**Fix:** `tagPieceWithProvider` gained a second optional parameter, `excludeAnchorPieceId`, that
+filters the anchor-pool query by id before calling `buildAnchorBlock`. Additive, unused by any
+production caller, verified directly (with vs. without exclusion) before the paid run.
+
+### Results
+
+8/8 calls succeeded, 100% parse rate, zero retries. **Cost $0.3152** (Sonnet $0.2353 / 4 calls,
+Haiku $0.0799 / 4 calls) — Haiku ~66% cheaper and ~48% faster (17.2s vs 33.0s avg), consistent with
+the cold-run ratios. Combined cold + warm spend across both phases: **$0.9446**.
+
+### Field-level findings and adjudication
+
+| case | piece | finding | verdict |
+|---|---|---|---|
+| w1 | 996760 (a modern fleece pullover hoodie — corrected from an earlier "sherpa" mischaracterization) | `category` flipped for **both** models between cold and warm (Sonnet: top→outerwear; Haiku: outerwear→top). **Owner ruling: warmth is not determinable from the photo alone**, so neither answer is checkable against visual evidence — this piece's stored `outerwear` value likely reflects how the owner actually wears it, not something recoverable from the hanger/worn shots. | **dropped as unadjudicable**, not scored either direction |
+| w2 | 996778 (silk print dress, reused from §6b) | Haiku correct on `fabric_weight` (light, matching silk) where Sonnet said medium; `silhouette` inconclusive — all three of stored/Sonnet/Haiku disagreed (shift/sheath/wrap) | `haiku_better` |
+| w3 | 996784 (lounge bottom, reused from §6b) | Sonnet correct on `formality` (lounge, matching stored) where Haiku said everyday; both models missed `length_hits_at` together (floor_length vs ankle — a shared miss, not a model-tier difference) | `sonnet_better` |
+| w4 | 126, tweed vest (fresh case) | Sonnet called an **unmistakable vest** `outerwear`; Haiku correctly matched the stored `top`. Unlike w1, a vest's construction (open front, sleeveless) is visible in the photo, so this is a real, checkable error, not an ambiguous garment | `haiku_better` |
+
+**Net: 2 Haiku wins (w2, w4), 1 Sonnet win (w3), 1 dropped as unanswerable from photo evidence
+(w1), zero material regressions in either direction.** This does not change the direction of §6b's
+finding — it extends "Haiku matches or beats Sonnet" to the warm/anchored prompt shape as well as
+cold start.
+
+### Decision
+
+**Extend the §6b decision to warm tagging: adopt `claude-haiku-4-5` for normal tagging, cold and
+warm.** Nothing has been changed in production routing — this section, like §6b, records the result
+a routing change should cite. The import-crop distribution (§6b, "What this doesn't answer") is
+still the one untested arm and remains the largest gap before calling this decision complete for
+every tagging path.
 
 ---
 
