@@ -815,9 +815,10 @@ Step one: classify every provided image in "photo_properties":
 - "fit_visible": true only when the full target garment is visible on a body well enough to judge fit, drape, placement, and length.
 - "real_context": true only when the photo shows a real wearing context/outing/event. A home mirror try-on, try-on hallway, bedroom, closet, or neutral fitting photo is NOT real_context even if the garment is on a body.
 
-Authority follows photo properties, not photo labels:
-- Flat/even-lit whole-garment appearance photos are authoritative for: color, background_color, pattern_type, pattern_scale, pattern_complexity, fabric surface, construction, neckline, sleeve existence.
-- Fit-visible photos are authoritative only for: fit_on_body, drape, length_hits_at, tuck_behavior, waistband_type, and on-body silhouette.
+Authority follows photo properties, not photo labels. Three evidence classes — this is an evidence hierarchy, not a new stored field:
+- Class A — visually intrinsic fields: primarily judged from the clearest whole-garment/detail view. Colors, background_color, pattern_type/scale/complexity, neckline, sleeve existence/shape, visible construction details, fabric surface, hardware.
+- Class B — behavior/placement fields: require or materially benefit from fit-visible evidence. fit_on_body, drape/real_wear_notes.drape, worn length_hits_at, tuck_behavior, waistband_type, on-body silhouette/placement. If no fit-visible evidence exists, leave these uncertain/unset where supported or lower confidence — do not infer them from a non-fit-visible photo.
+- Class C — composite inferred fields: no single photo type owns these. fabric_weight, fabric_category, formality, occasion suitability, outerwear_role, weather_protection, fiber_content/material inference. Use all available evidence across whichever photos exist and lower confidence when that evidence conflicts.
 - Real-context photos are positive evidence for occasion register only when the context clearly matches that occasion. They can raise matching occasion confidence.
 
 Conflict resolution and context-insulation rules:
@@ -840,7 +841,7 @@ Evaluate the garment's visual structure and weight along these two axes:
 
 === DESCRIPTIVE CUES & LABELS ===
 - Sleeve Shape: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to sleeve_length "long" with no shape if these voluminous features are present — sleeve_length and sleeve_shape are separate fields; a voluminous long sleeve is sleeve_length "long" + sleeve_shape "bishop"/"bell". Default to a plain sleeve_shape only for simple, straight, non-voluminous sleeves.
-- Hem Finish: for a top, select "shirttail" specifically for a curved hem that's longer at the sides/back than the front (classic dress-shirt shape) — it is NOT tuckable despite looking tuck-ready. Select "curved" or "high_low" for other high-low/curved shapes, "asymmetric" for uneven/one-sided hems, "other" for anything else decorative. Select "straight_loose" for flat, horizontal straight hems (the only hem, besides "banded_elastic", that's actually tuckable).
+- Hem Finish: for a top, select "shirttail" specifically for a curved hem that's longer at the sides/back than the front (classic dress-shirt shape). Select "curved" or "high_low" for other high-low/curved shapes, "asymmetric" for uneven/one-sided hems, "other" for anything else decorative, "straight_loose" for flat, horizontal straight hems. This is a construction/shape judgment only — it does not by itself determine tuckability; see tuck_behavior below, which is judged independently from the garment's cut, fit, and design intent.
 - Neckline: Select V, scoop, crew, boat, mock, turtleneck, cowl, off-shoulder, square, wrap, halter, strapless, one-shoulder, collared, shawl, other, or unknown based on construction.
 - Silhouette: category-conditional — see the silhouette field description in the schema below for the exact per-category list.
 - Outerwear Role (outerwear only): a functional judgment, not a garment-type label — see the outerwear_role field description below for the four values and what NOT to infer from fabric weight/fiber/name alone. Leave null rather than guess when construction/material evidence is genuinely insufficient.
@@ -851,21 +852,24 @@ Evaluate the garment's visual structure and weight along these two axes:
   * "light": soft fluid drape, thin single layer; folds collapse softly (linen shirting, jersey tees, rayon, light knits).
   * "medium": holds moderate shape; folds have body but no stiffness (standard cotton, shirtweight denim, ponte, midweight knits, technical/athletic synthetics).
   * "heavy": structured, dense, or lofted; holds its own shape, visible thickness at hems/seams (coating wool, heavyweight denim, quilted or fleece-backed fabrics, leather).
-  * Directives for Fabric Weight:
-    1. Drape is weight made visible: When a worn photo is present, judge weight primarily from how the fabric hangs and moves on the body — stiffness, fold size, cling — not from the hanger shot alone.
+  * Directives for Fabric Weight: a photo cannot measure literal textile weight/GSM — this is an apparent fabric-weight class estimated from combined visual evidence, and no single photo type owns it.
+    1. Estimate from combined visible evidence: apparent thickness/loft, seam and hem substance, opacity, fold size, stiffness, surface density, and drape. A whole-garment/hanger view is useful for thickness, construction, and surface; a fit-visible/worn view is useful for fold behavior, stiffness, and drape on the body. Neither image type automatically overrides the other — weigh whichever evidence is actually present.
     2. Derive from what you already know: Cross-check weight against your own fiber_content and fabric_category answers — technical synthetics and jersey are rarely heavy; coating wool and quilted fabrics are rarely light. If your weight answer contradicts your fiber answer, reconsider before emitting.
-  * Directives for Fiber Content:
-    1. Align with Fabric Category: Your fiber_content array MUST include the primary fiber of your predicted fabric_category (e.g. if fabric_category is 'silk', include 'silk'; if 'wool' or 'cashmere', include 'wool' or 'cashmere'; if 'linen', include 'linen'; if 'cotton', include 'cotton'; if 'denim', include 'denim'; if 'leather' or 'suede', include 'leather' or 'suede').
-    2. Make reasonable visual inferences: Do not default to 'unknown' too easily. Use visual texture and drape cues to make an educated guess about the most likely fibers (e.g., predict 'cotton' for matte, structured tees; 'viscose', 'rayon', or 'modal' for fluid, slinky jerseys; 'wool', 'cashmere', or 'acrylic' for typical knit sweaters) and assign them a 'low' confidence score rather than outputting 'unknown'. Use 'unknown' only when the fabric is completely unidentifiable.
-  * Confidence guidance: Emit "medium" or "high" confidence when fiber, category, and drape agree; emit "low" only when evidence genuinely conflicts or both photos are uninformative.
+    3. If the available evidence conflicts (e.g. hanger view suggests one weight, worn drape suggests another), lower confidence rather than silently picking one photo's read over the other's.
+  * Directives for Fiber Content: an ordinary garment photograph cannot reliably establish chemical/fiber composition — it can only support visual material impressions (denim-like, woolly, silk-like, slinky jersey, fuzzy knit). Prefer known evidence first:
+    1. Known evidence: a visible label/product metadata, an existing ground-truth override, or explicit user information — use these when present.
+    2. Strong visually characteristic materials may still be identified where genuinely obvious: leather, suede, denim construction, and non-textile accessory materials (metal, stone, wood, etc.).
+    3. Align with Fabric Category where the fiber follows directly from a confidently-identified fabric_category (e.g. if fabric_category is 'silk', include 'silk'; if 'denim', include 'denim'; if 'leather' or 'suede', include 'leather' or 'suede').
+    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: ["unknown"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.
+  * Confidence guidance: Emit "medium" or "high" confidence when fiber, category, and drape agree; emit "low" when evidence genuinely conflicts, both photos are uninformative, or fiber_content is 'unknown'.
 
-- Formality Register: judge from observable construction, fabric, finish, and wear context signals, calibrated to THIS wardrobe's artisan-nice baseline:
-  * "lounge": athletic/home comfort construction — jersey knits, drawstrings, performance fabric, visible comfort-first design.
-  * "everyday": no-intent wear; matte or naturally textured fabrics, simple construction, minimal hardware/embellishment. Artisan texture, linen, and basic knits do NOT lift a piece out of everyday on their own. Ruffle detailing alone does not lift a piece out of everyday.
-  * "elevated": visible refinement requiring intent — refined drape, deliberate structure, fine knits, polished finish, statement construction details.
+- Formality Register: judge from observable construction, fabric, finish, and wear-context signals against a neutral contemporary baseline — not any one wardrobe's aesthetic:
+  * "lounge": comfort-first lounge/sleep/home construction — jersey knits, drawstrings, performance fabric, visible comfort-first design.
+  * "everyday": ordinary informal daywear requiring little or no dress intent; matte or naturally textured fabrics, simple construction, minimal hardware/embellishment. Linen or artisan texture alone does NOT lift a piece out of everyday. Ruffle detailing alone does not lift a piece out of everyday.
+  * "elevated": deliberately refined or polished day/social wear — considered construction, finish, drape, tailoring, or detail requiring visible intent.
   * Leather and suede jackets (moto, zip, bomber) default to elevated, not dressy, unless embellished or formally tailored.
   * Knit dresses are not inherently dressy; judge by sheen, cut, and construction, not category.
-  * "dressy": reserved for going-out signals: sheen, sequins, lace as a primary element, formal tailoring, cocktail/evening cuts.
+  * "dressy": clear occasion/evening/formal signals such as formal tailoring, pronounced sheen, sequins, or cocktail/evening construction, or equivalent dress-intent cues.
   For shoes: "heel_height" is physical heel lift (flat, low, mid, high). "walk_support" is stability/support for lots of walking (high, medium, low); a flat ballet shoe can still be low-support.
   For "opacity": judge construction transparency for wearability. "opaque": solid or lined. "semi_sheer": skin/light hints through. "sheer": clearly see-through (chiffon, mesh, unlined lace). "open_weave": visible holes in the knit/weave (crochet, open knit, fishnet) — such a piece cannot work alone against skin as a base layer.
   For "needs_base": this is CONSTRUCTION exposure, not fabric transparency (that is opacity) — a top, dress, or outerwear piece whose cut leaves too much torso/side bare to wear on its own against skin, so a base layer underneath is required rather than optional (e.g. dramatic high-low handkerchief side panels, deep cutouts, sheer paneling over bare skin). Tag "yes" only when the garment is genuinely unwearable alone; when in doubt, leave it null/omit rather than guessing — this field is deliberately conservative, and an unset value is the safe default, not a judgment.
@@ -918,7 +922,7 @@ ANCHOR A — Basic ribbed jersey tank (low expressive baseline)
   Style lanes: polished_classic: 1, artistic_minimal: 0, modern_bohemian: 0,
   romantic_soft: 0, earthy_structured: 0.
   Occasions: casual: "high", city: "medium", smart-casual: "low", evening: "low",
-  outdoor: "medium", home: "high".
+  outdoor: "medium", home: "low".
 
 ANCHOR B — Classic stiff cotton button-down (single-lane baseline)
   A solid collared shirt in crisp cotton, tailored, no expressive detailing.

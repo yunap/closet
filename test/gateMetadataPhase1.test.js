@@ -31,7 +31,7 @@ test('tagger schemas request formality and structured shoe comfort fields', () =
     assert.match(source, /"heel_height": "flat\|low\|mid\|high\|null/)
     assert.match(source, /"walk_support": "high\|medium\|low\|null/)
   }
-  assert.match(prompts, /Artisan texture, linen, and basic knits do NOT lift a piece out of everyday/)
+  assert.match(prompts, /Linen or artisan texture alone does NOT lift a piece out of everyday/)
 })
 
 test('tag-piece endpoints share anchor block and response confidence shape', () => {
