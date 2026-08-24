@@ -62,7 +62,14 @@ test('3. /tag-piece stages a normalized tagger source before the provider call f
 })
 
 test('4/5. server validates against the known list rather than trusting arbitrary client text', () => {
-  assert.match(routeAiSource, /import \{ updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource \} from '\.\.\/lib\/aiCallTelemetry\.js'/)
+  assert.match(routeAiSource, /import \{ updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext \} from '\.\.\/lib\/aiCallTelemetry\.js'/)
+})
+
+test('tagPieceWithProvider re-establishes its telemetry snapshot directly around the provider call', () => {
+  const fnStart = routeAiSource.indexOf('export async function tagPieceWithProvider(')
+  const fnSection = routeAiSource.slice(fnStart, fnStart + 6000)
+  assert.match(fnSection, /const telemetrySnapshot = \{ \.\.\.getAiTelemetryContext\(\) \}/)
+  assert.match(fnSection, /await runWithAiTelemetryContext\(telemetrySnapshot, \(\) => askStylistWithUsage\(payload\)\)/)
 })
 
 test('6. Batch Add no longer allows post-tag photo-role swapping in Review', () => {
