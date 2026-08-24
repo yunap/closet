@@ -187,3 +187,71 @@ test('mock rows are flagged and excluded from real spend semantics', async () =>
   assert.equal(row.input_tokens, 0)
   assert.equal(row.output_tokens, 0)
 })
+
+// Tagger source attribution (2026-08-23 follow-up spec): both ordinary Add and Batch Add call
+// POST /api/ai/tag-piece, so flow=tag_piece alone can't distinguish them. routes/ai.js's
+// /tag-piece handler stages taggerSource on the request's AsyncLocalStorage context via
+// updateAiTelemetryContext(normalizeTaggerSource(header)) before the provider call fires —
+// these tests exercise that exact same mechanism end to end through the real instrumented SDK
+// transport (synthetic fetch, no billed call), the same way the rows above are produced.
+test('a known X-Tagger-Source value is recorded on the ai_call_log row', async () => {
+  const anthropic = new Anthropic({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/tag-piece' }, () => {
+    telemetry.updateAiTelemetryContext({ taggerSource: telemetry.normalizeTaggerSource('piece_form_add') })
+    return anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'test' }],
+    })
+  })
+  await waitForRows(6)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.tagger_source, 'piece_form_add')
+
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/tag-piece' }, () => {
+    telemetry.updateAiTelemetryContext({ taggerSource: telemetry.normalizeTaggerSource('batch_add') })
+    return anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'test' }],
+    })
+  })
+  await waitForRows(7)
+  const batchRow = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(batchRow)
+  assert.equal(batchRow.tagger_source, 'batch_add')
+})
+
+test('a missing X-Tagger-Source stays backward-compatible (empty, not a guess)', async () => {
+  const anthropic = new Anthropic({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/tag-piece' }, () => {
+    telemetry.updateAiTelemetryContext({ taggerSource: telemetry.normalizeTaggerSource(undefined) })
+    return anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'test' }],
+    })
+  })
+  await waitForRows(8)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.tagger_source, '')
+})
+
+test('an arbitrary client-supplied source string cannot pollute telemetry', async () => {
+  const anthropic = new Anthropic({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/tag-piece' }, () => {
+    telemetry.updateAiTelemetryContext({ taggerSource: telemetry.normalizeTaggerSource("'; DROP TABLE ai_call_log; --") })
+    return anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'test' }],
+    })
+  })
+  await waitForRows(9)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.tagger_source, 'unknown')
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_call_log').get().n, 9)
+})

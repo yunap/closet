@@ -627,7 +627,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         const fd = new FormData()
         fd.append('photo', hangerFile)
         if (wornFile) fd.append('worn_photo', wornFile)
-        res = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
+        res = await fetch('/api/ai/tag-piece', { method: 'POST', headers: { 'X-Tagger-Source': 'piece_form_add' }, body: fd })
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
