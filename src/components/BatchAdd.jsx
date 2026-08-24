@@ -236,7 +236,7 @@ function ProcessingPhase({ items, thumbnailSize }) {
 }
 
 // ── Phase: Grouping (Staging Area) ───────────────────────────────────────────
-function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel, onRemove, linkingFromId, setLinkingFromId }) {
+function GroupingPhase({ items, onLink, onUnlink, onSwap, onStart, onAddFiles, onCancel, onRemove, linkingFromId, setLinkingFromId }) {
   const [draggedId, setDraggedId] = useState(null)
   const [dragOverId, setDragOverId] = useState(null)
   const fileInputRef = useRef()
@@ -440,14 +440,25 @@ function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel,
                     🎯 Pair here
                   </button>
                 ) : item.wornPreview ? (
-                  /* If already paired, show unlink option */
-                  <button
-                    className="btn-secondary"
-                    style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)', color: 'var(--danger)', borderColor: 'rgba(168, 64, 64, 0.2)' }}
-                    onClick={() => onUnlink(item.id)}
-                  >
-                    ✕ Unlink
-                  </button>
+                  /* If already paired, allow correcting which side is hanger vs worn (must
+                     happen before Analyze — see handleSwapGrouped), and unlinking */
+                  <>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)' }}
+                      onClick={() => onSwap(item.id)}
+                      title="Swap which photo is hanger vs worn"
+                    >
+                      🔄 Swap Hanger/Worn
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)', color: 'var(--danger)', borderColor: 'rgba(168, 64, 64, 0.2)' }}
+                      onClick={() => onUnlink(item.id)}
+                    >
+                      ✕ Unlink
+                    </button>
+                  </>
                 ) : !linkingFromId ? (
                   /* Normal link button */
                   <button
@@ -531,7 +542,7 @@ function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel,
 }
 
 // ── Phase: Review (one item at a time) ────────────────────────────────────────
-function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thumbnailSize }) {
+function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSize }) {
   const item = items[currentIndex]
   const total = items.length
   const [form, setForm] = useState({ ...emptyForm(), ...item.form })
@@ -637,7 +648,9 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
           </div>
         )}
 
-        {/* Photos */}
+        {/* Photos — roles are fixed at Grouping/Analyze time (before tagging); swapping here
+            would desync the stored photo roles from the context the AI actually tagged under,
+            so this screen is display-only. Correct hanger/worn roles in Grouping instead. */}
         {item.wornPreview ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -650,14 +663,6 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
                 <img src={item.wornPreview} alt="Worn" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
               </div>
             </div>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onSwap}
-              style={{ padding: '6px 12px', fontSize: 11, alignSelf: 'center', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              🔄 Swap Hanger & Worn Photos
-            </button>
           </div>
         ) : (
           <img src={item.preview} alt="" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
@@ -1349,19 +1354,15 @@ export default function BatchAdd({ onDone }) {
     })
   }
 
-  const handleSwapPhotos = (index) => {
-    setItems(prev => prev.map((it, i) => {
-      if (i === index) {
-        return {
-          ...it,
-          file:        it.wornFile,
-          preview:     it.wornPreview,
-          wornFile:    it.file,
-          wornPreview: it.preview
-        }
-      }
-      return it
-    }))
+  // Pre-tag only: swaps which staged photo is treated as hanger vs worn for a paired
+  // Grouping-phase item. Must happen before Analyze — Review is tagged output display, not a
+  // place to change what the photos meant when the AI tagged them (see ReviewPhase comment).
+  const handleSwapGrouped = (itemId) => {
+    setItems(prev => prev.map(it => (
+      it.id === itemId
+        ? { ...it, file: it.wornFile, preview: it.wornPreview, wornFile: it.file, wornPreview: it.preview }
+        : it
+    )))
   }
 
   const handleCancel = () => {
@@ -1391,7 +1392,7 @@ export default function BatchAdd({ onDone }) {
           fd.append('worn_photo', updated[i].wornFile)
         }
         
-        const res  = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
+        const res  = await fetch('/api/ai/tag-piece', { method: 'POST', headers: { 'X-Tagger-Source': 'batch_add' }, body: fd })
         const tags = await res.json()
 
         if (tags.error) throw new Error(tags.error)
@@ -1504,6 +1505,7 @@ export default function BatchAdd({ onDone }) {
             items={items}
             onLink={handleLink}
             onUnlink={handleUnlink}
+            onSwap={handleSwapGrouped}
             onStart={startProcessing}
             onAddFiles={handleAddFiles}
             onCancel={handleCancel}
@@ -1520,7 +1522,6 @@ export default function BatchAdd({ onDone }) {
             currentIndex={current}
             onSave={handleSave}
             onSkip={handleSkip}
-            onSwap={() => handleSwapPhotos(current)}
             onPrev={current > 0 ? handlePrev : null}
             thumbnailSize={thumbnailSize}
           />

@@ -66,7 +66,7 @@ import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfil
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
-import { updateAiTelemetryContext, backfillFreeformRunId } from '../lib/aiCallTelemetry.js'
+import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -1271,6 +1271,12 @@ router.post('/tag-piece', upload.fields([
   { name: 'photo', maxCount: 1 },
   { name: 'worn_photo', maxCount: 1 }
 ]), async (req, res) => {
+  // Caller attribution (tagger semantic-consistency cleanup follow-up spec, 2026-08-23):
+  // both ordinary Add and Batch Add hit this endpoint, so flow=tag_piece alone can't tell them
+  // apart in telemetry. The client sends X-Tagger-Source; only a known value is trusted — an
+  // unrecognized or missing header is recorded as unknown/legacy rather than trusting arbitrary
+  // client text into an aggregation column.
+  updateAiTelemetryContext({ taggerSource: normalizeTaggerSource(req.headers['x-tagger-source']) })
   const files = req.files || {}
   const photoFile = files.photo ? files.photo[0] : null
   const wornPhotoFile = files.worn_photo ? files.worn_photo[0] : null
