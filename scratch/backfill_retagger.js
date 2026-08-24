@@ -68,7 +68,7 @@ async function retagPiece(id) {
 
   console.log(`\n[Process] Retagging Piece ${id}: "${piece.name}" (${photos.length} photo(s))...`);
   try {
-    const tags = await tagPieceWithProvider(photos, piece);
+    const tags = await tagPieceWithProvider(photos, piece, { excludeAnchorPieceId: id });
     cumulativeCost += COST_PER_PIECE_ESTIMATE;
     console.log(`[Cost Tracker] Model call succeeded. Cumulative estimated cost: $${cumulativeCost.toFixed(3)}`);
     

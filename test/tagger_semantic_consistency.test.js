@@ -1,9 +1,7 @@
-// Tagger semantic-consistency cleanup spec (2026-08-23), PR A — semantic prompt cleanup:
-// universal garment-analysis rules belong in the static prompt, user-specific calibration
-// belongs in dynamic anchors. These tests lock the resolved TAG_PIECE_PROMPT invariants the
-// spec required so a future edit can't silently reintroduce the contradictions this cleanup
-// removed. Anchor-exclusion and dead-field-removal invariants (spec items 7, 8) land in the
-// follow-up process-hardening PR.
+// Tagger semantic-consistency cleanup spec (2026-08-23), PR A + PR B — semantic prompt cleanup
+// plus process hardening (self-anchor exclusion, coverage/bareness dead-field removal). These
+// tests lock the resolved TAG_PIECE_PROMPT invariants the spec required so a future edit can't
+// silently reintroduce the contradictions this cleanup removed.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildPrompts, DEFAULT_PROFILE, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
@@ -54,7 +52,33 @@ test('6. dynamic formality anchors still exist', () => {
   assert.equal(block.anchors.length, 1)
 })
 
+test('7. an existing garment cannot appear in its own anchor block', () => {
+  const pieces = [
+    { id: 123, name: 'the piece being retagged', formality: 'elevated', manual_overrides: ['formality'], updated_at: '2026-08-20' },
+    { id: 456, name: 'a different anchor', formality: 'everyday', manual_overrides: ['formality'], updated_at: '2026-08-19' }
+  ]
+  const block = buildAnchorBlock({
+    pieces: pieces.filter(p => Number(p.id) !== 123),
+    fields: ['formality', 'fabric_weight']
+  })
+  assert.ok(!block.anchors.some(a => a.id === 123))
+  assert.ok(block.anchors.some(a => a.id === 456))
+})
+
 test('9. category-conditional enums remain unchanged', () => {
   assert.match(TAG_PIECE_PROMPT, /"formality": "lounge\|everyday\|elevated\|dressy"/)
   assert.match(TAG_PIECE_PROMPT, /"fabric_weight": "ultralight\|light\|medium\|heavy/)
+})
+
+test('coverage/bareness are no longer requested from the tagger (dead-field cleanup)', () => {
+  assert.doesNotMatch(TAG_PIECE_PROMPT, /"coverage": "normal\|full-insulating/)
+  assert.doesNotMatch(TAG_PIECE_PROMPT, /"bareness": "normal\|high/)
+})
+
+test('production retag paths pass excludeAnchorPieceId', async () => {
+  const fs = await import('node:fs')
+  const routeAi = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  const backfill = fs.readFileSync(new URL('../scratch/backfill_retagger.js', import.meta.url), 'utf8')
+  assert.match(routeAi, /tagPieceWithProvider\(photos, parsePiece\(piece\), \{ excludeAnchorPieceId: piece\.id \}\)/)
+  assert.match(backfill, /tagPieceWithProvider\(photos, piece, \{ excludeAnchorPieceId: id \}\)/)
 })

@@ -1347,7 +1347,7 @@ const tagExistingHandler = async (req, res) => {
 
     if (!photos.length) return res.status(400).json({ error: 'This piece has no photo to tag' })
 
-    const rawTags = await tagPieceWithProvider(photos, parsePiece(piece))
+    const rawTags = await tagPieceWithProvider(photos, parsePiece(piece), { excludeAnchorPieceId: piece.id })
     const { tags, gaps: unknown } = sanitizeTaggerColors(rawTags, { preserveExisting: true })
     queueColorTaxonomyReviews(db, {
       pieceId: piece.id,
