@@ -27,6 +27,8 @@ import {
   PROMPT_CACHE_BREAKPOINT,
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
+  ANTHROPIC_MODEL,
+  ANTHROPIC_TAGGER_MODEL,
   describeAiError
 } from '../styling-engine/provider.js'
 
@@ -375,7 +377,11 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
-export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model, excludeAnchorPieceId } = {}) {
+// docs/tagger-cost-spec.md §6b/§6c: standard tagging (add/edit/retag) defaults to the cheaper
+// tagger tier — screened cold-start and warm-anchored, no material regression found. Callers that
+// need the full stylist model (currently: routes/importer.js, whose crop/fallback-photo
+// distribution was never screened) must pass `model` explicitly to override this default.
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = (AI_PROVIDER === 'openai' ? null : ANTHROPIC_TAGGER_MODEL), excludeAnchorPieceId } = {}) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
