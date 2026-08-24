@@ -1551,7 +1551,13 @@ export function buildRankedCandidateText(rankedCandidates) {
 }
 
 export function selectCandidatesForOutfitGeneration(piece, allPieces, limit = 30, options = {}) {
-  const ranked = rankedComplementaryWardrobeFor(piece, allPieces, limit, options)
+  // Rank the FULL eligible wardrobe before any truncation — the per-category
+  // addSome() quotas below are what should bound each category's contribution.
+  // Passing `limit` here instead would apply a single global top-N cut before
+  // categories are separated, which can silently starve an entire category
+  // (e.g. shoes) when another category scores higher for this particular
+  // anchor piece, even though that category has plenty of eligible pieces.
+  const ranked = rankedComplementaryWardrobeFor(piece, allPieces, allPieces.length, options)
   const byCategory = { top: [], bottom: [], dress: [], outerwear: [], shoes: [], accessory: [] }
   for (const r of ranked) {
     const cat = r.piece.category || 'other'

@@ -255,3 +255,38 @@ test('an arbitrary client-supplied source string cannot pollute telemetry', asyn
   assert.equal(row.tagger_source, 'unknown')
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_call_log').get().n, 9)
 })
+
+// Diagnostic breadcrumbs (2026-08-24): a live Batch Add run showed 3 of 5 sequential /tag-piece
+// calls losing their request-scoped telemetry context entirely (flow=unattributed,
+// tagger_source=''), with no confirmed reproduction after four escalating local repros. These
+// breadcrumbs don't fix the mechanism — they make the NEXT occurrence diagnosable from server
+// logs instead of only visible after the fact in ai_call_log.
+test('updateAiTelemetryContext warns (and does not throw) when called with no active context', () => {
+  const originalWarn = console.warn
+  const warnings = []
+  console.warn = (...args) => warnings.push(args)
+  try {
+    assert.doesNotThrow(() => telemetry.updateAiTelemetryContext({ taggerSource: 'batch_add' }))
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(warnings.length, 1)
+  assert.match(String(warnings[0][0]), /updateAiTelemetryContext called with no active context/)
+})
+
+test('logAiCall warns and still records an honest unattributed row when context is missing', async () => {
+  const originalWarn = console.warn
+  const warnings = []
+  console.warn = (...args) => warnings.push(args)
+  try {
+    await telemetry.logAiCall({ provider: 'anthropic', model: 'claude-haiku-4-5', success: true })
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(warnings.length, 1)
+  assert.match(String(warnings[0][0]), /logAiCall found no usable telemetry context/)
+  await waitForRows(10)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'unattributed' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.tagger_source, '')
+})

@@ -66,7 +66,7 @@ import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfil
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
-import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource } from '../lib/aiCallTelemetry.js'
+import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -382,6 +382,18 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
 // need the full stylist model (currently: routes/importer.js, whose crop/fallback-photo
 // distribution was never screened) must pass `model` explicitly to override this default.
 export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = (AI_PROVIDER === 'openai' ? null : ANTHROPIC_TAGGER_MODEL), excludeAnchorPieceId } = {}) {
+  // Snapshot the request's AsyncLocalStorage telemetry context (flow, tagger_source, etc.) right
+  // at entry, then re-apply it in a fresh frame directly around the provider call below. Found
+  // live in a Batch Add run (2026-08-24): 3 of 5 sequential tag calls landed with
+  // flow=unattributed/tagger_source='' even though the route handler set taggerSource correctly
+  // before calling this function. NOT root-caused: four escalating local repros (plain sharp
+  // fan-out matching the per-photo/anchor-thumbnail shape below, real Express+multer+sharp, the
+  // actual patched SDK transport, and a ~2.5s simulated model-latency version of all of the
+  // above) all failed to reproduce the loss, so "heavy async fan-out breaks ALS" is disproven as
+  // the mechanism, not confirmed. This re-snapshot is defensive hardening, not a verified fix —
+  // see the console.warn breadcrumbs in lib/aiCallTelemetry.js (updateAiTelemetryContext and
+  // logAiCall) for whatever the next real occurrence actually reveals.
+  const telemetrySnapshot = { ...getAiTelemetryContext() }
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
@@ -462,7 +474,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
   // actually slow, and is the caching fix from this session actually landing" without a schema
   // change; promote to a real table if it turns out to be worth tracking over time.
   const tagCallStartedAt = Date.now()
-  const { text: raw, usage } = await askStylistWithUsage(payload)
+  const { text: raw, usage } = await runWithAiTelemetryContext(telemetrySnapshot, () => askStylistWithUsage(payload))
   const tagCallMs = Date.now() - tagCallStartedAt
   const cacheReadTokens = usage?.cacheReadInputTokens || 0
   const cacheCreationTokens = usage?.cacheCreationInputTokens || 0
@@ -933,6 +945,7 @@ export const composerPieceLineSuffix = piece => {
   return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
     `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
     `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
+    `${piece.fit_on_body ? `; fit_on_body: ${piece.fit_on_body}` : ''}` +
     `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
     `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
     `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +

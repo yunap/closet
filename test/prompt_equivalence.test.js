@@ -69,6 +69,20 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         '- Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.\n- Do not invent a physical activity. An occasion\'s vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in `bestFor`/`silhouette`/`watchFor` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").'
       )
     }
+    // 2026-08-24: live thread_1787558991064 paired a needs_base crochet top with a relaxed/drapey
+    // "emerald green v-neck top" as its base, defending the pairing until the owner corrected it —
+    // "to be a base top, it needs to be a fitted top, which it most definitely is not". The composer
+    // had the right piece available (a near-identically-named skims/straight tank) and used it
+    // correctly elsewhere in the same turn, so this was a base-layer compatibility check the model
+    // never had a stated rule for, not a missing garment. Moved ex-ante into the composition rules
+    // rather than left to post-hoc repair, per owner instruction: "repair is a bit late I want model
+    // to know that garments structure or silhouette won't work for what it wants it to do."
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        '- Respect the rotation warnings and any rejected-pairing memory provided.',
+        '- Base-layer compatibility: a piece labeled `needs_base: yes` (or visibly sheer/open-weave in its photo) requires a base underneath whose `fit_on_body` is `skims`, `clings_stretchy`, or `clings_drapey` — close enough to the body to sit cleanly under an open or sheer layer without its own excess fabric bunching or showing through unevenly. A candidate base tagged `drapes`, `hangs_straight`, or `none` does not satisfy this even if it is otherwise the right color or otherwise a good match — treat that as disqualifying for the base-layer slot specifically, not a minor style note. When two pieces share a near-identical name (e.g. two "emerald green v-neck top" entries), check each candidate\'s own `fit_on_body` by its ID — never assume they are interchangeable.\n- Respect the rotation warnings and any rejected-pairing memory provided.'
+      )
+    }
     // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a
     // tag is missing, low-confidence, or visibly contradicted. Automatic composition remains
     // conservative, and hem shape alone still cannot decide. Keep this deliberate delta explicit.
