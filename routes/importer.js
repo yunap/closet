@@ -15,7 +15,7 @@ import sharp from 'sharp'
 import AdmZip from 'adm-zip'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { tagPieceWithProvider } from './ai.js'
-import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
+import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, ANTHROPIC_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
 import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM, IMPORT_RELOCATE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
@@ -639,7 +639,13 @@ router.post('/sessions/:id/tag', async (req, res) => {
         if (canonical.crop_ok && canonicalSourceImage?.kind === 'worn_outfit') {
           tagInputs.push({ path: path.join(sessionDir(session.id), canonicalSourceImage.file), label: 'WORN PHOTO', guidance: `Full outfit photo the crop came from — use it to judge the garment's full extent and category (${cluster.descriptor}).` })
         }
-        const tags = await tagPieceWithProvider(tagInputs, null, { onUsage: usage => addSpend(session.id, usage) })
+        // docs/tagger-cost-spec.md §6b: import's crop/fallback-photo distribution was never
+        // screened against the cheaper tagger tier, so this stays on the full stylist model
+        // explicitly rather than picking up tagPieceWithProvider's new default.
+        const tags = await tagPieceWithProvider(tagInputs, null, {
+          model: AI_PROVIDER === 'openai' ? undefined : ANTHROPIC_MODEL,
+          onUsage: usage => addSpend(session.id, usage)
+        })
         setTags.run(JSON.stringify(tags || {}), cluster.id)
         tagged++
         bumpCounts(session.id, { garmentsTagged: 1 })

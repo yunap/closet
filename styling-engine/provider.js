@@ -493,6 +493,11 @@ export const AI_PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase(
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_STYLIST_MODEL || 'claude-sonnet-4-6'
 export const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o'
 export const ACTIVE_STYLIST_MODEL = AI_PROVIDER === 'openai' ? OPENAI_MODEL : ANTHROPIC_MODEL
+// docs/tagger-cost-spec.md §6b/§6c: adopted for standard add/edit/retag tagging after a
+// cold-start + warm-anchored screen found no material regression vs ANTHROPIC_MODEL. Import
+// tagging (routes/importer.js) deliberately stays on ANTHROPIC_MODEL — that distribution
+// (crops, fallback-to-full-photo) was never tested and is explicitly the open gap in that spec.
+export const ANTHROPIC_TAGGER_MODEL = process.env.ANTHROPIC_TAGGER_MODEL || 'claude-haiku-4-5'
 
 const ANTHROPIC_PRICING_PER_MILLION = [
   { match: /claude-.*sonnet.*4|claude-sonnet-4/i, input: 3, cacheWrite5m: 3.75, cacheRead: 0.30, output: 15 },
