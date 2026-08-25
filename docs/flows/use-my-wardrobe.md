@@ -38,10 +38,10 @@ flowchart TD
     Q -->|no| S["Return explicit wardrobe shortfall<br/>no model or local-fill card"]
     Q -->|yes| D["Assemble AI context<br/>weather, feedback, favorites"]
     D --> E{{"LLM · composes outfits<br/>sees every piece's photo"}}
-    E --> F{"Structurally valid<br/>outfits?"}
+    E --> F{"Shared wearable verdict<br/>hard-valid?"}
     F -->|enough| I["Show outfit cards<br/>in a new thread"]
     F -->|none valid| G["Backfill locally<br/>real wearable outfits"] --> I
-    F -->|some, but too few| H["Pad with diagnostic cards<br/>flagged 'needs review'"] --> I
+    F -->|any hard-invalid| H["Keep paid attempts visible<br/>flagged 'needs review'"] --> I
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
@@ -60,9 +60,9 @@ Two things worth knowing at this altitude:
   roster has no complete core plus shoes, there are zero calls: the response
   states the wardrobe shortfall before thumbnail preparation.
 - **Nothing is "repaired."** In advisor mode the app never swaps pieces to fix a
-  broken outfit. Invalid outfits are dropped; then the app either backfills with
-  locally-generated real outfits (only when the model produced *zero* valid ones)
-  or pads the remaining slots with diagnostic "needs review" cards.
+  broken outfit. Hard-invalid attempts do not count as valid, but paid attempts remain visible as
+  diagnostic Needs review cards even when enough sibling cards pass. Local backfill fills only the
+  valid-card shortfall and never weakens a hard finding to satisfy count.
 - **Backfill is validator-bound, 2026-08-25.** `validatedFallback` now enumerates the locally ranked
   candidates and immediately runs each through `locallyGateWholeWardrobeOutfits` with the same
   advisor policy before it can enter the fill set. The caller still owns ranking, diversity, count,
@@ -207,6 +207,9 @@ Engineer notes:
   violation text the server attached (`buildBrokenModelCard` /
   `buildBrokenDiagnosticCard`, `routes/ai.js`). To a PM this is "what the user
   sees when the model underperforms."
+- **One hard verdict, 2026-08-25.** `evaluateWearableOutfit` supplies category structure and
+  required-base findings to the advisor gate. Flow-specific advisory annotations remain local;
+  hard validity and its reason do not.
 - **Clash review has an executable trigger.** A second visual critic is called only when
   `wholeWardrobeOutfitVisualReviewFindings` sees at least two structured pattern signals. Legacy
   free-text `do_not_pair_rules` remain composer guidance and cannot activate or decide this paid

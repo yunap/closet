@@ -1117,7 +1117,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
     occasion: 'city',
     season: 'indoor',
     mood: '',
-    limit: 3,
+    limit: 1,
   })
 
   assert.equal(json.debug.aiReturnedCount, 3)

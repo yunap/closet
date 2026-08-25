@@ -1104,8 +1104,15 @@ live weather when a location exists; saved snapshots are used when that lookup i
 explicit hypothetical seasons bypass live weather. Declared activity remains separate from
 request-inferred activity so inference can guide the model without activating a hard footwear gate.
 Both generators expose resolved values, provenance, and conflicts under response debug
-`stylingContext`. This is the first consumer migration; freeform and plan-slot context remain later
-Slice 1 work.
+`stylingContext`.
+
+**[context-ownership consolidation completed, 2026-08-25] Freeform and plan slots now use the same
+field resolver.** `resolveToolStylingContext` passes explicit request, action artifact, established
+thread state, and inference to `resolveStylingContext`; it no longer owns a second stated/live
+weather branch. `buildPlanSlotWorkbench` resolves each slot through the shared owner before roster
+selection and preserves the result/provenance on the workbench and pending slot. Explicit supplied
+weather profiles, including indoor-transit profiles, are authoritative evidence. Saved artifacts
+and persistent thread state remain separate sources rather than overwriting one another.
 
 **[eligibility-ownership consolidation, 2026-08-24] Primary visual composition and selected-piece
 recovery now consume one finite-pool verdict.** `evaluateVisualComposerPiecePool` classifies every
@@ -1252,6 +1259,17 @@ to have been visually seen before the model may submit that unknown pairing. Kno
 still rejects after sight. The rule applies only to coverage required by a dependent garment;
 ordinary inner-garment/outer-layer combinations do not inherit a close-fit requirement. Colour,
 neckline, texture, bulk, and proportion remain model judgment.
+
+**[validation-ownership consolidation completed, 2026-08-25] Wearable-outfit validity now has one
+composed owner.** `evaluateWearableOutfit` combines category or explicit-role structure,
+required-base mechanics, optional layer-direction evidence, and sight state into typed hard,
+advisory, and unresolved results. Selected, whole, freeform proposal/swap, plan submission, and
+recovery validators consume that result before their bounded extensions. Unknown evidence is not
+invalid; it blocks only when sight is needed to prove a hard requirement and has not occurred.
+Hard-invalid paid selected/whole model attempts remain visible as Needs review cards with the actual
+finding, alongside valid sibling cards. A selected dependent anchor with no compatible base is
+preserved as an incomplete Needs review premise. Concept boards intentionally retain their lighter
+allowlist/anchor validation.
 
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit

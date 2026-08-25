@@ -34,7 +34,7 @@ flowchart TD
     X --> B["Load anchor + active wardrobe"]
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
     C --> Q{"Anchor has a complete<br/>outfit path?"}
-    Q -->|no| S["Return explicit wardrobe shortfall<br/>no model or fallback card"]
+    Q -->|no| S["Return explicit wardrobe shortfall<br/>dependent anchor stays Needs review"]
     Q -->|yes| D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"idealMode?<br/>set by free-text regex"}
     M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
@@ -65,9 +65,10 @@ Three things a PM should take away:
   composer that may suggest pieces you don't own. The **"Explore additions"
   button does not use this path** — it routes to
   [editorial ideal additions](editorial-ideal-additions.md).
-- **This flow returns cards only from viable supply.** Unlike advisor mode, it does repair ordinary
-  model failures. A structurally incomplete gated roster is different: it returns an explicit
-  shortfall before the model call and does not fabricate a fallback card.
+- **This flow accepts cards only from viable supply.** Unlike advisor mode, it repairs ordinary
+  model failures. A structurally incomplete gated roster returns an explicit shortfall before the
+  model call. If the selected premise itself says `needs_base` and no compatible base exists, the
+  anchor remains visible as an incomplete Needs review card; the dependency is not waived.
 
 ### Stage map
 
@@ -153,6 +154,10 @@ Engineer notes:
   it fails, the response carries a machine-readable recovery shortfall instead of preserving the
   old “always non-empty” behavior. Comfort shoe swaps use `validatedSubstitute` and validate the
   exact mutated outfit before returning it.
+- **Shared hard validation and paid-result visibility (2026-08-25):** model proposals consume
+  `evaluateWearableOutfit`. Hard-invalid proposals do not become accepted cards, but they are no
+  longer silently discarded: they return beside valid/fallback cards as Needs review with the
+  actual hard finding.
 
 ### Recorded follow-up — malformed/truncated composer JSON
 

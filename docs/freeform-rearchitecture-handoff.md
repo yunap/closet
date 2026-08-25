@@ -1,5 +1,13 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Architecture ownership completion, 2026-08-25:** freeform search, proposal, slot swaps, and
+> bounded generation now resolve named request/artifact/thread/inference evidence through
+> `resolveToolStylingContext` → `resolveStylingContext`; the former tool-local stated/live weather
+> resolver is retired. Proposal/correction/swap hard meaning now comes from
+> `evaluateWearableOutfit`. Unknown evidence may request sight, while known hard incompatibility
+> remains hard and visible as Needs review. Tool schemas and the ten-iteration protocol are
+> unchanged.
+
 > **Projection/result ownership, 2026-08-25:** `propose_outfit` no longer owns a separately worded
 > definition of explicit-role structure. Its tool description and validation retry project the
 > contract from `outfitValidation.js`. Proposal cards use the shared versioned `outfitResult.js`

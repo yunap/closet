@@ -23,7 +23,7 @@ const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolveP
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
-const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
+const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
@@ -187,12 +187,17 @@ test('provider-free replay exercises the complete capsule tool contract without 
           const pieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all()
             .map(parsePiece)
             .filter(piece => allowed.has(Number(piece.id)))
-          const first = group => pieces.find(piece => wardrobeCategoryGroup(piece) === group)
+          const first = group => pieces.find(piece => wardrobeCategoryGroup(piece) === group && (group !== 'top' || !pieceRequiresBaseLayer(piece)))
           return {
             outfits: [{
               slot_id: slot.id,
               label: 'Replay Casual Look',
-              piece_ids: [first('top')?.id, first('bottom')?.id, first('shoes')?.id].filter(Boolean),
+              piece_ids: [
+                first('top')?.id,
+                first('bottom')?.id,
+                first('shoes')?.id,
+                first('outerwear')?.id,
+              ].filter(Boolean),
               reason: 'A conventional solid casual combination for an offline contract replay.'
             }]
           }
@@ -211,7 +216,7 @@ test('provider-free replay exercises the complete capsule tool contract without 
   const planResult = replay.results.find(step => step.name === 'plan_outfit_set').result
   const submitResult = replay.results.find(step => step.name === 'submit_plan_outfits').result
   assert.equal(planResult.status, 'slot_rosters')
-  assert.equal(submitResult.status, 'success')
+  assert.equal(submitResult.status, 'success', JSON.stringify(submitResult))
   assert.equal(toolContext.generatedOutfits.length, 1)
   const planLines = toolContext.generatedOutfits[0].tripPlanLines.join(' ')
   assert.match(planLines, /Piece roster \(\d+\)/, 'the report must describe the curated roster, not only pieces used by the displayed card')
@@ -2214,9 +2219,9 @@ test('a blind top-over-dress submission is rejected with view_pieces coaching', 
 
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
-  assert.match(reasons, /layers a top with a dress/)
+  assert.match(reasons, /visual relationship that saved garment facts cannot resolve/)
   assert.match(reasons, /call view_pieces/)
-  assert.match(reasons, /model must decide it from both photos/)
+  assert.match(reasons, /judging it from sight/)
 })
 
 test('an unrecorded top-dress direction is provisionally accepted after both pieces are seen', async () => {
@@ -5768,7 +5773,7 @@ test('missing base-layer fit or opacity requires sight, then remains model-judge
 
   const unseen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission)
   assert.equal(unseen.accepted.length, 0)
-  assert.match(unseen.failures[0].reasons.join(' '), /incomplete fit or opacity data/)
+  assert.match(unseen.failures[0].reasons.join(' '), /saved garment facts cannot resolve/)
   assert.match(unseen.failures[0].reasons.join(' '), /view_pieces/)
 
   const seen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission, {

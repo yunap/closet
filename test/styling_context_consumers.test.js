@@ -56,6 +56,31 @@ test('retired direct context assemblers cannot return', () => {
   assert.doesNotMatch(routeSource, /getCurrentWeatherProfile/)
 })
 
+test('freeform and plan composition delegate field precedence to the shared context resolver', () => {
+  assert.match(toolSource, /export async function resolveToolStylingContext\(/)
+  assert.match(toolSource, /const stylingContext = await resolveToolStylingContext\(\{/)
+  assert.doesNotMatch(toolSource, /export async function resolveStatedOrLiveWeather\(/)
+  const workbenchStart = plannerSource.indexOf('export async function buildPlanSlotWorkbench')
+  const workbench = plannerSource.slice(workbenchStart)
+  assert.match(workbench, /const stylingContext = await resolveStylingContext\(\{/)
+  assert.match(workbench, /styling_context: slot\.stylingContext/)
+})
+
+test('paid visual composition preserves hard-invalid model results as Needs review cards', () => {
+  const selected = sourceBlock(
+    'async function composeSelectedPieceVisualWardrobeOutfits',
+    "router.post('/evaluate-piece'",
+  )
+  const whole = sourceBlock(
+    'export async function generateWholeWardrobeOutfitsVisualInternal',
+    "router.post('/generate-wardrobe-outfits-visual'",
+  )
+  assert.match(selected, /const needsReviewOutfits = selectedModelOutfits/)
+  assert.match(selected, /rejectionReason: selectedValidation\.get\(outfit\)\.primaryFinding/)
+  assert.match(whole, /const paidRejectedDiagnostics = \[/)
+  assert.match(whole, /const readyOutfits = structuredOutfits\.filter\(outfit => !outfit\.broken\)\.slice\(0, requestedLimit\)/)
+})
+
 test('selected and whole visual composers delegate finite-pool eligibility to one authority', () => {
   const selected = sourceBlock(
     'async function composeSelectedPieceVisualWardrobeOutfits',
@@ -160,49 +185,47 @@ test('whole-wardrobe footwear recovery consumes the shared automatic-use pool co
 
 test('retired category-structure boolean adapter cannot return', () => {
   assert.doesNotMatch(rulesSource, /export function isOutfitStructurallyValid/)
-  assert.match(plannerSource, /describeOutfitStructureGap,[\s\S]*evaluateOutfitStructure,[\s\S]*from '\.\/outfitValidation\.js'/)
+  assert.match(plannerSource, /describeOutfitStructureGap,[\s\S]*evaluateWearableOutfit,[\s\S]*from '\.\/outfitValidation\.js'/)
   assert.doesNotMatch(plannerSource, /function describeOutfitStructureGap\(/)
   assert.match(validationSource, /export function evaluateOutfitStructure\(/)
   assert.match(validationSource, /export function describeOutfitStructureGap\(/)
 })
 
-test('whole-wardrobe and submitted-plan gates consume typed structure findings directly', () => {
+test('whole-wardrobe and submitted-plan gates consume the composed wearable verdict', () => {
   const wholeStart = rulesSource.indexOf('export function locallyGateWholeWardrobeOutfits')
   const wholeEnd = rulesSource.indexOf('export function buildOutfitMechanicsReason', wholeStart)
   assert.ok(wholeStart >= 0 && wholeEnd > wholeStart, 'missing locallyGateWholeWardrobeOutfits source block')
   const whole = rulesSource.slice(wholeStart, wholeEnd)
-  assert.match(whole, /evaluateOutfitStructure\(pieces, \{ requireShoes \}\)/)
+  assert.match(whole, /evaluateWearableOutfit\(pieces, \{ requireShoes \}\)/)
   assert.doesNotMatch(whole, /isOutfitStructurallyValid\(/)
 
   const planStart = plannerSource.indexOf('export function validateSubmittedPlanOutfits')
   const planEnd = plannerSource.indexOf('export function assembleSubmittedPlanOutfits', planStart)
   assert.ok(planStart >= 0 && planEnd > planStart, 'missing validateSubmittedPlanOutfits source block')
   const plan = plannerSource.slice(planStart, planEnd)
-  assert.match(plan, /evaluateOutfitStructure\(pieces, \{ requireShoes: true \}\)/)
+  assert.match(plan, /const wearableValidation = evaluateWearableOutfit\(pieces, \{/)
   assert.doesNotMatch(plan, /isOutfitStructurallyValid\(/)
   assert.doesNotMatch(plan, /describeOutfitStructureGap\(/)
 })
 
 test('route-level structure filters reuse typed findings and contain no category recount', () => {
-  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateOutfitStructure \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
   assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
   const whole = sourceBlock(
     'export async function generateWholeWardrobeOutfitsVisualInternal',
     "router.post('/generate-wardrobe-outfits-visual'",
   )
-  assert.match(whole, /const structureByOutfit = new Map\(/)
-  assert.match(whole, /structureByOutfit\.get\(outfit\)\.valid/)
+  assert.match(whole, /const validationByOutfit = new Map\(/)
+  assert.match(whole, /validationByOutfit\.get\(outfit\)\.hardValid/)
   assert.doesNotMatch(whole, /const structuralRejectionReason = \(outfit\)/)
 })
 
-test('freeform proposal and swap validation consume typed role findings', () => {
+test('freeform proposal and swap validation consume the composed wearable verdict', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
-  assert.match(toolSource, /const roleValidation = evaluateOutfitRoles\(resolved\)/)
-  assert.match(toolSource, /evaluateOutfitRoles\(resolved\)\.findings/)
+  assert.match(toolSource, /import \{ evaluateWearableOutfit, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
-  assert.match(toolSource, /evaluateLayerDirections\(resolved, \{ roleAware: true \}\)/)
-  assert.match(plannerSource, /evaluateLayerDirections\(\[dressPiece, topPiece\]\)/)
+  assert.match(validationSource, /includeLayerDirections/)
   assert.doesNotMatch(attributesSource, /pieceReadsAsStandaloneBaseTop/)
   assert.doesNotMatch(toolSource, /export function validateOutfitRoles\(/)
   assert.doesNotMatch(toolSource, /function roleCategoryIssue\(/)
@@ -250,8 +273,8 @@ test('required base-layer mechanics and their prompt projection have one typed o
   assert.match(validationSource, /export function evaluateBaseLayerCandidate\(/)
   assert.match(validationSource, /export function evaluateRequiredBaseLayers\(/)
   assert.match(plannerSource, /evaluateBaseLayerCandidate\(piece\)\.verdict !== 'incompatible'/)
-  assert.match(plannerSource, /const requiredBaseLayers = evaluateRequiredBaseLayers\(pieces\)/)
-  assert.match(toolSource, /evaluateRequiredBaseLayers\(resolved, \{ roleAware: true \}\)/)
+  assert.match(plannerSource, /const wearableValidation = evaluateWearableOutfit\(pieces, \{/)
+  assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(promptSource, /\$\{requiredBaseLayerPromptRule\(\)\}/)
   assert.doesNotMatch(promptSource, /A candidate base tagged/)
 })

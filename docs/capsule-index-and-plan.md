@@ -412,6 +412,13 @@ capsule's ranking, deterministic roster seed, category choice targets, protagoni
 roster quotas, and postconditions remain capsule policy. `diagnostics.structuralCoverageReport`
 distinguishes true wardrobe supply gaps from a bench-capacity shortfall.
 
+**[context and validation ownership completed, 2026-08-25]** Every plan/capsule slot is resolved
+through `resolveStylingContext` before roster selection, and its provenance travels with the
+workbench/pending slot. Submitted looks consume `evaluateWearableOutfit` for shared structure,
+required-base, unknown/sight, and optional direction meaning before capsule-owned slot and set
+rules. Bounded completion and repair must pass that same hard result; rejected attempts remain
+Needs review evidence rather than being made valid to satisfy rotation count.
+
 **Ranking A/B: 0 scenarios differ — the corrected version is the no-op the V1 correction was too.**
 The first implementation of item 2 was NOT `validatorOnly` like `layer_floor:outerwear`, and it
 changed the deterministic path in one scenario: piece 258 (`formality: everyday`, `needs_base: yes`)

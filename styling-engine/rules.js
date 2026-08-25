@@ -15,7 +15,7 @@ import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
-import { evaluateOutfitStructure } from './outfitValidation.js'
+import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedSubstitute } from './recovery.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
@@ -4865,7 +4865,7 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
                 ? currentOutfit.pieces.map(piece => Number(piece.id) === Number(currentShoe.id) ? bestShoe : piece)
                 : currentOutfit.pieces,
             }),
-            validate: trial => evaluateOutfitStructure(wholeWardrobeFullPieces(trial, candidatePieces), { requireShoes: true }),
+            validate: trial => evaluateWearableOutfit(wholeWardrobeFullPieces(trial, candidatePieces), { requireShoes: true }),
             context: { flow: 'whole_wardrobe', reason: 'required_footwear' },
           })
           if (substitution.status === 'recovered') {
@@ -5134,7 +5134,7 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
   return { outfits: selected, rejected }
 }
 // docs/card-consistency-spec.md Part 1. A top worn with a dress is a legitimate styling decision
-// (owner ruling 2026-08-16) and is deliberately NOT gated — evaluateOutfitStructure still permits
+// (owner ruling 2026-08-16) and is deliberately NOT taste-gated — evaluateWearableOutfit still permits
 // it. But it is an unusual enough choice that the card has to account for it: a live response
 // paired a blouse and a floral tank with a lace midi dress and explained neither.
 //
@@ -5254,9 +5254,9 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
 
-    const structure = evaluateOutfitStructure(pieces, { requireShoes })
-    if (!structure.valid) {
-      reject(repaired, 'not a complete wardrobe outfit')
+    const validation = evaluateWearableOutfit(pieces, { requireShoes })
+    if (!validation.hardValid) {
+      reject(repaired, validation.primaryFinding?.message || 'not a complete wardrobe outfit')
       continue
     }
     if (ownedIds.size && pieceIds.some(id => !ownedIds.has(id))) {

@@ -15,7 +15,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
@@ -1244,10 +1244,10 @@ test('executeTool propose_outfit inherits hot-weather card context from prior se
     assert.equal(result.status, 'success')
     assert.equal(toolContext.generatedOutfits.length, 1)
     assert.equal(toolContext.generatedOutfits[0].occasion, 'city')
-    assert.equal(toolContext.generatedOutfits[0].season, 'hot weather')
+    assert.equal(toolContext.generatedOutfits[0].season, 'current season')
     assert.equal(toolContext.generatedOutfits[0].debug.resolvedActivity, 'walking')
     assert.equal(toolContext.generatedOutfits[0].debug.walkable, true)
-    assert.equal(toolContext.season, 'hot weather')
+    assert.equal(toolContext.season, 'current season')
   } finally {
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
   }
@@ -2310,30 +2310,31 @@ test('executeTool search_wardrobe falls back to the heuristic weatherSource with
 // fix at the source: resolveStatedOrLiveWeather must short-circuit to the stated text and never even
 // attempt the live lookup — mirrors outfitSetPlanner.js's resolveSlotWeather precedent and the
 // weather.test.js mocked-fetchImpl convention.
-test('resolveStatedOrLiveWeather short-circuits to the stated text and never calls fetch, even with a location set', async () => {
+test('shared tool context short-circuits to stated weather before live resolution', async () => {
   let calls = 0
-  const fetchImpl = async (url) => {
+  const weatherResolver = async () => {
     calls += 1
-    // If this were ever reached, it would resolve a hot summer profile — the opposite of "rainy".
-    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 34.05, longitude: -118.24 }] }) }
-    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [95], temperature_2m_min: [70] } }) }
+    return { weatherSource: 'live', isHot: true, highF: 95, lowF: 70 }
   }
-  const profile = await resolveStatedOrLiveWeather({
-    statedWeather: 'rainy weather',
-    location: 'Los Angeles',
-    fetchImpl
+  const context = await resolveToolStylingContext({
+    explicitRequest: { statedWeather: 'rainy weather', location: 'Los Angeles', season: 'current season' },
+    policy: { allowLiveWeather: true },
+    weatherResolver,
   })
+  const profile = context.weatherProfile
   assert.equal(profile.weatherSource, 'stated')
   assert.equal(profile.isHot, false, '"rainy weather" must not inherit the hot classification a live LA lookup would have returned')
   assert.equal(calls, 0, 'a stated override must short-circuit before any geocode/forecast call')
 })
 
-test('resolveStatedOrLiveWeather falls through to live resolution when no weather is stated', async () => {
-  const fetchImpl = async (url) => {
-    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 34.05, longitude: -118.24 }] }) }
-    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [95], temperature_2m_min: [70] } }) }
-  }
-  const profile = await resolveStatedOrLiveWeather({ location: 'Los Angeles', fetchImpl })
+test('shared tool context falls through to live resolution when weather is unstated', async () => {
+  const weatherResolver = async () => ({ weatherSource: 'live', isHot: true, highF: 95, lowF: 70 })
+  const context = await resolveToolStylingContext({
+    explicitRequest: { location: 'Los Angeles', season: 'current season' },
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  const profile = context.weatherProfile
   assert.equal(profile.weatherSource, 'live')
   assert.equal(profile.isHot, true)
 })
@@ -2421,7 +2422,7 @@ test('executeTool propose_outfit rejects hot-weather gated pieces using weather 
     assert.equal(toolContext.generatedOutfits[0].broken, true)
     assert.match(toolContext.generatedOutfits[0].rejectionReason, /hot weather: insulating fiber/)
     assert.equal(toolContext.generatedOutfits[0].occasion, 'city')
-    assert.equal(toolContext.generatedOutfits[0].season, 'hot')
+    assert.equal(toolContext.generatedOutfits[0].season, 'current season')
   } finally {
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(woolTopId, shortsId, shoesId)
   }

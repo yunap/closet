@@ -23,10 +23,11 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
     path.join(process.cwd(), 'test', 'fixtures', 'cross_flow_architecture_baseline.json'),
     'utf8',
   ))
-  assert.equal(baseline.schemaVersion, 4)
+  assert.equal(baseline.schemaVersion, 5)
   assert.match(captureSource, /evaluateAutomaticUsePiecePool/)
   assert.match(captureSource, /evaluateVisualComposerPiecePool/)
   assert.match(captureSource, /selectAutomaticUseCandidatesForOutfitGeneration/)
+  assert.match(captureSource, /evaluateWearableOutfit/)
   assert.doesNotMatch(captureSource, /filterWholeWardrobePiecesForGeneration/)
   assert.doesNotMatch(captureSource, /selectCandidatesForOutfitGeneration/)
   assert.doesNotMatch(captureSource, /buildVisualComposerRoster/)
@@ -52,6 +53,7 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
     'dependent_top_without_base',
     'dress_plus_top_unseen',
   ])
+  assert.ok(baseline.validation.every(entry => entry.wearable && Array.isArray(entry.wearable.hardFindingCodes)))
   assert.ok(baseline.recovery.selectedLocalFallback.length)
   assert.equal(baseline.recovery.planCompletion.completions.length, 1)
 

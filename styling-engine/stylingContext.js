@@ -136,7 +136,7 @@ async function resolveWeather({
   }
 
   const explicitProfile = profileCandidate(evidence, 'explicitRequest')
-  if (explicitProfile && ['stated', 'live', 'unavailable'].includes(String(explicitProfile.weatherSource || ''))) {
+  if (explicitProfile) {
     return {
       profile: explicitProfile,
       provenance: { source: 'explicit_request.weather_profile' },
@@ -203,8 +203,30 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
     inferred = {},
     policy = {},
   } = {}) {
-    const evidence = { explicitRequest, actionArtifact, establishedState, inferred }
-    const occasionChoice = chooseField({ evidence, field: 'occasion', normalize: normalizeOccasion, fallback: 'casual' })
+    const evidence = {
+      explicitRequest: { ...explicitRequest },
+      actionArtifact: { ...actionArtifact },
+      establishedState: { ...establishedState },
+      inferred: { ...inferred },
+    }
+    // Established activity belongs to its established occasion. A freeform action that explicitly
+    // switches occasion without declaring a new activity must not drag an older hiking/walking
+    // constraint into dinner. This is field-specific precedence owned here, not a tool-local reset.
+    const explicitOccasion = valueForField(evidence.explicitRequest, 'occasion')
+    const explicitActivity = valueForField(evidence.explicitRequest, 'activity')
+    const establishedOccasion = valueForField(evidence.establishedState, 'occasion')
+    if (policy.mode === 'freeform_action' && hasText(explicitOccasion) && !hasText(explicitActivity) &&
+        hasText(establishedOccasion) && normalizeOccasion(explicitOccasion) !== normalizeOccasion(establishedOccasion)) {
+      delete evidence.establishedState.activity
+    }
+    const occasionChoice = chooseField({
+      evidence,
+      field: 'occasion',
+      normalize: policy.requireOccasion === false
+        ? value => hasText(value) ? normalizeOccasion(value) : ''
+        : normalizeOccasion,
+      fallback: policy.requireOccasion === false ? '' : 'casual',
+    })
     const activityChoice = chooseField({ evidence, field: 'activity', normalize: normalizeActivity, fallback: 'none' })
     const seasonChoice = chooseField({ evidence, field: 'season', normalize: normalizeSeason, fallback: 'current season' })
     // Visual-composer missions include strategy values beyond stylingIntent.js's narrower

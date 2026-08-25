@@ -41,13 +41,12 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
+import { resolveStylingContext } from './stylingContext.js'
 import {
   categoryOutfitStructurePromptRule,
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
-  evaluateLayerDirections,
-  evaluateOutfitStructure,
-  evaluateRequiredBaseLayers,
+  evaluateWearableOutfit,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
@@ -1339,20 +1338,22 @@ function evaluatePlannerAutomaticUsePool(pieces = [], context = {}) {
 function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWinter = false } = {}) {
   const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ')
   const indoorSlot = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
-  const season = indoorSlot
+  const season = slot.stylingContext?.season || (indoorSlot
     ? (slot.transitSeason || 'indoor')
-    : (slot.statedWeather || slot.season || (isSummer ? 'summer' : (isWinter ? 'winter' : '')))
-  const slotWeatherProfile = weatherProfileFromContext({ mood: slotRequestText, season })
+    : (slot.statedWeather || slot.season || (isSummer ? 'summer' : (isWinter ? 'winter' : ''))))
+  const slotWeatherProfile = {
+    ...(slot.stylingContext?.weatherProfile || weatherProfileFromContext({ mood: slotRequestText, season })),
+  }
   if (indoorSlot) slotWeatherProfile.isCold = false
   const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
   const registerCeiling = registerRankName(ceilingRank) || null
   const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
-    occasion: slot.occasion,
+    occasion: slot.stylingContext?.occasion || slot.occasion,
     season,
     explorationMode: 'moderate',
     weatherProfile: slotWeatherProfile,
     mood: slotRequestText,
-    activity: slot.activity,
+    activity: slot.stylingContext?.activity || slot.activity,
     request: slotRequestText,
     ...(registerCeiling ? { registerCeiling } : {})
   })
@@ -3275,6 +3276,36 @@ export async function selectCapsuleRosterViaModel({
 export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
+  const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
+  slots = await Promise.all(slots.map(async slot => {
+    const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
+    const weatherRequestText = [slotRequestText, question].filter(Boolean).join('. ')
+    const weatherSlot = slot.statedWeather || slot.weather !== 'indoor'
+      ? slot
+      : { ...slot, statedWeather: 'indoor' }
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(weatherSlot, {
+      mood,
+      question: weatherRequestText,
+      dateRange,
+      location,
+      fetchImpl,
+      seasonIsCalendarOnly: isSeasonalCapsule,
+    })
+    const stylingContext = await resolveStylingContext({
+      explicitRequest: {
+        occasion: slot.occasion,
+        activity: slot.activity,
+        season: slot.statedWeather || slot.season,
+        mood,
+        requestText: slotRequestText,
+        location: slot.location || location,
+        date: slot.date || dateRange.start,
+        weatherProfile,
+      },
+      policy: { allowLiveWeather: false },
+    })
+    return { ...slot, stylingContext, weatherProfile, weatherLabel }
+  }))
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
   const isSummerContext = /\b(summer|warm|hot|80|90|heat)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
   const isWinterContext = /\b(winter|cold|chilly|snow|freezing)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
@@ -3331,7 +3362,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const catalogById = new Map()
   const slotWeather = []
   const workbenchSlots = []
-  const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
   const coverageGaps = []
   if (droppedSlotLabels.length) {
     coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
@@ -3342,7 +3372,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, location, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
+    const weatherProfile = slot.stylingContext.weatherProfile
+    const weatherLabel = slot.weatherLabel
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
@@ -3352,13 +3383,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
     const registerCeilingOverride = registerRankName(ceilingRank) || null
     const gateResult = evaluatePlannerAutomaticUsePool(composePool, {
-      occasion: slot.occasion,
-      season: slot.statedWeather || slot.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      occasion: slot.stylingContext.occasion,
+      season: slot.stylingContext.season,
       ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
       mood: mood || slotRequestText,
-      activity: slot.activity,
+      activity: slot.stylingContext.activity,
       request: slotRequestText,
       ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
     })
@@ -3390,6 +3421,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       register: slot.register || '',
       target_outfits: targetOutfits,
       weather_used: weatherLabel,
+      styling_context: slot.stylingContext,
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
       allowed_piece_ids: shownPieces.map(piece => Number(piece.id)).filter(Boolean),
@@ -3400,6 +3432,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     slot._modelWorkbench = {
       weatherProfile,
       weatherLabel,
+      stylingContext: slot.stylingContext,
       allowedPieces: shownPieces,
       rosterIds: new Set(shownPieces.map(piece => Number(piece.id)).filter(Boolean)),
       gateAllowedIds: idSetForPieces(allowedPieces),
@@ -3977,36 +4010,14 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       reasons.push(REASON_REVISION_MESSAGE)
     }
     if (!unresolvedPieceIds.length) {
-      const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
-      if (!structure.valid) {
-        reasons.push(structure.primaryFinding?.message || 'outfit is structurally incomplete or has duplicate core roles')
-      }
-      // Step 5 V1 follow-up (owner review 2026-07-30): a needs_base piece is
-      // tagged unwearable alone by construction, but nothing checked that at
-      // the OUTFIT level before — only that a standalone base existed
-      // somewhere in the roster or slot. A submitted look could pair a
-      // needs_base top with just a bottom and shoes and ship as an ordinary
-      // card, presenting the dependent as if it were standalone. Shared by
-      // every caller of this validator (atomic capsule composition and the
-      // model tool-loop submit_plan_outfits), so a trip or work-week plan
-      // that happens to include a needs_base piece is covered too — same
-      // defect, same fix, not new scope.
-      const requiredBaseLayers = evaluateRequiredBaseLayers(pieces)
-      if (requiredBaseLayers.verdict === 'incompatible') {
-        reasons.push(...requiredBaseLayers.findings
-          .filter(finding => finding.severity === 'error')
-          .map(finding => finding.message))
-      } else if (requiredBaseLayers.verdict === 'unknown') {
-        const unknownPairs = requiredBaseLayers.pairs.filter(pair => pair.result.verdict === 'unknown')
-        const visiblePair = unknownPairs.find(pair =>
-          seenPieceIds.has(Number(pair.dependent.id)) && seenPieceIds.has(Number(pair.candidate.id)))
-        if (!visiblePair) {
-          const idsToSee = [...new Set(unknownPairs.flatMap(pair => [
-            Number(pair.dependent.id),
-            Number(pair.candidate.id),
-          ]).filter(Boolean))]
-          reasons.push(`this outfit uses a required base-layer pairing with incomplete fit or opacity data — call view_pieces on [${idsToSee.join(', ')}] first, then resubmit; required coverage must be confirmed visually when the saved garment facts are incomplete`)
-        }
+      const wearableValidation = evaluateWearableOutfit(pieces, {
+        requireShoes: true,
+        includeLayerDirections: true,
+        seenPieceIds,
+      })
+      reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
+      if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
+        reasons.push(`this outfit has a visual relationship that saved garment facts cannot resolve — call view_pieces on [${wearableValidation.unresolvedSightPieceIds.join(', ')}] first, then resubmit after judging it from sight`)
       }
       if (pendingPlan.isWinterCapsule && slot.environment === 'indoor') {
         const hasSleevelessBase = pieces.some(piece =>
@@ -4084,20 +4095,6 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // was the one composition path that escaped it, and it let a top get
       // layered blind over a dress. Does not ban top-over-dress, only
       // requires the model to have actually looked at both pieces first.
-      const dressPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'dress')
-      const topPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'top')
-      if (dressPair && topPair) {
-        const dressPiece = planPiecesById.get(dressPair.id)
-        const topPiece = planPiecesById.get(topPair.id)
-        const direction = evaluateLayerDirections([dressPiece, topPiece])
-        const unseenIds = [dressPair.id, topPair.id].filter(id => !seenPieceIds.has(id))
-        if (unseenIds.length) {
-          const unknownNote = direction.verdict === 'unknown'
-            ? ' The saved garment facts do not establish over/under direction, so the model must decide it from both photos.'
-            : ''
-          reasons.push(`this outfit layers a top with a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.${unknownNote}`)
-        }
-      }
       const printIssue = printPairingSightIssue(pieces, seenPieceIds)
       if (printIssue) reasons.push(printIssue)
     }

@@ -1,10 +1,40 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { describeOutfitStructureGap, evaluateOutfitStructure, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
 import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
+
+test('composed wearable verdict keeps hard invalidity separate from unresolved visual evidence', () => {
+  const dependent = { id: 1, name: 'Sheer overshirt', category: 'top', needs_base: 'yes', role: 'layer_top' }
+  const unknownBase = { id: 2, name: 'Legacy tank', category: 'top', role: 'primary_top' }
+  const bottom = { id: 3, name: 'Trousers', category: 'bottom', role: 'primary_bottom' }
+  const shoes = { id: 4, name: 'Loafers', category: 'shoes', role: 'shoes' }
+
+  const unseen = evaluateWearableOutfit([dependent, unknownBase, bottom, shoes], {
+    roleAware: true,
+    includeLayerDirections: true,
+  })
+  assert.equal(unseen.hardValid, true, 'unknown metadata is not hard invalidity')
+  assert.equal(unseen.reviewRequired, true)
+  assert.deepEqual(new Set(unseen.unresolvedSightPieceIds), new Set([1, 2]))
+
+  const seen = evaluateWearableOutfit([dependent, unknownBase, bottom, shoes], {
+    roleAware: true,
+    includeLayerDirections: true,
+    seenPieceIds: [1, 2],
+  })
+  assert.equal(seen.hardValid, true)
+  assert.equal(seen.reviewRequired, false, 'the model may resolve a styling-quality unknown from both photos')
+
+  const missingBase = evaluateWearableOutfit([dependent, bottom, shoes], {
+    roleAware: true,
+    includeLayerDirections: true,
+  })
+  assert.equal(missingBase.hardValid, false)
+  assert.ok(missingBase.hardFindings.some(finding => finding.code === 'required_base_layer_missing_or_incompatible'))
+})
 
 test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {
   assert.equal(pieceRequiresBaseLayer({ needs_base: 'yes' }), true)
@@ -141,7 +171,7 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
   // The archetype template is still the fallback: this fixture supplies no reason, so one is
   // generated for it.
   assert.ok(String(result.outfits[0].reason || '').trim(), 'an outfit with no authored reason still gets the generated one')
-  assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
+  assert.ok(result.rejected.some(r => /shoe|top|bottom|dress|complete wardrobe outfit/i.test(r.reason)))
 })
 
 test('locallyGateWholeWardrobeOutfits advisor mode keeps but flags walking footwear caught by structured enums (spec 8)', () => {

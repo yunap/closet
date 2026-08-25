@@ -32,7 +32,7 @@ const {
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
-const { evaluateOutfitRoles, evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
+const { evaluateOutfitRoles, evaluateOutfitStructure, evaluateWearableOutfit } = await import('../styling-engine/outfitValidation.js')
 const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool, selectAutomaticUseCandidatesForOutfitGeneration } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
@@ -596,11 +596,18 @@ function captureValidationStages() {
       reason: 'Fixture reason.',
       styling_instructions: '',
     }])
+    const wearable = evaluateWearableOutfit(pieces, { includeLayerDirections: true })
     return {
       id: entry.id,
       core: {
         valid: evaluateOutfitStructure(pieces).valid,
         gap: describeOutfitStructureGap(pieces),
+      },
+      wearable: {
+        hardValid: wearable.hardValid,
+        reviewRequired: wearable.reviewRequired,
+        hardFindingCodes: wearable.hardFindings.map(finding => finding.code),
+        unresolvedSightPieceIds: wearable.unresolvedSightPieceIds,
       },
       freeformRoles: { issues: evaluateOutfitRoles(rolePieces).findings.map(finding => finding.message) },
       wholeGate: {
@@ -658,7 +665,7 @@ export async function captureCrossFlowArchitecture() {
     }
   }
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     auditBaseline: 'c1693a8e8f76881d5cb3d87c173ea21fed6ccb53',
     fixturePieceIds: wardrobe.map(item => item.id),
     scenarios,

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "auditBaseline": "c1693a8e8f76881d5cb3d87c173ea21fed6ccb53",
   "fixturePieceIds": [
     101,
@@ -46,12 +46,10 @@
           "activitySource": "none",
           "season": "current season",
           "weather": {
-            "weatherSource": "live",
+            "weatherSource": "fixture",
             "isHot": false,
             "isCold": false,
-            "isExtremeHeat": false,
-            "highF": 72,
-            "lowF": 56
+            "isExtremeHeat": false
           },
           "provenanceByField": {
             "occasion": {
@@ -87,7 +85,7 @@
               "raw": "2026-08-24T19:00:00.000Z"
             },
             "weatherProfile": {
-              "source": "live_weather"
+              "source": "explicit_request.weather_profile"
             }
           },
           "conflicts": [
@@ -391,7 +389,7 @@
           "activitySource": "dropdown",
           "season": "summer",
           "weather": {
-            "weatherSource": "heuristic",
+            "weatherSource": "fixture",
             "isHot": true,
             "isCold": false,
             "isExtremeHeat": false
@@ -430,7 +428,7 @@
               "raw": "2026-08-24T19:00:00.000Z"
             },
             "weatherProfile": {
-              "source": "heuristic"
+              "source": "explicit_request.weather_profile"
             }
           },
           "conflicts": [
@@ -714,7 +712,7 @@
           "activitySource": "none",
           "season": "spring",
           "weather": {
-            "weatherSource": "heuristic",
+            "weatherSource": "fixture",
             "isHot": false,
             "isCold": false,
             "isExtremeHeat": false
@@ -753,7 +751,7 @@
               "raw": "2026-08-24T19:00:00.000Z"
             },
             "weatherProfile": {
-              "source": "heuristic"
+              "source": "explicit_request.weather_profile"
             }
           },
           "conflicts": [
@@ -1023,6 +1021,12 @@
         "valid": true,
         "gap": ""
       },
+      "wearable": {
+        "hardValid": true,
+        "reviewRequired": false,
+        "hardFindingCodes": [],
+        "unresolvedSightPieceIds": []
+      },
       "freeformRoles": {
         "issues": []
       },
@@ -1046,6 +1050,14 @@
         "valid": false,
         "gap": "missing shoes"
       },
+      "wearable": {
+        "hardValid": false,
+        "reviewRequired": true,
+        "hardFindingCodes": [
+          "missing_shoes"
+        ],
+        "unresolvedSightPieceIds": []
+      },
       "freeformRoles": {
         "issues": [
           "outfit is missing shoes — every proposed outfit card needs actual footwear; missing_gaps may explain the wardrobe gap but cannot satisfy the shoes slot"
@@ -1054,14 +1066,14 @@
       "wholeGate": {
         "accepted": false,
         "rejectedReasons": [
-          "not a complete wardrobe outfit"
+          "missing shoes"
         ]
       },
       "wholeAdvisor": {
         "accepted": false,
         "flags": [],
         "rejectedReasons": [
-          "not a complete wardrobe outfit"
+          "missing shoes"
         ]
       },
       "plan": {
@@ -1077,6 +1089,14 @@
         "valid": false,
         "gap": "more than one shoe option was submitted"
       },
+      "wearable": {
+        "hardValid": false,
+        "reviewRequired": true,
+        "hardFindingCodes": [
+          "multiple_shoes"
+        ],
+        "unresolvedSightPieceIds": []
+      },
       "freeformRoles": {
         "issues": [
           "more than one shoes — unresolved shoes slot"
@@ -1085,14 +1105,14 @@
       "wholeGate": {
         "accepted": false,
         "rejectedReasons": [
-          "not a complete wardrobe outfit"
+          "more than one shoe option was submitted"
         ]
       },
       "wholeAdvisor": {
         "accepted": false,
         "flags": [],
         "rejectedReasons": [
-          "not a complete wardrobe outfit"
+          "more than one shoe option was submitted"
         ]
       },
       "plan": {
@@ -1108,17 +1128,29 @@
         "valid": true,
         "gap": ""
       },
+      "wearable": {
+        "hardValid": false,
+        "reviewRequired": true,
+        "hardFindingCodes": [
+          "required_base_layer_missing_or_incompatible"
+        ],
+        "unresolvedSightPieceIds": []
+      },
       "freeformRoles": {
         "issues": []
       },
       "wholeGate": {
-        "accepted": true,
-        "rejectedReasons": []
+        "accepted": false,
+        "rejectedReasons": [
+          "Sheer mesh shell cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom"
+        ]
       },
       "wholeAdvisor": {
-        "accepted": true,
+        "accepted": false,
         "flags": [],
-        "rejectedReasons": []
+        "rejectedReasons": [
+          "Sheer mesh shell cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom"
+        ]
       },
       "plan": {
         "accepted": false,
@@ -1132,6 +1164,15 @@
       "core": {
         "valid": true,
         "gap": ""
+      },
+      "wearable": {
+        "hardValid": true,
+        "reviewRequired": true,
+        "hardFindingCodes": [],
+        "unresolvedSightPieceIds": [
+          101,
+          301
+        ]
       },
       "freeformRoles": {
         "issues": [
@@ -1155,7 +1196,7 @@
       "plan": {
         "accepted": false,
         "failureReasons": [
-          "this outfit layers a top with a dress — call view_pieces on [301, 101] first, then resubmit; layering is a sight-required decision. The saved garment facts do not establish over/under direction, so the model must decide it from both photos."
+          "this outfit has a visual relationship that saved garment facts cannot resolve — call view_pieces on [101, 301] first, then resubmit after judging it from sight"
         ]
       }
     }

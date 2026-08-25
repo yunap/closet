@@ -96,5 +96,5 @@ test('hard structural checks still reject outright in advisor mode for these cal
   })
 
   assert.equal(result.outfits.length, 0, 'an outfit that repair cannot complete must still be rejected outright, not flagged and kept')
-  assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
+  assert.ok(result.rejected.some(r => r.reason === 'missing shoes'))
 })

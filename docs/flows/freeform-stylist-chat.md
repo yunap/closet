@@ -175,6 +175,14 @@ card is superseded, `validatedSubstitute` runs the exact corrected card through 
 and required-base hard checks. A failed mutation remains a validation error; it cannot become the
 surviving card merely because it overlaps the prior attempt.
 
+**[2026-08-25] Freeform context and wearable validation use the shared owners.** Search,
+`propose_outfit`, slot swaps, and bounded generation pass named current-request, action-artifact,
+established-thread, and inference evidence through `resolveToolStylingContext` to
+`resolveStylingContext`; the tool module no longer owns a parallel stated/live weather resolver.
+Proposal, corrected-card recovery, and slot swaps consume `evaluateWearableOutfit`. Unknown visual
+evidence asks for sight only when required; known hard incompatibility remains hard and a rejected
+proposal remains visible as Needs review.
+
 **[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
 accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
 the commentary drifting from what it commented on: a follow-up called the loafers the grounding

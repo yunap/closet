@@ -503,6 +503,76 @@ export function evaluateOutfitStructure(pieces = [], { requireShoes = true } = {
   }
 }
 
+// Shared composed verdict for any surface that claims to produce a wearable outfit. Narrow fact
+// owners above remain independently testable; this function owns their composition and the
+// distinction between hard invalidity and unresolved evidence. Flow policy controls visibility,
+// retry, and whether role/layer extensions apply, but cannot rewrite a finding.
+export function evaluateWearableOutfit(pieces = [], {
+  requireShoes = true,
+  roleAware = false,
+  includeRoles = roleAware,
+  includeLayerDirections = false,
+  seenPieceIds = [],
+} = {}) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const seenIds = seenPieceIds instanceof Set
+    ? seenPieceIds
+    : new Set((Array.isArray(seenPieceIds) ? seenPieceIds : []).map(Number))
+  const stages = []
+  const structure = includeRoles
+    ? evaluateOutfitRoles(normalizedPieces)
+    : evaluateOutfitStructure(normalizedPieces, { requireShoes })
+  stages.push({ stage: includeRoles ? 'roles' : 'structure', result: structure })
+
+  const dependencies = evaluateRequiredBaseLayers(normalizedPieces, { roleAware })
+  stages.push({ stage: 'required_base', result: dependencies })
+
+  const directions = includeLayerDirections
+    ? evaluateLayerDirections(normalizedPieces, { roleAware })
+    : null
+  if (directions) stages.push({ stage: 'layer_direction', result: directions })
+
+  const findings = stages.flatMap(({ result }) => result?.findings || [])
+  const hardFindings = findings.filter(finding => finding.severity === 'error')
+  const advisoryFindings = findings.filter(finding => finding.severity !== 'error')
+  const unresolvedPairs = [
+    ...dependencies.pairs
+      .filter(pair => pair.result.verdict === 'unknown')
+      .map(pair => ({
+        kind: 'required_base',
+        pieceIds: [Number(pair.dependent?.id), Number(pair.candidate?.id)].filter(Boolean),
+      })),
+    ...(directions?.pairs || [])
+      .filter(pair => pair.verdict === 'unknown')
+      .map(pair => ({
+        kind: 'layer_direction',
+        pieceIds: [Number(pair.addedPiece?.id), Number(pair.basePiece?.id)].filter(Boolean),
+      })),
+  ]
+  const unresolvedSightPairs = unresolvedPairs.filter(pair =>
+    pair.pieceIds.some(pieceId => !seenIds.has(pieceId)))
+  const unresolvedSightPieceIds = [...new Set(unresolvedSightPairs.flatMap(pair => pair.pieceIds))]
+
+  return {
+    valid: hardFindings.length === 0,
+    hardValid: hardFindings.length === 0,
+    reviewRequired: hardFindings.length > 0 || unresolvedSightPairs.length > 0,
+    findings,
+    hardFindings,
+    advisoryFindings,
+    primaryFinding: hardFindings[0] || advisoryFindings[0] || null,
+    unresolvedPairs,
+    unresolvedSightPairs,
+    unresolvedSightPieceIds,
+    evidence: {
+      roleAware: Boolean(roleAware),
+      includedStages: stages.map(stage => stage.stage),
+      seenPieceIds: [...seenIds],
+    },
+    stages,
+  }
+}
+
 export function describeOutfitStructureGap(pieces = [], options = {}) {
   return evaluateOutfitStructure(pieces, options).primaryFinding?.message || ''
 }

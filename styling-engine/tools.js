@@ -5,16 +5,16 @@
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
-import { evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
+import { evaluateWearableOutfit, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
-import { getCurrentWeatherProfile } from './weather.js'
+import { createStylingContextResolver, resolveStylingContext } from './stylingContext.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import {
   normalizePlanSlots,
@@ -37,7 +37,7 @@ import {
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET
 } from './outfitSetPlanner.js'
-import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
+import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
 import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
@@ -356,14 +356,56 @@ export function setFreeformCapsuleRosterFailureCodes(toolContext, codes = []) {
 // toolContext.location resolved live to sunny/hot LA, and the resulting cached
 // profile then made propose_outfit reject the correct rainy-day pieces as "hot
 // weather: insulating piece".
-export async function resolveStatedOrLiveWeather({ statedWeather = '', date = new Date(), location = '', mood = '', fallbackSeason = '', fetchImpl } = {}) {
-  if (statedWeather) {
-    // Short-circuits before any geocode/forecast attempt — a stated override must never be
-    // silently outvoted by a live lookup for the (possibly unrelated) established location.
-    return { ...weatherProfileFromContext({ mood, season: statedWeather }), weatherSource: 'stated' }
+export async function resolveToolStylingContext({
+  explicitRequest = {},
+  actionArtifact = {},
+  toolContext = {},
+  inferred = {},
+  policy = {},
+  weatherResolver = null,
+} = {}) {
+  const safeExplicitLocation = looksLikeTimezoneIdentifier(explicitRequest.location)
+    ? ''
+    : (explicitRequest.location || '')
+  const establishedState = {
+    occasion: toolContext.occasion,
+    activity: toolContext.activity,
+    season: toolContext.season,
+    statedWeather: toolContext.weather,
+    weatherProfile: toolContext.weatherProfile,
+    mission: toolContext.mission,
+    mood: toolContext.mood,
+    requestText: toolContext.request || toolContext.question,
+    location: toolContext.location,
+    date: toolContext.currentDate,
   }
-  return getCurrentWeatherProfile({ date, location, mood, season: fallbackSeason, ...(fetchImpl ? { fetchImpl } : {}) })
+  const resolver = weatherResolver
+    ? createStylingContextResolver({ weatherResolver })
+    : resolveStylingContext
+  const context = await resolver({
+    explicitRequest: { ...explicitRequest, location: safeExplicitLocation },
+    actionArtifact,
+    establishedState,
+    inferred,
+    policy,
+  })
+  toolContext.occasion = context.occasion
+  toolContext.activity = context.activity
+  toolContext.season = context.season
+  toolContext.mission = context.mission
+  toolContext.mood = context.mood
+  toolContext.weatherProfile = context.weatherProfile
+  toolContext.stylingContext = context.debug
+  if (String(explicitRequest.statedWeather || '').trim()) {
+    toolContext.weather = String(explicitRequest.statedWeather).trim()
+  }
+  setFreeformWeatherSource(toolContext, context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
+  return context
 }
+
+// Slice 1 (2026-08-25): resolveStatedOrLiveWeather was retired after freeform consumers moved to
+// resolveToolStylingContext/resolveStylingContext. The named tombstone keeps historical docs
+// readable without leaving an executable precedence branch.
 
 function requestExclusionReasonsForPiece(piece = {}, requestText = '') {
   const text = String(requestText || '').toLowerCase()
@@ -377,9 +419,9 @@ function requestExclusionReasonsForPiece(piece = {}, requestText = '') {
   return reasons
 }
 
-function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = '', requestText = '', mood = '' } = {}) {
-  const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
-  const activityProfile = resolveActivityProfile({
+function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = '', requestText = '', mood = '', stylingContext = null } = {}) {
+  const occasionProfile = stylingContext?.occasionProfile || resolveOccasionProfile(resolvedOccasion, '')
+  const activityProfile = stylingContext?.activityProfile || resolveActivityProfile({
     activity: resolvedActivity,
     occasion: resolvedOccasion,
     mood,
@@ -395,10 +437,11 @@ function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = ''
     activityProfile
   })
   return {
-    resolvedActivity: activityProfile?.id || resolvedActivity || 'none',
-    activitySource: resolvedActivity ? 'tool_context' : (activityProfile?.id ? 'request' : 'none'),
+    resolvedActivity: stylingContext?.resolvedActivity || activityProfile?.id || resolvedActivity || 'none',
+    activitySource: stylingContext?.activitySource || (resolvedActivity ? 'tool_context' : (activityProfile?.id ? 'request' : 'none')),
     walkable: activityProfile?.id === 'walking' || activityProfile?.id === 'hiking',
-    registerCeiling: registerCeiling?.ceiling || registerCeiling || 'none'
+    registerCeiling: registerCeiling?.ceiling || registerCeiling || 'none',
+    ...(stylingContext?.debug ? { stylingContext: stylingContext.debug } : {}),
   }
 }
 
@@ -1020,6 +1063,29 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const relaxationPass = Number(args.__relaxationPass) || 0
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
+        const requestText = [
+          toolContext.request,
+          toolContext.question,
+          toolContext.mission,
+          query,
+          toolContext.mood
+        ].filter(Boolean).join(' ')
+        const stylingContext = await resolveToolStylingContext({
+          explicitRequest: {
+            occasion,
+            activity,
+            season: args?.season,
+            statedWeather: weatherText,
+            location,
+            requestText,
+          },
+          toolContext,
+          inferred: { requestText },
+          policy: { requireOccasion: false },
+        })
+        const resolvedOccasion = stylingContext.occasion
+        const resolvedActivity = stylingContext.activity
+        const resolvedWeather = stylingContext.weatherProfile
         const { categories, unknown: unknownCategories } = normalizeCategoryFilters(args.category)
         if (unknownCategories.length) {
           return [{ note: `Unknown category "${unknownCategories.join('", "')}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
@@ -1066,10 +1132,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const searchEligibility = evaluateAutomaticUsePiecePool({
             pieces: filtered,
             context: {
-              occasion,
-              season: args?.season || toolContext.season || '',
-              activity: activity !== undefined && activity !== null && activity !== '' ? normalizeActivity(activity) : (toolContext.activity || ''),
-              weatherProfile: weatherProfileFromContext({ weather: weatherText || toolContext.weather || '', season: args?.season || toolContext.season || '' })
+              occasion: resolvedOccasion,
+              season: stylingContext.season,
+              activity: resolvedActivity,
+              weatherProfile: resolvedWeather,
             }
           })
           const occasionFiltered = filtered.filter(p => {
@@ -1128,29 +1194,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         
         let results = filtered
-        // Spec 4: THIS call's own `weather` arg is a stated override and wins outright (see
-        // resolveStatedOrLiveWeather above); otherwise live weather when a real location is known
-        // (this call's arg or carried over on toolContext from earlier in the turn), with a
-        // resilient fallback to the text heuristic — profileRuleFit/weatherFitForPiece consume the
-        // same {isHot, isCold} shape either way. The model's own `location` arg is discarded if
-        // it's timezone-shaped rather than a real place — see looksLikeTimezoneIdentifier above —
-        // falling back to the server-injected home location (toolContext.location) instead, which
-        // is never timezone-shaped itself.
-        const safeModelLocation = looksLikeTimezoneIdentifier(location) ? '' : (location || '')
-        const resolvedWeather = await resolveStatedOrLiveWeather({
-          statedWeather: weatherText || '',
-          date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
-          location: safeModelLocation || toolContext.location || '',
-          mood: toolContext.mood || '',
-          fallbackSeason: toolContext.weather || toolContext.season || ''
-        })
-        if (toolContext) {
-          toolContext.weatherProfile = resolvedWeather
-          if (weatherText) {
-            toolContext.weather = String(weatherText)
-          }
-        }
-        setFreeformWeatherSource(toolContext, resolvedWeather.weatherSource)
+        // One shared resolver owns stated/live/saved/heuristic weather precedence and records
+        // provenance. Search remains retrieval policy; it does not gain a complete-outfit gate.
         if (resolvedWeather.isHot || resolvedWeather.isCold) {
           results = results
             .map(p => {
@@ -1160,28 +1205,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             .sort((a, b) => (b.weatherFitScore || 0) - (a.weatherFitScore || 0))
         }
 
-        const resolvedOccasion = occasion || toolContext.occasion || ''
-        const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
-          ? normalizeActivity(activity)
-          : (toolContext.activity || '')
-        if (toolContext) {
-          if (resolvedOccasion) toolContext.occasion = resolvedOccasion
-          if (resolvedActivity) toolContext.activity = resolvedActivity
-        }
-        const requestText = [
-          toolContext.request,
-          toolContext.question,
-          toolContext.mission,
-          query,
-          toolContext.mood
-        ].filter(Boolean).join(' ')
         if (requestText) {
           const beforeRequestExclusions = results.length
           results = results.filter(p => requestExclusionReasonsForPiece(p, requestText).length === 0)
           requestExcludedCount = beforeRequestExclusions - results.length
         }
-        const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
-        const activityProfile = resolveActivityProfile({ activity: resolvedActivity })
+        const occasionProfile = stylingContext.occasionProfile
+        const activityProfile = stylingContext.activityProfile
         if (occasionProfile || activityProfile) {
           const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
           // Resolve the register ceiling once per call (matching the composer), then let profileRuleFit
@@ -1504,38 +1534,24 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenPrintPairingBlocks')
           contractIssues.push(printIssue)
         }
-        const requiredBaseLayers = evaluateRequiredBaseLayers(resolved, { roleAware: true })
-        if (requiredBaseLayers.verdict === 'unknown') {
-          const unknownPairs = requiredBaseLayers.pairs.filter(pair => pair.result.verdict === 'unknown')
-          const visiblePair = unknownPairs.find(pair =>
-            seenIdsThisTurn.has(Number(pair.dependent.id)) && seenIdsThisTurn.has(Number(pair.candidate.id)))
-          if (!visiblePair) {
-            const idsToSee = [...new Set(unknownPairs.flatMap(pair => [
-              Number(pair.dependent.id),
-              Number(pair.candidate.id),
-            ]).filter(Boolean))]
-            contractIssues.push(`required base-layer compatibility is unknown from the saved fit/opacity fields: call view_pieces (size:'large') for [${idsToSee.join(', ')}] and confirm the base sits cleanly beneath the dependent garment`)
-          }
-        }
-        const roleValidation = evaluateOutfitRoles(resolved)
-        const layerDirections = evaluateLayerDirections(resolved, { roleAware: true })
-        if (layerDirections.verdict === 'unknown' && roleValidation.valid) {
-          const unresolvedPairs = layerDirections.pairs.filter(pair => pair.verdict === 'unknown')
-          const unseenDirectionPairs = unresolvedPairs.filter(pair =>
-            !seenIdsThisTurn.has(Number(pair.addedPiece.id)) ||
-            !seenIdsThisTurn.has(Number(pair.basePiece.id)))
-          if (unseenDirectionPairs.length) {
-            const idsToSee = [...new Set(unseenDirectionPairs.flatMap(pair => [
-              Number(pair.addedPiece.id),
-              Number(pair.basePiece.id),
-            ]).filter(Boolean))]
-            bumpFreeformDiagnostic(toolContext, 'proposeUnknownLayerDirectionBlocks')
-            contractIssues.push(`layer direction is unknown from the saved garment facts: call view_pieces (size:'large') for [${idsToSee.join(', ')}], decide visually which piece sits over or under, and only keep the pairing if that relationship works`)
-          } else {
-            // Deliberately provisional: this records a one-turn visual judgment, not a reusable
-            // garment fact. If live results are poor, this single allowance can be retired.
-            bumpFreeformDiagnostic(toolContext, 'proposeVisualLayerDirectionAllows')
-          }
+        const wearableValidation = evaluateWearableOutfit(resolved, {
+          roleAware: true,
+          includeLayerDirections: true,
+          seenPieceIds: seenIdsThisTurn,
+        })
+        if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
+          const idsToSee = wearableValidation.unresolvedSightPieceIds
+          bumpFreeformDiagnostic(toolContext, 'proposeUnknownLayerDirectionBlocks')
+          const hasUnknownRequiredBase = wearableValidation.unresolvedSightPairs
+            .some(pair => pair.kind === 'required_base')
+          const unknownRelationship = hasUnknownRequiredBase
+            ? 'required base-layer compatibility is unknown'
+            : 'layer direction is unknown'
+          contractIssues.push(`${unknownRelationship} from the saved garment facts: call view_pieces (size:'large') for [${idsToSee.join(', ')}], resolve the visual relationship, and only keep the pairing if it works`)
+        } else if (wearableValidation.unresolvedPairs.length) {
+          // Deliberately provisional: this records a one-turn visual judgment, not a reusable
+          // garment fact. If live results are poor, this single allowance can be retired.
+          bumpFreeformDiagnostic(toolContext, 'proposeVisualLayerDirectionAllows')
         }
         // Spec 26 Part 1: same mid-revision reason check as
         // validateSubmittedPlanOutfits — a proposed outfit's why_it_works
@@ -1554,39 +1570,36 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const statedOccasion = occasion ? normalizeOccasion(occasion) : ''
-        const contextOccasion = toolContext.occasion || ''
-        const resolvedOccasion = statedOccasion || contextOccasion || 'casual'
-        const resolvedSeason = season || toolContext.weather || toolContext.season || 'current season'
-        // Inherit toolContext.activity only when this call doesn't contradict
-        // the context it came from. A proposal that states an occasion and
-        // omits activity otherwise inherits whatever activity a PRIOR turn
-        // set (e.g. "hiking" from an earlier capsule plan) — dragging that
-        // turn's register ceiling down even though this call is a dinner, not
-        // a hike. Same-occasion or occasion-less follow-ups still inherit
-        // exactly as before (cross-turn state, e.g. "swap the shoes on #2").
-        const occasionSwitched = Boolean(statedOccasion) && Boolean(contextOccasion) && statedOccasion !== contextOccasion
-        const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
-          ? normalizeActivity(activity)
-          : (occasionSwitched ? '' : (toolContext.activity || ''))
         const requestTextForProposal = [
           toolContext.request,
           toolContext.question,
           occasion_context
         ].filter(Boolean).join(' ')
+        const stylingContext = await resolveToolStylingContext({
+          explicitRequest: {
+            occasion,
+            activity,
+            season,
+            statedWeather: season,
+            requestText: requestTextForProposal,
+          },
+          toolContext,
+          inferred: { requestText: requestTextForProposal },
+          policy: { mode: 'freeform_action' },
+        })
+        const resolvedOccasion = stylingContext.occasion
+        const resolvedSeason = stylingContext.season
+        const resolvedActivity = stylingContext.activity
         const outfitDebug = freeformOutfitDebugTrace({
           resolvedOccasion,
           resolvedActivity,
           requestText: requestTextForProposal,
-          mood: toolContext.mood || occasion_context || ''
+          mood: stylingContext.mood,
+          stylingContext,
         })
 
         // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
-        const hardFindings = [
-          ...roleValidation.findings,
-          ...requiredBaseLayers.findings.filter(finding => finding.severity === 'error'),
-          ...layerDirections.findings.filter(finding => finding.severity === 'error'),
-        ]
+        const hardFindings = wearableValidation.hardFindings
         const issues = hardFindings.map(finding => finding.message)
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
@@ -1625,20 +1638,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        // THIS call's own `season` arg is a stated override and wins outright — even over a
-        // toolContext.weatherProfile cached from an earlier tool call this turn (2026-07-14 live
-        // bug: a followup re-proposing for stated new weather still inherited a stale cached
-        // profile and got rejected for pieces that were correct for the weather it just stated).
-        // Only when this call carries no season of its own do we fall back to the turn's cache,
-        // then live/heuristic resolution.
-        const resolvedWeather = season
-          ? await resolveStatedOrLiveWeather({ statedWeather: season, mood: toolContext.mood || '' })
-          : (toolContext.weatherProfile || await resolveStatedOrLiveWeather({
-              date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
-              location: toolContext.location || '',
-              mood: toolContext.mood || '',
-              fallbackSeason: toolContext.weather || resolvedSeason || ''
-            }))
+        const resolvedWeather = stylingContext.weatherProfile
         const proposalEligibility = evaluateAutomaticUsePiecePool({
           pieces: resolved,
           context: {
@@ -1786,14 +1786,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               // The model has already supplied the complete corrected card. Treat that exact card
               // as the substitution result; do not reconstruct it and risk losing roles or text.
               mutate: (_broken, corrected) => corrected,
-              validate: corrected => {
-                const roles = evaluateOutfitRoles(corrected.pieces)
-                if (!roles.valid) return roles
-                const dependencies = evaluateRequiredBaseLayers(corrected.pieces, { roleAware: true })
-                return dependencies.verdict === 'incompatible'
-                  ? { valid: false, primaryFinding: dependencies.primaryFinding }
-                  : { valid: true }
-              },
+              validate: corrected => evaluateWearableOutfit(corrected.pieces, { roleAware: true, includeLayerDirections: true }),
               context: { flow: 'freeform_propose_outfit', supersededLabel: supersededBroken.label || '' },
             })
           : null
@@ -1915,19 +1908,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const limit = multipleRequested
           ? Math.max(1, Math.min(3, rawLimit || 3))
           : 1
-        const resolvedOccasion = args?.occasion ? normalizeOccasion(args.occasion) : (outfit.occasion || toolContext.occasion || 'casual')
-        const resolvedSeason = args?.season || toolContext.weather || toolContext.season || 'current season'
-        const resolvedActivity = args?.activity !== undefined && args?.activity !== null && args?.activity !== ''
-          ? normalizeActivity(args.activity)
-          : (outfit.activity || toolContext.activity || '')
-        const resolvedWeather = args?.season
-          ? await resolveStatedOrLiveWeather({ statedWeather: args.season, mood: toolContext.mood || '' })
-          : (toolContext.weatherProfile || await resolveStatedOrLiveWeather({
-              date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
-              location: toolContext.location || '',
-              mood: toolContext.mood || '',
-              fallbackSeason: toolContext.weather || resolvedSeason || ''
-            }))
+        const stylingContext = await resolveToolStylingContext({
+          explicitRequest: {
+            occasion: args?.occasion,
+            activity: args?.activity,
+            season: args?.season,
+            statedWeather: args?.season,
+            requestText,
+          },
+          actionArtifact: {
+            occasion: outfit.occasion,
+            activity: outfit.activity,
+            season: outfit.season,
+            weatherProfile: outfit.weatherProfile,
+          },
+          toolContext,
+          inferred: { requestText },
+          policy: { mode: 'freeform_action' },
+        })
+        const resolvedOccasion = stylingContext.occasion
+        const resolvedSeason = stylingContext.season
+        const resolvedActivity = stylingContext.activity
+        const resolvedWeather = stylingContext.weatherProfile
 
         const replacementIds = Array.isArray(args?.replacement_ids)
           ? args.replacement_ids.map(Number).filter(Number.isFinite)
@@ -1943,8 +1945,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const query = String(args?.query || '').toLowerCase().trim()
         const color = String(args?.color || '').toLowerCase().trim()
 
-        const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
-        const activityProfile = resolveActivityProfile({ activity: resolvedActivity })
+        const occasionProfile = stylingContext.occasionProfile
+        const activityProfile = stylingContext.activityProfile
         const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
         const registerCeiling = resolveRegisterCeiling({
           occasion: resolvedOccasion,
@@ -2001,24 +2003,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             .map(piece => ({ ...piece, role: roleForPieceCategory(piece) }))
           resolved.push({ ...replacement, role: slotRole })
           resolved.sort((a, b) => OUTFIT_ROLES.indexOf(a.role) - OUTFIT_ROLES.indexOf(b.role))
-          const layerDirections = evaluateLayerDirections(resolved, { roleAware: true })
-          const directionParticipatingRole = ['layer_top', 'primary_top', 'dress'].includes(slotRole)
-          const unseenUnknownDirectionPairs = directionParticipatingRole
-            ? layerDirections.pairs.filter(pair => pair.verdict === 'unknown' && (
-                !toolContext.visuallySeenPieceIds?.has(Number(pair.addedPiece.id)) ||
-                !toolContext.visuallySeenPieceIds?.has(Number(pair.basePiece.id))))
-            : []
-          const roleIssues = [
-            ...evaluateOutfitRoles(resolved).findings,
-            ...evaluateRequiredBaseLayers(resolved, { roleAware: true }).findings
-              .filter(finding => finding.severity === 'error'),
-            ...layerDirections.findings.filter(finding => finding.severity === 'error'),
-          ].map(finding => finding.message)
-          if (unseenUnknownDirectionPairs.length) {
-            const idsToSee = [...new Set(unseenUnknownDirectionPairs.flatMap(pair => [
-              Number(pair.addedPiece.id), Number(pair.basePiece.id),
-            ]).filter(Boolean))]
-            roleIssues.push(`layer direction is unknown from the saved garment facts; view both pieces [${idsToSee.join(', ')}] before making this swap`)
+          const wearableValidation = evaluateWearableOutfit(resolved, {
+            roleAware: true,
+            includeLayerDirections: true,
+            seenPieceIds: toolContext.visuallySeenPieceIds,
+          })
+          const roleIssues = wearableValidation.hardFindings.map(finding => finding.message)
+          if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
+            roleIssues.push(`outfit compatibility is unknown from the saved garment facts; view pieces [${wearableValidation.unresolvedSightPieceIds.join(', ')}] before making this swap`)
           }
           const hardGateIssues = candidate.trust.allowed
             ? []
@@ -2797,22 +2789,26 @@ async function executeToolInternal(name, args, toolContext = {}) {
           !piece_id && requestedCount >= 2 &&
           !(Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.some(outfit => !outfit?.broken))
         const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
-        const intent = normalizeStylingIntent({ occasion, season, mood, mission })
-        const resolvedActivity = (activity !== undefined && activity !== null && activity !== '')
-          ? normalizeActivity(activity)
-          : (toolContext.activity || 'none')
-        let resolvedSeason = toolContext.weather ? `${intent.season}; ${toolContext.weather}` : intent.season
-        if (boundedMultiLook) {
-          const safeModelLocation = looksLikeTimezoneIdentifier(location) ? '' : (location || '')
-          const resolvedWeather = await resolveStatedOrLiveWeather({
+        const stylingContext = await resolveToolStylingContext({
+          explicitRequest: {
+            occasion,
+            activity,
+            season,
+            mission,
+            mood,
             statedWeather: toolContext.weather || '',
-            date: date ? new Date(date) : (toolContext.currentDate ? new Date(toolContext.currentDate) : new Date()),
-            location: safeModelLocation || toolContext.location || '',
-            mood: intent.mood,
-            fallbackSeason: intent.season
-          })
-          toolContext.weatherProfile = resolvedWeather
-          setFreeformWeatherSource(toolContext, resolvedWeather.weatherSource)
+            location,
+            date: date || toolContext.currentDate || new Date(),
+            requestText: toolContext.question || '',
+          },
+          toolContext,
+          inferred: { requestText: toolContext.question || '' },
+          policy: { mode: 'freeform_action', allowLiveWeather: boundedMultiLook },
+        })
+        const resolvedActivity = stylingContext.activity
+        let resolvedSeason = stylingContext.season
+        if (boundedMultiLook) {
+          const resolvedWeather = stylingContext.weatherProfile
           const forecastTemperature = Number.isFinite(Number(resolvedWeather.highF))
             ? `forecast high ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? `, low ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
             : ''
@@ -2821,19 +2817,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : (resolvedWeather.isHot ? 'hot weather' : (resolvedWeather.isCold ? 'cold weather' : 'mild weather'))
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
-            : `${intent.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
+            : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
           toolContext.boundedWeatherSummary = Number.isFinite(Number(resolvedWeather.highF))
             ? `a forecast high of ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? ` and low of ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
             : ''
-          toolContext.boundedLocation = safeModelLocation || toolContext.location || ''
+          toolContext.boundedLocation = stylingContext.location
           toolContext.boundedWeatherUnavailable = resolvedWeather.weatherSource === 'unavailable'
         }
-        
-        toolContext.occasion = intent.occasion
-        toolContext.season = resolvedSeason
-        toolContext.mood = intent.mood
-        toolContext.mission = intent.mission
-        toolContext.activity = resolvedActivity
 
         // generateOutfitsForPieceInternal / generateWholeWardrobeOutfitsVisualInternal each make a
         // real provider call of their own (recordNestedFreeformUsage above covers that once this
@@ -2857,10 +2847,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.source = 'selected_piece'
           result = await generateOutfitsForPieceInternal({
             pieceId: Number(piece_id),
-            occasion: intent.occasion,
+            occasion: stylingContext.occasion,
             season: resolvedSeason,
-            mission: intent.mission,
-            mood: intent.mood,
+            mission: stylingContext.mission,
+            mood: stylingContext.mood,
             includeMissingPieces: false,
             idealOnly: false,
             question: toolContext.question || '',
@@ -2869,10 +2859,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         } else {
           toolContext.source = 'whole_wardrobe'
           result = await generateWholeWardrobeOutfitsVisualInternal({
-            occasion: intent.occasion,
+            occasion: stylingContext.occasion,
             season: resolvedSeason,
-            mood: intent.mood,
-            mission: intent.mission,
+            mood: stylingContext.mood,
+            mission: stylingContext.mission,
             limit: requestedCount,
             explorationMode: 'moderate',
             question: toolContext.question || '',

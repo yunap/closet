@@ -52,6 +52,7 @@ import {
   garmentKind,
   pieceMatchesMaterial,
   pieceMatchesFootwear,
+  pieceRequiresBaseLayer,
   pieceVisualDetailPolicy
 } from '../styling-engine/attributes.js'
 import {
@@ -137,7 +138,7 @@ import {
   evaluateVisualComposerPiecePool,
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
-import { categoryOutfitStructurePromptRule, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { categoryOutfitStructurePromptRule, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
@@ -1001,8 +1002,32 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   )
   const structureShortfall = projectCandidateSetShortfall(rosterDebug.coverageReport, { anchorPiece: selectedPiece })
   if (structureShortfall) {
+    const selectedDependencyValidation = pieceRequiresBaseLayer(selectedPiece)
+      ? evaluateWearableOutfit([selectedPiece], { requireShoes: true })
+      : null
+    const dependencyFinding = selectedDependencyValidation?.hardFindings
+      .find(finding => finding.kind === 'required_base') || null
+    const incompleteAnchorCard = dependencyFinding
+      ? normalizeOutfitResult({
+          label: `${selectedPiece.name || 'Selected garment'} — Needs review`,
+          title: `${selectedPiece.name || 'Selected garment'} — Needs review`,
+          pieceIds: [Number(selectedPiece.id)],
+          pieces: [selectedPiece],
+          selectedPieceId: Number(selectedPiece.id),
+          broken: true,
+          diagnosticOnly: true,
+          strength: 'needs review',
+          rejectionReason: dependencyFinding.message,
+          reason: 'The selected garment remains the premise, but the wardrobe does not currently prove a complete wearable outfit around it.',
+          source: 'selected-anchor-incomplete',
+        }, {
+          disposition: 'rejected',
+          findings: [dependencyFinding],
+          provenance: { flow: 'selected_piece_visual', source: 'selected-anchor-incomplete', composedBy: 'engine', stage: 'candidate_supply' },
+        })
+      : null
     return {
-      outfits: [],
+      outfits: incompleteAnchorCard ? [incompleteAnchorCard] : [],
       recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
       rejected: [],
       skip: structureShortfall,
@@ -1188,10 +1213,30 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
   }).filter(o => o.pieces.some(p => Number(p.id) === selectedId) && o.pieces.length >= 2)
 
-  let outfits = resolved.map(o =>
+  const selectedModelOutfits = resolved.map(o =>
     repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood, { season, weatherProfile, activity }))
     .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
-    .filter(o => evaluateOutfitStructure(o.pieces, { requireShoes: true }).valid)
+  const selectedValidation = new Map(selectedModelOutfits.map(outfit => [
+    outfit,
+    evaluateWearableOutfit(outfit.pieces, {
+      requireShoes: true,
+      seenPieceIds: new Set(shownPieces.map(piece => Number(piece.id))),
+    }),
+  ]))
+  const needsReviewOutfits = selectedModelOutfits
+    .filter(outfit => !selectedValidation.get(outfit).hardValid)
+    .map(outfit => normalizeOutfitResult({
+      ...outfit,
+      broken: true,
+      diagnosticOnly: true,
+      strength: 'needs review',
+      rejectionReason: selectedValidation.get(outfit).primaryFinding?.message || 'Hard outfit validation failed.',
+    }, {
+      disposition: 'rejected',
+      findings: selectedValidation.get(outfit).hardFindings,
+      provenance: { flow: 'selected_piece_visual', source: 'model-rejected', composedBy: 'model', stage: 'shared_validation' },
+    }))
+  let outfits = selectedModelOutfits.filter(outfit => selectedValidation.get(outfit).hardValid)
 
   if (!outfits.length) {
     const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, recoveryRankedCandidates, { occasion })
@@ -1210,7 +1255,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     })
   }
 
-  outfits = outfits.slice(0, 4).map(outfit => ({
+  outfits = [...outfits.slice(0, 4), ...needsReviewOutfits].map(outfit => ({
     ...outfit,
     selectedPieceId: selectedPiece.id,
     wholeWardrobe: false,
@@ -2328,11 +2373,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const normalizedModelOutfits = resolved.map(o =>
       sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject(o, allowedPieces))
     )
-    const structureByOutfit = new Map(normalizedModelOutfits.map(outfit => [
+    const validationByOutfit = new Map(normalizedModelOutfits.map(outfit => [
       outfit,
-      evaluateOutfitStructure(outfit.pieces, { requireShoes: true }),
+      evaluateWearableOutfit(outfit.pieces, { requireShoes: true }),
     ]))
-    const structuralRejectionReason = (structure) => ({
+    const structuralRejectionReason = (validation) => ({
       multiple_shoes: 'structural: more than one shoe',
       missing_shoes: 'structural: missing shoes',
       multiple_bottoms: 'structural: more than one bottom',
@@ -2341,10 +2386,12 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       missing_top_or_dress: 'structural: missing top',
       multiple_tops_without_bottom: 'structural: missing bottom',
       missing_bottom: 'structural: missing bottom',
-    }[structure?.primaryFinding?.code] || 'structural: not a complete wardrobe outfit')
+      required_base_missing: 'dependency: required base layer is missing',
+      required_base_incompatible: 'dependency: required base layer is incompatible',
+    }[validation?.primaryFinding?.code] || validation?.primaryFinding?.message || 'structural: not a complete wardrobe outfit')
     const structurallyRejectedModelOutfits = normalizedModelOutfits
-      .filter(outfit => !structureByOutfit.get(outfit).valid)
-      .map(outfit => ({ outfit, reason: structuralRejectionReason(structureByOutfit.get(outfit)) }))
+      .filter(outfit => !validationByOutfit.get(outfit).hardValid)
+      .map(outfit => ({ outfit, reason: structuralRejectionReason(validationByOutfit.get(outfit)) }))
 
     // The composer above proposes from ISOLATED per-garment photos and never sees two pieces
     // together — its own written "reason" can rationalize a pairing that the actual photos, side
@@ -2355,7 +2402,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // opinion nobody asked for. Non-fatal: a critic failure must never block the whole turn.
     let visualClashDebug = null
     let clashFlaggedByOutfit = new Map()
-    const structurallyValidForClashReview = normalizedModelOutfits.filter(outfit => structureByOutfit.get(outfit).valid)
+    const structurallyValidForClashReview = normalizedModelOutfits.filter(outfit => validationByOutfit.get(outfit).hardValid)
     // normalizeWholeWardrobeOutfitObject trims outfit.pieces to {id, name, category, photo,
     // worn_photo} — pattern_complexity and style_profile_json are gone by here, so the
     // questionable-check would silently see nothing to flag. Rehydrate against allowedPieces by
@@ -2414,11 +2461,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       ? normalizedModelOutfits.filter(outfit => !includesSavedMain(outfit)).length
       : 0
     const modelLayeredTopFormulaRejectedCount = savedFormulaRequiresLayeredTop
-      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && structureByOutfit.get(outfit).valid && !hasLayeredTopFormula(outfit)).length
+      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && validationByOutfit.get(outfit).hardValid && !hasLayeredTopFormula(outfit)).length
       : 0
     let modelOutfits = normalizedModelOutfits
       .filter(includesSavedMain)
-      .filter(outfit => structureByOutfit.get(outfit).valid)
+      .filter(outfit => validationByOutfit.get(outfit).hardValid)
       .filter(o => !clashFlaggedByOutfit.has(o))
       .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
       .map(outfit => ({
@@ -2630,6 +2677,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         structuredOutfits = [...structuredOutfits, ...diagnostics]
       }
     }
+    // A paid composition attempt remains visible even when enough sibling looks passed.
+    // Validation controls disposition, not visibility: hard findings become Needs review
+    // cards with the actual reason and never consume the requested valid-card count.
+    const deliveredKeys = new Set(structuredOutfits.map(outfitKey))
+    const paidRejectedDiagnostics = [
+      ...structurallyRejectedModelOutfits,
+      ...visuallyRejectedModelOutfits,
+      ...gatedModel.rejected
+        .filter(item => item?.outfit)
+        .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' })),
+    ]
+    for (const candidate of paidRejectedDiagnostics) {
+      const key = outfitKey(candidate.outfit)
+      if (!key || deliveredKeys.has(key)) continue
+      const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason)
+      structuredOutfits.push(diagnostic)
+      deliveredKeys.add(key)
+      diagnosticBrokenCount += 1
+    }
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
     visualDebugLog.localBackfillRecovery = localBackfillRecoveryReport
@@ -2660,7 +2726,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     console.log('[Visual Composer Final Selection]', visualDebugLog)
 
     // Mission labeling stays post-generation:
-    structuredOutfits = structuredOutfits.slice(0, requestedLimit).map((outfit, index) => {
+    const readyOutfits = structuredOutfits.filter(outfit => !outfit.broken).slice(0, requestedLimit)
+    const reviewOutfits = structuredOutfits.filter(outfit => outfit.broken)
+    structuredOutfits = [...readyOutfits, ...reviewOutfits].map((outfit, index) => {
       const missionPieces = fullPiecesForMissionCheck(outfit, allowedPieces)
       const qualifiedMission = mission && mission !== 'mix'
         ? (() => {
