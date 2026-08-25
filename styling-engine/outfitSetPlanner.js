@@ -39,6 +39,8 @@ import {
   getOwnerRuleNotes,
 } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
+import { describeOutfitStructureGap } from './outfitValidation.js'
+export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
   bottomKind,
   fabricWeight,
@@ -2924,26 +2926,6 @@ function suppressedReasonMap(suppressedPieces = []) {
     map.set(id, reasons)
   }
   return map
-}
-
-export function describeOutfitStructureGap(pieces = [], { requireShoes = true } = {}) {
-  const groups = (Array.isArray(pieces) ? pieces : []).map(piece => wardrobeCategoryGroup(piece))
-  const shoeCount = groups.filter(group => group === 'shoes').length
-  const bottomCount = groups.filter(group => group === 'bottom').length
-  const dressCount = groups.filter(group => group === 'dress').length
-  const topCount = groups.filter(group => group === 'top').length
-
-  if (requireShoes && shoeCount === 0) return 'missing shoes'
-  if (shoeCount > 1) return 'more than one shoe option was submitted'
-  if (bottomCount > 1) return 'more than one bottom was submitted'
-  if (dressCount > 1) return 'more than one dress was submitted'
-  if (dressCount === 1 && bottomCount > 0) return 'dress and bottom were both submitted'
-  if (dressCount === 0 && topCount < 1) return 'missing top or dress'
-  if (dressCount === 0 && bottomCount !== 1) {
-    if (topCount > 1 && bottomCount === 0) return `${topCount} tops were submitted without a bottom`
-    return 'missing bottom'
-  }
-  return ''
 }
 
 function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {

@@ -14,6 +14,7 @@ import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRO
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
+import { evaluateOutfitStructure } from './outfitValidation.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
   ownerGuidanceApplicabilityFromSynthesis,
@@ -5131,23 +5132,7 @@ export const LAYERED_TOP_UNEXPLAINED_FLAG =
   'This look layers a top with the dress and the stylist did not say why — treat the top as optional.'
 
 export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
-  const groups = pieces.map(p => wardrobeCategoryGroup(p))
-  const shoeCount = groups.filter(g => g === 'shoes').length
-  const bottomCount = groups.filter(g => g === 'bottom').length
-  const dressCount = groups.filter(g => g === 'dress').length
-  const topCount = groups.filter(g => g === 'top').length
-
-  if (shoeCount > 1) return false
-  if (requireShoes && shoeCount !== 1) return false
-  if (bottomCount > 1) return false
-  if (dressCount > 1) return false
-
-  if (dressCount === 1) {
-    if (bottomCount > 0) return false
-  } else {
-    if (topCount < 1 || bottomCount !== 1) return false
-  }
-  return true
+  return evaluateOutfitStructure(pieces, { requireShoes }).valid
 }
 
 export function normalizeWholeWardrobeStrengths(outfits = []) {

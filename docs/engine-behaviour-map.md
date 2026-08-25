@@ -944,10 +944,20 @@ settled: today it does not, and no path can make it.
 
 ### What is not in this stack
 
-Structural validity (`isOutfitStructurallyValid`, `validateOutfitRoles` — needs shoes, needs
-top+bottom or a dress, a layer needs its base) is a *separate* check on the assembled outfit, and
+Structural validity (`evaluateOutfitStructure` with its `isOutfitStructurallyValid` boolean and
+`describeOutfitStructureGap` message projections, plus specialized `validateOutfitRoles` — needs
+shoes, needs top+bottom or a dress, a layer needs its base) is a *separate* check on the assembled outfit, and
 it runs **before** the piece gate in `propose_outfit`. Diversity, dedup and repair run after — see
 the next section. None of those are piece-eligibility questions, which is why they are not here.
+
+**[validation-ownership consolidation, first foundation migration, 2026-08-24] Category structure
+now has one typed owner.** `evaluateOutfitStructure` returns ordered error findings for missing or
+multiple shoes, multiple bottoms/dresses, dress-plus-bottom conflicts, and incomplete separates,
+with category-count evidence. `isOutfitStructurallyValid` returns only its `valid` flag;
+`describeOutfitStructureGap` returns only its primary message. This preserves every existing
+boolean and diagnosis contract while removing their duplicate category counting. A top over a dress
+remains legal. Role intent, layer/base mechanics, ownership/context checks, plan slot/set rules, and
+advisor disposition remain separate validators.
 
 ---
 

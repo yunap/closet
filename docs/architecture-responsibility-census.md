@@ -110,7 +110,7 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 |---|---:|---|---|---|---:|
 | Context resolution | 10 consumer families; 2 now migrated | `resolveStylingContext` now owns selected-piece and whole-wardrobe context; remaining consumers still use `normalizeOccasion`, `normalizeActivity`, `resolveOccasionProfile`, `resolveActivityProfile`, and `weatherProfileFromContext` directly | Freeform search/propose/swaps/generate and plan slots still independently choose precedence, defaults, live-weather behavior, and mutation | Critical: the same words can still reach later gates with different structured context until the remaining consumers migrate | 1 |
 | Piece eligibility | 11 | `evaluateAutomaticUsePiecePool` over `wholeWardrobePieceTrustDecision` and narrow verdict helpers | Visual presentation policy, retrieval broadening, explicit anchor disposition, and post-composition validators still add flow policy | Critical: remaining compatibility and validation callers can still diverge until migrated | 2 |
-| Outfit validation | 11 | `isOutfitStructurallyValid` for a narrow category core | Selected gates, whole advisor/gate, freeform roles, plan submission, concept boards, and route-local explanations return different shapes and cover different invariants | Critical: identical outfits can be accepted, annotated, repaired, or rejected for accidental reasons | 3 |
+| Outfit validation | 11 | `evaluateOutfitStructure` now owns typed category-core findings; boolean and diagnosis are projections | Selected gates, whole advisor/gate, freeform roles, plan submission, concept boards, and route-local checks still compose different additional invariants and dispositions | Critical: identical outfits can still be accepted, annotated, repaired, or rejected for accidental reasons outside the shared category core | 3 |
 | Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
 | Recovery and fallback | 8 | Some shared validators and footwear helpers | Selected local/absolute fallback, whole backfill, plan completion, capsule repair, freeform retry, and diagnostic cards independently mutate or replace results | High: error paths silently weaken the primary path's contract | 5 |
 | Prompt fact projection | 10 | Style Constitution exports and some serializers | Composer, selected-anchor, freeform tool, plan, capsule, board, and saved-variant prompts restate overlapping runtime facts | High: a code fix can be absent from the model-visible contract, or prompt wording can invent another rule | 6 |
@@ -362,8 +362,9 @@ same verdict. Prompt presence alone is not enforcement.
 
 | Decision surface | Verdict | Classification | Disposition |
 |---|---|---|---|
-| `isOutfitStructurallyValid` | Category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural boolean | Used by selected/whole/plan paths |
-| `describeOutfitStructureGap` | Human-readable explanation of nearly the same category structure | `duplicate` semantic computation, useful projection | Capsule repair diagnosis and plan failures |
+| `evaluateOutfitStructure` | Typed category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural verdict | Boolean, diagnosis, and future composed validators |
+| `isOutfitStructurallyValid` | Boolean projection of `evaluateOutfitStructure` | `legacy` compatibility adapter | Selected/whole/plan callers pending direct finding migration |
+| `describeOutfitStructureGap` | Primary-finding message projection of `evaluateOutfitStructure` | `projection` | Capsule repair diagnosis and plan failures |
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
 | `locallyGateWholeWardrobeOutfits` | Structure, ownership, context/profile findings, diversity; gate/advisor modes | `adapter` plus disposition specialization | Gate rejects; advisor annotates many concerns and does not reinvent |
@@ -641,6 +642,14 @@ all callers consume the structured result.
 
 **Required proof:** identical outfits produce identical findings across flows; only the reviewed
 disposition may differ.
+
+**First foundation migration, 2026-08-24:** `evaluateOutfitStructure` now emits ordered typed
+category-core findings with stable codes, messages, and count evidence. `isOutfitStructurallyValid`
+is a boolean adapter and `describeOutfitStructureGap` is the primary-message projection; their two
+independent category-count implementations are gone. Existing callers, message wording, top-over-
+dress allowance, shoe requirement option, and disposition remain unchanged. Role cardinality,
+layer/base mechanics, ownership/context findings, slot rules, set rules, and concept-board policy
+remain specialized and are not silently folded into this narrow core.
 
 ### Slice 4 — reusable candidate-set construction
 

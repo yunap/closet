@@ -7,6 +7,7 @@ const routeSource = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'u
 const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
 const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
 const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
+const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -96,4 +97,15 @@ test('whole-wardrobe footwear recovery consumes the shared automatic-use pool co
   const repair = rulesSource.slice(start, end)
   assert.match(repair, /evaluateAutomaticUsePiecePoolCore\(\{/)
   assert.doesNotMatch(repair, /filterWholeWardrobePiecesForGeneration\(/)
+})
+
+test('category structure boolean and diagnosis delegate to one typed validator', () => {
+  const start = rulesSource.indexOf('export function isOutfitStructurallyValid')
+  const end = rulesSource.indexOf('export function normalizeWholeWardrobeStrengths', start)
+  assert.ok(start >= 0 && end > start, 'missing isOutfitStructurallyValid source block')
+  assert.match(rulesSource.slice(start, end), /evaluateOutfitStructure\(/)
+  assert.match(plannerSource, /import \{ describeOutfitStructureGap \} from '\.\/outfitValidation\.js'/)
+  assert.doesNotMatch(plannerSource, /function describeOutfitStructureGap\(/)
+  assert.match(validationSource, /export function evaluateOutfitStructure\(/)
+  assert.match(validationSource, /export function describeOutfitStructureGap\(/)
 })

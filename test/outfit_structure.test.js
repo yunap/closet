@@ -1,6 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { isOutfitStructurallyValid, locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
+import { describeOutfitStructureGap, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+
+test('typed structure findings preserve the boolean and diagnosis contracts', () => {
+  const top = { category: 'top', name: 'Top' }
+  const bottom = { category: 'bottom', name: 'Bottom' }
+  const shoe = { category: 'shoes', name: 'Shoe' }
+  const valid = evaluateOutfitStructure([top, bottom, shoe])
+  assert.equal(valid.valid, true)
+  assert.deepEqual(valid.findings, [])
+
+  const incomplete = evaluateOutfitStructure([top])
+  assert.equal(incomplete.valid, false)
+  assert.deepEqual(incomplete.findings.map(finding => finding.code), ['missing_shoes', 'missing_bottom'])
+  assert.equal(incomplete.primaryFinding.message, 'missing shoes')
+  assert.equal(describeOutfitStructureGap([top]), 'missing shoes')
+  assert.equal(isOutfitStructurallyValid([top]), false)
+})
 
 test('isOutfitStructurallyValid - basic validation cases', () => {
   // 1. Valid separates: 1 top, 1 bottom, 1 shoe
