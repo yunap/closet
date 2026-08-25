@@ -367,11 +367,11 @@ same verdict. Prompt presence alone is not enforcement.
 | `describeOutfitStructureGap` | Primary-finding message projection of `evaluateOutfitStructure` | `projection` | Capsule repair diagnosis and plan failures |
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
-| `locallyGateWholeWardrobeOutfits` | Structure, ownership, context/profile findings, diversity; gate/advisor modes | `adapter` plus disposition specialization | Gate rejects; advisor annotates many concerns and does not reinvent |
+| `locallyGateWholeWardrobeOutfits` | Composes typed category structure with ownership, context/profile findings, and diversity | `adapter` plus disposition specialization | Structural errors reject in both modes; advisor annotates many later concerns and does not reinvent |
 | `validateOutfitRoles` | Freeform explicit role cardinality, shoes, missing gaps, base independence | `specialization`; `unresolved` where base logic differs | Reject proposed card with issues |
 | `validateCapsuleRoster` | Finite roster quotas, base/structure supply, slots and budget | `specialization` | Reject or report roster gaps |
 | `validateSlotOutfitConstraints` | Slot weather/activity/register/season and plan requirements | `specialization` | Failure reason for plan submission |
-| `validateSubmittedPlanOutfits` | Ownership, structure, dependency, slot, repetition, core uniqueness, set rules | `canonical` plan validator / orchestration | Accept or return structured failures |
+| `validateSubmittedPlanOutfits` | Composes typed category structure with ownership, dependency, slot, repetition, core uniqueness, and set rules | `canonical` plan validator / orchestration | Accept or return structured failures |
 | Route-local board filters | Allowed IDs, anchor, dedupe, minimum piece count | `specialization`; incomplete by design for concept boards | Skip unusable boards |
 
 **Proposed owner:** Evolve the narrow structural owner to return a structured verdict with reason
@@ -650,6 +650,15 @@ independent category-count implementations are gone. Existing callers, message w
 dress allowance, shoe requirement option, and disposition remain unchanged. Role cardinality,
 layer/base mechanics, ownership/context findings, slot rules, set rules, and concept-board policy
 remain specialized and are not silently folded into this narrow core.
+
+**Second consumer migration, 2026-08-24:** `locallyGateWholeWardrobeOutfits` and
+`validateSubmittedPlanOutfits` now consume `evaluateOutfitStructure` directly. Whole-wardrobe keeps
+its established coarse rejection projection (`not a complete wardrobe outfit`) and both gate and
+advisor modes still reject structural errors before later disposition policy. Submitted plans keep
+the shared primary message previously supplied by `describeOutfitStructureGap`, then continue into
+their dependency, winter-indoor, slot, register, repetition, and set validators only as before.
+No acceptance rule or model-call sequence changed. The boolean compatibility adapter remains for
+route filters and other callers awaiting bounded migration.
 
 ### Slice 4 — reusable candidate-set construction
 

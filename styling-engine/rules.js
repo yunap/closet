@@ -5208,7 +5208,8 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
 
-    if (!isOutfitStructurallyValid(pieces, { requireShoes })) {
+    const structure = evaluateOutfitStructure(pieces, { requireShoes })
+    if (!structure.valid) {
       reject(repaired, 'not a complete wardrobe outfit')
       continue
     }

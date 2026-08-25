@@ -959,6 +959,14 @@ boolean and diagnosis contract while removing their duplicate category counting.
 remains legal. Role intent, layer/base mechanics, ownership/context checks, plan slot/set rules, and
 advisor disposition remain separate validators.
 
+**[validation-ownership consolidation, second consumer migration, 2026-08-24] Whole-wardrobe and
+submitted-plan gates now read typed structure findings directly.** `locallyGateWholeWardrobeOutfits`
+maps any structural error to its existing `not a complete wardrobe outfit` rejection before
+ownership/context/advisor policy. `validateSubmittedPlanOutfits` uses the primary finding's existing
+message before its dependency, slot, repetition, and set checks. The former plan-side boolean-plus-
+diagnosis double evaluation is gone. Structural acceptance, rejection wording, advisor behavior,
+and model-call sequence are unchanged.
+
 ---
 
 ## The shape of a turn, and how many round-trips it takes

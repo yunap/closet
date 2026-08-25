@@ -29,7 +29,6 @@
 
 import { getWeatherProfileForPlan } from './weather.js'
 import {
-  isOutfitStructurallyValid,
   weatherProfileFromContext,
   wardrobeCategoryGroup,
   footwearComfortVerdict,
@@ -39,7 +38,7 @@ import {
   getOwnerRuleNotes,
 } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
-import { describeOutfitStructureGap } from './outfitValidation.js'
+import { describeOutfitStructureGap, evaluateOutfitStructure } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
   bottomKind,
@@ -3958,9 +3957,9 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       reasons.push(REASON_REVISION_MESSAGE)
     }
     if (!unresolvedPieceIds.length) {
-      const structureGap = describeOutfitStructureGap(pieces, { requireShoes: true })
-      if (structureGap || !isOutfitStructurallyValid(pieces, { requireShoes: true })) {
-        reasons.push(structureGap || 'outfit is structurally incomplete or has duplicate core roles')
+      const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
+      if (!structure.valid) {
+        reasons.push(structure.primaryFinding?.message || 'outfit is structurally incomplete or has duplicate core roles')
       }
       // Step 5 V1 follow-up (owner review 2026-07-30): a needs_base piece is
       // tagged unwearable alone by construction, but nothing checked that at
