@@ -697,10 +697,16 @@ atlas showed to be working.
 ## Step 6 resolution — the planning engine (designed 2026-07-12, **shipped**)
 
 > **[status 2026-08-20]** This section's heading said "not yet built". It is built:
-> `buildPlanSlotWorkbench` ([outfitSetPlanner.js:3278](../../styling-engine/outfitSetPlanner.js#L3278))
+> `buildPlanSlotWorkbench` (`styling-engine/outfitSetPlanner.js`)
 > is what `plan_outfit_set` composes through, with `submit_plan_outfits` closing the
 > loop, and there is no engine-mode fallback left. Read the design below as the
 > record of *why* it has its shape.
+
+> **[eligibility ownership, 2026-08-24]** Each slot workbench now consumes
+> `evaluateAutomaticUsePiecePool` through the planner adapter before plan-specific ranking and caps.
+> Slot weather, activity, register escalation, owner-exclusion occasion, and the existing
+> hot-weather outerwear capacity remain unchanged; the migration changes ownership, not planning
+> strategy or the model-call sequence.
 
 Live trip tests settled step 6 with evidence in both directions: the model CAN
 self-compose planning turns, but the trip precompose produces something the

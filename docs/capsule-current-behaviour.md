@@ -22,7 +22,9 @@ itself does not mean hot weather, home-only dressing, dresses, or a fixed number
 2. Deterministic gates form an eligible bench from active owned garments. Weather, occasion,
    activity, suppression, garment dependencies, and register validity remain code constraints, and
    they gate the deterministic selector and the model's bench identically — both call
-   `capsulePiecesEligibleForAnySlot`.
+   `capsulePiecesEligibleForAnySlot`. As of 2026-08-24, each slot in that union consumes
+   `evaluateAutomaticUsePiecePool` through `evaluatePlannerAutomaticUsePool`; the capsule still
+   owns its union, finite budget, category shape, roster selection, and recombination strategy.
 
    **Free-text owner rules are not among them.** Stored owner rules
    (`getOwnerRuleNotes`) are prose, so they reach the two model prompts — roster selection and

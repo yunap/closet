@@ -5,6 +5,7 @@ import path from 'node:path'
 
 const routeSource = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
 const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
+const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -80,4 +81,9 @@ test('selected ranking and whole generation consume shared automatic-use pool ad
   assert.doesNotMatch(selected, /selectCandidatesForOutfitGeneration\(/)
   assert.match(whole, /evaluateAutomaticUsePiecePool\(\{/)
   assert.doesNotMatch(whole, /filterWholeWardrobePiecesForGeneration\(/)
+})
+
+test('plan workbenches and capsule eligibility consume the shared automatic-use pool', () => {
+  assert.match(plannerSource, /evaluateAutomaticUsePiecePool\(\{/)
+  assert.doesNotMatch(plannerSource, /filterWholeWardrobePiecesForGeneration\(/)
 })

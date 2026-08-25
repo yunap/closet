@@ -9,7 +9,7 @@
 // assembleSubmittedPlanOutfits check and assemble the result. Deterministic code
 // guarantees only garment truth and structural/register/weather/footwear
 // correctness (validateSlotOutfitConstraints, describeOutfitStructureGap,
-// filterWholeWardrobePiecesForGeneration's gates) — taste and composition are
+// evaluateAutomaticUsePiecePool's hard-gate findings) — taste and composition are
 // the model's job. (Spec 14, 2026-07-16: retired the prior engine-composed path,
 // composeOutfitSet, and its taste-scorer layer — see
 // docs/freeform-rearchitecture-handoff.md.)
@@ -29,7 +29,6 @@
 
 import { getWeatherProfileForPlan } from './weather.js'
 import {
-  filterWholeWardrobePiecesForGeneration,
   isOutfitStructurallyValid,
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -39,6 +38,7 @@ import {
   getAcceptedFeedbackSynthesisMemory,
   getOwnerRuleNotes,
 } from './rules.js'
+import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import {
   bottomKind,
   fabricWeight,
@@ -1299,6 +1299,14 @@ function strictestRegisterCeilingRank(occasions = []) {
   return ranks.length ? Math.min(...ranks) : null
 }
 
+function evaluatePlannerAutomaticUsePool(pieces = [], context = {}) {
+  return evaluateAutomaticUsePiecePool({
+    pieces,
+    context,
+    policy: { hotOuterwearCap: 3 },
+  })
+}
+
 // A capsule slot is finite inventory, so every selected garment must have at
 // least one real job in the requested lifestyle. Apply the same deterministic
 // trust/register/weather/activity gates used by the downstream workbench
@@ -1318,7 +1326,7 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
   if (indoorSlot) slotWeatherProfile.isCold = false
   const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
   const registerCeiling = registerRankName(ceilingRank) || null
-  const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
+  const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
     occasion: slot.occasion,
     season,
     explorationMode: 'moderate',
@@ -1328,7 +1336,7 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
     request: slotRequestText,
     ...(registerCeiling ? { registerCeiling } : {})
   })
-  return allowedPieces
+  return eligiblePieces
 }
 
 function capsulePiecesEligibleForAnySlot(pool = [], slots = [], { isSummer = false, isWinter = false } = {}) {
@@ -1637,7 +1645,7 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
     const registerCeilingOverride = occasionCeilingRank !== null && ceilingRank > occasionCeilingRank
       ? registerRankName(ceilingRank)
       : null
-    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
+    const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
       occasion: slot.occasion,
       season,
       explorationMode: 'moderate',
@@ -1647,7 +1655,7 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
       request: slotRequestText,
       ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
     })
-    demands.push({ floorRank, ceilingRank, allowedIds: idSetForPieces(allowedPieces) })
+    demands.push({ floorRank, ceilingRank, allowedIds: idSetForPieces(eligiblePieces) })
   }
   return demands
 }
@@ -3354,7 +3362,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // existing declared-register escalation behavior.
     const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
     const registerCeilingOverride = registerRankName(ceilingRank) || null
-    const gateResult = filterWholeWardrobePiecesForGeneration(composePool, {
+    const gateResult = evaluatePlannerAutomaticUsePool(composePool, {
       occasion: slot.occasion,
       season: slot.statedWeather || slot.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
       ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
@@ -3365,8 +3373,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       request: slotRequestText,
       ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
     })
-    const allowedPieces = gateResult.allowedPieces
-    const suppressedPieces = gateResult.suppressedPieces
+    const allowedPieces = gateResult.eligiblePieces
+    const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
     const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })

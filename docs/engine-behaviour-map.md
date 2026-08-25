@@ -1085,7 +1085,18 @@ generation and concept-board planning no longer independently invoke the hard ga
 generation also consumes `evaluateAutomaticUsePiecePool` directly. Its former hot-weather
 outerwear behavior is an explicit capacity policy (keep the three lightest, deterministic by ID),
 and a saved Main may bypass that disposition without erasing the hard-gate or capacity finding.
-The legacy whole-filter function remains only for unmigrated plan/capsule/recovery consumers.
+At this point the legacy whole-filter function still served plan, capsule, and recovery consumers.
+
+**[eligibility-ownership consolidation, fourth consumer migration, 2026-08-24] Coordinated plans
+and capsules now consume the same automatic-use pool before applying their own strategy.**
+`evaluatePlannerAutomaticUsePool` carries each slot's resolved weather, activity, register ceiling,
+and `ownerExclusionOccasion` into `evaluateAutomaticUsePiecePool`. It also declares the existing
+three-piece hot-weather outerwear cap as capacity policy. `slotGateEligiblePieces`,
+`elevatedCapsuleDemands`, and `buildPlanSlotWorkbench` consume the resulting eligible projection;
+the workbench's suppression diagnostics retain `underlyingExcludedPieces`. Plan ranking and caps,
+capsule slot union, quota/roster selection, structural coverage, and representative rotation do not
+move into eligibility and do not change behavior. The legacy whole-filter adapter remains only in
+recovery logic in `rules.js`.
 
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
