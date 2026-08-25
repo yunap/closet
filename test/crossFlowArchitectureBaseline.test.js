@@ -15,11 +15,21 @@ test('cross-flow architecture capture matches the reviewed deterministic baselin
 })
 
 test('cross-flow architecture corpus covers every consolidation stage without provider calls', () => {
+  const captureSource = fs.readFileSync(
+    path.join(process.cwd(), 'scratch', 'capture_cross_flow_architecture.js'),
+    'utf8',
+  )
   const baseline = JSON.parse(fs.readFileSync(
     path.join(process.cwd(), 'test', 'fixtures', 'cross_flow_architecture_baseline.json'),
     'utf8',
   ))
-  assert.equal(baseline.schemaVersion, 3)
+  assert.equal(baseline.schemaVersion, 4)
+  assert.match(captureSource, /evaluateAutomaticUsePiecePool/)
+  assert.match(captureSource, /evaluateVisualComposerPiecePool/)
+  assert.match(captureSource, /selectAutomaticUseCandidatesForOutfitGeneration/)
+  assert.doesNotMatch(captureSource, /filterWholeWardrobePiecesForGeneration/)
+  assert.doesNotMatch(captureSource, /selectCandidatesForOutfitGeneration/)
+  assert.doesNotMatch(captureSource, /buildVisualComposerRoster/)
   assert.deepEqual(Object.keys(baseline.scenarios), ['casual_neutral', 'hot_hiking', 'capacity_pressure'])
   for (const scenario of Object.values(baseline.scenarios)) {
     assert.ok(scenario.context.intent)
@@ -29,17 +39,11 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
     assert.deepEqual(Object.keys(scenario.candidates), [
       'trust',
       'automaticUsePool',
-      'wholeWardrobeFilter',
       'visualRoster',
       'selectedPieceCandidates',
       'planWorkbench',
       'capsule',
     ])
-    assert.deepEqual(
-      scenario.candidates.automaticUsePool.eligibleIds,
-      scenario.candidates.wholeWardrobeFilter.allowedIds,
-      'shared pool must preserve whole-filter eligibility and hot-outerwear capacity',
-    )
   }
   assert.deepEqual(baseline.validation.map(entry => entry.id), [
     'valid_separates',

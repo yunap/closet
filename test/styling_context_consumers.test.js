@@ -92,6 +92,14 @@ test('selected ranking and whole generation consume shared automatic-use pool ad
   assert.doesNotMatch(whole, /filterWholeWardrobePiecesForGeneration\(/)
 })
 
+test('retired whole-filter response shape cannot return as an executable API', () => {
+  assert.doesNotMatch(rulesSource, /export function filterWholeWardrobePiecesForGeneration/)
+  assert.doesNotMatch(rulesSource, /allowedPieces: result\.eligiblePieces/)
+  assert.doesNotMatch(toolSource, /filterWholeWardrobePiecesForGeneration/)
+  assert.doesNotMatch(plannerSource, /filterWholeWardrobePiecesForGeneration/)
+  assert.doesNotMatch(routeSource, /filterWholeWardrobePiecesForGeneration/)
+})
+
 test('plan workbenches and capsule eligibility consume the shared automatic-use pool', () => {
   assert.match(plannerSource, /evaluateAutomaticUsePiecePool\(\{/)
   assert.doesNotMatch(plannerSource, /filterWholeWardrobePiecesForGeneration\(/)

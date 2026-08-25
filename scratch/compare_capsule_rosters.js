@@ -25,7 +25,8 @@ import {
 } from '../styling-engine/outfitSetPlanner.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { wardrobeCategoryGroup, pieceFormality, formalityRank } from '../styling-engine/attributes.js'
-import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext, pieceStyleProfile } from '../styling-engine/rules.js'
+import { weatherProfileFromContext, pieceStyleProfile } from '../styling-engine/rules.js'
+import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
 
 const WITH_MODEL = process.argv.includes('--with-model')
 // CLI script safety: --dry-run validates inputs, prints the targeted scope and
@@ -138,24 +139,28 @@ function liveScenarioFrom(payloadPath) {
 }
 
 // Per-slot capacity means nothing without each slot's real gate result — the
-// same filter buildPlanSlotWorkbench applies. Passing bare slots reports 0
+// same shared eligibility stage buildPlanSlotWorkbench applies. Passing bare slots reports 0
 // everywhere, which is a harness artifact, not a thin roster.
 function gateSlotsFor(roster, slots, { isSummer, isWinter }) {
   return slots.map(slot => {
     const request = [slot.label, slot.bestFor].filter(Boolean).join('. ')
     const season = slot.environment === 'indoor' ? 'indoor' : (isSummer ? 'summer' : 'winter')
-    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(roster, {
-      occasion: slot.occasion,
-      explorationMode: 'moderate',
-      // Prefer the weather the live plan actually resolved. Re-deriving it from
-      // season/environment is an approximation, and approximating a gate is
-      // what produced a wrong "this slot is starved" reading before.
-      weatherProfile: slot.weatherProfile || weatherProfileFromContext({ mood: request, season }),
-      mood: request,
-      activity: slot.activity || 'none',
-      request,
+    const { eligiblePieces } = evaluateAutomaticUsePiecePool({
+      pieces: roster,
+      context: {
+        occasion: slot.occasion,
+        explorationMode: 'moderate',
+        // Prefer the weather the live plan actually resolved. Re-deriving it from
+        // season/environment is an approximation, and approximating a gate is
+        // what produced a wrong "this slot is starved" reading before.
+        weatherProfile: slot.weatherProfile || weatherProfileFromContext({ mood: request, season }),
+        mood: request,
+        activity: slot.activity || 'none',
+        request,
+      },
+      policy: { hotOuterwearCap: 3 },
     })
-    return { ...slot, gateAllowedIds: new Set(allowedPieces.map(piece => Number(piece.id))) }
+    return { ...slot, gateAllowedIds: new Set(eligiblePieces.map(piece => Number(piece.id))) }
   })
 }
 

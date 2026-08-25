@@ -8,7 +8,8 @@
 
 import { db, parsePiece } from '../db.js'
 import { selectCapsuleRoster } from '../styling-engine/outfitSetPlanner.js'
-import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext } from '../styling-engine/rules.js'
+import { weatherProfileFromContext } from '../styling-engine/rules.js'
+import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
 import { wardrobeCategoryGroup } from '../styling-engine/attributes.js'
 
 const JSON_OUTPUT = process.argv.includes('--json')
@@ -73,16 +74,20 @@ for (const season of SEASONS) {
       const rosterIds = new Set(roster.map(piece => Number(piece.id)))
       const slots = scenario.slots.map(slot => {
         const request = [slot.slot, slot.bestFor].join('. ')
-        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
-          occasion: slot.occasion,
-          explorationMode: 'moderate',
-          weatherProfile: slot.environment === 'indoor'
-            ? weatherProfileFromContext({ season: 'indoor' })
-            : season.profile,
-          mood: `${season.name} capsule`,
-          request
+        const { eligiblePieces } = evaluateAutomaticUsePiecePool({
+          pieces: allPieces,
+          context: {
+            occasion: slot.occasion,
+            explorationMode: 'moderate',
+            weatherProfile: slot.environment === 'indoor'
+              ? weatherProfileFromContext({ season: 'indoor' })
+              : season.profile,
+            mood: `${season.name} capsule`,
+            request
+          },
+          policy: { hotOuterwearCap: 3 },
         })
-        const eligible = allowedPieces.filter(piece => rosterIds.has(Number(piece.id)))
+        const eligible = eligiblePieces.filter(piece => rosterIds.has(Number(piece.id)))
         const counts = tally(eligible)
         return {
           slot: slot.slot,

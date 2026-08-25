@@ -1,6 +1,6 @@
 // Diagnostic: why did one shoe carry 7 of 8 looks in the "14-piece summer capsule" plan?
 //
-// Replays the real per-slot gate (`filterWholeWardrobePiecesForGeneration`) against the real
+// Replays the real shared per-slot eligibility stage against the real
 // wardrobe, for the exact slot occasions the capsule plan used, and prints every shoe's fate with
 // the engine's own suppression reasons. No model call, no network, read-only.
 //
@@ -11,7 +11,8 @@
 // Reads WARDROBE_DB_PATH like the rest of the app; defaults to the repo's wardrobe.db.
 
 import { db, parsePiece } from '../db.js'
-import { filterWholeWardrobePiecesForGeneration, resolveRegisterCeiling } from '../styling-engine/rules.js'
+import { resolveRegisterCeiling } from '../styling-engine/rules.js'
+import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
 
 // The slots this capsule actually planned, with the occasion each one resolved to. Taken from
 // thread_1784970885986's stored structuredOutfits (tripSlot + occasion), not invented.
@@ -45,7 +46,11 @@ for (const slot of SLOTS) {
     request
   }
   const ceiling = resolveRegisterCeiling({ occasion: slot.occasion, mood: 'summer capsule', request })
-  const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, options)
+  const { eligiblePieces: allowedPieces, underlyingExcludedPieces: suppressedPieces } = evaluateAutomaticUsePiecePool({
+    pieces: allPieces,
+    context: options,
+    policy: { hotOuterwearCap: 3 },
+  })
 
   const allowedShoes = allowedPieces.filter(p => String(p.category || '').toLowerCase() === 'shoes')
   const suppressedShoes = suppressedPieces.filter(s => String(s.category || '').toLowerCase() === 'shoes')

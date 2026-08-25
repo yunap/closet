@@ -28,14 +28,12 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tempRoot, 'uploads')
 
 const { db } = await import('../db.js')
 const {
-  filterWholeWardrobePiecesForGeneration,
   locallyGateWholeWardrobeOutfits,
-  selectCandidatesForOutfitGeneration,
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
 const { evaluateOutfitRoles, evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
-const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
+const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool, selectAutomaticUseCandidatesForOutfitGeneration } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -242,10 +240,6 @@ db.prepare(`
 const pieceById = new Map(wardrobe.map(item => [Number(item.id), item]))
 const ids = values => (Array.isArray(values) ? values : []).map(value => Number(value?.piece?.id ?? value?.id ?? value)).filter(Number.isFinite)
 const sortedObject = value => Object.fromEntries(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)))
-const reasonsById = values => Object.fromEntries((Array.isArray(values) ? values : [])
-  .map(entry => [String(Number(entry?.pieceId ?? entry?.id)), [...(entry?.reasons || [entry?.reason].filter(Boolean))]])
-  .sort(([a], [b]) => Number(a) - Number(b)))
-
 const scenarioDefinitions = [
   {
     id: 'casual_neutral',
@@ -401,7 +395,6 @@ async function captureCandidateStages(definition) {
     context: options,
     policy: { hotOuterwearCap: 3 },
   })
-  const filtered = filterWholeWardrobePiecesForGeneration(wardrobe, options)
   const visual = evaluateVisualComposerPiecePool({
     pieces: wardrobe,
     context: {
@@ -418,7 +411,12 @@ async function captureCandidateStages(definition) {
       recordMetadataTodos: false,
     },
   })
-  const selected = selectCandidatesForOutfitGeneration(pieceById.get(101), wardrobe, selectedCandidateLimit, options)
+  const selected = selectAutomaticUseCandidatesForOutfitGeneration({
+    anchorPiece: pieceById.get(101),
+    pieces: wardrobe,
+    limit: selectedCandidateLimit,
+    context: options,
+  })
   const slots = [structuredClone(definition.slot)]
   const workbench = await buildPlanSlotWorkbench(slots, {
     constraints: { reuse: 'maximize', piece_budget: capsuleBudget },
@@ -462,10 +460,6 @@ async function captureCandidateStages(definition) {
       excluded: Object.fromEntries(automaticUse.excludedPieces.map(entry => [String(entry.pieceId), entry.reasons])),
       findingCounts: sortedObject(automaticUse.debug.findingCounts),
     },
-    wholeWardrobeFilter: {
-      allowedIds: ids(filtered.allowedPieces),
-      suppressed: reasonsById(filtered.suppressedPieces),
-    },
     visualRoster: {
       rosterIds: ids(visual.eligiblePieces),
       recoveryEligibleIds: ids(visual.recoveryEligiblePieces),
@@ -481,7 +475,7 @@ async function captureCandidateStages(definition) {
         cutPieceIds: (visual.debug?.capCutPieces || []).map(entry => Number(entry.id)).filter(Number.isFinite),
       },
     },
-    selectedPieceCandidates: selected.map(entry => ({
+    selectedPieceCandidates: selected.rankedCandidates.map(entry => ({
       id: Number(entry.piece.id),
       blocked: Boolean(entry.autoUseBlocked),
       blockReasons: entry.autoUseBlockReasons || [],
@@ -627,12 +621,13 @@ function captureValidationStages() {
 }
 
 function captureRecoveryStages() {
-  const selectedCandidates = selectCandidatesForOutfitGeneration(pieceById.get(101), wardrobe, 10, {
-    occasion: 'casual',
-    activity: 'none',
-    weatherProfile: {},
+  const selectedCandidates = selectAutomaticUseCandidatesForOutfitGeneration({
+    anchorPiece: pieceById.get(101),
+    pieces: wardrobe,
+    limit: 10,
+    context: { occasion: 'casual', activity: 'none', weatherProfile: {} },
   })
-  const selectedFallback = buildLocalFallbackOutfitDirections(pieceById.get(101), selectedCandidates, { occasion: 'casual' })
+  const selectedFallback = buildLocalFallbackOutfitDirections(pieceById.get(101), selectedCandidates.rankedCandidates, { occasion: 'casual' })
   const incompleteSubmission = [{
     slot_id: 'fixture-slot',
     title: 'Sneakers fixture',
@@ -663,7 +658,7 @@ export async function captureCrossFlowArchitecture() {
     }
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     auditBaseline: 'c1693a8e8f76881d5cb3d87c173ea21fed6ccb53',
     fixturePieceIds: wardrobe.map(item => item.id),
     scenarios,

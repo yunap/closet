@@ -15,7 +15,13 @@ const {
   createOwnerConstraintFromProposal,
   setOwnerConstraintStatus,
 } = await import('../lib/ownerConstraints.js')
-const { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration } = await import('../styling-engine/rules.js')
+const { wholeWardrobePieceTrustDecision } = await import('../styling-engine/rules.js')
+const { evaluateAutomaticUsePiecePool } = await import('../styling-engine/eligibility.js')
+
+function generationPool(pieces, context) {
+  const result = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
+  return { allowedPieces: result.eligiblePieces, suppressedPieces: result.underlyingExcludedPieces }
+}
 
 function insertPiece({ name, category, material = '', occasions = ['casual'] }) {
   const result = db.prepare(`INSERT INTO pieces
@@ -65,11 +71,11 @@ test('slot-aware filtering applies material weather constraints per request cont
     contextValues: ['wet_exposure'],
     reason: 'Owner does not want suede used in wet exposure.',
   })
-  const wet = filterWholeWardrobePiecesForGeneration([suede, leather], {
+  const wet = generationPool([suede, leather], {
     occasion: 'casual', weatherProfile: { isWetExposure: true },
   })
   assert.deepEqual(wet.allowedPieces.map(piece => piece.id), [leather.id])
-  const dry = filterWholeWardrobePiecesForGeneration([suede, leather], {
+  const dry = generationPool([suede, leather], {
     occasion: 'casual', weatherProfile: {},
   })
   assert.equal(dry.allowedPieces.length, 2)
@@ -87,14 +93,14 @@ test('season constraints are no-ops without season and gate before roster assemb
     reason: 'Owner does not wear these boots in summer.',
   })
 
-  const noSeason = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual' })
+  const noSeason = generationPool([boots, sandals], { occasion: 'casual' })
   assert.deepEqual(noSeason.allowedPieces.map(piece => piece.id), [boots.id, sandals.id])
 
-  const summer = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'summer' })
+  const summer = generationPool([boots, sandals], { occasion: 'casual', season: 'summer' })
   assert.deepEqual(summer.allowedPieces.map(piece => piece.id), [sandals.id])
   assert.match(summer.suppressedPieces[0].reasons.join(' '), /owner constraint/)
 
-  const winter = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'winter' })
+  const winter = generationPool([boots, sandals], { occasion: 'casual', season: 'winter' })
   assert.deepEqual(winter.allowedPieces.map(piece => piece.id), [boots.id, sandals.id])
 })
 
@@ -110,13 +116,13 @@ test('owner can enforce no boots in summer as a footwear-type rule', () => {
     reason: "Don't suggest boots when season is summer.",
   })
 
-  const summer = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'summer' })
+  const summer = generationPool([boots, sandals], { occasion: 'casual', season: 'summer' })
   assert.deepEqual(summer.allowedPieces.map(piece => piece.id), [sandals.id])
-  const winter = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'winter' })
+  const winter = generationPool([boots, sandals], { occasion: 'casual', season: 'winter' })
   assert.deepEqual(winter.allowedPieces.map(piece => piece.id), [boots.id, sandals.id])
-  const warm = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'warm' })
+  const warm = generationPool([boots, sandals], { occasion: 'casual', season: 'warm' })
   assert.deepEqual(warm.allowedPieces.map(piece => piece.id), [sandals.id])
-  const currentSummer = filterWholeWardrobePiecesForGeneration([boots, sandals], {
+  const currentSummer = generationPool([boots, sandals], {
     occasion: 'casual', season: 'current season', currentDate: new Date('2026-07-15T12:00:00Z'),
   })
   assert.deepEqual(currentSummer.allowedPieces.map(piece => piece.id), [sandals.id])

@@ -7,9 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
-**Status:** Active — Stage 1 and Slices 0, 2, 4, 5, and 6 complete; Slices 1 and 3 in progress as of
-2026-08-25. Proposed ownership decisions marked unresolved still require the named owner ruling
-before implementation. Slice 7 is next.
+**Status:** Active — Stage 1 and Slices 0, 2, 4, 5, 6, and 7 complete; Slices 1 and 3 remain
+partial as of 2026-08-25. Proposed ownership decisions marked unresolved still require the named
+owner ruling before their remaining migrations.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -211,7 +211,7 @@ requirements but may not redefine the underlying verdict.
 |---|---|---|---|
 | `wholeWardrobePieceTrustDecision` | Aggregate owner constraint, occasion/register, weather, activity, footwear, and auto-styling trust for one piece | `canonical` aggregate for automatic-use eligibility | Selected ranking, whole filtering/scoring, freeform search/propose/swaps/generate, plan workbench, repairs |
 | `profileRuleFit`, `footwearComfortVerdict`, `registerCeilingVerdict`, weather and occasion readers | Narrow contextual verdicts | `canonical` primitives | Trust aggregate, visual roster, scores, plan validation, search |
-| `filterWholeWardrobePiecesForGeneration` | Legacy `{allowedPieces, suppressedPieces}` projection over the shared pool core | `legacy` compatibility adapter | Historical contract tests only; no production consumer |
+| `evaluateAutomaticUsePiecePool` | Canonical pool projection over the shared per-piece verdict and capacity policy | `canonical` pool owner | Selected ranking, whole generation, freeform tools, plans/capsules, recovery, tracked diagnostics |
 | Selected-piece anchor bypass | Keep the user-selected premise even when ordinary auto-use gates would exclude it | `specialization` | Selected visual/text composers and boards |
 | `buildVisualComposerRoster` | Photo availability, metadata completeness, supply-aware register/activity policy, visual relevance, category ceilings and global image cap | `specialization`; `adapter` where it calls shared verdicts; `unresolved` for parallel gate branches | Selected visual and whole visual composers |
 | `search_wardrobe` filtering and broadening | Active/category/owner exclusions are fixed; descriptive and occasion filters may relax with disclosure | `specialization` | Freeform serial retrieval |
@@ -615,11 +615,9 @@ consumers still need migration before Slice 2 is complete.
 use `selectAutomaticUseCandidatesForOutfitGeneration`, which injects one shared decision map into
 the existing score/category-quota strategy. Whole-wardrobe generation consumes
 `evaluateAutomaticUsePiecePool` directly; hot-weather outerwear trimming is an explicit capacity
-policy and saved-Main bypass changes only effective disposition. Direct parity fixtures preserve
-selected ordering/reasons, and the cross-flow baseline proves the pool matches the old whole filter.
-Plan, capsule, and remaining recovery callers still use the compatibility filter and are the next
-Slice 2 consumers.
-
+policy and saved-Main bypass changes only effective disposition. At migration, direct parity
+fixtures preserved selected ordering/reasons, and the then-current cross-flow baseline proved the
+pool matched the old whole filter before Slice 7 retired both duplicate comparisons.
 **Fourth-consumer migration, 2026-08-24:** coordinated-plan workbenches, capsule slot unions, and
 elevated capsule supply checks now call `evaluateAutomaticUsePiecePool` through
 `evaluatePlannerAutomaticUsePool`. The adapter preserves each resolved slot's weather, activity,
@@ -635,10 +633,14 @@ required-footwear substitution pool from the same automatic-use evaluator mechan
 dependency-neutral pool iteration, owner-constraint preload, typed findings, anchor disposition,
 and capacity policy; the public `evaluateAutomaticUsePiecePool` supplies the canonical piece
 verdict. Recovery supplies that same verdict locally and keeps its existing required-footwear and
-shoe-relevance strategy. `filterWholeWardrobePiecesForGeneration` is now only a legacy response
-projection over the core, with no production callers or independent gate loop. This completes the
-runtime-consumer migration named by Slice 2; visual presentation policy and post-composition
-validation remain deliberately separate later slices.
+shoe-relevance strategy. This completed the runtime-consumer migration named by Slice 2; visual
+presentation policy and post-composition validation remain deliberately separate later slices.
+
+**Retirement, 2026-08-25:** Slice 7 removed the executable
+`filterWholeWardrobePiecesForGeneration` compatibility projection. Tests and tracked diagnostics
+now call `evaluateAutomaticUsePiecePool` and name its canonical `eligiblePieces` and
+`underlyingExcludedPieces` projections directly. The retired symbol remains only in a source
+tombstone and ratchet assertions, not as an importable API.
 
 ### Slice 3 — structured outfit validation
 
@@ -805,6 +807,16 @@ owning slices. Add narrow checks that active entry points import/inject the shar
 retired symbols cannot return. Re-run the full cross-flow fixture corpus and ranking A/B diff. Only
 after this should provider/state cleanup be considered.
 
+**Implemented 2026-08-25:** the final audit found one retired executable surface: the legacy
+whole-wardrobe filter response adapter. It has been deleted, and all tracked tests and diagnostics
+now exercise the public shared eligibility owner. The cross-flow fixture is schema 4 and no longer
+records that duplicate response shape as an independent stage. Source ratchets require active
+entry points to call the shared context, eligibility, bounded-supply, validation, recovery, and
+result-envelope owners and prevent retired context assemblers, category booleans, direct recovery
+mutations, and the whole-filter export from returning. The retained
+`selectCandidatesForOutfitGeneration` and `buildVisualComposerRoster` functions are internal
+ranking/presentation strategies behind shared public adapters, not competing eligibility owners.
+
 Each slice is one semantic contract, updates the matching behavioral docs in the same commit, runs
 the full offline suite, and runs the ranking A/B diff whenever scoring or attribute classification
 can change.
@@ -843,7 +855,8 @@ change production code.
 ### Slice 0 cross-flow baseline — implemented 2026-08-24
 
 `scratch/capture_cross_flow_architecture.js` now runs one 14-piece synthetic wardrobe through the
-active deterministic exports for context, trust/filter eligibility, visual roster, selected-piece
+active deterministic exports for context, the per-piece trust verdict and shared pool eligibility,
+visual roster, selected-piece
 candidates, plan workbench, capsule roster/bench, core/freeform/whole/plan validation, selected
 fallback, and plan completion. It is isolated in a temporary SQLite database, fixes the reference
 date, forbids network weather lookup, and calls no provider.
@@ -866,8 +879,9 @@ The first capture records architecture evidence rather than only the triggering 
 - With a fixed August date, `current season` resolves hot in the heuristic context while the same
   scenario carries an explicitly supplied neutral weather profile. Existing stages do not all use
   the same source.
-- A persisted “no fixture boots in summer” owner constraint suppresses the boots in the shared
-  trust and whole-filter results. The neutral visual roster and plan workbench retain them because
+- A persisted “no fixture boots in summer” owner constraint suppresses the boots in the per-piece
+  trust verdict and shared automatic-use pool. The neutral visual roster and plan workbench retain
+  them because
   those paths assemble eligibility/context differently.
 - An otherwise valid shoe with missing comfort metadata is allowed by the shared trust aggregate,
   excluded by the hiking visual roster, and retained in other bounded sets according to their own
@@ -904,18 +918,10 @@ Existing offline coverage already exercises the main owners:
   deterministic repair in `plan_outfit_set.test.js` and `aiEndpointContracts.test.js`;
 - prompt/style and text-matching architecture ratchets in the repository-wide test suite.
 
-Missing tests that should precede implementation:
+The implemented suite now covers the original cross-flow corpus, typed eligibility/validation
+findings, selected and plan recovery validation, bounded structural coverage, dependency/base
+semantics, normalized result dispositions, and the deleted-symbol ratchets. The remaining partial
+Slice 1 and Slice 3 questions are policy questions listed in §7, not permission for a caller to
+reintroduce a private implementation while those decisions wait.
 
-- one cross-flow fixture harness that records every shared stage for the same inputs;
-- context-provenance parity across direct routes, tools, and plan slots;
-- underlying eligibility-finding parity with different approved flow policies;
-- validation-finding parity separated from disposition;
-- one shared layer/base fixture matrix across freeform, capsule, selected, and whole consumers;
-- primary-versus-fallback hard-verdict parity for selected local and absolute backfills;
-- structural coverage surviving every hard cap when capacity permits;
-- impossible capacity producing a named shortfall at every bounded roster consumer;
-- structured core reason codes shared by boolean validation and human-readable diagnosis;
-- capsule expansion fallback capacity parity with the saved canonical slot capacity.
-
-No paid model, vision, image, database mutation, ranking change, or production behavior change was
-performed for this Stage 1 census.
+No paid model, vision, or image call is part of this deterministic architecture corpus.

@@ -1,6 +1,7 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate (which
+**Status:** twelfth pass, 2026-07-26; **amended 2026-08-25** for the shared eligibility API retirement
+audit; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
 two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
@@ -725,8 +726,9 @@ model call.
 `evaluateAutomaticUsePiecePool` in `eligibility.js`, which executes that verdict for every piece and
 returns typed findings plus eligible/excluded projections. `evaluateAutomaticUsePiecePoolCore`
 owns the dependency-neutral pool mechanics used by that public adapter and by recovery inside
-`rules.js`. The legacy `filterWholeWardrobePiecesForGeneration` shape is a projection over the same
-core and has no production callers. `scoreWholeWardrobeCandidate` uses the piece verdict as a `-18`
+`rules.js`. As of Slice 7 (2026-08-25), the legacy
+`filterWholeWardrobePiecesForGeneration` response adapter is deleted; tracked tests and diagnostics
+consume the shared pool result directly. `scoreWholeWardrobeCandidate` uses the piece verdict as a `-18`
 support-only *penalty*, not a block. The hard gate itself returns
 `{allowed, supportOnly, reasons}`; `allowed` is simply `reasons.length === 0`.
 

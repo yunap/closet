@@ -14,8 +14,14 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db, parsePiece } = await import('../db.js')
-const { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration, buildVisualComposerRoster } = await import('../styling-engine/rules.js')
+const { wholeWardrobePieceTrustDecision, buildVisualComposerRoster } = await import('../styling-engine/rules.js')
+const { evaluateAutomaticUsePiecePool } = await import('../styling-engine/eligibility.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+
+function generationPool(pieces, context) {
+  const result = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
+  return { allowedPieces: result.eligiblePieces, suppressedPieces: result.underlyingExcludedPieces }
+}
 
 test('Part 1 & 5 — Exclusion toggle API database mechanics', () => {
   // Let's create a temporary piece to test database toggling
@@ -124,7 +130,7 @@ test('Part 1, 4 & 5 — Exclusion logic propagates to candidate generation and v
   const pool = [pieceExcluded, pieceAllowed]
 
   // Flow A: Candidate pool filter
-  const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, { occasion: 'Outdoor Active' })
+  const { allowedPieces } = generationPool(pool, { occasion: 'Outdoor Active' })
   const allowedIds = allowedPieces.map(p => p.id)
   assert.ok(!allowedIds.includes(9998), 'Excluded piece must not be allowed in generation flow')
   assert.ok(allowedIds.includes(9997), 'Allowed piece must be present')
@@ -155,7 +161,7 @@ test('Part 4 & 5 — Ratified occasion "concert" behavior', () => {
     occasion_exclusions: []
   }
 
-  const { allowedPieces } = filterWholeWardrobePiecesForGeneration([pieceExcluded, pieceAllowed], { occasion: 'concert' })
+  const { allowedPieces } = generationPool([pieceExcluded, pieceAllowed], { occasion: 'concert' })
   const allowedIds = allowedPieces.map(p => p.id)
   assert.ok(!allowedIds.includes(8888), 'Should suppress concert exclusion under profiled concert occasion')
   assert.ok(allowedIds.includes(8887), 'Should allow the other piece')

@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration } from '../styling-engine/rules.js'
+import { wholeWardrobePieceTrustDecision } from '../styling-engine/rules.js'
+import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
+
+function generationPool(pieces, context) {
+  const result = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
+  return { allowedPieces: result.eligiblePieces, suppressedPieces: result.underlyingExcludedPieces }
+}
 
 // Spec 5 (superseded by spec 8, 2026-07-09): register-ceiling gate for the trip-precompose path.
 // Originally opt-in (options.applyRegisterCeiling / options.registerCeiling), mirroring spec 1's
@@ -42,8 +48,8 @@ test('wholeWardrobePieceTrustDecision allows a flat, high-support shoe for the s
   assert.equal(decision.allowed, true)
 })
 
-test('filterWholeWardrobePiecesForGeneration excludes the dressy piece from allowedPieces with no opt-in needed', () => {
-  const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration([dressyPiece, everydayPiece], {
+test('shared automatic-use pool excludes the dressy piece with no opt-in needed', () => {
+  const { allowedPieces, suppressedPieces } = generationPool([dressyPiece, everydayPiece], {
     occasion: 'gallery / art event'
   })
   assert.ok(!allowedPieces.some(p => p.id === dressyPiece.id), 'dressy piece must not appear in allowedPieces')
@@ -51,8 +57,8 @@ test('filterWholeWardrobePiecesForGeneration excludes the dressy piece from allo
   assert.ok(suppressedPieces.some(p => p.id === dressyPiece.id), 'dressy piece should be recorded as suppressed with a reason')
 })
 
-test('filterWholeWardrobePiecesForGeneration excludes the high-heel shoe from allowedPieces for a walking activity', () => {
-  const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration([highHeelShoe, flatShoe], {
+test('shared automatic-use pool excludes the high-heel shoe for a walking activity', () => {
+  const { allowedPieces, suppressedPieces } = generationPool([highHeelShoe, flatShoe], {
     occasion: 'city',
     activity: 'walking'
   })

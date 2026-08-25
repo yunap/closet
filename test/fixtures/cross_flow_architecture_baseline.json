@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "auditBaseline": "c1693a8e8f76881d5cb3d87c173ea21fed6ccb53",
   "fixturePieceIds": [
     101,
@@ -187,34 +187,6 @@
             "owner_constraint_1_prohibited_for_season_summer": 1,
             "register_dressy_exceeds_everyday_ceiling": 1,
             "register_elevated_exceeds_everyday_ceiling": 2
-          }
-        },
-        "wholeWardrobeFilter": {
-          "allowedIds": [
-            101,
-            102,
-            104,
-            201,
-            202,
-            301,
-            401,
-            501,
-            502,
-            504
-          ],
-          "suppressed": {
-            "103": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "203": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "302": [
-              "register: dressy exceeds everyday ceiling"
-            ],
-            "503": [
-              "owner constraint 1: prohibited for season summer"
-            ]
           }
         },
         "visualRoster": {
@@ -559,38 +531,6 @@
             "register_elevated_exceeds_everyday_ceiling": 2
           }
         },
-        "wholeWardrobeFilter": {
-          "allowedIds": [
-            101,
-            104,
-            201,
-            202,
-            301,
-            401,
-            501,
-            504
-          ],
-          "suppressed": {
-            "102": [
-              "hot weather: insulating fiber"
-            ],
-            "103": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "203": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "302": [
-              "register: dressy exceeds everyday ceiling"
-            ],
-            "502": [
-              "activity profile: low support unsuitable"
-            ],
-            "503": [
-              "owner constraint 1: prohibited for season summer"
-            ]
-          }
-        },
         "visualRoster": {
           "rosterIds": [
             101,
@@ -908,32 +848,6 @@
           "findingCounts": {
             "register_dressy_exceeds_everyday_ceiling": 1,
             "register_elevated_exceeds_everyday_ceiling": 2
-          }
-        },
-        "wholeWardrobeFilter": {
-          "allowedIds": [
-            101,
-            102,
-            104,
-            201,
-            202,
-            301,
-            401,
-            501,
-            502,
-            503,
-            504
-          ],
-          "suppressed": {
-            "103": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "203": [
-              "register: elevated exceeds everyday ceiling"
-            ],
-            "302": [
-              "register: dressy exceeds everyday ceiling"
-            ]
           }
         },
         "visualRoster": {

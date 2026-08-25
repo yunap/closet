@@ -2753,23 +2753,9 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   }
 }
 
-export function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
-  const result = evaluateAutomaticUsePiecePoolCore({
-    pieces: allPieces,
-    context: options,
-    policy: { hotOuterwearCap: 3 },
-    decidePiece: wholeWardrobePieceTrustDecision,
-  })
-  return {
-    allowedPieces: result.eligiblePieces,
-    suppressedPieces: result.underlyingExcludedPieces.map(entry => ({
-      id: entry.id,
-      name: entry.name,
-      category: wardrobeCategoryGroup(entry.piece),
-      reasons: entry.reasons,
-    })),
-  }
-}
+// Slice 7 (2026-08-25): filterWholeWardrobePiecesForGeneration was a compatibility projection
+// over evaluateAutomaticUsePiecePool and had no production consumers. It was removed so tests and
+// diagnostics cannot accidentally establish the retired response shape as a second eligibility API.
 
 export function buildVisualComposerRoster(allowedPieces = [], {
   occasion = 'casual',

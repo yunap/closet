@@ -16,8 +16,6 @@ const {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } = await import('../styling-engine/eligibility.js')
 const {
-  filterWholeWardrobePiecesForGeneration,
-  selectCandidatesForOutfitGeneration,
   wholeWardrobeOutfitLooksQuestionable,
   wholeWardrobeOutfitVisualReviewFindings,
 } = await import('../styling-engine/rules.js')
@@ -95,26 +93,7 @@ test('hot-weather outerwear capacity and anchor bypass are explicit pool policy'
   assert.equal(result.debug.bypassedAnchorCount, 1)
 })
 
-test('legacy whole-filter projection delegates to the shared pool without changing eligibility', () => {
-  const pieces = [
-    piece(45, { category: 'outerwear', name: 'Light layer A', fabric_weight: 'light' }),
-    piece(46, { category: 'outerwear', name: 'Light layer B', fabric_weight: 'light' }),
-    piece(47, { category: 'outerwear', name: 'Medium layer A', fabric_weight: 'medium' }),
-    piece(48, { category: 'outerwear', name: 'Medium layer B', fabric_weight: 'medium' }),
-    piece(49, { name: 'Blocked heel', heel_height: 'high', walk_support: 'low', shoe_type: 'pump' }),
-  ]
-  const context = { occasion: 'city', activity: 'walking', weatherProfile: { isHot: true, isCold: false } }
-  const shared = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
-  const legacy = filterWholeWardrobePiecesForGeneration(pieces, context)
-
-  assert.deepEqual(legacy.allowedPieces.map(item => item.id), shared.eligiblePieces.map(item => item.id))
-  assert.deepEqual(
-    new Map(legacy.suppressedPieces.map(item => [item.id, item.reasons])),
-    new Map(shared.underlyingExcludedPieces.map(item => [item.id, item.reasons])),
-  )
-})
-
-test('selected candidate adapter preserves the existing ranking while reusing one pool verdict', () => {
+test('selected candidate adapter exposes ranking and its one shared pool verdict together', () => {
   const anchor = piece(50, { category: 'top', name: 'Selected top' })
   const candidates = [
     piece(51, { category: 'bottom', name: 'Bottom A' }),
@@ -123,13 +102,11 @@ test('selected candidate adapter preserves the existing ranking while reusing on
     piece(54, { name: 'Blocked heel', heel_height: 'high', walk_support: 'low', shoe_type: 'pump' }),
   ]
   const context = { occasion: 'city', activity: 'walking', weatherProfile: { isHot: false, isCold: false } }
-  const legacy = selectCandidatesForOutfitGeneration(anchor, candidates, 4, context)
   const shared = selectAutomaticUseCandidatesForOutfitGeneration({ anchorPiece: anchor, pieces: candidates, limit: 4, context })
 
-  assert.deepEqual(
-    shared.rankedCandidates.map(entry => [entry.piece.id, entry.autoUseBlocked, entry.autoUseBlockReasons]),
-    legacy.map(entry => [entry.piece.id, entry.autoUseBlocked, entry.autoUseBlockReasons]),
-  )
+  assert.equal(shared.rankedCandidates.some(entry => entry.piece.id === 54), false)
+  assert.equal(shared.rankedCandidates.find(entry => entry.piece.id === 53)?.autoUseBlocked, false)
+  assert.equal(shared.eligibility.decisionsById.get(54)?.allowed, false)
   assert.equal(shared.eligibility.decisionsById.size, candidates.length)
 })
 

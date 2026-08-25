@@ -3704,7 +3704,7 @@ test('buildCapsuleBench honours the per-slot minimum — a low-ranked piece that
   }
   // The gate's occasion filter passes casual tops/shoes for an 'evening'
   // slot on trust/formality grounds even without an 'evening' occasion tag
-  // (measured: filterWholeWardrobePiecesForGeneration), but excludes
+  // (measured: evaluateAutomaticUsePiecePool), but excludes
   // bottoms lacking one — so this bottom is the only thing that can complete
   // a Restaurant Dinner core, low-scoring (single occasion tag, patterned,
   // non-neutral) so a plain rank cut would leave it out.

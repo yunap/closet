@@ -132,10 +132,9 @@ flowchart TD
 
 Engineer notes:
 
-- **One suppression result.** Whole-wardrobe generation no longer assembles
-  `filterWholeWardrobePiecesForGeneration` locally. It consumes typed hard-gate/capacity findings
-  from `evaluateAutomaticUsePiecePool`; the older filter remains a compatibility adapter for
-  plan/capsule/recovery consumers not yet migrated.
+- **One suppression result.** Whole-wardrobe generation consumes typed hard-gate/capacity findings
+  from `evaluateAutomaticUsePiecePool`. Slice 7 (2026-08-25) deleted the older compatibility
+  response adapter after plan, capsule, recovery, tests, and tracked diagnostics migrated.
 
 - **Selected-piece bypass.** Every gate checks `isSelected(p)` first — a pinned
   piece skips every exclusion (photo, category, weather, register, cap). This
