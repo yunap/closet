@@ -14,6 +14,7 @@ inferring intent from implementation. See §"How to use this index" at the botto
 
 | If you are asking… | Read first |
 |---|---|
+| What does this term mean? Is "piece"/"garment"/"item" the same thing? What's a "roster" vs a "candidate"? | [CONTEXT.md](CONTEXT.md) — canonical domain vocabulary, read this before trusting any term used loosely elsewhere |
 | A user typed a message into the chat — what happens next? | [message-lifecycle.md](message-lifecycle.md) — routing, prompt, model call, answer, follow-up, end to end |
 | Why did the engine allow / block / rank this garment? | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | What did the user tell the app, where did it go, who reads it, with what authority? | [feedback-and-memory-map.md](feedback-and-memory-map.md) |
