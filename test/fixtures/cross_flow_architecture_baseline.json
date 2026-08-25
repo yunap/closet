@@ -1,0 +1,901 @@
+{
+  "schemaVersion": 1,
+  "auditBaseline": "c1693a8e8f76881d5cb3d87c173ea21fed6ccb53",
+  "fixturePieceIds": [
+    101,
+    102,
+    103,
+    104,
+    201,
+    202,
+    203,
+    301,
+    302,
+    401,
+    501,
+    502,
+    503,
+    504
+  ],
+  "scenarios": {
+    "casual_neutral": {
+      "context": {
+        "intent": {
+          "occasion": "casual",
+          "season": "current season",
+          "mood": "easy city day",
+          "mission": "mix"
+        },
+        "occasionProfile": "casual",
+        "activityProfile": null,
+        "suppliedWeather": {
+          "isHot": false,
+          "isCold": false,
+          "isWetExposure": false,
+          "weatherSource": "fixture"
+        },
+        "heuristicWeather": {
+          "isHot": true,
+          "isCold": false,
+          "isWetExposure": false
+        }
+      },
+      "candidates": {
+        "trust": {
+          "allowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ],
+            "503": [
+              "owner constraint 1: prohibited for season summer"
+            ]
+          }
+        },
+        "wholeWardrobeFilter": {
+          "allowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ],
+            "503": [
+              "owner constraint 1: prohibited for season summer"
+            ]
+          }
+        },
+        "visualRoster": {
+          "rosterIds": [
+            101,
+            104,
+            102,
+            201,
+            202,
+            501,
+            301
+          ],
+          "excluded": {
+            "103": "register: elevated exceeds everyday ceiling",
+            "203": "register: elevated exceeds everyday ceiling",
+            "302": "register: dressy exceeds everyday ceiling",
+            "401": "roster cap: category limit",
+            "502": "roster cap: category limit",
+            "503": "roster cap: category limit",
+            "504": "roster cap: category limit"
+          },
+          "excludedCounts": {
+            "register: dressy exceeds everyday ceiling": 1,
+            "register: elevated exceeds everyday ceiling": 2,
+            "roster cap: category limit": 4
+          },
+          "slotCoverage": {
+            "top": 3,
+            "bottom": 2,
+            "dress": 1,
+            "shoes": 1,
+            "outerwear": 0,
+            "accessory": 0
+          },
+          "cap": {
+            "requested": 10,
+            "applied": true,
+            "cutPieceIds": [
+              504,
+              502,
+              503,
+              401
+            ]
+          }
+        },
+        "selectedPieceCandidates": [
+          {
+            "id": 201,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 202,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 501,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 504,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 502,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 401,
+            "blocked": false,
+            "blockReasons": []
+          }
+        ],
+        "planWorkbench": {
+          "allowedIds": [
+            104,
+            101,
+            102,
+            202,
+            201,
+            301,
+            504,
+            503,
+            502,
+            501,
+            401
+          ],
+          "gateAllowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ]
+          },
+          "weatherUsed": "mild weather"
+        },
+        "capsule": {
+          "requestedBudget": 10,
+          "requestedBenchSize": 10,
+          "rosterIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502
+          ],
+          "postConditionGaps": [],
+          "benchIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503
+          ],
+          "benchUnmetTargets": [
+            {
+              "group": "shoes",
+              "target": 4,
+              "actual": 3,
+              "eligible": 4
+            }
+          ],
+          "validation": {
+            "ok": true,
+            "failures": []
+          }
+        }
+      }
+    },
+    "hot_hiking": {
+      "context": {
+        "intent": {
+          "occasion": "travel",
+          "season": "summer",
+          "mood": "hot outdoor hiking day",
+          "mission": "mix"
+        },
+        "occasionProfile": null,
+        "activityProfile": "hiking",
+        "suppliedWeather": {
+          "isHot": true,
+          "isCold": false,
+          "isWetExposure": false,
+          "weatherSource": "fixture"
+        },
+        "heuristicWeather": {
+          "isHot": true,
+          "isCold": false,
+          "isWetExposure": false
+        }
+      },
+      "candidates": {
+        "trust": {
+          "allowedIds": [
+            101,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            504
+          ],
+          "suppressed": {
+            "102": [
+              "hot weather: insulating fiber"
+            ],
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ],
+            "502": [
+              "activity profile: low support unsuitable"
+            ],
+            "503": [
+              "owner constraint 1: prohibited for season summer"
+            ]
+          }
+        },
+        "wholeWardrobeFilter": {
+          "allowedIds": [
+            101,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            504
+          ],
+          "suppressed": {
+            "102": [
+              "hot weather: insulating fiber"
+            ],
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ],
+            "502": [
+              "activity profile: low support unsuitable"
+            ],
+            "503": [
+              "owner constraint 1: prohibited for season summer"
+            ]
+          }
+        },
+        "visualRoster": {
+          "rosterIds": [
+            101,
+            104,
+            201,
+            202,
+            301,
+            501,
+            401
+          ],
+          "excluded": {
+            "102": "hot weather: insulating fiber",
+            "103": "register: elevated exceeds everyday ceiling",
+            "203": "register: elevated exceeds everyday ceiling",
+            "302": "register: dressy exceeds everyday ceiling",
+            "502": "footwear: low support unsuitable for Hiking / Outdoor active",
+            "503": "footwear: low heel unsuitable for Hiking / Outdoor active",
+            "504": "metadata missing: footwear comfort (activity gate active)"
+          },
+          "excludedCounts": {
+            "footwear: low heel unsuitable for Hiking / Outdoor active": 1,
+            "footwear: low support unsuitable for Hiking / Outdoor active": 1,
+            "hot weather: insulating fiber": 1,
+            "metadata missing: footwear comfort (activity gate active)": 1,
+            "register: dressy exceeds everyday ceiling": 1,
+            "register: elevated exceeds everyday ceiling": 2
+          },
+          "slotCoverage": {
+            "top": 2,
+            "bottom": 2,
+            "dress": 1,
+            "shoes": 1,
+            "outerwear": 1,
+            "accessory": 0
+          },
+          "cap": {
+            "requested": 10,
+            "applied": false,
+            "cutPieceIds": []
+          }
+        },
+        "selectedPieceCandidates": [
+          {
+            "id": 201,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 202,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 501,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 504,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 401,
+            "blocked": false,
+            "blockReasons": []
+          }
+        ],
+        "planWorkbench": {
+          "allowedIds": [
+            104,
+            101,
+            202,
+            201,
+            301,
+            504,
+            501,
+            401
+          ],
+          "gateAllowedIds": [
+            101,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            504
+          ],
+          "suppressed": {
+            "102": [
+              "hot weather: insulating fiber"
+            ],
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ],
+            "502": [
+              "activity profile: low support unsuitable"
+            ],
+            "503": [
+              "activity profile: low heel unsuitable"
+            ]
+          },
+          "weatherUsed": "hot weather"
+        },
+        "capsule": {
+          "requestedBudget": 10,
+          "requestedBenchSize": 10,
+          "rosterIds": [
+            101,
+            104,
+            202,
+            201,
+            301,
+            401,
+            501,
+            504
+          ],
+          "postConditionGaps": [],
+          "benchIds": [
+            101,
+            104,
+            202,
+            201,
+            301,
+            401,
+            501,
+            504
+          ],
+          "benchUnmetTargets": [],
+          "validation": {
+            "ok": true,
+            "failures": []
+          }
+        }
+      }
+    },
+    "capacity_pressure": {
+      "context": {
+        "intent": {
+          "occasion": "casual",
+          "season": "spring",
+          "mood": "ordinary mild day",
+          "mission": "mix"
+        },
+        "occasionProfile": "casual",
+        "activityProfile": null,
+        "suppliedWeather": {
+          "isHot": false,
+          "isCold": false,
+          "isWetExposure": false,
+          "weatherSource": "fixture"
+        },
+        "heuristicWeather": {
+          "isHot": false,
+          "isCold": false,
+          "isWetExposure": false
+        }
+      },
+      "candidates": {
+        "trust": {
+          "allowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ]
+          }
+        },
+        "wholeWardrobeFilter": {
+          "allowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ]
+          }
+        },
+        "visualRoster": {
+          "rosterIds": [
+            101,
+            201
+          ],
+          "excluded": {
+            "102": "roster cap: category limit",
+            "103": "register: elevated exceeds everyday ceiling",
+            "104": "roster cap: category limit",
+            "202": "roster cap: category limit",
+            "203": "register: elevated exceeds everyday ceiling",
+            "301": "roster cap: category limit",
+            "302": "register: dressy exceeds everyday ceiling",
+            "401": "roster cap: category limit",
+            "501": "roster cap: category limit",
+            "502": "roster cap: category limit",
+            "503": "roster cap: category limit",
+            "504": "roster cap: category limit"
+          },
+          "excludedCounts": {
+            "register: dressy exceeds everyday ceiling": 1,
+            "register: elevated exceeds everyday ceiling": 2,
+            "roster cap: category limit": 9
+          },
+          "slotCoverage": {
+            "top": 1,
+            "bottom": 1,
+            "dress": 0,
+            "shoes": 0,
+            "outerwear": 0,
+            "accessory": 0
+          },
+          "cap": {
+            "requested": 5,
+            "applied": true,
+            "cutPieceIds": [
+              104,
+              102,
+              202,
+              501,
+              504,
+              502,
+              503,
+              301,
+              401
+            ]
+          }
+        },
+        "selectedPieceCandidates": [
+          {
+            "id": 201,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 202,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 501,
+            "blocked": false,
+            "blockReasons": []
+          },
+          {
+            "id": 504,
+            "blocked": false,
+            "blockReasons": []
+          }
+        ],
+        "planWorkbench": {
+          "allowedIds": [
+            104,
+            101,
+            102,
+            202,
+            201,
+            301,
+            504,
+            503,
+            502,
+            501,
+            401
+          ],
+          "gateAllowedIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
+          "suppressed": {
+            "103": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "203": [
+              "register: elevated exceeds everyday ceiling"
+            ],
+            "302": [
+              "register: dressy exceeds everyday ceiling"
+            ]
+          },
+          "weatherUsed": "mild weather"
+        },
+        "capsule": {
+          "requestedBudget": 6,
+          "requestedBenchSize": 5,
+          "rosterIds": [
+            101,
+            102,
+            201,
+            202,
+            301,
+            501
+          ],
+          "postConditionGaps": [],
+          "benchIds": [
+            101,
+            102,
+            201,
+            202,
+            301,
+            501
+          ],
+          "benchUnmetTargets": [
+            {
+              "group": "top",
+              "target": 3,
+              "actual": 2,
+              "eligible": 3
+            },
+            {
+              "group": "shoes",
+              "target": 4,
+              "actual": 1,
+              "eligible": 4
+            }
+          ],
+          "validation": {
+            "ok": true,
+            "failures": []
+          }
+        }
+      }
+    }
+  },
+  "validation": [
+    {
+      "id": "valid_separates",
+      "core": {
+        "valid": true,
+        "gap": ""
+      },
+      "freeformRoles": {
+        "issues": []
+      },
+      "wholeGate": {
+        "accepted": true,
+        "rejectedReasons": []
+      },
+      "wholeAdvisor": {
+        "accepted": true,
+        "flags": [],
+        "rejectedReasons": []
+      },
+      "plan": {
+        "accepted": true,
+        "failureReasons": []
+      }
+    },
+    {
+      "id": "missing_shoes",
+      "core": {
+        "valid": false,
+        "gap": "missing shoes"
+      },
+      "freeformRoles": {
+        "issues": [
+          "outfit is missing shoes — every proposed outfit card needs actual footwear; missing_gaps may explain the wardrobe gap but cannot satisfy the shoes slot"
+        ]
+      },
+      "wholeGate": {
+        "accepted": false,
+        "rejectedReasons": [
+          "not a complete wardrobe outfit"
+        ]
+      },
+      "wholeAdvisor": {
+        "accepted": false,
+        "flags": [],
+        "rejectedReasons": [
+          "not a complete wardrobe outfit"
+        ]
+      },
+      "plan": {
+        "accepted": false,
+        "failureReasons": [
+          "missing shoes"
+        ]
+      }
+    },
+    {
+      "id": "two_shoes",
+      "core": {
+        "valid": false,
+        "gap": "more than one shoe option was submitted"
+      },
+      "freeformRoles": {
+        "issues": [
+          "more than one shoes — unresolved shoes slot"
+        ]
+      },
+      "wholeGate": {
+        "accepted": false,
+        "rejectedReasons": [
+          "not a complete wardrobe outfit"
+        ]
+      },
+      "wholeAdvisor": {
+        "accepted": false,
+        "flags": [],
+        "rejectedReasons": [
+          "not a complete wardrobe outfit"
+        ]
+      },
+      "plan": {
+        "accepted": false,
+        "failureReasons": [
+          "more than one shoe option was submitted"
+        ]
+      }
+    },
+    {
+      "id": "dependent_top_without_base",
+      "core": {
+        "valid": true,
+        "gap": ""
+      },
+      "freeformRoles": {
+        "issues": []
+      },
+      "wholeGate": {
+        "accepted": true,
+        "rejectedReasons": []
+      },
+      "wholeAdvisor": {
+        "accepted": true,
+        "flags": [],
+        "rejectedReasons": []
+      },
+      "plan": {
+        "accepted": false,
+        "failureReasons": [
+          "Sheer mesh shell cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom"
+        ]
+      }
+    },
+    {
+      "id": "dress_plus_top_unseen",
+      "core": {
+        "valid": true,
+        "gap": ""
+      },
+      "freeformRoles": {
+        "issues": [
+          "a dress cannot be combined with a primary_top/primary_bottom — choose separates or a dress"
+        ]
+      },
+      "wholeGate": {
+        "accepted": true,
+        "rejectedReasons": []
+      },
+      "wholeAdvisor": {
+        "accepted": true,
+        "flags": [
+          {
+            "type": "layering",
+            "message": "This look layers a top with the dress and the stylist did not say why — treat the top as optional."
+          }
+        ],
+        "rejectedReasons": []
+      },
+      "plan": {
+        "accepted": false,
+        "failureReasons": [
+          "Navy cotton tee + Blue cotton day dress has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer",
+          "this outfit layers a top over a dress — call view_pieces on [301, 101] first, then resubmit; layering is a sight-required decision."
+        ]
+      }
+    }
+  ],
+  "recovery": {
+    "selectedLocalFallback": [
+      {
+        "label": "Controlled contrast variation",
+        "pieceIds": [
+          101,
+          202,
+          504,
+          401
+        ]
+      },
+      {
+        "label": "Most specific wardrobe direction",
+        "pieceIds": [
+          101,
+          201,
+          501
+        ]
+      }
+    ],
+    "planCompletion": {
+      "acceptedPieceIds": [
+        [
+          101,
+          201,
+          501
+        ]
+      ],
+      "remainingFailures": [],
+      "completions": [
+        {
+          "slotId": "fixture-slot",
+          "title": "Sneakers fixture",
+          "filled": true,
+          "group": "shoes",
+          "addedPieceId": 501,
+          "addedPieceName": "White supportive sneakers",
+          "matchesCardText": true
+        }
+      ]
+    }
+  }
+}

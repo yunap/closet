@@ -1,5 +1,7 @@
 # yunap-closet
 
+**Status:** Active — canonical domain vocabulary, introduced by PR 253 on 2026-08-24.
+
 An AI-driven wardrobe and styling assistant: a user's photographed pieces are tagged, ranked,
 and composed into outfits and capsules by a model-in-the-loop engine, gated by deterministic
 rules and shaped by the user's own feedback and standing preferences.

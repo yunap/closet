@@ -1,5 +1,7 @@
 # Closet docs — index and routing
 
+**Status:** Active — canonical documentation index.
+
 **Start here.** This app's behaviour is documented before it is coded: the maps and ratified
 documents below state *intent*, and the code implements it. Reading code without reading intent
 reliably produces confident wrong conclusions — a deliberate design decision looks identical to a
@@ -19,7 +21,7 @@ inferring intent from implementation. See §"How to use this index" at the botto
 | Why did the engine allow / block / rank this garment? | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | What did the user tell the app, where did it go, who reads it, with what authority? | [feedback-and-memory-map.md](feedback-and-memory-map.md) |
 | Where in the UI does this happen, and what can the user actually touch? | [app-surface-map.md](app-surface-map.md) |
-| Which model calls does this flow make, in what order? | [flows/README.md](flows/README.md) — the flow atlas, all 16 model-facing flows |
+| Which model calls does this flow make, in what order? | [flows/README.md](flows/README.md) — the flow atlas, all 18 active flow entries |
 | What does this `pieces` field mean / who fills it in? | [garment-field-reference.md](garment-field-reference.md) |
 | Is this style claim legitimate? | [style_constitution.md](style_constitution.md) — single authority for style claims |
 | What is allowed for this occasion? | [occasion_profiles_ratification.md](occasion_profiles_ratification.md) |
@@ -95,12 +97,15 @@ proposal is not evidence the capability is absent.
 | [active-memory-surface-spec.md](active-memory-surface-spec.md) · [guidance-applicability-review.md](guidance-applicability-review.md) | Owner-guidance surface and applicability |
 | [feedback-audit-backlog.md](feedback-audit-backlog.md) | Hardening the verification tooling itself |
 | [cleanup-inventory.md](cleanup-inventory.md) | Dead-code / duplicate-authority sweep (spec 20), with an explicit scope note |
+| [architecture-ownership-consolidation-spec.md](architecture-ownership-consolidation-spec.md) | Proposed executable-reuse and consolidation protocol across context, Piece facts, eligibility, candidate sets, validation, recovery, prompts, provider paths and state. Stage 1 is census-only and stops for owner review before code changes |
+| [architecture-responsibility-census.md](architecture-responsibility-census.md) | Stage 1 cross-flow reuse census at baseline `c1693a8`: eleven outfit pipelines, duplicated runtime stages ranked by reach and risk, target shared pipeline, migration slices, and eight owner rulings |
 
 ## 4 · Flow atlas
 
-[flows/README.md](flows/README.md) — every model-facing flow as a diagram, grouped A–F (intake ·
-wardrobe composition · editorial · image rendering · evaluation · the `/ask` chat brain).
-Rectangles are app code, hexagons are model calls. Complete: all 16 flows mapped.
+[flows/README.md](flows/README.md) — every provider-facing flow as a diagram, grouped A–F (intake ·
+wardrobe composition · editorial · image rendering · evaluation · the `/ask` chat brain), plus the
+deterministic capsule-repair sibling needed to show the zero-call boundary. Rectangles are app code,
+hexagons are model calls. Complete: all 18 active entries mapped.
 
 ## 5 · Review records and panels — historical, still binding where marked ratified
 
