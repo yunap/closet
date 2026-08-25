@@ -1186,6 +1186,13 @@ it records a useful action or chosen relationship, not an owner's already-known 
 camisole, the shared composer contract made `opacity` and both `needs_base` values authoritative.
 An opaque `needs_base:no` garment cannot acquire an unverified underlayer from visual inference.
 
+**[architecture consolidation, 2026-08-24] `needs_base` has one runtime fact reader.**
+`pieceRequiresBaseLayer` returns true only for normalized explicit `yes`; unset and explicit `no`
+retain the historical independent default. Capsule capacity and outfit checks, protagonist
+ordering, selected local fallback, renderer instructions, and freeform primary-top/dress swaps now
+consume that reader instead of interpreting the field independently. This is a fact consolidation,
+not a new coverage or pair-compatibility rule; the ranking A/B diagnostic reported zero changes.
+
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit
 `styling_instructions` renderer contract, and prose integrity apply wherever

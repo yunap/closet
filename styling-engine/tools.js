@@ -9,7 +9,7 @@ import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
-import { bottomKind, wardrobeCategoryGroup } from './attributes.js'
+import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
 import { evaluateOutfitRoles, OUTFIT_ROLES } from './outfitValidation.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
@@ -1850,7 +1850,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           : db.prepare("SELECT * FROM pieces WHERE status = 'active' AND category = ? ORDER BY id").all(category).map(parsePiece)
         candidates = candidates.filter(piece => Number(piece.id) !== Number(removed.id))
         if (slotRole === 'primary_top' || slotRole === 'dress') {
-          candidates = candidates.filter(piece => String(piece.needs_base || '').toLowerCase().trim() !== 'yes')
+          candidates = candidates.filter(piece => !pieceRequiresBaseLayer(piece))
         }
         const query = String(args?.query || '').toLowerCase().trim()
         const color = String(args?.color || '').toLowerCase().trim()

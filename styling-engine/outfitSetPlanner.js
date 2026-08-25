@@ -54,7 +54,8 @@ import {
   sleeveCoverage,
   pieceHasExplicitTopLayerEvidence,
   pieceHasExplicitBaseLayerEvidence,
-  pieceDressSupportsUnderlayer
+  pieceDressSupportsUnderlayer,
+  pieceRequiresBaseLayer
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
@@ -653,7 +654,7 @@ export function describeCapsuleUndemonstratedJobs(roster = [], cards = []) {
   // Special jobs, each one a structured fact rather than an inference. A
   // dependent piece costs two roster slots to produce one look, so a
   // never-demonstrated one is the most expensive kind of unused piece.
-  const dependents = rosterPieces.filter(pieceNeedsBase)
+  const dependents = rosterPieces.filter(pieceRequiresBaseLayer)
   const unusedDependents = dependents.filter(piece => !isUsed(piece))
   if (unusedDependents.length) {
     jobs.push(`${unusedDependents.length} of ${dependents.length} piece(s) that need a base under them appear in no look — ${nameList(unusedDependents)}`)
@@ -1471,15 +1472,6 @@ const CAPSULE_STATED_PALETTE_BONUS = 14
 // the bench cannot offer a piece no card could ever contain.
 const CAPSULE_COMPOSABLE_GROUPS = new Set(['top', 'bottom', 'dress', 'outerwear', 'shoes'])
 
-// Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
-// this garment cannot be worn against skin on its own. In a finite capsule it
-// therefore costs two roster slots to produce one look — fine when a base is
-// there, dead weight when it isn't. Only 'yes' counts: unset means nobody has
-// looked, and must behave exactly as it did before the field existed.
-function pieceNeedsBase(piece = {}) {
-  return String(piece?.needs_base || '').toLowerCase() === 'yes'
-}
-
 // The single, shared definition of "a top that can serve as a base," used
 // everywhere a dependent's base needs to be found — capacity math, slot
 // validation, outfit validation, and the roster-level guarantee — so none of
@@ -1496,7 +1488,7 @@ function pieceNeedsBase(piece = {}) {
 // right under this specific piece."
 function isCapsuleBaseCandidate(piece = {}) {
   if (wardrobeCategoryGroup(piece) !== 'top') return false
-  if (pieceNeedsBase(piece)) return false
+  if (pieceRequiresBaseLayer(piece)) return false
   const opacity = String(piece?.opacity || '').toLowerCase().trim()
   return !['sheer', 'semi_sheer', 'open_weave'].includes(opacity)
 }
@@ -1738,7 +1730,7 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
   // can go under it. Absent any `needs_base` piece the condition is not added
   // at all, so an unpopulated field changes nothing anywhere.
   const dependentTops = (Array.isArray(roster) ? roster : [])
-    .filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+    .filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
   if (dependentTops.length) {
     conditions.push({
       code: 'base_for_dependent_top',
@@ -1791,7 +1783,7 @@ export function capsuleConditionMatches(piece, condition, roster = []) {
   if (!((condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) && condition.predicate(piece))) {
     return false
   }
-  if (condition.group === 'top' && condition.code !== 'base_for_dependent_top' && pieceNeedsBase(piece)) {
+  if (condition.group === 'top' && condition.code !== 'base_for_dependent_top' && pieceRequiresBaseLayer(piece)) {
     return (Array.isArray(roster) ? roster : []).some(isCapsuleBaseCandidate)
   }
   return true
@@ -2214,8 +2206,8 @@ export function buildCapsuleBench(pool = [], {
   // This copy is what the guarantee had drifted away from.
   const protagonists = ranked.filter(pieceReadsAsProtagonist)
   protagonists.sort((a, b) => {
-    const aNeedsBase = a.needs_base === 'yes' ? 1 : 0
-    const bNeedsBase = b.needs_base === 'yes' ? 1 : 0
+    const aNeedsBase = pieceRequiresBaseLayer(a) ? 1 : 0
+    const bNeedsBase = pieceRequiresBaseLayer(b) ? 1 : 0
     if (aNeedsBase !== bNeedsBase) return aNeedsBase - bNeedsBase
     return (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
   })
@@ -2471,7 +2463,7 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.tuck_behavior ? `tuck:${piece.tuck_behavior}` : '',
     waistbandConstraint,
     piece.opacity && piece.opacity !== 'opaque' ? `opacity:${piece.opacity}` : '',
-    piece.needs_base === 'yes' ? 'NEEDS_BASE_LAYER' : '',
+    pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
     piece.visual_weight ? `weight:${piece.visual_weight}` : '',
@@ -2622,7 +2614,7 @@ function capsuleSlotCoreKeys(piecesById = new Map(), slot = {}) {
   // not thereby barred from being its own outfit's top. Only a dependent
   // top's OWN core-forming ability depends on whether a base exists here.
   const hasStandaloneBaseHere = tops.some(isCapsuleBaseCandidate)
-  const coreCapableTops = tops.filter(top => !pieceNeedsBase(top) || hasStandaloneBaseHere)
+  const coreCapableTops = tops.filter(top => !pieceRequiresBaseLayer(top) || hasStandaloneBaseHere)
   for (const top of coreCapableTops) {
     for (const bottom of bottoms) cores.add(`separates:${Number(top.id)}:${Number(bottom.id)}`)
   }
@@ -2808,7 +2800,7 @@ export function validateCapsuleRoster(roster = [], {
   // unpopulated field is a strict no-op.
   for (const { slot, index, slotEligible } of gateSlots) {
     const dependents = slotEligible.filter(piece =>
-      wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+      wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
     if (!dependents.length) continue
     if (slotEligible.some(isCapsuleBaseCandidate)) continue
     // Same supply attribution the post-conditions use: a wardrobe that has no
@@ -3410,7 +3402,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     if (rosterPieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')) {
       capsuleFunctionalJobs.push('the layer(s) it holds, worn in at least one look')
     }
-    const dependents = rosterPieces.filter(pieceNeedsBase)
+    const dependents = rosterPieces.filter(pieceRequiresBaseLayer)
     if (dependents.length) {
       capsuleFunctionalJobs.push(dependents.length > 1
         ? 'each piece that cannot be worn alone, over a DIFFERENT base and in a different context — repeating one base under all of them demonstrates bookkeeping, not breadth'
@@ -3971,7 +3963,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // model tool-loop submit_plan_outfits), so a trip or work-week plan
       // that happens to include a needs_base piece is covered too — same
       // defect, same fix, not new scope.
-      const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+      const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
       if (dependentTops.length && !pieces.some(isCapsuleBaseCandidate)) {
         reasons.push(`${dependentTops.map(piece => piece.name || `piece ${piece.id}`).join(', ')} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`)
       }
@@ -4059,7 +4051,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         const supportsOverlay = pieceHasExplicitTopLayerEvidence(topPiece)
         const supportsUnderlayer = pieceHasExplicitBaseLayerEvidence(topPiece) ||
           pieceDressSupportsUnderlayer(dressPiece) ||
-          (pieceNeedsBase(dressPiece) && isCapsuleBaseCandidate(topPiece))
+          (pieceRequiresBaseLayer(dressPiece) && isCapsuleBaseCandidate(topPiece))
         if (!supportsOverlay && !supportsUnderlayer) {
           reasons.push(`${topPiece?.name || `piece ${topPair.id}`} + ${dressPiece?.name || `piece ${dressPair.id}`} has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer`)
         }

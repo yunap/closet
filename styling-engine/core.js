@@ -83,7 +83,7 @@ import {
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
-import { visuallyPrioritizedPieces } from './attributes.js'
+import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -714,7 +714,7 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
   // only option, never displacing a standalone piece that needed no layering
   // this fallback can't provide.
   for (const cat of ['top', 'dress', 'outerwear']) {
-    byCategory[cat].sort((a, b) => (a.needs_base === 'yes' ? 1 : 0) - (b.needs_base === 'yes' ? 1 : 0))
+    byCategory[cat].sort((a, b) => Number(pieceRequiresBaseLayer(a)) - Number(pieceRequiresBaseLayer(b)))
   }
 
   const pick = (cat, used = new Set(), predicate = null) => (byCategory[cat] || []).find(p => {
@@ -2082,7 +2082,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
         : (piece.tuck_behavior ? `respect its ${String(piece.tuck_behavior).replaceAll('_', ' ')} wear behavior` : ''),
       piece.waistband_type ? `preserve the ${String(piece.waistband_type).replaceAll('_', ' ')} waistband` : '',
       piece.opacity && piece.opacity !== 'opaque' ? `preserve its ${String(piece.opacity).replaceAll('_', ' ')} opacity` : '',
-      piece.needs_base === 'yes' ? 'show it with a base layer' : '',
+      pieceRequiresBaseLayer(piece) ? 'show it with a base layer' : '',
     ].filter(Boolean)
     return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
   }).join('\n')

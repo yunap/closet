@@ -313,7 +313,7 @@ There is currently no single owner. The shared concept must be split into six qu
 
 | Contract | Current surfaces | Current missing-data behavior | Classification / proposed owner |
 |---|---|---|---|
-| Dependent status: does this piece need something beneath it? | Structured `needs_base`; capsule-local `pieceNeedsBase`; prompt lines | Missing generally means independent | `canonical` reader should live in `attributes.js`; capsule wrapper becomes adapter |
+| Dependent status: does this piece need something beneath it? | Structured `needs_base` through `pieceRequiresBaseLayer`; prompt lines are projections | Only explicit `yes` is dependent; unset and explicit `no` preserve the independent default | `canonical` reader in `attributes.js`; candidate, capsule, fallback, rendering, and swap decisions consume it |
 | Independent coverage: can this top provide usable torso coverage by itself? | `pieceReadsAsStandaloneBaseTop`; capsule-local `isCapsuleBaseCandidate` | Freeform reader may use normalized text fallback; capsule treats unknown opacity as eligible if `needs_base` is false | `unresolved`; one tri-state verdict with explicit evidence and flow policy for `unknown` |
 | Pair mechanics: can base A physically sit beneath dependent piece B? | Visual composer prompt requires close `fit_on_body`; no shared code verdict | Missing fit evidence is left to model judgment | New canonical tri-state verdict consuming structured fit/weight/coverage facts |
 | Layer direction: which piece may sit over/under which? | `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`; plan/freeform checks | Explicit evidence required for unusual direction | Existing attribute readers stay canonical; add a shared direction verdict rather than prompt-only restatement |
@@ -685,6 +685,15 @@ are unchanged; the unused `missingGaps` validator argument was removed because i
 finding. An architecture ratchet prevents the former tool-local validator and category helper from
 returning. Pair mechanics, layer direction/sight, plan slot/set checks, and disposition composition
 remain later Slice 3 work.
+
+**Dependent-fact migration, 2026-08-24:** `pieceRequiresBaseLayer` in `attributes.js` now owns the
+structured question “does this garment require a base beneath it?” Only normalized explicit `yes`
+returns true; unset and explicit `no` remain false, preserving the field's additive default.
+Capsule capacity/validation/guidance, protagonist ordering, selected local-fallback ordering,
+renderer instructions, and freeform primary-top/dress swap filtering all consume that reader. The
+capsule-local fact reader and direct runtime equality checks were removed, with a ratchet preventing
+their return. A ranking A/B comparison against the recorded audit baseline reported zero changed
+scenarios. This does not resolve the different independent-coverage or pair-mechanics contracts.
 
 ### Slice 4 — reusable candidate-set construction
 

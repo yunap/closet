@@ -2,8 +2,17 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
 import { describeOutfitStructureGap, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
+
+test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {
+  assert.equal(pieceRequiresBaseLayer({ needs_base: 'yes' }), true)
+  assert.equal(pieceRequiresBaseLayer({ needs_base: ' YES ' }), true)
+  assert.equal(pieceRequiresBaseLayer({ needs_base: 'no' }), false)
+  assert.equal(pieceRequiresBaseLayer({ needs_base: null }), false)
+  assert.equal(pieceRequiresBaseLayer({}), false)
+})
 
 test('typed structure findings preserve the boolean and diagnosis contracts', () => {
   const top = { category: 'top', name: 'Top' }

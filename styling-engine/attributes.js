@@ -849,6 +849,12 @@ export function hasSleevelessConstruction(p) {
   return String(p?.sleeve_length || '').toLowerCase().trim() === 'sleeveless'
 }
 
+// Canonical structured construction fact. Only explicit "yes" means the garment cannot be worn
+// alone against skin; unset and explicit "no" both preserve the historical independent default.
+export function pieceRequiresBaseLayer(piece = {}) {
+  return String(piece?.needs_base || '').toLowerCase().trim() === 'yes'
+}
+
 function pieceLayerIntentText(piece = {}) {
   const styleProfile = piece.style_profile_json && typeof piece.style_profile_json === 'object'
     ? JSON.stringify(piece.style_profile_json)

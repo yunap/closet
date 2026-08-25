@@ -8,6 +8,8 @@ const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tool
 const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
 const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
 const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
+const attributesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/attributes.js'), 'utf8')
+const coreSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -143,4 +145,18 @@ test('freeform proposal and swap validation consume typed role findings', () => 
   assert.match(toolSource, /evaluateOutfitRoles\(resolved\)\.findings/)
   assert.doesNotMatch(toolSource, /export function validateOutfitRoles\(/)
   assert.doesNotMatch(toolSource, /function roleCategoryIssue\(/)
+})
+
+test('runtime dependent-piece decisions consume one structured needs_base reader', () => {
+  assert.match(attributesSource, /export function pieceRequiresBaseLayer\(/)
+  for (const source of [plannerSource, coreSource, toolSource]) {
+    assert.doesNotMatch(
+      source,
+      /needs_base\s*===\s*['"]yes['"]/,
+    )
+    assert.doesNotMatch(source, /function pieceNeedsBase\(/)
+  }
+  assert.match(plannerSource, /pieceRequiresBaseLayer/)
+  assert.match(coreSource, /pieceRequiresBaseLayer/)
+  assert.match(toolSource, /pieceRequiresBaseLayer/)
 })
