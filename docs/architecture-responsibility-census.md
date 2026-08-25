@@ -314,8 +314,8 @@ There is currently no single owner. The shared concept must be split into six qu
 | Contract | Current surfaces | Current missing-data behavior | Classification / proposed owner |
 |---|---|---|---|
 | Dependent status: does this piece need something beneath it? | Structured `needs_base` through `pieceRequiresBaseLayer`; prompt lines are projections | Only explicit `yes` is dependent; unset and explicit `no` preserve the independent default | `canonical` reader in `attributes.js`; candidate, capsule, fallback, rendering, and swap decisions consume it |
-| Independent coverage: can this top provide usable torso coverage by itself? | `pieceReadsAsStandaloneBaseTop`; capsule-local `isCapsuleBaseCandidate` | Freeform reader may use normalized text fallback; capsule treats unknown opacity as eligible if `needs_base` is false | `unresolved`; one tri-state verdict with explicit evidence and flow policy for `unknown` |
-| Pair mechanics: can base A physically sit beneath dependent piece B? | Visual composer prompt requires close `fit_on_body`; no shared code verdict | Missing fit evidence is left to model judgment | New canonical tri-state verdict consuming structured fit/weight/coverage facts |
+| Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate`; the older `pieceReadsAsStandaloneBaseTop` remains only in ordinary explicit-role direction validation | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
+| Pair mechanics: can base A physically sit beneath dependent piece B? | `evaluateRequiredBaseLayers`, consumed by plan submission and freeform proposal/swap validation; visual composer prompt projects the same close-fit values | Missing opacity or fit returns `unknown` with `sightRequired: both` | `canonical` typed pair/outfit verdict consuming the structured coverage verdict |
 | Layer direction: which piece may sit over/under which? | `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`; plan/freeform checks | Explicit evidence required for unusual direction | Existing attribute readers stay canonical; add a shared direction verdict rather than prompt-only restatement |
 | Sight requirement: must photos be inspected? | Tool sight gates, visual roster, composer prompt | Varies by path and image availability | Shared verdict should name `none`, `one`, or `both`; flow controls whether unavailable sight rejects or discloses uncertainty |
 | Visual success: do neckline, bulk, texture, color, and proportion work? | Visual composer and stylist model | Not deterministically inferable | Model-owned judgment; never converted into keyword taste rules |
@@ -334,9 +334,13 @@ evidence, sightRequired }`. Dependent status and independent coverage can expose
 while pair mechanics consumes both pieces. Flow policy decides what to do with `unknown`; the
 fact owner does not silently turn it into allow or reject.
 
-**Owner rulings required:** For unknown opacity and fit, which flows may proceed to visual judgment,
-which must require sight, and which finite rosters must reserve a safer base? Does a user-selected
-dependent anchor bypass automatic eligibility only if the roster can still supply coverage?
+**Owner ruling, 2026-08-24:** capsule capacity and finite-roster reservation may retain unknown
+historical candidates; sight/model-backed outfit submission requires both the dependent and
+candidate base to be seen when fit or opacity is unknown. Known incompatibility is deterministic.
+This close-fit contract is scoped only to a garment whose card says “Needs a base layer”; ordinary
+inner-garment/outer-layer styling is a separate direction and visual-fit question. Whether a
+user-selected dependent anchor bypasses automatic eligibility when no coverage supply exists
+remains unresolved.
 
 ### 4.6 Composition constraints and prompt projections
 
@@ -693,7 +697,22 @@ Capsule capacity/validation/guidance, protagonist ordering, selected local-fallb
 renderer instructions, and freeform primary-top/dress swap filtering all consume that reader. The
 capsule-local fact reader and direct runtime equality checks were removed, with a ratchet preventing
 their return. A ranking A/B comparison against the recorded audit baseline reported zero changed
-scenarios. This does not resolve the different independent-coverage or pair-mechanics contracts.
+scenarios. At that migration boundary, the different independent-coverage and pair-mechanics
+contracts remained unresolved; the following migration records their later resolution.
+
+**Required-base contract migration, 2026-08-24:** owner review resolved the overloaded term: the
+existing card fact “Needs a base layer” means required coverage for a dependent garment, while
+ordinary layering uses inner garment / outer layer and does not inherit a close-fit rule.
+`evaluateBaseLayerCandidate` now emits `compatible | incompatible | unknown` with typed findings
+from structured `needs_base`, opacity, and `fit_on_body`; `evaluateRequiredBaseLayers` composes the
+same verdict across category-only plan outfits and explicit freeform roles. Capsule capacity,
+postconditions, and supply attribution retain unknown candidates but no longer count known loose
+fits as bases. Submitted plans and `propose_outfit` require sight of both garments when legacy fit
+or opacity is missing, then leave visual success to the model; known incompatible candidates reject
+even after sight. Slot swaps consume the same hard findings. Tests distinguish this from a draped
+blouse under ordinary outerwear, which remains outside the contract. The exact cross-flow baseline
+is unchanged because its dependency fixture has no candidate base; new fixtures cover known close,
+known loose, sheer, dependent, missing metadata, sight-backed unknown, and the ordinary-layer no-op.
 
 ### Slice 4 — reusable candidate-set construction
 

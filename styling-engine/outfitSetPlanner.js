@@ -38,7 +38,12 @@ import {
   getOwnerRuleNotes,
 } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
-import { describeOutfitStructureGap, evaluateOutfitStructure } from './outfitValidation.js'
+import {
+  describeOutfitStructureGap,
+  evaluateBaseLayerCandidate,
+  evaluateOutfitStructure,
+  evaluateRequiredBaseLayers,
+} from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
   bottomKind,
@@ -1472,25 +1477,11 @@ const CAPSULE_STATED_PALETTE_BONUS = 14
 // the bench cannot offer a piece no card could ever contain.
 const CAPSULE_COMPOSABLE_GROUPS = new Set(['top', 'bottom', 'dress', 'outerwear', 'shoes'])
 
-// The single, shared definition of "a top that can serve as a base," used
-// everywhere a dependent's base needs to be found — capacity math, slot
-// validation, outfit validation, and the roster-level guarantee — so none of
-// them can ever disagree about what "available" means (owner review
-// 2026-07-30). A top tagged needs_base cannot itself be a base. Structured
-// opacity rules out sheer/semi_sheer/open_weave — the tagger prompt already
-// states these "cannot work alone against skin as a base layer"
-// (styling-engine/prompts.js). Unknown/unset opacity (206 of 243 pieces on
-// the live wardrobe) stays eligible: absence of a tag is not evidence of
-// unsuitability, and excluding on missing metadata would not be the
-// additive no-op this correction requires. Neckline, strap/sleeve shape,
-// bulk, colour and visual fit stay model judgment — this predicate answers
-// only "could this structurally function as coverage," never "does it look
-// right under this specific piece."
+// Capsule selection may reserve an unknown candidate because excluding every historical row with
+// missing fit/opacity would destroy supply. It may never reserve one the shared construction verdict
+// knows is incompatible. Submitted outfits apply the stricter sight policy below.
 function isCapsuleBaseCandidate(piece = {}) {
-  if (wardrobeCategoryGroup(piece) !== 'top') return false
-  if (pieceRequiresBaseLayer(piece)) return false
-  const opacity = String(piece?.opacity || '').toLowerCase().trim()
-  return !['sheer', 'semi_sheer', 'open_weave'].includes(opacity)
+  return evaluateBaseLayerCandidate(piece).verdict !== 'incompatible'
 }
 
 // One definition of "this garment can lead a look," shared by the bench's
@@ -3963,9 +3954,22 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // model tool-loop submit_plan_outfits), so a trip or work-week plan
       // that happens to include a needs_base piece is covered too — same
       // defect, same fix, not new scope.
-      const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
-      if (dependentTops.length && !pieces.some(isCapsuleBaseCandidate)) {
-        reasons.push(`${dependentTops.map(piece => piece.name || `piece ${piece.id}`).join(', ')} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`)
+      const requiredBaseLayers = evaluateRequiredBaseLayers(pieces)
+      if (requiredBaseLayers.verdict === 'incompatible') {
+        reasons.push(...requiredBaseLayers.findings
+          .filter(finding => finding.severity === 'error')
+          .map(finding => finding.message))
+      } else if (requiredBaseLayers.verdict === 'unknown') {
+        const unknownPairs = requiredBaseLayers.pairs.filter(pair => pair.result.verdict === 'unknown')
+        const visiblePair = unknownPairs.find(pair =>
+          seenPieceIds.has(Number(pair.dependent.id)) && seenPieceIds.has(Number(pair.candidate.id)))
+        if (!visiblePair) {
+          const idsToSee = [...new Set(unknownPairs.flatMap(pair => [
+            Number(pair.dependent.id),
+            Number(pair.candidate.id),
+          ]).filter(Boolean))]
+          reasons.push(`this outfit uses a required base-layer pairing with incomplete fit or opacity data — call view_pieces on [${idsToSee.join(', ')}] first, then resubmit; required coverage must be confirmed visually when the saved garment facts are incomplete`)
+        }
       }
       if (pendingPlan.isWinterCapsule && slot.environment === 'indoor') {
         const hasSleevelessBase = pieces.some(piece =>

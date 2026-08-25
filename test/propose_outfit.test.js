@@ -1,12 +1,61 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluateOutfitRoles } from '../styling-engine/outfitValidation.js'
+import {
+  evaluateBaseLayerCandidate,
+  evaluateOutfitRoles,
+  evaluateRequiredBaseLayers,
+} from '../styling-engine/outfitValidation.js'
 
 // Spec 2: role-based outfit validation (roles only, no layerOf). Intentional layering is valid;
 // unresolved slot collisions are not — the malformed-vs-intentional distinction, mechanically enforced.
 
 const p = (id, role) => ({ id, role })
 const roleIssues = pieces => evaluateOutfitRoles(pieces).findings.map(finding => finding.message)
+
+test('required base-layer candidate verdict distinguishes known compatibility from missing metadata', () => {
+  assert.equal(evaluateBaseLayerCandidate({
+    id: 1, category: 'top', opacity: 'opaque', fit_on_body: 'skims',
+  }).verdict, 'compatible')
+  const unknown = evaluateBaseLayerCandidate({ id: 2, category: 'top' })
+  assert.equal(unknown.verdict, 'unknown')
+  assert.equal(unknown.sightRequired, 'both')
+  assert.deepEqual(
+    unknown.findings.map(finding => finding.code),
+    ['base_layer_candidate_opacity_unknown', 'base_layer_candidate_fit_unknown'],
+  )
+})
+
+test('required base-layer candidate rejects dependence, sheer coverage, and loose fit as independent facts', () => {
+  const result = evaluateBaseLayerCandidate({
+    id: 2,
+    name: 'sheer draped shell',
+    category: 'top',
+    needs_base: 'yes',
+    opacity: 'sheer',
+    fit_on_body: 'drapes',
+  })
+  assert.equal(result.verdict, 'incompatible')
+  assert.deepEqual(result.findings.map(finding => finding.code), [
+    'base_layer_candidate_is_dependent',
+    'base_layer_candidate_not_opaque',
+    'base_layer_candidate_not_close_fitting',
+  ])
+})
+
+test('required base-layer contract applies to dependent garments, not ordinary layered outfits', () => {
+  const ordinaryLayers = evaluateRequiredBaseLayers([
+    { id: 1, category: 'top', role: 'primary_top', fit_on_body: 'drapes', opacity: 'opaque' },
+    { id: 2, category: 'outerwear', role: 'layer_top' },
+  ], { roleAware: true })
+  assert.equal(ordinaryLayers.verdict, 'compatible', 'ordinary inner/outer layering has no close-fit rule')
+
+  const dependentLayers = evaluateRequiredBaseLayers([
+    { id: 1, category: 'top', role: 'primary_top', fit_on_body: 'drapes', opacity: 'opaque' },
+    { id: 2, name: 'open crochet top', category: 'top', role: 'layer_top', needs_base: 'yes' },
+  ], { roleAware: true })
+  assert.equal(dependentLayers.verdict, 'incompatible')
+  assert.match(dependentLayers.primaryFinding.message, /rather than close-fitting/)
+})
 
 test('returns typed role findings with stable evidence', () => {
   const result = evaluateOutfitRoles([p(1, 'primary_top'), p(2, 'primary_top'), p(3, 'shoes')])

@@ -1193,6 +1193,20 @@ ordering, selected local fallback, renderer instructions, and freeform primary-t
 consume that reader instead of interpreting the field independently. This is a fact consolidation,
 not a new coverage or pair-compatibility rule; the ranking A/B diagnostic reported zero changes.
 
+**[validation-ownership consolidation, required-base contract, 2026-08-24] “Needs a base layer”
+now has one construction verdict after the garment fact.** `evaluateBaseLayerCandidate` and
+`evaluateRequiredBaseLayers` in `outfitValidation.js` consume the canonical `needs_base` fact plus
+structured `opacity` and `fit_on_body`. A candidate is incompatible when it also needs a base, is
+`sheer`/`semi_sheer`/`open_weave`, or has a known non-close fit (`drapes`, `hangs_straight`,
+`structured`, `none`). It is known compatible only with recorded opaque coverage and a close fit
+(`skims`, `clings_stretchy`, `clings_drapey`). Missing fit or opacity is `unknown`, never silently
+converted into a fact. Capsule roster/capacity policy may reserve an unknown candidate so legacy
+metadata does not erase supply; submitted plans and freeform `propose_outfit` require both garments
+to have been visually seen before the model may submit that unknown pairing. Known incompatibility
+still rejects after sight. The rule applies only to coverage required by a dependent garment;
+ordinary inner-garment/outer-layer combinations do not inherit a close-fit requirement. Colour,
+neckline, texture, bulk, and proportion remain model judgment.
+
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit
 `styling_instructions` renderer contract, and prose integrity apply wherever

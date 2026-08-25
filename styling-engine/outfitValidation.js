@@ -1,6 +1,173 @@
-import { pieceReadsAsStandaloneBaseTop, wardrobeCategoryGroup } from './attributes.js'
+import {
+  pieceReadsAsStandaloneBaseTop,
+  pieceRequiresBaseLayer,
+  wardrobeCategoryGroup,
+} from './attributes.js'
 
 export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
+
+const BASE_LAYER_CLOSE_FITS = new Set(['clings_stretchy', 'clings_drapey', 'skims'])
+const BASE_LAYER_INCOMPATIBLE_FITS = new Set(['hangs_straight', 'drapes', 'structured', 'none'])
+const BASE_LAYER_INCOMPATIBLE_OPACITIES = new Set(['sheer', 'semi_sheer', 'open_weave'])
+
+// Prompt projection of the executable contract. Prompts may explain the rule to a composer, but
+// may not maintain a second list of fit values that can drift from the validator.
+export function requiredBaseLayerPromptRule() {
+  return `- Base-layer compatibility: a piece labeled \`needs_base: yes\` requires a base underneath whose \`fit_on_body\` is \`skims\`, \`clings_stretchy\`, or \`clings_drapey\` — close enough to the body to sit cleanly under an open or sheer dependent garment without its own excess fabric bunching or showing through unevenly. A candidate base tagged \`drapes\`, \`hangs_straight\`, \`structured\`, or \`none\` does not satisfy this even if it is otherwise the right color or a good match. Missing fit or opacity is unknown rather than proof either way: inspect both garments before using that pairing. This rule is only for a garment that needs required coverage beneath it; it is not a close-fit rule for ordinary layering. When two pieces share a near-identical name, check each candidate's own fields by ID — never assume they are interchangeable.`
+}
+
+function baseLayerFinding(code, message, severity, evidence = {}) {
+  return {
+    code,
+    message,
+    kind: 'base_layer',
+    severity,
+    evidence,
+  }
+}
+
+// Canonical construction verdict for the garment that would provide required coverage beneath a
+// `needs_base` garment. This is deliberately not an ordinary-layering rule: a blouse may drape
+// under a roomy jacket, but it cannot serve as the close, smooth coverage layer required by a
+// sheer/open dependent garment. Missing historical tags stay unknown rather than becoming false
+// facts; each flow decides whether sight can resolve that uncertainty.
+export function evaluateBaseLayerCandidate(piece = {}) {
+  const pieceId = Number(piece?.id) || null
+  const label = piece?.name || (pieceId ? `piece ${pieceId}` : 'this garment')
+  const categoryGroup = wardrobeCategoryGroup(piece)
+  const opacity = String(piece?.opacity || '').toLowerCase().trim()
+  const fitOnBody = String(piece?.fit_on_body || '').toLowerCase().trim()
+  const requiresBase = pieceRequiresBaseLayer(piece)
+  const findings = []
+
+  if (categoryGroup !== 'top') {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_not_top',
+      `${label} is not a top and cannot fill the required base-layer slot`,
+      'error',
+      { pieceId, categoryGroup },
+    ))
+  }
+  if (requiresBase) {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_is_dependent',
+      `${label} also needs a base layer and cannot provide the required coverage`,
+      'error',
+      { pieceId, requiresBase: true },
+    ))
+  }
+  if (BASE_LAYER_INCOMPATIBLE_OPACITIES.has(opacity)) {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_not_opaque',
+      `${label} is ${opacity.replace('_', ' ')} and cannot provide the required coverage`,
+      'error',
+      { pieceId, opacity },
+    ))
+  }
+  if (BASE_LAYER_INCOMPATIBLE_FITS.has(fitOnBody)) {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_not_close_fitting',
+      `${label} is tagged ${fitOnBody.replace('_', ' ')} rather than close-fitting, so it will not sit cleanly beneath a dependent garment`,
+      'error',
+      { pieceId, fitOnBody },
+    ))
+  }
+
+  const incompatible = findings.some(finding => finding.severity === 'error')
+  if (!incompatible && opacity !== 'opaque') {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_opacity_unknown',
+      opacity ? `${label} has an unrecognized opacity value (${opacity})` : `${label} has no recorded opacity`,
+      'warning',
+      { pieceId, opacity: opacity || null },
+    ))
+  }
+  if (!incompatible && !BASE_LAYER_CLOSE_FITS.has(fitOnBody)) {
+    findings.push(baseLayerFinding(
+      'base_layer_candidate_fit_unknown',
+      fitOnBody ? `${label} has an unrecognized fit-on-body value (${fitOnBody})` : `${label} has no recorded fit-on-body`,
+      'warning',
+      { pieceId, fitOnBody: fitOnBody || null },
+    ))
+  }
+
+  const verdict = incompatible
+    ? 'incompatible'
+    : (opacity !== 'opaque' || !BASE_LAYER_CLOSE_FITS.has(fitOnBody) ? 'unknown' : 'compatible')
+
+  return {
+    verdict,
+    findings,
+    primaryFinding: findings[0] || null,
+    evidence: { pieceId, categoryGroup, requiresBase, opacity: opacity || null, fitOnBody: fitOnBody || null },
+    sightRequired: verdict === 'unknown' ? 'both' : 'none',
+  }
+}
+
+// Shared dependent-to-base contract. With explicit roles, the base beneath a dependent top is the
+// primary_top; a top beneath a dependent dress is the additional layer_top. Category-only plan
+// submissions use the same facts without pretending to know a visual direction that roles did not
+// express. Visual colour/neckline/texture/proportion judgment remains outside this verdict.
+export function evaluateRequiredBaseLayers(pieces = [], { roleAware = false } = {}) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const dependents = normalizedPieces.filter(piece =>
+    ['top', 'dress'].includes(wardrobeCategoryGroup(piece)) && pieceRequiresBaseLayer(piece))
+  const findings = []
+  const pairs = []
+
+  for (const dependent of dependents) {
+    const dependentGroup = wardrobeCategoryGroup(dependent)
+    const candidates = normalizedPieces.filter(candidate => {
+      if (candidate === dependent || Number(candidate?.id) === Number(dependent?.id)) return false
+      if (wardrobeCategoryGroup(candidate) !== 'top') return false
+      if (!roleAware) return true
+      if (dependentGroup === 'dress') return candidate.role === 'layer_top'
+      return candidate.role === 'primary_top'
+    })
+    const evaluated = candidates.map(candidate => ({
+      dependent,
+      candidate,
+      result: evaluateBaseLayerCandidate(candidate),
+    }))
+    pairs.push(...evaluated)
+
+    if (evaluated.some(pair => pair.result.verdict === 'compatible')) continue
+    const unknownPairs = evaluated.filter(pair => pair.result.verdict === 'unknown')
+    if (unknownPairs.length) {
+      const candidateIds = unknownPairs.map(pair => Number(pair.candidate.id)).filter(Boolean)
+      findings.push(baseLayerFinding(
+        'required_base_layer_unknown',
+        `${dependent.name || `piece ${dependent.id}`} needs a base layer, but the possible base${candidateIds.length === 1 ? '' : 's'} ${candidateIds.join(', ')} ${candidateIds.length === 1 ? 'has' : 'have'} incomplete fit or opacity data`,
+        'warning',
+        { dependentId: Number(dependent.id) || null, candidateIds, sightRequired: 'both' },
+      ))
+      continue
+    }
+
+    const candidateFindings = evaluated.flatMap(pair => pair.result.findings)
+    findings.push(baseLayerFinding(
+      'required_base_layer_missing_or_incompatible',
+      candidateFindings[0]?.message || `${dependent.name || `piece ${dependent.id}`} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`,
+      'error',
+      {
+        dependentId: Number(dependent.id) || null,
+        candidateIds: candidates.map(candidate => Number(candidate.id)).filter(Boolean),
+      },
+    ))
+  }
+
+  const verdict = findings.some(finding => finding.severity === 'error')
+    ? 'incompatible'
+    : (findings.some(finding => finding.severity === 'warning') ? 'unknown' : 'compatible')
+  return {
+    verdict,
+    findings,
+    primaryFinding: findings[0] || null,
+    pairs,
+    evidence: { dependentIds: dependents.map(piece => Number(piece.id)).filter(Boolean), roleAware: Boolean(roleAware) },
+    sightRequired: verdict === 'unknown' ? 'both' : 'none',
+  }
+}
 
 function structureFinding(code, message, evidence = {}) {
   return {

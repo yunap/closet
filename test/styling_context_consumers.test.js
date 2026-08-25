@@ -10,6 +10,7 @@ const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rul
 const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
 const attributesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/attributes.js'), 'utf8')
 const coreSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
+const promptSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -103,7 +104,7 @@ test('whole-wardrobe footwear recovery consumes the shared automatic-use pool co
 
 test('retired category-structure boolean adapter cannot return', () => {
   assert.doesNotMatch(rulesSource, /export function isOutfitStructurallyValid/)
-  assert.match(plannerSource, /import \{ describeOutfitStructureGap, evaluateOutfitStructure \} from '\.\/outfitValidation\.js'/)
+  assert.match(plannerSource, /describeOutfitStructureGap,[\s\S]*evaluateOutfitStructure,[\s\S]*from '\.\/outfitValidation\.js'/)
   assert.doesNotMatch(plannerSource, /function describeOutfitStructureGap\(/)
   assert.match(validationSource, /export function evaluateOutfitStructure\(/)
   assert.match(validationSource, /export function describeOutfitStructureGap\(/)
@@ -140,7 +141,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume typed role findings', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateOutfitRoles, OUTFIT_ROLES \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const roleValidation = evaluateOutfitRoles\(resolved\)/)
   assert.match(toolSource, /evaluateOutfitRoles\(resolved\)\.findings/)
   assert.doesNotMatch(toolSource, /export function validateOutfitRoles\(/)
@@ -159,4 +160,14 @@ test('runtime dependent-piece decisions consume one structured needs_base reader
   assert.match(plannerSource, /pieceRequiresBaseLayer/)
   assert.match(coreSource, /pieceRequiresBaseLayer/)
   assert.match(toolSource, /pieceRequiresBaseLayer/)
+})
+
+test('required base-layer mechanics and their prompt projection have one typed owner', () => {
+  assert.match(validationSource, /export function evaluateBaseLayerCandidate\(/)
+  assert.match(validationSource, /export function evaluateRequiredBaseLayers\(/)
+  assert.match(plannerSource, /evaluateBaseLayerCandidate\(piece\)\.verdict !== 'incompatible'/)
+  assert.match(plannerSource, /const requiredBaseLayers = evaluateRequiredBaseLayers\(pieces\)/)
+  assert.match(toolSource, /evaluateRequiredBaseLayers\(resolved, \{ roleAware: true \}\)/)
+  assert.match(promptSource, /\$\{requiredBaseLayerPromptRule\(\)\}/)
+  assert.doesNotMatch(promptSource, /A candidate base tagged/)
 })

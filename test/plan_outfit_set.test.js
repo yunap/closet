@@ -5646,6 +5646,7 @@ test('a submitted outfit cannot ship a dependent top without a standalone base',
   const dependentId = insertPiece({ category: 'top', name: 'geometric tassel top', occasions: ['casual'], formality: 'everyday' })
   db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
   const baseId = insertPiece({ category: 'top', name: 'orange ribbed tank', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET opacity = ?, fit_on_body = ? WHERE id = ?').run('opaque', 'skims', baseId)
   const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
   const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
@@ -5688,7 +5689,57 @@ test('a submitted outfit cannot use a sheer top as the dependent\'s base', async
     piece_ids: [Number(dependentId), Number(sheerBaseId), Number(bottomId), Number(shoesId)],
   }])
   assert.equal(result.accepted.length, 0)
-  assert.match(result.failures[0].reasons.join(' '), /cannot be worn alone/)
+  assert.match(result.failures[0].reasons.join(' '), /cannot provide the required coverage/)
+})
+
+test('a submitted outfit cannot use a known loose top as the dependent\'s required base layer', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'open crochet top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const looseBaseId = insertPiece({ category: 'top', name: 'draped blouse', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET opacity = ?, fit_on_body = ? WHERE id = ?').run('opaque', 'drapes', looseBaseId)
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const workbench = await buildPlanSlotWorkbench(
+    normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }]),
+    { allPieces, question: 'city day' },
+  )
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(dependentId), Number(looseBaseId), Number(bottomId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([dependentId, looseBaseId]) })
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /rather than close-fitting/)
+})
+
+test('missing base-layer fit or opacity requires sight, then remains model-judged', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'open crochet top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const unknownBaseId = insertPiece({ category: 'top', name: 'legacy tank', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const workbench = await buildPlanSlotWorkbench(
+    normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }]),
+    { allPieces, question: 'city day' },
+  )
+  const submission = [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(dependentId), Number(unknownBaseId), Number(bottomId), Number(shoesId)],
+  }]
+
+  const unseen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(unseen.accepted.length, 0)
+  assert.match(unseen.failures[0].reasons.join(' '), /incomplete fit or opacity data/)
+  assert.match(unseen.failures[0].reasons.join(' '), /view_pieces/)
+
+  const seen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission, {
+    visuallySeenPieceIds: new Set([dependentId, unknownBaseId]),
+  })
+  assert.equal(seen.accepted.length, 1, `sight-backed unknown should remain model-judged: ${JSON.stringify(seen.failures)}`)
 })
 
 test('a standalone-only outfit is unaffected by the dependent-base check', async () => {

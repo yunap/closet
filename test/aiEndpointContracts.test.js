@@ -4845,6 +4845,44 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
   assert.equal(accepted.status, 'success')
 })
 
+test('propose_outfit requires sight of both garments when legacy base-layer facts are incomplete', async () => {
+  const dependentId = insertPiece({
+    name: 'open crochet dependent top',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'open crochet overlay worn over a base',
+  })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, dependentId]),
+  }
+  const outfitArgs = {
+    label: 'Dependent layer look',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: dependentId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }
+
+  const unseen = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(unseen.status, 'validation_error')
+  assert.match(unseen.message, /required base-layer compatibility is unknown/)
+  assert.match(unseen.message, new RegExp(String(dependentId)))
+  assert.match(unseen.message, new RegExp(String(seeded.top)))
+
+  toolContext.visuallySeenPieceIds = new Set([Number(dependentId), Number(seeded.top)])
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+})
+
 // Spec 26 Part 1: same reason-revision truthfulness check as
 // validateSubmittedPlanOutfits, applied to propose_outfit's why_it_works —
 // a proposal whose rationale revises itself mid-sentence while `pieces`

@@ -1553,6 +1553,16 @@ camisole. `composerPieceLineSuffix` now transmits opacity plus either explicit b
 shared prompt forbids contradicting those fields or inventing an underlayer for an independently
 wearable garment.
 
+**2026-08-24 required-base consolidation:** the whole-wardrobe composer no longer owns a separate
+list of acceptable base-layer fits. Its instruction is projected by
+`requiredBaseLayerPromptRule` from the same module that executes `evaluateBaseLayerCandidate` and
+`evaluateRequiredBaseLayers`. The established card fact remains “Needs a base layer.” For that
+specific dependency, known sheer/open coverage or a known loose fit is incompatible; incomplete
+legacy fit/opacity requires seeing both garments in `propose_outfit`, after which visual success is
+still model judgment. Ordinary inner-garment/outer-layer styling is explicitly outside the
+close-fit rule. The prompt no longer promotes visual inference over an explicit `needs_base` value.
+Tool schemas and the model-call sequence did not change.
+
 ## 2026-08-19 — compact text-profile follow-up arc
 
 `docs/freeform-followup-profiles-spec.md` begins the next cost phase without changing visual
