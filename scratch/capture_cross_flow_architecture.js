@@ -37,6 +37,7 @@ const {
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
+const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { buildLocalFallbackOutfitDirections } = await import('../styling-engine/core.js')
@@ -52,6 +53,17 @@ const {
 } = await import('../styling-engine/outfitSetPlanner.js')
 
 const REFERENCE_DATE = new Date('2026-08-24T12:00:00-07:00')
+const resolveFixtureStylingContext = createStylingContextResolver({
+  weatherResolver: async ({ location }) => ({
+    isHot: false,
+    isCold: false,
+    isWetExposure: false,
+    highF: 72,
+    lowF: 56,
+    location,
+    weatherSource: 'live',
+  }),
+})
 
 function piece(overrides = {}) {
   const id = Number(overrides.id)
@@ -308,7 +320,7 @@ const scenarioDefinitions = [
   },
 ]
 
-function normalizedContext(definition) {
+async function normalizedContext(definition) {
   const intent = normalizeStylingIntent(definition.request)
   const occasionProfile = resolveOccasionProfile(intent.occasion, intent.mood)
   const activityProfile = resolveActivityProfile({
@@ -321,6 +333,26 @@ function normalizedContext(definition) {
     mood: intent.mood,
     season: intent.season,
     currentDate: REFERENCE_DATE,
+  })
+  const shared = await resolveFixtureStylingContext({
+    explicitRequest: {
+      ...definition.request,
+      requestText: definition.request.mood,
+      location: definition.request.season === 'current season' ? 'Berkeley, CA' : '',
+      date: REFERENCE_DATE,
+    },
+    actionArtifact: {
+      occasion: 'evening',
+      season: 'winter',
+      weatherProfile: {
+        isHot: false,
+        isCold: true,
+        weatherSource: 'saved_snapshot',
+      },
+    },
+    inferred: {
+      activity: definition.request.activity === 'none' ? 'walking' : '',
+    },
   })
   return {
     intent,
@@ -336,6 +368,16 @@ function normalizedContext(definition) {
       isHot: Boolean(heuristicWeather.isHot),
       isCold: Boolean(heuristicWeather.isCold),
       isWetExposure: Boolean(heuristicWeather.isWetExposure),
+    },
+    sharedResolution: {
+      occasion: shared.occasion,
+      declaredActivity: shared.activity,
+      resolvedActivity: shared.resolvedActivity,
+      activitySource: shared.activitySource,
+      season: shared.season,
+      weather: shared.debug.resolved.weather,
+      provenanceByField: JSON.parse(JSON.stringify(shared.provenanceByField)),
+      conflicts: shared.conflicts,
     },
   }
 }
@@ -596,12 +638,12 @@ export async function captureCrossFlowArchitecture() {
   const scenarios = {}
   for (const definition of scenarioDefinitions) {
     scenarios[definition.id] = {
-      context: normalizedContext(definition),
+      context: await normalizedContext(definition),
       candidates: await captureCandidateStages(definition),
     }
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     auditBaseline: 'c1693a8e8f76881d5cb3d87c173ea21fed6ccb53',
     fixturePieceIds: wardrobe.map(item => item.id),
     scenarios,

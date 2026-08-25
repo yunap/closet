@@ -1033,17 +1033,28 @@ composite label containing `summer` cannot re-hot a live 78°F/56°F profile.
 The direct `/generate-wardrobe-outfits-visual` route now reads the saved home location and resolves
 today's live numeric forecast before roster gates run. An explicit seasonal or extreme-weather
 selection remains an authored hypothetical and bypasses the live lookup, preserving the brief.
-See `resolveDirectVisualComposerWeather` and the `/generate-wardrobe-outfits-visual` route
-(`routes/ai.js`).
+See `resolveStylingContext` (`styling-engine/stylingContext.js`) and
+`generateWholeWardrobeOutfitsVisualInternal` (`routes/ai.js`).
 
 **[forecast-failure correction, 2026-08-19] A named place is never converted from unknown weather
 to guessed heat.** `getCurrentWeatherProfile` and `getWeatherProfileForPlan` return a neutral,
 observable `weatherSource:"unavailable"` profile when a real location lookup fails. Hard hot/cold
-gates remain off; `resolveWholeWardrobeWeatherProfile` preserves that neutral result instead of
-re-parsing router season text. Bounded freeform removes the calendar label from the composer weather
+gates remain off; shared context resolution preserves that neutral result instead of re-parsing
+router season text. Bounded freeform removes the calendar label from the composer weather
 brief and visibly says the forecast could not be verified. Requests without a location still use
 the existing text/calendar heuristic. This follows `thread_1787098654251`, where failed Berkeley
 weather became `summer; hot weather` and wrongly removed 79 weather-related candidates.
+
+**[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
+resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source
+precedence, normalization, occasion/activity profile construction, comfort constraints, and weather
+selection. Explicit stated weather outranks physical inference; current-season requests refresh
+live weather when a location exists; saved snapshots are used when that lookup is unavailable; and
+explicit hypothetical seasons bypass live weather. Declared activity remains separate from
+request-inferred activity so inference can guide the model without activating a hard footwear gate.
+Both generators expose resolved values, provenance, and conflicts under response debug
+`stylingContext`. This is the first consumer migration; freeform and plan-slot context remain later
+Slice 1 work.
 
 **[forecast-failure integration correction, 2026-08-19] Neutral failure is global and disclosure
 must match it.** `resolveSlotWeather` now labels failed named-place plan forecasts as unavailable

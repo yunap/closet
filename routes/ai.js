@@ -33,9 +33,7 @@ import {
 } from '../styling-engine/provider.js'
 
 import {
-  resolveComfortFootwearConstraint,
   applyComfortFootwearRepair,
-  resolveActivityProfile,
   ACTIVITY_PROFILES
 } from '../styling-engine/footwear-comfort.js'
 
@@ -48,7 +46,7 @@ import {
 } from '../styling-engine/promptRuntime.js'
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan } from '../styling-engine/outfitSetPlanner.js'
 
-import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
+import { OCCASION_PROFILES } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -62,7 +60,8 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { resolveStylingContext } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -71,7 +70,6 @@ import { randomUUID } from 'node:crypto'
 
 import {
   isStyleSelectedQuestion,
-  weatherProfileFromContext,
   buildVisualComposerRoster,
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
@@ -965,7 +963,9 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   activity = '',
   memoryText = '',
   weatherProfile = null,
-  comfortConstraint = null
+  comfortConstraint = null,
+  occasionProfile = null,
+  activityProfile = null
 }) {
   const routeStartedAt = Date.now()
   const selectedId = Number(selectedPiece.id)
@@ -974,8 +974,6 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     .filter(p => p && Number(p.id) !== selectedId)
   const candidatePool = [selectedPiece, ...supportCandidates]
   const poolById = new Map(candidatePool.map(p => [Number(p.id), p]))
-  const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: question })
-  const occasionProfile = resolveOccasionProfile(occasion, mood)
   const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(candidatePool, {
     occasion,
     weatherProfile,
@@ -1497,7 +1495,12 @@ export async function generateOutfitsForPieceInternal({
   history,
   includeMissingPieces = false,
   idealOnly = false,
-  activity = ''
+  activity = '',
+  location = '',
+  date = null,
+  currentDate = null,
+  statedWeather = '',
+  resolvedWeatherProfile = null
 }) {
   console.log(`\n[0] 🧥 generateOutfitsForPieceInternal called:`)
   console.log(`    - pieceId: ${pieceId}`)
@@ -1510,11 +1513,36 @@ export async function generateOutfitsForPieceInternal({
   }
 
   const parsedPiece = parsePiece(piece)
+  const stylingContext = await resolveStylingContext({
+    explicitRequest: {
+      occasion,
+      activity,
+      season,
+      mission,
+      mood,
+      requestText: question,
+      location: location || getHomeLocation(),
+      date: date || currentDate || new Date(),
+      statedWeather,
+      weatherProfile: resolvedWeatherProfile,
+    },
+    policy: { allowLiveWeather: true },
+  })
+  occasion = stylingContext.occasion
+  activity = stylingContext.activity
+  season = stylingContext.season
+  mission = stylingContext.mission
+  mood = stylingContext.mood
+  question = stylingContext.requestText
   const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
   const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const weatherProfile = weatherProfileFromContext({ mood, season })
-  const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question, activity })
+  const {
+    weatherProfile,
+    comfortConstraint,
+    occasionProfile,
+    activityProfile,
+  } = stylingContext
   let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
@@ -1569,7 +1597,9 @@ export async function generateOutfitsForPieceInternal({
       activity,
       memoryText,
       weatherProfile,
-      comfortConstraint
+      comfortConstraint,
+      occasionProfile,
+      activityProfile
     })
     visualCriticDebug = composed.debug || null
   } else {
@@ -1675,7 +1705,8 @@ export async function generateOutfitsForPieceInternal({
     debug: {
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
-      weatherProfile
+      weatherProfile,
+      stylingContext: stylingContext.debug
     }
   }
 }
@@ -1747,14 +1778,6 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
   }
 })
 
-export function resolveWholeWardrobeWeatherProfile({ mood = '', stylingRequest = '', season = '', resolvedWeatherProfile = null } = {}) {
-  // A live forecast is physical evidence. Calendar/season language may still shape the composer's
-  // aesthetic brief, but must not recompute hard hot/cold gates (live Larkspur: 78°F became hot
-  // solely because the execution router supplied `season: summer`).
-  if (['live', 'unavailable'].includes(resolvedWeatherProfile?.weatherSource)) return resolvedWeatherProfile
-  return weatherProfileFromContext({ mood: [mood, stylingRequest].filter(Boolean).join(' '), season })
-}
-
 export async function generateWholeWardrobeOutfitsVisualInternal({
   occasion = 'casual',
   season = 'current season',
@@ -1767,21 +1790,43 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   activity = '',
   savedOutfitSeed = null,
   resolvedWeatherProfile = null,
+  statedWeather = '',
+  location = '',
+  date = null,
+  currentDate = null,
   adaptiveVisualDetail = false,
   comparisonSetGuidance = true
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
-    const stylingRequest = String(request || question || '').trim()
-    const weatherProfile = resolveWholeWardrobeWeatherProfile({ mood, stylingRequest, season, resolvedWeatherProfile })
-    const occasionProfile = resolveOccasionProfile(occasion, mood)
-    const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: request || question || '' })
-    const comfortConstraint = resolveComfortFootwearConstraint({
-      occasion,
-      mood,
-      request: request || question || '',
-      activity
+    const stylingContext = await resolveStylingContext({
+      explicitRequest: {
+        occasion,
+        activity,
+        season,
+        mission,
+        mood,
+        requestText: request || question,
+        location: location || getHomeLocation(),
+        date: date || currentDate || new Date(),
+        statedWeather,
+        weatherProfile: resolvedWeatherProfile,
+      },
+      policy: { allowLiveWeather: true },
     })
+    occasion = stylingContext.occasion
+    activity = stylingContext.activity
+    season = stylingContext.season
+    mission = stylingContext.mission
+    mood = stylingContext.mood
+    const stylingRequest = stylingContext.requestText
+    request = stylingRequest
+    const {
+      weatherProfile,
+      occasionProfile,
+      activityProfile,
+      comfortConstraint,
+    } = stylingContext
     let occasionProfileGuidance = ''
     if (occasionProfile) {
       const preferred = [
@@ -2514,6 +2559,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         suppressedCount: suppressedPieces.length,
         suppressedReasonCounts,
         weatherProfile,
+        stylingContext: stylingContext.debug,
         savedMainBypassedSuppression,
         savedMainSuppressionReasons: savedMainSuppression?.reasons || [],
         savedSourceHasLayeredTopFormula,
@@ -2579,34 +2625,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
 }
 
-export async function resolveDirectVisualComposerWeather({
-  season = 'current season',
-  location = '',
-  date = new Date(),
-  mood = '',
-  fetchImpl
-} = {}) {
-  const normalizedSeason = String(season || 'current season').trim().toLowerCase()
-  if (normalizedSeason !== 'current season') return null
-  return getCurrentWeatherProfile({
-    date,
-    location,
-    mood,
-    season,
-    ...(fetchImpl ? { fetchImpl } : {})
-  })
-}
-
 router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
   try {
     const input = req.body || {}
-    const resolvedWeatherProfile = input.resolvedWeatherProfile || await resolveDirectVisualComposerWeather({
-      season: input.season,
+    const result = await generateWholeWardrobeOutfitsVisualInternal({
+      ...input,
       location: input.location || getHomeLocation(),
       date: input.date || input.currentDate || new Date(),
-      mood: [input.mood, input.request, input.question].filter(Boolean).join(' ')
     })
-    const result = await generateWholeWardrobeOutfitsVisualInternal({ ...input, resolvedWeatherProfile })
     res.json(result)
   } catch (err) {
     console.error('Visual wardrobe composer error:', err)

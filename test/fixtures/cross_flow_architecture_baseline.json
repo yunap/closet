@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "auditBaseline": "c1693a8e8f76881d5cb3d87c173ea21fed6ccb53",
   "fixturePieceIds": [
     101,
@@ -38,6 +38,93 @@
           "isHot": true,
           "isCold": false,
           "isWetExposure": false
+        },
+        "sharedResolution": {
+          "occasion": "casual",
+          "declaredActivity": "none",
+          "resolvedActivity": "none",
+          "activitySource": "none",
+          "season": "current season",
+          "weather": {
+            "weatherSource": "live",
+            "isHot": false,
+            "isCold": false,
+            "isExtremeHeat": false,
+            "highF": 72,
+            "lowF": 56
+          },
+          "provenanceByField": {
+            "occasion": {
+              "source": "explicit_request",
+              "raw": "casual"
+            },
+            "activity": {
+              "source": "explicit_request",
+              "raw": "none"
+            },
+            "season": {
+              "source": "explicit_request",
+              "raw": "current season"
+            },
+            "mission": {
+              "source": "explicit_request",
+              "raw": "default"
+            },
+            "mood": {
+              "source": "explicit_request",
+              "raw": "easy city day"
+            },
+            "requestText": {
+              "source": "explicit_request",
+              "raw": "easy city day"
+            },
+            "location": {
+              "source": "explicit_request",
+              "raw": "Berkeley, CA"
+            },
+            "date": {
+              "source": "explicit_request",
+              "raw": "2026-08-24T19:00:00.000Z"
+            },
+            "weatherProfile": {
+              "source": "live_weather"
+            }
+          },
+          "conflicts": [
+            {
+              "field": "occasion",
+              "chosenSource": "explicit_request",
+              "chosenValue": "casual",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "evening"
+                }
+              ]
+            },
+            {
+              "field": "activity",
+              "chosenSource": "explicit_request",
+              "chosenValue": "none",
+              "ignored": [
+                {
+                  "source": "inference",
+                  "value": "walking"
+                }
+              ]
+            },
+            {
+              "field": "season",
+              "chosenSource": "explicit_request",
+              "chosenValue": "current season",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "winter"
+                }
+              ]
+            }
+          ]
         }
       },
       "candidates": {
@@ -274,6 +361,80 @@
           "isHot": true,
           "isCold": false,
           "isWetExposure": false
+        },
+        "sharedResolution": {
+          "occasion": "travel",
+          "declaredActivity": "hiking",
+          "resolvedActivity": "hiking",
+          "activitySource": "dropdown",
+          "season": "summer",
+          "weather": {
+            "weatherSource": "heuristic",
+            "isHot": true,
+            "isCold": false,
+            "isExtremeHeat": false
+          },
+          "provenanceByField": {
+            "occasion": {
+              "source": "explicit_request",
+              "raw": "travel"
+            },
+            "activity": {
+              "source": "explicit_request",
+              "raw": "hiking"
+            },
+            "season": {
+              "source": "explicit_request",
+              "raw": "summer"
+            },
+            "mission": {
+              "source": "explicit_request",
+              "raw": "default"
+            },
+            "mood": {
+              "source": "explicit_request",
+              "raw": "hot outdoor hiking day"
+            },
+            "requestText": {
+              "source": "explicit_request",
+              "raw": "hot outdoor hiking day"
+            },
+            "location": {
+              "source": "default",
+              "raw": ""
+            },
+            "date": {
+              "source": "explicit_request",
+              "raw": "2026-08-24T19:00:00.000Z"
+            },
+            "weatherProfile": {
+              "source": "heuristic"
+            }
+          },
+          "conflicts": [
+            {
+              "field": "occasion",
+              "chosenSource": "explicit_request",
+              "chosenValue": "travel",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "evening"
+                }
+              ]
+            },
+            {
+              "field": "season",
+              "chosenSource": "explicit_request",
+              "chosenValue": "summer",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "winter"
+                }
+              ]
+            }
+          ]
         }
       },
       "candidates": {
@@ -504,6 +665,91 @@
           "isHot": false,
           "isCold": false,
           "isWetExposure": false
+        },
+        "sharedResolution": {
+          "occasion": "casual",
+          "declaredActivity": "none",
+          "resolvedActivity": "none",
+          "activitySource": "none",
+          "season": "spring",
+          "weather": {
+            "weatherSource": "heuristic",
+            "isHot": false,
+            "isCold": false,
+            "isExtremeHeat": false
+          },
+          "provenanceByField": {
+            "occasion": {
+              "source": "explicit_request",
+              "raw": "casual"
+            },
+            "activity": {
+              "source": "explicit_request",
+              "raw": "none"
+            },
+            "season": {
+              "source": "explicit_request",
+              "raw": "spring"
+            },
+            "mission": {
+              "source": "explicit_request",
+              "raw": "default"
+            },
+            "mood": {
+              "source": "explicit_request",
+              "raw": "ordinary mild day"
+            },
+            "requestText": {
+              "source": "explicit_request",
+              "raw": "ordinary mild day"
+            },
+            "location": {
+              "source": "default",
+              "raw": ""
+            },
+            "date": {
+              "source": "explicit_request",
+              "raw": "2026-08-24T19:00:00.000Z"
+            },
+            "weatherProfile": {
+              "source": "heuristic"
+            }
+          },
+          "conflicts": [
+            {
+              "field": "occasion",
+              "chosenSource": "explicit_request",
+              "chosenValue": "casual",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "evening"
+                }
+              ]
+            },
+            {
+              "field": "activity",
+              "chosenSource": "explicit_request",
+              "chosenValue": "none",
+              "ignored": [
+                {
+                  "source": "inference",
+                  "value": "walking"
+                }
+              ]
+            },
+            {
+              "field": "season",
+              "chosenSource": "explicit_request",
+              "chosenValue": "spring",
+              "ignored": [
+                {
+                  "source": "action_artifact",
+                  "value": "winter"
+                }
+              ]
+            }
+          ]
         }
       },
       "candidates": {

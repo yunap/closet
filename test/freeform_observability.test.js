@@ -16,7 +16,8 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
-const { persistFreeformGenerationRun, resolveWholeWardrobeWeatherProfile, resolveDirectVisualComposerWeather, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
+const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
+const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
@@ -2029,7 +2030,7 @@ test('bounded multi-look discloses unavailable destination weather instead of cl
   assert.doesNotMatch(answer, /summer|warm night|hot weather/i)
 })
 
-test('live numeric weather owns hard gates even when the execution router supplies summer', () => {
+test('supplied live numeric weather owns hard gates without being re-derived from text', async () => {
   const live = {
     isHot: false,
     isCold: false,
@@ -2037,19 +2038,19 @@ test('live numeric weather owns hard gates even when the execution router suppli
     lowF: 56,
     weatherSource: 'live'
   }
-  assert.deepEqual(resolveWholeWardrobeWeatherProfile({
-    mood: 'relaxed',
-    stylingRequest: 'outdoor farmers market',
-    season: 'summer; mild weather; forecast high 78°F, low 56°F',
-    resolvedWeatherProfile: live
-  }), live)
-
-  assert.equal(resolveWholeWardrobeWeatherProfile({
-    season: 'summer; mild weather; forecast high 78°F, low 56°F'
-  }).isHot, true, 'without a resolved live profile the existing text fallback remains unchanged')
+  const resolveStylingContext = createStylingContextResolver()
+  const context = await resolveStylingContext({
+    explicitRequest: {
+      mood: 'relaxed',
+      requestText: 'outdoor farmers market',
+      season: 'summer; mild weather; forecast high 78°F, low 56°F',
+      weatherProfile: live,
+    },
+  })
+  assert.deepEqual(context.weatherProfile, live)
 })
 
-test('unavailable named-place weather remains neutral through whole-wardrobe composition', () => {
+test('unavailable named-place weather remains neutral through shared context resolution', async () => {
   const unavailable = {
     isHot: false,
     isCold: false,
@@ -2058,45 +2059,41 @@ test('unavailable named-place weather remains neutral through whole-wardrobe com
     weatherSource: 'unavailable',
     weatherFailure: 'weather_request_failed'
   }
-  assert.deepEqual(resolveWholeWardrobeWeatherProfile({
-    season: 'summer; hot weather',
-    resolvedWeatherProfile: unavailable
-  }), unavailable)
+  const resolveStylingContext = createStylingContextResolver()
+  const context = await resolveStylingContext({
+    explicitRequest: {
+      season: 'summer; hot weather',
+      weatherProfile: unavailable,
+    },
+  })
+  assert.deepEqual(context.weatherProfile, unavailable)
 })
 
-test('direct Visual Composer resolves live weather only for Current season', async () => {
+test('shared context resolves live weather only for Current season', async () => {
   const calls = []
-  const fetchImpl = async (url) => {
-    calls.push(url)
-    if (url.includes('geocoding-api')) {
-      return { ok: true, json: async () => ({ results: [{ latitude: 37.9, longitude: -122.1 }] }) }
-    }
-    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [69], temperature_2m_min: [55] } }) }
-  }
-
-  const current = await resolveDirectVisualComposerWeather({
-    season: 'current season',
-    location: 'Walnut Creek, CA',
-    date: '2026-08-19',
-    fetchImpl
+  const resolveStylingContext = createStylingContextResolver({
+    weatherResolver: async input => {
+      calls.push(input)
+      return { isHot: false, isCold: false, highF: 69, lowF: 55, weatherSource: 'live' }
+    },
   })
-  assert.deepEqual(current, {
+  const current = await resolveStylingContext({
+    explicitRequest: { season: 'current season', location: 'Walnut Creek, CA', date: '2026-08-19' },
+  })
+  assert.deepEqual(current.weatherProfile, {
     isHot: false,
     isCold: false,
     highF: 69,
     lowF: 55,
     weatherSource: 'live'
   })
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 1)
 
-  const hypothetical = await resolveDirectVisualComposerWeather({
-    season: 'winter',
-    location: 'Walnut Creek, CA',
-    date: '2026-08-19',
-    fetchImpl
+  const hypothetical = await resolveStylingContext({
+    explicitRequest: { season: 'winter', location: 'Walnut Creek, CA', date: '2026-08-19' },
   })
-  assert.equal(hypothetical, null)
-  assert.equal(calls.length, 2, 'an explicit seasonal brief must not fetch or be overridden by today\'s weather')
+  assert.equal(hypothetical.weatherProfile.weatherSource, 'heuristic')
+  assert.equal(calls.length, 1, 'an explicit seasonal brief must not fetch or be overridden by today\'s weather')
 })
 
 test('direct Visual Composer endpoint wires saved location weather into whole-wardrobe composition', () => {
@@ -2105,7 +2102,8 @@ test('direct Visual Composer endpoint wires saved location weather into whole-wa
   const routeEnd = routeSrc.indexOf('// ── AI Visual Rendering & Boards', routeStart)
   const routeBlock = routeSrc.slice(routeStart, routeEnd)
   assert.match(routeBlock, /location: input\.location \|\| getHomeLocation\(\)/)
-  assert.match(routeBlock, /generateWholeWardrobeOutfitsVisualInternal\(\{ \.\.\.input, resolvedWeatherProfile \}\)/)
+  assert.match(routeBlock, /generateWholeWardrobeOutfitsVisualInternal\(\{/)
+  assert.match(routeBlock, /date: input\.date \|\| input\.currentDate \|\| new Date\(\)/)
 })
 
 test('bounded composer schema accepts location and resolved date for weather', () => {

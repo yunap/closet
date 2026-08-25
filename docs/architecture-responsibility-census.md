@@ -108,7 +108,7 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 
 | Shared stage | Affected pipelines | Current reusable core | Independently assembled work that remains | Divergence risk | Priority |
 |---|---:|---|---|---|---:|
-| Context resolution | 11 | `normalizeOccasion`, `normalizeActivity`, `resolveOccasionProfile`, `resolveActivityProfile`, `weatherProfileFromContext` | Selected, whole, freeform search/propose/swaps/generate, plan slots, and direct routes independently choose precedence, defaults, live-weather behavior, and mutation | Critical: the same words can reach different gates with different structured context | 1 |
+| Context resolution | 10 consumer families; 2 now migrated | `resolveStylingContext` now owns selected-piece and whole-wardrobe context; remaining consumers still use `normalizeOccasion`, `normalizeActivity`, `resolveOccasionProfile`, `resolveActivityProfile`, and `weatherProfileFromContext` directly | Freeform search/propose/swaps/generate and plan slots still independently choose precedence, defaults, live-weather behavior, and mutation | Critical: the same words can still reach later gates with different structured context until the remaining consumers migrate | 1 |
 | Piece eligibility | 11 | `wholeWardrobePieceTrustDecision` plus narrow verdict helpers | Visual roster, search broadening, plan/capsule slot gates, anchor handling, and post-composition validators independently add or repeat policy | Critical: forbidden or unsuitable pieces can enter one flow after being excluded in another | 2 |
 | Outfit validation | 11 | `isOutfitStructurallyValid` for a narrow category core | Selected gates, whole advisor/gate, freeform roles, plan submission, concept boards, and route-local explanations return different shapes and cover different invariants | Critical: identical outfits can be accepted, annotated, repaired, or rejected for accidental reasons | 3 |
 | Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
@@ -545,9 +545,28 @@ facts while assembling profiles separately. Contract tests run both through iden
 assert the same values and provenance. Consumer tests then prove each route delegates through the
 shared interface before its replaced assembly branches are deleted.
 
-**Decision required before implementation:** the interface can be fixed now, but its precedence
-cannot be encoded safely until the owner ratifies the conflict order in §7. A behavior-preserving
-module that asks each caller to order sources itself would be shallow and would preserve the defect.
+**First-consumer result, implemented 2026-08-24:**
+
+| Context concern | Shared behavior in selected-piece and whole-wardrobe composition |
+|---|---|---|
+| Request input | Each generator passes named evidence to `resolveStylingContext`; the resolver, not the caller, owns source order and normalization |
+| Occasion/activity profiles | `resolveStylingContext` constructs both profiles once; visual composers receive the resolved profiles instead of rebuilding them |
+| Activity hardness | Declared activity remains separate from request-inferred activity, so soft walking inference does not silently activate hard footwear gates |
+| Weather | Explicit stated weather wins; current-season requests refresh from live weather when location is available; a saved snapshot is the fallback when live lookup is unavailable; authored hypothetical seasons use the deterministic heuristic |
+| Provenance/conflicts | Both response debug payloads expose `stylingContext`, including resolved values, per-field source, ignored conflicting evidence, and weather authority |
+
+This is not harmless duplication: identical current-season evidence can reach different physical
+weather facts before eligibility. Per [CONTEXT.md](CONTEXT.md), **Normalize** means vocabulary/schema
+coercion while **Resolve** means choosing a structured value from raw or ambiguous input. Slice 1
+must own both steps explicitly rather than calling a collection of normalizers a context resolver.
+
+**Owner ruling, 2026-08-24:** precedence is field-specific. Occasion, activity, and mission use
+explicit request > saved/action artifact > established state > inference. Stated weather uses the
+current explicit statement before a saved slot statement. Physical weather uses live forecast for
+the authoritative date/location > saved snapshot > heuristic. Date and location use explicit >
+saved artifact > established state > default. An explicit hypothetical season does not fetch live
+weather; a saved current-season snapshot refreshes live when possible. The resolver encodes this
+order and reports conflicts instead of asking each caller to recreate it.
 
 ### Slice 2 — executable eligibility pipeline
 

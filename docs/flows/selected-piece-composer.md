@@ -1,5 +1,8 @@
 # Selected-piece composer — "Style this piece"
 
+**Status:** Active
+**Last verified:** 2026-08-24
+
 You open one garment and ask the stylist to build outfits around it. Unlike
 [Use my wardrobe](use-my-wardrobe.md), the selected piece is the **anchor**: it
 is pinned into every outfit and the candidate pool is pre-narrowed to its best
@@ -23,7 +26,8 @@ hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**
 
 ```mermaid
 flowchart TD
-    A["You open a piece<br/>+ occasion, mood, mode"] --> B["Load anchor + active wardrobe"]
+    A["You open a piece<br/>+ occasion, mood, mode"] --> X["Resolve shared styling context<br/>values + source provenance"]
+    X --> B["Load anchor + active wardrobe"]
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
     C --> D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"idealMode?<br/>set by free-text regex"}
@@ -38,7 +42,7 @@ flowchart TD
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class A,B,R app;
+    class A,X,B,R app;
     class C,D rules;
     class E,V,E2 model;
     class M,F,G check;
@@ -63,7 +67,8 @@ Three things a PM should take away:
 | Stage | What happens                            | Where                                                             |
 | ----- | --------------------------------------- | ----------------------------------------------------------------- |
 | A     | User picks a piece + options            | `StylistChat.jsx` → `POST /api/ai/generate-outfits-for-piece`     |
-| B–G   | Server composes outfits                 | `generateOutfitsForPieceInternal` — `routes/ai.js:2091`           |
+| B–G   | Server resolves context and composes outfits | `generateOutfitsForPieceInternal` — `routes/ai.js`             |
+| X     | Normalize values, choose field authority, build profiles and weather | `resolveStylingContext` — `styling-engine/stylingContext.js` |
 | C     | Candidate ranking                       | `selectCandidatesForOutfitGeneration`                             |
 | E     | Wardrobe-mode visual composer           | `composeSelectedPieceVisualWardrobeOutfits` — `routes/ai.js:1587` |
 | V,E2  | Ideal-mode critic + text composer       | `rankSelectedPieceCandidatesWithVision`, `composeStructuredOutfitsForPiece` |
@@ -85,6 +90,12 @@ Same roster builder (`buildVisualComposerRoster`), different framing:
 | Fallback          | local backfill or diagnostic cards | local fallback direction → basic backfill (always non-empty) (`ai.js:2200`) |
 
 Engineer notes:
+
+- **Shared context authority** (`resolveStylingContext`): selected-piece composition now uses the
+  same field-specific precedence, normalized occasion/activity profiles, and physical-weather
+  authority as whole-wardrobe composition. Current-season requests can use live weather from the
+  saved home location. Explicit hypothetical seasons stay hypothetical. Response debug records the
+  chosen source and ignored conflicts for each field.
 
 - **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
   request booleans *or* a regex on the question ("ideal", "missing", "not in my

@@ -26,7 +26,8 @@ Everything else — filtering, gating, backfill, rendering — is the app's code
 
 ```mermaid
 flowchart TD
-    A["You set the brief<br/>occasion, season, mood, request"] --> B["Gather your wardrobe<br/>all active closet pieces"]
+    A["You set the brief<br/>occasion, season, mood, request"] --> X["Resolve shared styling context<br/>values + source provenance"]
+    X --> B["Gather your wardrobe<br/>all active closet pieces"]
     B --> C["Filter to a roster<br/>hide unsuitable, cap photos"]
     C --> D["Assemble AI context<br/>weather, feedback, favorites"]
     D --> E{{"LLM · composes outfits<br/>sees every piece's photo"}}
@@ -39,7 +40,7 @@ flowchart TD
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class A,B,I app;
+    class A,X,B,I app;
     class C,D rules;
     class E model;
     class F,G,H check;
@@ -59,9 +60,9 @@ Two things worth knowing at this altitude:
 > therefore used only the season/request text heuristic. The endpoint now resolves today's live
 > forecast from the saved home location and passes the exact numeric profile into composition.
 > Explicit Spring/Summer/Fall/Winter/Very hot/Very cold selections remain hypothetical briefs and
-> deliberately do not fetch or get overridden by today's local weather. See
-> `resolveDirectVisualComposerWeather` and the `/generate-wardrobe-outfits-visual` route
-> (`routes/ai.js`).
+> deliberately do not fetch or get overridden by today's local weather. This behavior now belongs
+> to `resolveStylingContext` (`styling-engine/stylingContext.js`), shared with selected-piece
+> composition. Response debug includes the chosen source and any conflicting evidence.
 
 > **Shared-composer scope, 2026-08-19:** garment wear facts and explicit renderer
 > `styling_instructions` apply here as well as bounded freeform. The composer judges the relevant
@@ -77,6 +78,7 @@ Two things worth knowing at this altitude:
 | Stage | What happens                        | Where                                                             |
 | ----- | ----------------------------------- | ----------------------------------------------------------------- |
 | A     | User fills the brief, hits generate | `generateWholeWardrobeOutfits` — `src/components/StylistChat.jsx`  |
+| X     | Normalize values, choose field authority, build profiles and weather | `resolveStylingContext` — `styling-engine/stylingContext.js` |
 | B–H   | Server builds and validates outfits | `generateWholeWardrobeOutfitsVisualInternal` — `routes/ai.js`     |
 | C     | Roster construction (deep dive)     | `buildVisualComposerRoster` — `styling-engine/rules.js`           |
 | E     | The model call                      | `askStylistWithUsage` with `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`|

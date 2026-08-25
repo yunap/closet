@@ -346,13 +346,18 @@ test('6. Structured activity precedence: activity="walking" triggers constraint,
 })
 
 test('7. Plumbing: activity parameter propagates through the generateOutfitsForPieceInternal pipeline', async () => {
+  const liveWeather = { isHot: false, isCold: false, highF: 72, lowF: 55, weatherSource: 'live' }
   const result = await generateOutfitsForPieceInternal({
     pieceId: seeded.stiletto,
     occasion: 'evening',
     season: 'current season',
-    activity: 'walking'
+    activity: 'walking',
+    resolvedWeatherProfile: liveWeather
   })
 
+  assert.deepEqual(result.debug.weatherProfile, liveWeather)
+  assert.equal(result.debug.stylingContext.provenanceByField.activity.source, 'explicit_request')
+  assert.equal(result.debug.stylingContext.provenanceByField.weatherProfile.source, 'explicit_request.weather_profile')
   assert.ok(result.structuredOutfits.length > 0)
   for (const outfit of result.structuredOutfits) {
     const shoe = outfit.pieces.find(p => p.category === 'shoes')
@@ -380,6 +385,8 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
     })
 
     assert.ok(Array.isArray(result.structuredOutfits))
+    assert.equal(result.debug.stylingContext.provenanceByField.activity.source, 'explicit_request')
+    assert.equal(result.debug.stylingContext.resolved.activity, 'walking')
 
     assert.ok(capturedMessages, 'AI must have been called')
     const userText = Array.isArray(capturedMessages[0].content)
