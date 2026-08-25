@@ -6,6 +6,7 @@ import path from 'node:path'
 const routeSource = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
 const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
 const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
+const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -86,4 +87,13 @@ test('selected ranking and whole generation consume shared automatic-use pool ad
 test('plan workbenches and capsule eligibility consume the shared automatic-use pool', () => {
   assert.match(plannerSource, /evaluateAutomaticUsePiecePool\(\{/)
   assert.doesNotMatch(plannerSource, /filterWholeWardrobePiecesForGeneration\(/)
+})
+
+test('whole-wardrobe footwear recovery consumes the shared automatic-use pool core', () => {
+  const start = rulesSource.indexOf('export function repairWholeWardrobeOutfit')
+  const end = rulesSource.indexOf('export function wholeWardrobeDiversitySelectionScore', start)
+  assert.ok(start >= 0 && end > start, 'missing repairWholeWardrobeOutfit source block')
+  const repair = rulesSource.slice(start, end)
+  assert.match(repair, /evaluateAutomaticUsePiecePoolCore\(\{/)
+  assert.doesNotMatch(repair, /filterWholeWardrobePiecesForGeneration\(/)
 })

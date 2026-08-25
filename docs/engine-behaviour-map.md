@@ -723,9 +723,11 @@ model call.
 
 `wholeWardrobePieceTrustDecision` in `rules.js` is the hard gate. Pool consumers should call
 `evaluateAutomaticUsePiecePool` in `eligibility.js`, which executes that verdict for every piece and
-returns typed findings plus eligible/excluded projections. Compatibility consumers still call the
-hard gate through `filterWholeWardrobePiecesForGeneration`; `scoreWholeWardrobeCandidate` uses it as
-a `-18` support-only *penalty*, not a block. The hard gate itself returns
+returns typed findings plus eligible/excluded projections. `evaluateAutomaticUsePiecePoolCore`
+owns the dependency-neutral pool mechanics used by that public adapter and by recovery inside
+`rules.js`. The legacy `filterWholeWardrobePiecesForGeneration` shape is a projection over the same
+core and has no production callers. `scoreWholeWardrobeCandidate` uses the piece verdict as a `-18`
+support-only *penalty*, not a block. The hard gate itself returns
 `{allowed, supportOnly, reasons}`; `allowed` is simply `reasons.length === 0`.
 
 **[by design]** A user-requested **anchor changes disposition, not evidence**. The shared pool still
@@ -1097,6 +1099,17 @@ the workbench's suppression diagnostics retain `underlyingExcludedPieces`. Plan 
 capsule slot union, quota/roster selection, structural coverage, and representative rotation do not
 move into eligibility and do not change behavior. The legacy whole-filter adapter remains only in
 recovery logic in `rules.js`.
+
+**[eligibility-ownership consolidation, fifth consumer migration, 2026-08-24] Footwear recovery
+now consumes the same automatic-use pool mechanics, completing the active-caller migration.**
+`repairWholeWardrobeOutfit` uses `evaluateAutomaticUsePiecePoolCore` with
+`wholeWardrobePieceTrustDecision` before its existing required-footwear match and relevance sort.
+The core was extracted below `eligibility.js` to avoid a circular dependency; it owns owner-
+constraint loading, typed findings, effective/underlying dispositions, and capacity policy, while
+the public `evaluateAutomaticUsePiecePool` remains the domain entry point for every caller outside
+`rules.js`. The legacy whole-filter export delegates to this core and remains only for contract
+tests. Hiking activation, eligible shoe supply, scoring, tie-breaking, and the single-swap behavior
+are unchanged.
 
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured

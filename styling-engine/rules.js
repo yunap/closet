@@ -13,6 +13,7 @@ import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
+import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
   ownerGuidanceApplicabilityFromSynthesis,
@@ -2740,61 +2741,21 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
 }
 
 export function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
-  const { weatherProfile = {} } = options
-  const allowedPieces = []
-  const suppressedPieces = []
-
-  let ownerConstraints = options.ownerConstraints
-  if (!Array.isArray(ownerConstraints)) {
-    try { ownerConstraints = db.prepare("SELECT * FROM owner_constraints WHERE status = 'active' ORDER BY id").all().map(parseOwnerConstraintRow) } catch { ownerConstraints = [] }
+  const result = evaluateAutomaticUsePiecePoolCore({
+    pieces: allPieces,
+    context: options,
+    policy: { hotOuterwearCap: 3 },
+    decidePiece: wholeWardrobePieceTrustDecision,
+  })
+  return {
+    allowedPieces: result.eligiblePieces,
+    suppressedPieces: result.underlyingExcludedPieces.map(entry => ({
+      id: entry.id,
+      name: entry.name,
+      category: wardrobeCategoryGroup(entry.piece),
+      reasons: entry.reasons,
+    })),
   }
-  const decisionOptions = { ...options, ownerConstraints }
-  for (const piece of allPieces) {
-    const decision = wholeWardrobePieceTrustDecision(piece, decisionOptions)
-    if (decision.allowed) {
-      allowedPieces.push(piece)
-    } else {
-      suppressedPieces.push({
-        id: piece.id,
-        name: piece.name,
-        category: wardrobeCategoryGroup(piece),
-        reasons: decision.reasons
-      })
-    }
-  }
-
-  if (weatherProfile.isHot) {
-    const outerwearPieces = allowedPieces.filter(p => p.category === 'outerwear' || wardrobeCategoryGroup(p) === 'outerwear')
-    if (outerwearPieces.length > 3) {
-      const weightScore = { 'light': 1, 'medium': 2, 'heavy': 3 }
-      const getWeightVal = (p) => weightScore[pieceFabricWeight(p)] || 2
-
-      outerwearPieces.sort((a, b) => {
-        const diff = getWeightVal(a) - getWeightVal(b)
-        if (diff !== 0) return diff
-        return a.id - b.id // deterministic tie-breaker
-      })
-
-      const toSuppress = outerwearPieces.slice(3)
-      const toSuppressIds = new Set(toSuppress.map(p => p.id))
-
-      let i = allowedPieces.length
-      while (i--) {
-        const p = allowedPieces[i]
-        if (toSuppressIds.has(p.id)) {
-          allowedPieces.splice(i, 1)
-          suppressedPieces.push({
-            id: p.id,
-            name: p.name,
-            category: wardrobeCategoryGroup(p),
-            reasons: ['hot weather: outerwear cap']
-          })
-        }
-      }
-    }
-  }
-
-  return { allowedPieces, suppressedPieces }
 }
 
 export function buildVisualComposerRoster(allowedPieces = [], {
@@ -4795,7 +4756,13 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
       const isTrailRated = requiredFootwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
       if (!isTrailRated) {
         const weatherProfile = options.weatherProfile || weatherProfileFromContext({ mood, season: options.season })
-        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, season: options.season, weatherProfile, mood, activity: options.activity })
+        const recoveryEligibility = evaluateAutomaticUsePiecePoolCore({
+          pieces: candidatePieces,
+          context: { occasion, season: options.season, weatherProfile, mood, activity: options.activity },
+          policy: { hotOuterwearCap: 3 },
+          decidePiece: wholeWardrobePieceTrustDecision,
+        })
+        const allowedPieces = recoveryEligibility.eligiblePieces
         
         const getShoeRelevance = (shoe) => {
           let score = pieceOccasionScore(shoe, occasion)

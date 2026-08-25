@@ -210,7 +210,7 @@ requirements but may not redefine the underlying verdict.
 |---|---|---|---|
 | `wholeWardrobePieceTrustDecision` | Aggregate owner constraint, occasion/register, weather, activity, footwear, and auto-styling trust for one piece | `canonical` aggregate for automatic-use eligibility | Selected ranking, whole filtering/scoring, freeform search/propose/swaps/generate, plan workbench, repairs |
 | `profileRuleFit`, `footwearComfortVerdict`, `registerCeilingVerdict`, weather and occasion readers | Narrow contextual verdicts | `canonical` primitives | Trust aggregate, visual roster, scores, plan validation, search |
-| `filterWholeWardrobePiecesForGeneration` | Legacy adapter applying the trust aggregate across a pool plus hot-outerwear supply behavior | `legacy` compatibility adapter | Remaining recovery caller in `rules.js` |
+| `filterWholeWardrobePiecesForGeneration` | Legacy `{allowedPieces, suppressedPieces}` projection over the shared pool core | `legacy` compatibility adapter | Historical contract tests only; no production consumer |
 | Selected-piece anchor bypass | Keep the user-selected premise even when ordinary auto-use gates would exclude it | `specialization` | Selected visual/text composers and boards |
 | `buildVisualComposerRoster` | Photo availability, metadata completeness, supply-aware register/activity policy, visual relevance, category ceilings and global image cap | `specialization`; `adapter` where it calls shared verdicts; `unresolved` for parallel gate branches | Selected visual and whole visual composers |
 | `search_wardrobe` filtering and broadening | Active/category/owner exclusions are fixed; descriptive and occasion filters may relax with disclosure | `specialization` | Freeform serial retrieval |
@@ -619,6 +619,17 @@ outerwear limit an explicit capacity policy. Plan ranking, workbench caps, capsu
 selection, and recombination remain strategy owned by `outfitSetPlanner.js`; suppressed diagnostics
 read `underlyingExcludedPieces` so typed findings are not lost. The only production caller of the
 legacy whole-filter adapter now sits in recovery logic in `rules.js`.
+
+**Fifth-consumer migration, 2026-08-24:** `repairWholeWardrobeOutfit` now obtains its
+required-footwear substitution pool from the same automatic-use evaluator mechanics. To avoid a
+`rules.js` ↔ `eligibility.js` import cycle, `evaluateAutomaticUsePiecePoolCore` owns the
+dependency-neutral pool iteration, owner-constraint preload, typed findings, anchor disposition,
+and capacity policy; the public `evaluateAutomaticUsePiecePool` supplies the canonical piece
+verdict. Recovery supplies that same verdict locally and keeps its existing required-footwear and
+shoe-relevance strategy. `filterWholeWardrobePiecesForGeneration` is now only a legacy response
+projection over the core, with no production callers or independent gate loop. This completes the
+runtime-consumer migration named by Slice 2; visual presentation policy and post-composition
+validation remain deliberately separate later slices.
 
 ### Slice 3 — structured outfit validation
 

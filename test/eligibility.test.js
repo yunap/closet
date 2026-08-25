@@ -16,6 +16,7 @@ const {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } = await import('../styling-engine/eligibility.js')
 const {
+  filterWholeWardrobePiecesForGeneration,
   selectCandidatesForOutfitGeneration,
   wholeWardrobeOutfitLooksQuestionable,
   wholeWardrobeOutfitVisualReviewFindings,
@@ -92,6 +93,25 @@ test('hot-weather outerwear capacity and anchor bypass are explicit pool policy'
   assert.equal(result.decisionsById.get(44).bypassed, true)
   assert.ok(result.underlyingExcludedPieces.some(entry => entry.pieceId === 44), 'bypass keeps the original suppression observable')
   assert.equal(result.debug.bypassedAnchorCount, 1)
+})
+
+test('legacy whole-filter projection delegates to the shared pool without changing eligibility', () => {
+  const pieces = [
+    piece(45, { category: 'outerwear', name: 'Light layer A', fabric_weight: 'light' }),
+    piece(46, { category: 'outerwear', name: 'Light layer B', fabric_weight: 'light' }),
+    piece(47, { category: 'outerwear', name: 'Medium layer A', fabric_weight: 'medium' }),
+    piece(48, { category: 'outerwear', name: 'Medium layer B', fabric_weight: 'medium' }),
+    piece(49, { name: 'Blocked heel', heel_height: 'high', walk_support: 'low', shoe_type: 'pump' }),
+  ]
+  const context = { occasion: 'city', activity: 'walking', weatherProfile: { isHot: true, isCold: false } }
+  const shared = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
+  const legacy = filterWholeWardrobePiecesForGeneration(pieces, context)
+
+  assert.deepEqual(legacy.allowedPieces.map(item => item.id), shared.eligiblePieces.map(item => item.id))
+  assert.deepEqual(
+    new Map(legacy.suppressedPieces.map(item => [item.id, item.reasons])),
+    new Map(shared.underlyingExcludedPieces.map(item => [item.id, item.reasons])),
+  )
 })
 
 test('selected candidate adapter preserves the existing ranking while reusing one pool verdict', () => {
