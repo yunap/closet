@@ -1,5 +1,7 @@
 # Closet — model-facing flow atlas
 
+**Status:** Active — provider-call and deterministic sibling flow index.
+
 Every user flow that talks to a model, mapped as a diagram a PM can read. Each
 flow gets its own file; this page is the index.
 
@@ -32,6 +34,8 @@ All three intake flows are in [piece-intake-and-tagging.md](piece-intake-and-tag
 | [Visual Composer recent memory](whole-wardrobe-session-memory.md) | Visual Composer "Reset recent memory" | `/whole-wardrobe-session-memory` | **done** |
 | [Outfits for a selected piece](selected-piece-composer.md) | Piece → "style this" | `/generate-outfits-for-piece` | **done** |
 | [Visual boards for a piece concept](piece-concept-boards.md) | Piece result → boards | `/generate-outfit-boards` | **done** |
+| [Expand one capsule slot](capsule-expansion-and-repair.md) | Capsule card → Show another | `/expand-capsule` | **done** |
+| [Repair one capsule look](capsule-expansion-and-repair.md) | Rejected capsule card → Fix this look | `/repair-capsule-look` | **done** |
 
 ## C. Ideal / beyond-wardrobe styling  (editorial)
 
@@ -75,8 +79,9 @@ overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ### Progress
 
-**16 model-facing flows across families A–F are mapped.** Two known gaps: `/expand-capsule` and
-`/repair-capsule-look` have no diagram here (noted 2026-08-20). For how a message *reaches* any of
-these flows in the first place, see [message-lifecycle.md](../message-lifecycle.md) — the dispatcher
-is a seam between flows and is owned by no diagram on this page.
-Every flow that talks to a model now has a diagram here.
+**18 active flow entries across families A–F are mapped.** The two capsule follow-on gaps recorded
+on 2026-08-20 are now closed. Seventeen can cross a provider boundary; deterministic capsule repair
+is included because it is the zero-call sibling of capsule expansion. For how a message *reaches*
+any of these flows in the first place, see [message-lifecycle.md](../message-lifecycle.md) — the
+dispatcher is a seam between flows and is owned by no diagram on this page. Every active flow that
+talks to a model now has a diagram here.

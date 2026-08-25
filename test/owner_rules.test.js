@@ -164,6 +164,32 @@ test('office and client guidance uses explicit request situations rather than al
   assert.equal(ownerGuidanceApplies(applicability, { requestContext: { requestText: 'smart casual museum visit' } }), false)
 })
 
+test('season-scoped guidance treats current season as its calendar season', () => {
+  const applicability = extractOwnerGuidanceApplicability('I avoid suede shoes in summer.')
+  const pieces = [{ id: 1, category: 'shoes', name: 'Olive suede slip-ons', fabric_category: 'suede', fiber_content: [] }]
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { season: 'current season', currentDate: new Date('2026-07-15T12:00:00-07:00') },
+    pieces,
+  }), true)
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { season: 'current season', currentDate: new Date('2026-01-15T12:00:00-08:00') },
+    pieces,
+  }), false)
+})
+
+test('weather-scoped guidance accepts the canonical structured weather profile shape', () => {
+  const applicability = extractOwnerGuidanceApplicability('Canvas sneakers are not suitable for rainy weather.')
+  const pieces = [{ id: 1, category: 'shoes', name: 'canvas sneakers', fabric_category: 'canvas', fiber_content: [] }]
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { weather: { isRainy: true, weatherSource: 'live' }, weatherText: '' },
+    pieces,
+  }), true)
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { weather: { isRainy: false, weatherSource: 'live' }, weatherText: '' },
+    pieces,
+  }), false)
+})
+
 test('a repeated correction can gain a validated proposal without duplicating the memory', () => {
   storeUserCorrection('No dresses for travel.', 'general', null)
   const result = storeUserCorrection('No dresses for travel.', 'general', null, {

@@ -141,6 +141,24 @@ test('exact outfit reaction stays within its recorded context', () => {
   assert.equal(getExactOutfitReactionMemory([selected.id, candidate.id]), '')
 })
 
+test('exact outfit reaction resolves historical and requested current season by date', () => {
+  const id = insertBoard({ imageUrl: '/uploads/almost-current-season.png', labels: ['almost'] })
+  const row = db.prepare('SELECT payload FROM saved_boards WHERE id = ?').get(id)
+  const payload = JSON.parse(row.payload)
+  payload.scoped_evidence = { version: 1, kind: 'outfit_logic', verdict: 'almost', logic: {}, context: { season: 'current season' } }
+  db.prepare('UPDATE saved_boards SET payload = ?, created_at = ? WHERE id = ?')
+    .run(JSON.stringify(payload), '2026-07-15 12:00:00', id)
+
+  assert.match(getExactOutfitReactionMemory(
+    [selected.id, candidate.id],
+    { season: 'current season', currentDate: new Date('2026-07-20T12:00:00-07:00') },
+  ), /Almost right/)
+  assert.equal(getExactOutfitReactionMemory(
+    [selected.id, candidate.id],
+    { season: 'current season', currentDate: new Date('2026-01-20T12:00:00-08:00') },
+  ), '')
+})
+
 test('exact outfit reaction normalizes absent and compound stored context', () => {
   const id = insertBoard({ imageUrl: '/uploads/almost-compound-context.png', labels: ['almost'] })
   const row = db.prepare('SELECT payload FROM saved_boards WHERE id = ?').get(id)
@@ -373,6 +391,9 @@ test('only accepted personal synthesis drafts become styling prompt memory', () 
   insert.run(batchId, 'personal_contextual_lesson', 'Summer shoes', 'Do not use the fall shoes in summer.', 'Summer only.', 'accepted', JSON.stringify({ applicability: {
     version: 1, scope: 'piece_context', piece_ids: [195], occasions: [], activities: [], seasons: ['summer'], weather_terms: [],
   } }))
+  insert.run(batchId, 'personal_contextual_lesson', 'Rain shoes', 'Use the rain-ready shoes when the forecast is rainy.', 'Rain only.', 'accepted', JSON.stringify({ applicability: {
+    version: 1, scope: 'piece_context', piece_ids: [196], occasions: [], activities: [], seasons: [], weather_terms: ['rainy'],
+  } }))
   insert.run(batchId, 'personal_contextual_lesson', 'Active top', 'Preserve this top’s elevated register.', 'Only when styling piece 260.', 'accepted', JSON.stringify({ applicability: {
     version: 1, scope: 'piece', piece_ids: [260], occasions: [], activities: [], seasons: [], weather_terms: [],
   } }))
@@ -390,6 +411,18 @@ test('only accepted personal synthesis drafts become styling prompt memory', () 
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { season: 'winter' }), /fall shoes in summer/)
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [195], season: 'winter' }), /fall shoes in summer/)
   assert.match(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [195], season: 'summer' }), /fall shoes in summer/)
+  assert.match(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [196], weather: { isRainy: true } }), /rain-ready shoes/)
+  assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [196], weather: { isRainy: false } }), /rain-ready shoes/)
+  assert.match(getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: [195],
+    season: 'current season',
+    currentDate: new Date('2026-07-15T12:00:00-07:00'),
+  }), /fall shoes in summer/)
+  assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: [195],
+    season: 'current season',
+    currentDate: new Date('2026-01-15T12:00:00-08:00'),
+  }), /fall shoes in summer/)
   assert.match(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [260] }), /elevated register/)
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [261] }), /elevated register/)
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { season: 'summer' }), /lacks structured applicability/)

@@ -29,6 +29,13 @@ Once asked, the answers were uncomfortable:
   against a vocabulary that does not exist
 - the wardrobe's colour vocabulary cannot express `coral`, so the coral maxi dress is tagged `pink`
 
+**[2026-08-25] Shared projection/result amendment.** Plan submission requirements and capsule
+expansion now obtain category-core wording from `outfitValidation.js`. Accepted representative
+cards and visible rejected attempts carry the versioned `outfitResult.js` envelope; rejected
+attempts are `repairable` with the existing `repair_capsule_look` action, while accepted plan cards
+record `plan_outfit_set` provenance. Capsule selection, rotation, provider calls, and UI actions did
+not change.
+
 None of this was reachable by reading the code, which is why the research documents exist. The rule
 going forward: **a constant that shapes output needs a source, an owner ruling, or a measurement —
 a comment explaining the reasoning is not one of those.**
@@ -171,6 +178,12 @@ at composition time instead of rejecting it to a needs-review card. The logic al
 On the live run this converts **7 good + 3 needs-review into 9 good + 1**, at no model cost.
 Testable offline against the saved thread. Implemented as `completeSubmittedPlanOutfits`; only
 structural absence is completed, and the entire rotation is revalidated after each completion.
+Since 2026-08-25 the enumeration runs through shared `validatedComplete`: the capsule still owns
+its stable candidate order and zero-call budget, while the primitive makes the
+`validateSubmittedPlanOutfits` postcondition mandatory and emits the standard recovery-shortfall
+shape when no allowed addition validates. The same split applies to deterministic capsule-card
+repair (`validatedComplete` for absence, `validatedSubstitute` for a blocked piece) and palette
+roster swaps (`validatedSubstitute` with `validateCapsuleRoster`).
 
 ### Step 2 — slot facts *(complete 2026-07-30)*
 
@@ -389,6 +402,22 @@ deferred):**
    strap/sleeve shape, length, bulk, colour relationship, concealment intent) and the
    strong-vs-weak-dependency judgment, matching how hero/support/wearability guidance was already
    written. No deterministic score, no exclusion — model judgment, as designed.
+
+**[candidate-set ownership, 2026-08-25] Capsule bench structural admission now uses the same
+bounded-set primitive as selected, visual, and coordinated-plan composition.** Each capsule slot
+restricts a shared complete-outfit requirement to its own gate-eligible IDs, so the finite model
+bench retains a top + bottom + shoes or dress + shoes path when supply and bench capacity permit.
+Dependent paths reserve a usable required base through the shared construction verdict. The
+capsule's ranking, deterministic roster seed, category choice targets, protagonist/palette supply,
+roster quotas, and postconditions remain capsule policy. `diagnostics.structuralCoverageReport`
+distinguishes true wardrobe supply gaps from a bench-capacity shortfall.
+
+**[context and validation ownership completed, 2026-08-25]** Every plan/capsule slot is resolved
+through `resolveStylingContext` before roster selection, and its provenance travels with the
+workbench/pending slot. Submitted looks consume `evaluateWearableOutfit` for shared structure,
+required-base, unknown/sight, and optional direction meaning before capsule-owned slot and set
+rules. Bounded completion and repair must pass that same hard result; rejected attempts remain
+Needs review evidence rather than being made valid to satisfy rotation count.
 
 **Ranking A/B: 0 scenarios differ — the corrected version is the no-op the V1 correction was too.**
 The first implementation of item 2 was NOT `validatorOnly` like `layer_floor:outerwear`, and it

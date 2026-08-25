@@ -13,11 +13,16 @@ import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
+import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
+import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
+import { evaluateWearableOutfit } from './outfitValidation.js'
+import { validatedSubstitute } from './recovery.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
   ownerGuidanceApplicabilityFromSynthesis,
   ownerGuidanceApplies,
 } from '../lib/ownerGuidance.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 import {
   fabricWeight,
@@ -791,7 +796,7 @@ function feedbackContextMatches(storedValue, requestedValue) {
 }
 
 export function getExactOutfitReactionMemory(pieceIds = [], {
-  occasion = '', activity = '', season = '', limit = 3,
+  occasion = '', activity = '', season = '', currentDate = null, limit = 3,
 } = {}) {
   const availableIds = new Set((Array.isArray(pieceIds) ? pieceIds : [pieceIds])
     .map(Number).filter(id => Number.isInteger(id) && id > 0))
@@ -799,7 +804,14 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
   const normalizedContext = {
     occasion: String(occasion || '').trim().toLowerCase(),
     activity: String(activity || '').trim().toLowerCase(),
-    season: String(season || '').trim().toLowerCase(),
+    season: resolveCalendarSeason(season, currentDate),
+  }
+  const rowSeason = (value, row) => {
+    const rawDate = row?.created_at
+    const referenceDate = rawDate
+      ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(rawDate) ? rawDate : `${String(rawDate).replace(' ', 'T')}Z`)
+      : undefined
+    return resolveCalendarSeason(value, referenceDate)
   }
   try {
     const rows = db.prepare(`
@@ -824,7 +836,7 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
       const storedContext = {
         occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
         activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
-        season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+        season: rowSeason(evidenceContext.season || payload.outfit?.season || '', row),
       }
       const contextMismatch = Object.keys(storedContext).some(key =>
         !feedbackContextMatches(storedContext[key], normalizedContext[key]))
@@ -866,7 +878,7 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
         const storedContext = {
           occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
           activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
-          season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+          season: rowSeason(evidenceContext.season || payload.outfit?.season || '', row),
         }
         const contextMismatch = Object.keys(storedContext).some(key =>
           !feedbackContextMatches(storedContext[key], normalizedContext[key]))
@@ -1512,16 +1524,23 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
   return allowed
     .map(p => {
       const scored = compatibilityScoreForSelectedItem(piece, p, options)
-      const trust = wholeWardrobePieceTrustDecision(p, {
-        occasion: options.occasion || 'casual',
-        season: options.season,
-        activity: options.activity,
-        mood: options.mood,
-        request: options.request,
-        question: options.question,
-        explorationMode: options.explorationMode || 'moderate',
-        weatherProfile: options.weatherProfile
-      })
+      const sharedEligibility = options.eligibilityDecisionsById?.get(Number(p.id))
+      const trust = sharedEligibility
+        ? {
+            allowed: sharedEligibility.underlyingAllowed,
+            supportOnly: sharedEligibility.supportOnly,
+            reasons: sharedEligibility.reasons,
+          }
+        : wholeWardrobePieceTrustDecision(p, {
+            occasion: options.occasion || 'casual',
+            season: options.season,
+            activity: options.activity,
+            mood: options.mood,
+            request: options.request,
+            question: options.question,
+            explorationMode: options.explorationMode || 'moderate',
+            weatherProfile: options.weatherProfile
+          })
       return {
         piece: p,
         ...scored,
@@ -1584,11 +1603,21 @@ export function selectCandidatesForOutfitGeneration(piece, allPieces, limit = 30
   }
 
   const seen = new Set()
-  return mixed.filter(r => {
+  const initialSelection = mixed.filter(r => {
     if (seen.has(r.piece.id)) return false
     seen.add(r.piece.id)
     return true
   }).slice(0, limit)
+  const rowById = new Map(ranked.map(row => [Number(row.piece.id), row]))
+  const covered = buildCoveredCandidateSet({
+    rankedPieces: ranked.map(row => row.piece).filter(candidate => Number(candidate.id) !== Number(piece?.id)),
+    initialSelection: initialSelection.map(row => row.piece),
+    capacity: limit,
+    requirements: [completeOutfitSupplyRequirement({ anchorPiece: piece, id: 'selected_anchor_outfit_path' })],
+  })
+  const result = covered.pieces.map(candidate => rowById.get(Number(candidate.id))).filter(Boolean)
+  Object.defineProperty(result, 'coverageReport', { value: covered.report, enumerable: false })
+  return result
 }
 
 export function buildOutfitGenerationCandidateText(rankedCandidates) {
@@ -1916,33 +1945,30 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
-// Cheap, tag-based pre-filter for whether a composed outfit is worth the extra visual-critic
-// call — not a replacement for it. Deliberately over-inclusive: pattern_complexity/do_not_pair_rules
-// may be missing or wrong (the tagger or the user may never have set them), so this also falls back
-// to scanning each piece's own name/notes text for pattern words, the same signal a human would
-// have if the tags did not exist.
-const QUESTIONABLE_PATTERN_WORD_RE = /\b(floral|paisley|botanical|abstract|graphic|print|printed|pattern|patterned|stripe|striped|animal print|tropical|tie-dye|camo)\b/i
-// A do-not-pair rule about patterns/prints (e.g. "avoid another loud pattern") is only ever
-// actually implicated when a second patterned piece is present — that risk is already covered
-// by the patternedCount check above. Counting it on its own presence, regardless of whether
-// anything else in the outfit is patterned, flagged nearly every outfit containing a single
-// printed hero piece as "questionable" (most wardrobe pieces carry some do_not_pair_rule) and
-// sent it to the visual critic with nothing for the critic to actually judge — it then had to
-// invent a clash to justify the call. Non-pattern rules (silhouette, texture, color, formality)
-// still count on presence alone; those need the photo to verify and can't be cheaply checked.
-const PATTERN_DO_NOT_PAIR_RE = /\b(pattern|print|printed|patterned)\b/i
-export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
+// Cheap, structured pre-filter for whether a composed outfit is worth the extra visual-critic
+// call — not a replacement for it. Legacy garment-intelligence prose was produced by several
+// tagger generations without stable provenance. Its mere presence is not executable evidence and
+// must never activate a paid review or rejection path.
+export function wholeWardrobeOutfitVisualReviewFindings(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const patternedCount = pieces.filter(piece => {
+  const patternedPieceIds = pieces.filter(piece => {
     const complexity = String(piece.pattern_complexity || '').toLowerCase().trim()
     if (complexity === 'loud' || complexity === 'medium') return true
-    if (complexity) return false // explicitly tagged solid/quiet — trust the tag over the name scan
-    return QUESTIONABLE_PATTERN_WORD_RE.test(pieceNameBlob(piece))
-  }).length
-  if (patternedCount >= 2) return true
-  return pieces.some(piece =>
-    pieceGarmentIntelligence(piece).doNotPairRules.some(rule => !PATTERN_DO_NOT_PAIR_RE.test(rule))
-  )
+    if (complexity) return false
+    const patternType = String(piece.pattern_type || '').toLowerCase().trim()
+    return Boolean(patternType && !['solid', 'none', 'unknown'].includes(patternType))
+  }).map(piece => Number(piece.id)).filter(Number.isFinite)
+  if (patternedPieceIds.length < 2) return []
+  return [{
+    code: 'multiple_patterned_pieces',
+    reason: 'two or more pieces carry a concrete pattern signal',
+    pieceIds: patternedPieceIds,
+    source: 'structured_piece_facts',
+  }]
+}
+
+export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
+  return wholeWardrobeOutfitVisualReviewFindings(outfit).length > 0
 }
 
 export function inferWholeWardrobePieceRoles(piece = {}) {
@@ -2641,7 +2667,7 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     piece,
   }, {
     occasion: ownerExclusionOccasion,
-    season: options.season,
+    season: options.calendarSeason || options.season,
     activity: options.activity,
     currentDate: options.currentDate,
     weather: {
@@ -2735,63 +2761,9 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   }
 }
 
-export function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
-  const { weatherProfile = {} } = options
-  const allowedPieces = []
-  const suppressedPieces = []
-
-  let ownerConstraints = options.ownerConstraints
-  if (!Array.isArray(ownerConstraints)) {
-    try { ownerConstraints = db.prepare("SELECT * FROM owner_constraints WHERE status = 'active' ORDER BY id").all().map(parseOwnerConstraintRow) } catch { ownerConstraints = [] }
-  }
-  const decisionOptions = { ...options, ownerConstraints }
-  for (const piece of allPieces) {
-    const decision = wholeWardrobePieceTrustDecision(piece, decisionOptions)
-    if (decision.allowed) {
-      allowedPieces.push(piece)
-    } else {
-      suppressedPieces.push({
-        id: piece.id,
-        name: piece.name,
-        category: wardrobeCategoryGroup(piece),
-        reasons: decision.reasons
-      })
-    }
-  }
-
-  if (weatherProfile.isHot) {
-    const outerwearPieces = allowedPieces.filter(p => p.category === 'outerwear' || wardrobeCategoryGroup(p) === 'outerwear')
-    if (outerwearPieces.length > 3) {
-      const weightScore = { 'light': 1, 'medium': 2, 'heavy': 3 }
-      const getWeightVal = (p) => weightScore[pieceFabricWeight(p)] || 2
-
-      outerwearPieces.sort((a, b) => {
-        const diff = getWeightVal(a) - getWeightVal(b)
-        if (diff !== 0) return diff
-        return a.id - b.id // deterministic tie-breaker
-      })
-
-      const toSuppress = outerwearPieces.slice(3)
-      const toSuppressIds = new Set(toSuppress.map(p => p.id))
-
-      let i = allowedPieces.length
-      while (i--) {
-        const p = allowedPieces[i]
-        if (toSuppressIds.has(p.id)) {
-          allowedPieces.splice(i, 1)
-          suppressedPieces.push({
-            id: p.id,
-            name: p.name,
-            category: wardrobeCategoryGroup(p),
-            reasons: ['hot weather: outerwear cap']
-          })
-        }
-      }
-    }
-  }
-
-  return { allowedPieces, suppressedPieces }
-}
+// Slice 7 (2026-08-25): filterWholeWardrobePiecesForGeneration was a compatibility projection
+// over evaluateAutomaticUsePiecePool and had no production consumers. It was removed so tests and
+// diagnostics cannot accidentally establish the retired response shape as a second eligibility API.
 
 export function buildVisualComposerRoster(allowedPieces = [], {
   occasion = 'casual',
@@ -3448,6 +3420,44 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   } else {
     roster.push(...afterStep4)
   }
+
+  const protectedRosterPieces = afterActivityGate.filter(isSelected)
+  const coverageRequirements = protectedRosterPieces.length
+    ? protectedRosterPieces.map(anchorPiece => completeOutfitSupplyRequirement({
+        anchorPiece,
+        id: `visual_anchor_${Number(anchorPiece.id)}_outfit_path`,
+      }))
+    : [completeOutfitSupplyRequirement({ id: 'visual_roster_outfit_path' })]
+  const coveredRoster = buildCoveredCandidateSet({
+    rankedPieces: [...afterActivityGate].sort((a, b) => comparePieces(a, b)),
+    initialSelection: roster,
+    capacity: maxImages,
+    protectedPieceIds: protectedRosterPieces.map(piece => Number(piece.id)),
+    requirements: coverageRequirements,
+  })
+  const originalRosterIds = new Set(roster.map(piece => Number(piece.id)))
+  const coveredRosterIds = new Set(coveredRoster.pieces.map(piece => Number(piece.id)))
+  const rosterChanged = originalRosterIds.size !== coveredRosterIds.size ||
+    [...originalRosterIds].some(id => !coveredRosterIds.has(id))
+  if (rosterChanged) {
+    const addedIds = new Set([...coveredRosterIds].filter(id => !originalRosterIds.has(id)))
+    const finalIds = new Set(coveredRoster.pieces.map(piece => Number(piece.id)))
+    for (let index = excluded.length - 1; index >= 0; index -= 1) {
+      const item = excluded[index]
+      if (!addedIds.has(Number(item.pieceId)) || !capCutReasons.has(item.reason)) continue
+      excluded.splice(index, 1)
+      debug.excludedCounts[item.reason] = Math.max(0, (debug.excludedCounts[item.reason] || 0) - 1)
+    }
+    for (const piece of roster) {
+      if (finalIds.has(Number(piece.id))) continue
+      if (!excluded.some(item => Number(item.pieceId) === Number(piece.id) && capCutReasons.has(item.reason))) {
+        exclude(piece, 'roster cap: global limit')
+      }
+    }
+    roster.splice(0, roster.length, ...coveredRoster.pieces)
+  }
+  debug.coverageReport = coveredRoster.report
+  debug.structureCoverageGaps = coveredRoster.report.shortfalls.map(shortfall => shortfall.code)
 
   // Populate debug category counts
   for (const p of roster) {
@@ -4791,7 +4801,13 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
       const isTrailRated = requiredFootwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
       if (!isTrailRated) {
         const weatherProfile = options.weatherProfile || weatherProfileFromContext({ mood, season: options.season })
-        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, season: options.season, weatherProfile, mood, activity: options.activity })
+        const recoveryEligibility = evaluateAutomaticUsePiecePoolCore({
+          pieces: candidatePieces,
+          context: { occasion, season: options.season, weatherProfile, mood, activity: options.activity },
+          policy: { hotOuterwearCap: 3 },
+          decidePiece: wholeWardrobePieceTrustDecision,
+        })
+        const allowedPieces = recoveryEligibility.eligiblePieces
         
         const getShoeRelevance = (shoe) => {
           let score = pieceOccasionScore(shoe, occasion)
@@ -4844,16 +4860,30 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
             if (scoreA !== scoreB) return scoreB - scoreA
             return a.id - b.id
           })
-          const bestShoe = candidateShoes[0]
-          
-          if (Array.isArray(repaired.pieceIds)) {
-            repaired.pieceIds = repaired.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+          const substitution = validatedSubstitute({
+            subject: repaired,
+            target: currentShoe,
+            candidates: candidateShoes,
+            mutate: (currentOutfit, bestShoe) => ({
+              ...currentOutfit,
+              pieceIds: Array.isArray(currentOutfit.pieceIds)
+                ? currentOutfit.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+                : currentOutfit.pieceIds,
+              pieces: Array.isArray(currentOutfit.pieces)
+                ? currentOutfit.pieces.map(piece => Number(piece.id) === Number(currentShoe.id) ? bestShoe : piece)
+                : currentOutfit.pieces,
+            }),
+            validate: trial => evaluateWearableOutfit(wholeWardrobeFullPieces(trial, candidatePieces), { requireShoes: true }),
+            context: { flow: 'whole_wardrobe', reason: 'required_footwear' },
+          })
+          if (substitution.status === 'recovered') {
+            const updatedRepaired = rewriteWholeWardrobeOutfitWithArchetype(substitution.value, candidatePieces, occasion)
+            Object.assign(repaired, updatedRepaired)
+          } else {
+            const warning = "footwear is not trail-rated — closest available match."
+            if (!repaired.watchFor || repaired.watchFor === 'none') repaired.watchFor = warning
+            else if (!repaired.watchFor.includes(warning)) repaired.watchFor = `${repaired.watchFor}; ${warning}`
           }
-          if (Array.isArray(repaired.pieces)) {
-            repaired.pieces = repaired.pieces.map(p => Number(p.id) === Number(currentShoe.id) ? bestShoe : p)
-          }
-          const updatedRepaired = rewriteWholeWardrobeOutfitWithArchetype(repaired, candidatePieces, occasion)
-          Object.assign(repaired, updatedRepaired)
         } else {
           const warning = "footwear is not trail-rated — closest available match."
           if (!repaired.watchFor || repaired.watchFor === 'none') {
@@ -5112,7 +5142,7 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
   return { outfits: selected, rejected }
 }
 // docs/card-consistency-spec.md Part 1. A top worn with a dress is a legitimate styling decision
-// (owner ruling 2026-08-16) and is deliberately NOT gated — isOutfitStructurallyValid still permits
+// (owner ruling 2026-08-16) and is deliberately NOT taste-gated — evaluateWearableOutfit still permits
 // it. But it is an unusual enough choice that the card has to account for it: a live response
 // paired a blouse and a floral tank with a lace midi dress and explained neither.
 //
@@ -5158,26 +5188,6 @@ const GENERIC_GARMENT_WORDS = new Set([
 
 export const LAYERED_TOP_UNEXPLAINED_FLAG =
   'This look layers a top with the dress and the stylist did not say why — treat the top as optional.'
-
-export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
-  const groups = pieces.map(p => wardrobeCategoryGroup(p))
-  const shoeCount = groups.filter(g => g === 'shoes').length
-  const bottomCount = groups.filter(g => g === 'bottom').length
-  const dressCount = groups.filter(g => g === 'dress').length
-  const topCount = groups.filter(g => g === 'top').length
-
-  if (shoeCount > 1) return false
-  if (requireShoes && shoeCount !== 1) return false
-  if (bottomCount > 1) return false
-  if (dressCount > 1) return false
-
-  if (dressCount === 1) {
-    if (bottomCount > 0) return false
-  } else {
-    if (topCount < 1 || bottomCount !== 1) return false
-  }
-  return true
-}
 
 export function normalizeWholeWardrobeStrengths(outfits = []) {
   return outfits.map((outfit, index) => ({
@@ -5252,8 +5262,9 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
 
-    if (!isOutfitStructurallyValid(pieces, { requireShoes })) {
-      reject(repaired, 'not a complete wardrobe outfit')
+    const validation = evaluateWearableOutfit(pieces, { requireShoes })
+    if (!validation.hardValid) {
+      reject(repaired, validation.primaryFinding?.message || 'not a complete wardrobe outfit')
       continue
     }
     if (ownedIds.size && pieceIds.some(id => !ownedIds.has(id))) {

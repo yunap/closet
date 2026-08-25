@@ -81,6 +81,17 @@ async function seedWardrobe() {
     VALUES (?, ?, 'active', ?, ?, ?)
   `).run('brown ankle boots', 'shoes', JSON.stringify(['brown']), bootPhoto, 'brown leather ankle boots').lastInsertRowid
 
+  // These are composer-plumbing fixtures, not missing-metadata fixtures. Keep at least one
+  // complete gate-valid path available now that visual composition correctly stops before the
+  // provider when its footwear supply is structurally incomplete.
+  db.prepare(`
+    UPDATE pieces
+    SET formality = 'everyday', heel_height = 'flat', walk_support = 'high',
+        shoe_type = 'sneaker', occasions = '["casual","city","evening","outdoor"]'
+    WHERE category = 'shoes'
+  `).run()
+  db.prepare("UPDATE pieces SET formality = 'everyday' WHERE category != 'shoes'").run()
+
   seeded = {
     top: topId,
     bottom: bottomId,
@@ -346,13 +357,24 @@ test('6. Structured activity precedence: activity="walking" triggers constraint,
 })
 
 test('7. Plumbing: activity parameter propagates through the generateOutfitsForPieceInternal pipeline', async () => {
+  db.prepare("UPDATE pieces SET formality = 'everyday'").run()
+  db.prepare("UPDATE pieces SET heel_height = 'high', walk_support = 'low', shoe_type = 'pump' WHERE id = ?").run(seeded.stiletto)
+  db.prepare("UPDATE pieces SET heel_height = 'low', walk_support = 'high', shoe_type = 'pump' WHERE id = ?").run(seeded.blockHeel)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker' WHERE id = ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET heel_height = 'low', walk_support = 'medium', shoe_type = 'pump' WHERE id = ?").run(seeded.kittenHeel)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'medium', shoe_type = 'boot' WHERE id = ?").run(seeded.ankleBoot)
+  const liveWeather = { isHot: false, isCold: false, highF: 72, lowF: 55, weatherSource: 'live' }
   const result = await generateOutfitsForPieceInternal({
     pieceId: seeded.stiletto,
     occasion: 'evening',
     season: 'current season',
-    activity: 'walking'
+    activity: 'walking',
+    resolvedWeatherProfile: liveWeather
   })
 
+  assert.deepEqual(result.debug.weatherProfile, liveWeather)
+  assert.equal(result.debug.stylingContext.provenanceByField.activity.source, 'explicit_request')
+  assert.equal(result.debug.stylingContext.provenanceByField.weatherProfile.source, 'explicit_request.weather_profile')
   assert.ok(result.structuredOutfits.length > 0)
   for (const outfit of result.structuredOutfits) {
     const shoe = outfit.pieces.find(p => p.category === 'shoes')
@@ -361,7 +383,45 @@ test('7. Plumbing: activity parameter propagates through the generateOutfitsForP
   }
 })
 
+test('7b. Selected-piece local fallback cannot reintroduce a roster validity exclusion', async () => {
+  db.prepare(`
+    UPDATE pieces
+    SET formality = 'everyday', walk_support = 'high', heel_height = 'flat', shoe_type = 'sneaker', occasions = '["casual","city","outdoor"]'
+    WHERE category = 'shoes'
+  `).run()
+  db.prepare("UPDATE pieces SET formality = 'lounge' WHERE id = ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE category = 'shoes' AND id != ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE id = ?").run(seeded.bottom)
+
+  const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = args => {
+    if (String(args.system || '').includes('SELECTED-ANCHOR CONTRACT')) return '{"outfits": ['
+    return defaultHandler(args)
+  }
+
+  try {
+    const result = await generateOutfitsForPieceInternal({
+      pieceId: seeded.top,
+      occasion: 'outdoor_daytime_social',
+      season: 'current season',
+      activity: 'walking',
+      resolvedWeatherProfile: { isHot: false, isCold: false, highF: 72, lowF: 55, weatherSource: 'live' },
+    })
+
+    assert.ok(result.debug.visualCritic.composerError, 'fixture must exercise the local fallback')
+    assert.equal(
+      result.structuredOutfits.some(outfit => outfit.pieceIds.map(Number).includes(Number(seeded.sneaker))),
+      false,
+      'a shoe rejected by the polished-walking register gate cannot return through fallback',
+    )
+    assert.equal(result.debug.visualCritic.excludedCounts['register: lounge below polished walking target'], 1)
+  } finally {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
+  }
+})
+
 test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activity parameter', async () => {
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE id = ?").run(seeded.sneaker)
   let capturedSystem = null
   let capturedMessages = null
   const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
@@ -373,15 +433,17 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
 
   try {
     const result = await generateWholeWardrobeOutfitsVisualInternal({
-      occasion: 'evening',
+      occasion: 'casual',
       season: 'current season',
       activity: 'walking',
       limit: 2
     })
 
     assert.ok(Array.isArray(result.structuredOutfits))
+    assert.equal(result.debug.stylingContext.provenanceByField.activity.source, 'explicit_request')
+    assert.equal(result.debug.stylingContext.resolved.activity, 'walking')
 
-    assert.ok(capturedMessages, 'AI must have been called')
+    assert.ok(capturedMessages, `AI must have been called: ${JSON.stringify(result.debug)}`)
     const userText = Array.isArray(capturedMessages[0].content)
       ? capturedMessages[0].content.map(part => part?.text || '').join('\n')
       : String(capturedMessages[0].content || '')

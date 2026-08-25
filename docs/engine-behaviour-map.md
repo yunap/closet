@@ -1,6 +1,7 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate (which
+**Status:** twelfth pass, 2026-07-26; **amended 2026-08-25** for the shared eligibility API retirement
+audit and canonical applicability projection; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
 two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
@@ -721,14 +722,20 @@ model call.
 
 ### One function, three composition paths
 
-`wholeWardrobePieceTrustDecision` (`rules.js`) is the hard gate. It is called by the freeform
-`propose_outfit` tool (`tools.js`), by `filterWholeWardrobePiecesForGeneration`, and by
-`scoreWholeWardrobeCandidate` (there as a `-18` support-only *penalty*, not a block). It returns
+`wholeWardrobePieceTrustDecision` in `rules.js` is the hard gate. Pool consumers should call
+`evaluateAutomaticUsePiecePool` in `eligibility.js`, which executes that verdict for every piece and
+returns typed findings plus eligible/excluded projections. `evaluateAutomaticUsePiecePoolCore`
+owns the dependency-neutral pool mechanics used by that public adapter and by recovery inside
+`rules.js`. As of Slice 7 (2026-08-25), the legacy
+`filterWholeWardrobePiecesForGeneration` response adapter is deleted; tracked tests and diagnostics
+consume the shared pool result directly. `scoreWholeWardrobeCandidate` uses the piece verdict as a `-18`
+support-only *penalty*, not a block. The hard gate itself returns
 `{allowed, supportOnly, reasons}`; `allowed` is simply `reasons.length === 0`.
 
-**[by design]** A user-requested **anchor bypasses it entirely** — `if (piece.anchor) return []` in
-the freeform gate. Asking to wear a garment overrides auto-use suitability. Verification
-(retrieval + layer photos) still applies.
+**[by design]** A user-requested **anchor changes disposition, not evidence**. The shared pool still
+records the hard-gate findings and marks the underlying verdict, while anchor policy keeps the
+explicit user premise eligible. Freeform proposal validation does not surface those findings as
+errors for the anchor. Verification (retrieval + layer photos) still applies.
 
 ### The layers, in the order they run
 
@@ -752,7 +759,7 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    crossed with one context dimension (occasion, activity, season or weather). Missing context is a
    no-op — the gate never fires on an unspecified dimension. A match hard-blocks the garment and
    emits the constraint ID and dimension in the suppression reason; retiring the row is the undo.
-   Season comparison runs through `resolveSeasonTerm`, so `warm` → summer, `autumn` → fall, and the
+   Season comparison runs through `resolveCalendarSeason` (`lib/seasonContext.js`), so `warm` → summer, `autumn` → fall, and the
    composer's unresolved default `current season` resolves against `requestContext.currentDate`
    rather than always "now". **[unverified]** no exclusion counts have been measured for this layer;
    the counts elsewhere in this section predate it.
@@ -939,10 +946,54 @@ settled: today it does not, and no path can make it.
 
 ### What is not in this stack
 
-Structural validity (`isOutfitStructurallyValid`, `validateOutfitRoles` — needs shoes, needs
-top+bottom or a dress, a layer needs its base) is a *separate* check on the assembled outfit, and
+Structural validity (`evaluateOutfitStructure` with its `describeOutfitStructureGap` message
+projection, plus typed `evaluateOutfitRoles` — needs shoes, needs primary top+bottom or a dress, and
+a layer role needs its primary) is a *separate* check on the assembled outfit, and
 it runs **before** the piece gate in `propose_outfit`. Diversity, dedup and repair run after — see
 the next section. None of those are piece-eligibility questions, which is why they are not here.
+
+**[validation-ownership consolidation, first foundation migration, 2026-08-24] Category structure
+now has one typed owner.** `evaluateOutfitStructure` returns ordered error findings for missing or
+multiple shoes, multiple bottoms/dresses, dress-plus-bottom conflicts, and incomplete separates,
+with category-count evidence. `describeOutfitStructureGap` returns only its primary message. The
+former boolean adapter preserved the earlier contract during migration and was retired after its
+last consumer moved. This removes duplicate category counting. A top over a dress
+remains legal. Role intent, layer/base mechanics, ownership/context checks, plan slot/set rules, and
+advisor disposition remain separate validators.
+
+**[validation-ownership consolidation, second consumer migration, 2026-08-24] Whole-wardrobe and
+submitted-plan gates now read typed structure findings directly.** `locallyGateWholeWardrobeOutfits`
+maps any structural error to its existing `not a complete wardrobe outfit` rejection before
+ownership/context/advisor policy. `validateSubmittedPlanOutfits` uses the primary finding's existing
+message before its dependency, slot, repetition, and set checks. The former plan-side boolean-plus-
+diagnosis double evaluation is gone. Structural acceptance, rejection wording, advisor behavior,
+and model-call sequence are unchanged.
+
+**[validation-ownership consolidation, third consumer migration, 2026-08-24] Route-level visual
+composition no longer reimplements or repeatedly recomputes category structure.** Selected-piece
+resolution filters on `evaluateOutfitStructure(...).valid`. Whole visual composition caches one
+typed result per normalized model outfit and reuses it for structural diagnostics, clash-review
+eligibility, saved-variant accounting, and final filtering. Its public diagnostic vocabulary is a
+projection from finding codes, so existing strings and generation-run counts remain stable. Visual
+critic policy, local fallback, saved-Main handling, and accepted-card behavior are unchanged.
+
+**[validation-ownership consolidation, explicit-role migration, 2026-08-24] Freeform role
+structure now has a typed owner outside the tool executor.** `evaluateOutfitRoles` returns ordered
+error findings and role-count evidence for explicit role validity/cardinality, footwear and core
+completeness, dress/primary conflicts, orphan layers, and role/category mismatches.
+`propose_outfit` and slot-swap validation project the same messages and
+retain the same reject/retry behavior. The former tool-local prose validator and its unused
+`missingGaps` parameter are gone. This does not settle pair mechanics, direction, sight, plan
+slot/set findings, or advisor disposition.
+
+**[validation-ownership consolidation, layer direction, 2026-08-24] Ordinary over/under direction
+is now a shared typed verdict.** `evaluateLayerDirections` resolves explicit overlay, underlayer,
+dependent-garment, role, and outerwear evidence. Missing direction is `unknown`, requires sight of
+both garments, and may then be accepted as a provisional one-turn model judgment; it is not saved
+as garment truth. Freeform diagnostics distinguish blocked unknown direction from visually allowed
+unknown direction, so the allowance can be evaluated and removed centrally. Submitted plans and
+direction-participating slot swaps consume the same verdict. The former tee/tank keyword veto was
+removed; required coverage mechanics remain a separate hard contract.
 
 ---
 
@@ -1033,17 +1084,149 @@ composite label containing `summer` cannot re-hot a live 78°F/56°F profile.
 The direct `/generate-wardrobe-outfits-visual` route now reads the saved home location and resolves
 today's live numeric forecast before roster gates run. An explicit seasonal or extreme-weather
 selection remains an authored hypothetical and bypasses the live lookup, preserving the brief.
-See `resolveDirectVisualComposerWeather` and the `/generate-wardrobe-outfits-visual` route
-(`routes/ai.js`).
+See `resolveStylingContext` (`styling-engine/stylingContext.js`) and
+`generateWholeWardrobeOutfitsVisualInternal` (`routes/ai.js`).
 
 **[forecast-failure correction, 2026-08-19] A named place is never converted from unknown weather
 to guessed heat.** `getCurrentWeatherProfile` and `getWeatherProfileForPlan` return a neutral,
 observable `weatherSource:"unavailable"` profile when a real location lookup fails. Hard hot/cold
-gates remain off; `resolveWholeWardrobeWeatherProfile` preserves that neutral result instead of
-re-parsing router season text. Bounded freeform removes the calendar label from the composer weather
+gates remain off; shared context resolution preserves that neutral result instead of re-parsing
+router season text. Bounded freeform removes the calendar label from the composer weather
 brief and visibly says the forecast could not be verified. Requests without a location still use
 the existing text/calendar heuristic. This follows `thread_1787098654251`, where failed Berkeley
 weather became `summer; hot weather` and wrongly removed 79 weather-related candidates.
+
+**[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
+resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source
+precedence, normalization, occasion/activity profile construction, comfort constraints, and weather
+selection. Explicit stated weather outranks physical inference; current-season requests refresh
+live weather when a location exists; saved snapshots are used when that lookup is unavailable; and
+explicit hypothetical seasons bypass live weather. Declared activity remains separate from
+request-inferred activity so inference can guide the model without activating a hard footwear gate.
+Both generators expose resolved values, provenance, and conflicts under response debug
+`stylingContext`.
+
+**[context-ownership consolidation completed, 2026-08-25] Freeform and plan slots now use the same
+field resolver.** `resolveToolStylingContext` passes explicit request, action artifact, established
+thread state, and inference to `resolveStylingContext`; it no longer owns a second stated/live
+weather branch. `buildPlanSlotWorkbench` resolves each slot through the shared owner before roster
+selection and preserves the result/provenance on the workbench and pending slot. Explicit supplied
+weather profiles, including indoor-transit profiles, are authoritative evidence. Saved artifacts
+and persistent thread state remain separate sources rather than overwriting one another.
+
+**[calendar-season projection correction, 2026-08-25] A resolved request season and its executable
+season are distinct fields.** `resolveStylingContext` preserves `season: "current season"` for live
+weather and display behavior while deriving `calendarSeason` from the authoritative request date.
+`resolveCalendarSeason` is also the shared defensive projection for direct/freeform/plan prompt
+memory, hard owner constraints and historical exact-outfit reactions. This closes the live
+`thread_1787651275782` gap where accepted summer guidance was omitted before the model call because
+one reader compared the placeholder literally. It does not add a suede taste rule, alter ranking,
+or turn a prompt preference into a hard eligibility gate.
+
+**[applicability projection completed, 2026-08-25] Calendar Season and physical weather now cross
+flow boundaries as one canonical executable shape.** `projectStylingApplicabilityContext` in
+`stylingContext.js` derives Calendar Season against the authoritative request date and normalizes
+hot, cold, rainy, and wet-exposure flags from the resolved Weather Profile. Direct selected/whole,
+freeform search/propose/swap/generation, plan workbenches, and capsule feedback readers consume
+that projection. Plan slots preserve Requested Season separately from `statedWeather`, so an
+indoor summer slot remains summer for seasonal applicability without treating `indoor` as a
+calendar season. Composite bounded labels such as `current season; mild weather` are parsed only
+at the resolver boundary; they are not a new semantic source. The hard gate receives the same
+Calendar Season and request date, so it cannot independently reinterpret the turn.
+
+**[eligibility-ownership consolidation, 2026-08-24] Primary visual composition and selected-piece
+recovery now consume one finite-pool verdict.** `evaluateVisualComposerPiecePool` classifies every
+roster exclusion as validity, presentation, or capacity. The photo roster remains bounded, while
+the recovery projection may reuse accessories, no-photo pieces, and cap cuts but cannot reintroduce
+a weather, register, activity, footwear, metadata, or other validity exclusion. Selected local
+fallback, absolute fallback, and comfort-footwear repair all use that recovery projection. A
+shoe-anchor repair evaluates the full wardrobe through the same authority before choosing a
+substitute; it does not reopen raw `allPieces`.
+
+**[eligibility-ownership consolidation, second consumer migration, 2026-08-24] Freeform search,
+proposal validation, and slot swaps now consume one hard-gate pool result.**
+`evaluateAutomaticUsePiecePool` preserves the hard gate's underlying findings and labels owner
+authority explicitly. `search_wardrobe` continues its deliberate retrieval disposition: owner
+vetoes remain fixed while non-owner profile findings proceed to the existing rule-fit annotation
+and `intent:"explain"` path. `propose_outfit` and `suggest_slot_swaps` keep their stricter
+dispositions, and an explicit anchor remains usable without erasing the evidence that ordinary
+automatic selection would have blocked it. No scoring, profile rule, or broadening order changed.
+
+**[eligibility-ownership consolidation, third consumer migration, 2026-08-24] Selected support
+ranking and whole-wardrobe suppression now consume the same automatic-use pool.**
+`selectAutomaticUseCandidatesForOutfitGeneration` evaluates supporting pieces once, then injects
+those decisions into the existing compatibility score and category-quota strategy; selected-piece
+generation and concept-board planning no longer independently invoke the hard gate. Whole-wardrobe
+generation also consumes `evaluateAutomaticUsePiecePool` directly. Its former hot-weather
+outerwear behavior is an explicit capacity policy (keep the three lightest, deterministic by ID),
+and a saved Main may bypass that disposition without erasing the hard-gate or capacity finding.
+At this point the legacy whole-filter function still served plan, capsule, and recovery consumers.
+
+**[eligibility-ownership consolidation, fourth consumer migration, 2026-08-24] Coordinated plans
+and capsules now consume the same automatic-use pool before applying their own strategy.**
+`evaluatePlannerAutomaticUsePool` carries each slot's resolved weather, activity, register ceiling,
+and `ownerExclusionOccasion` into `evaluateAutomaticUsePiecePool`. It also declares the existing
+three-piece hot-weather outerwear cap as capacity policy. `slotGateEligiblePieces`,
+`elevatedCapsuleDemands`, and `buildPlanSlotWorkbench` consume the resulting eligible projection;
+the workbench's suppression diagnostics retain `underlyingExcludedPieces`. Plan ranking and caps,
+capsule slot union, quota/roster selection, structural coverage, and representative rotation do not
+move into eligibility and do not change behavior. The legacy whole-filter adapter remains only in
+recovery logic in `rules.js`.
+
+**[eligibility-ownership consolidation, fifth consumer migration, 2026-08-24] Footwear recovery
+now consumes the same automatic-use pool mechanics, completing the active-caller migration.**
+`repairWholeWardrobeOutfit` uses `evaluateAutomaticUsePiecePoolCore` with
+`wholeWardrobePieceTrustDecision` before its existing required-footwear match and relevance sort.
+The core was extracted below `eligibility.js` to avoid a circular dependency; it owns owner-
+constraint loading, typed findings, effective/underlying dispositions, and capacity policy, while
+the public `evaluateAutomaticUsePiecePool` remains the domain entry point for every caller outside
+`rules.js`. The legacy whole-filter export delegates to this core and remains only for contract
+tests. Hiking activation, eligible shoe supply, scoring, tie-breaking, and the single-swap behavior
+are unchanged.
+
+**[candidate-set ownership, 2026-08-25] Hard caps preserve executable outfit supply before they
+preserve category abundance.** `buildCoveredCandidateSet` is the shared bounded-set owner for
+selected support candidates, visual photo rosters, coordinated-plan workbenches, and capsule model
+benches. Caller-specific ranking remains intact, but a cap may replace a lower-priority duplicate
+category piece with the ranked top/bottom/shoe or dress/shoe path needed to leave composition
+possible. A `needs_base` anchor or path also reserves a base whose shared construction verdict is
+not known incompatible. Already-complete selections keep their exact order. Missing wardrobe
+supply and insufficient hard capacity are distinct report codes. Direct visual flows make no
+composer call and return no fallback card when the final gated roster is incomplete; plan slots
+continue only for the coverable portion and disclose each unfilled slot. Search remains retrieval
+and does not inherit the composition-coverage requirement.
+
+**[recovery ownership, 2026-08-25] A fallback or mutation cannot weaken the primary hard
+contract.** `recovery.js` owns four mechanics: `validatedSubstitute`, `validatedComplete`,
+`validatedFallback`, and `discloseRecoveryShortfall`. The first three require a validator callback
+and run it immediately against each exact mutated/replacement result; rejected attempts remain
+attempt evidence and are never returned as recovered. Selected local/absolute fallbacks inject
+anchor, structure, and required-base checks; whole backfill injects
+`locallyGateWholeWardrobeOutfits`; comfort and required-footwear swaps inject category structure;
+plan/capsule mutations inject `validateSubmittedPlanOutfits` or `validateCapsuleRoster`; freeform
+correction supersession injects explicit-role and required-base checks. Candidate ordering, whether
+unknown visual evidence may proceed, retry/provider budgets, and visible disposition remain local
+policy. Exhaustion uses one structured `recovery_shortfall` report while existing human-facing
+wording stays flow-specific.
+
+**[projection and result ownership, 2026-08-25] One finding has one model-visible definition and
+one delivered disposition.** `outfitValidation.js` now projects its category-core, explicit-role,
+and typed-finding contracts into whole-wardrobe, freeform proposal, coordinated-plan, and capsule
+expansion prompts. The flows retain their distinct strategies and output schemas. After validation,
+`outfitResult.js` gives selected, whole, freeform proposal, plan/capsule, expansion, and repair
+cards a versioned `result` containing exactly one of `accepted`, `annotated`, `repairable`, or
+`rejected`, plus findings, annotations, provenance, and an optional repair capability. Existing
+top-level fields remain as UI compatibility aliases, so this is an additive no-op for ranking,
+provider sequence, persistence, and current card actions.
+
+**[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
+visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
+pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review
+routing: these notes came from multiple tagger generations, were not normalized or continuously
+corrected, and remain composer guidance rather than executable authority. This follows
+`thread_1787621859177`, where two already-satisfied legacy notes sent an ordinary emerald top,
+beige tailored shorts, and brown leather shoes to a paid critic; unusual photo lighting then caused
+a false mauve-shoe rejection.
 
 **[forecast-failure integration correction, 2026-08-19] Neutral failure is global and disclosure
 must match it.** `resolveSlotWeather` now labels failed named-place plan forecasts as unavailable
@@ -1075,6 +1258,38 @@ it records a useful action or chosen relationship, not an owner's already-known 
 `thread_1787103886848` called an opaque, independently wearable lace top sheer and invented a nude
 camisole, the shared composer contract made `opacity` and both `needs_base` values authoritative.
 An opaque `needs_base:no` garment cannot acquire an unverified underlayer from visual inference.
+
+**[architecture consolidation, 2026-08-24] `needs_base` has one runtime fact reader.**
+`pieceRequiresBaseLayer` returns true only for normalized explicit `yes`; unset and explicit `no`
+retain the historical independent default. Capsule capacity and outfit checks, protagonist
+ordering, selected local fallback, renderer instructions, and freeform primary-top/dress swaps now
+consume that reader instead of interpreting the field independently. This is a fact consolidation,
+not a new coverage or pair-compatibility rule; the ranking A/B diagnostic reported zero changes.
+
+**[validation-ownership consolidation, required-base contract, 2026-08-24] “Needs a base layer”
+now has one construction verdict after the garment fact.** `evaluateBaseLayerCandidate` and
+`evaluateRequiredBaseLayers` in `outfitValidation.js` consume the canonical `needs_base` fact plus
+structured `opacity` and `fit_on_body`. A candidate is incompatible when it also needs a base, is
+`sheer`/`semi_sheer`/`open_weave`, or has a known non-close fit (`drapes`, `hangs_straight`,
+`structured`, `none`). It is known compatible only with recorded opaque coverage and a close fit
+(`skims`, `clings_stretchy`, `clings_drapey`). Missing fit or opacity is `unknown`, never silently
+converted into a fact. Capsule roster/capacity policy may reserve an unknown candidate so legacy
+metadata does not erase supply; submitted plans and freeform `propose_outfit` require both garments
+to have been visually seen before the model may submit that unknown pairing. Known incompatibility
+still rejects after sight. The rule applies only to coverage required by a dependent garment;
+ordinary inner-garment/outer-layer combinations do not inherit a close-fit requirement. Colour,
+neckline, texture, bulk, and proportion remain model judgment.
+
+**[validation-ownership consolidation completed, 2026-08-25] Wearable-outfit validity now has one
+composed owner.** `evaluateWearableOutfit` combines category or explicit-role structure,
+required-base mechanics, optional layer-direction evidence, and sight state into typed hard,
+advisory, and unresolved results. Selected, whole, freeform proposal/swap, plan submission, and
+recovery validators consume that result before their bounded extensions. Unknown evidence is not
+invalid; it blocks only when sight is needed to prove a hard requirement and has not occurred.
+Hard-invalid paid selected/whole model attempts remain visible as Needs review cards with the actual
+finding, alongside valid sibling cards. A selected dependent anchor with no compatible base is
+preserved as an incomplete Needs review premise. Concept boards intentionally retain their lighter
+allowlist/anchor validation.
 
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit
@@ -1266,8 +1481,8 @@ contract's clauses ask whether a card's pieces are real (*truth*), whether conte
 describe the card**, so an internally inconsistent card passed every one of them.
 
 **[by design] A top worn with a dress is legal and is never removed.** Owner ruling 2026-08-16: a
-styling decision, not a hard ban. `isOutfitStructurallyValid` is unchanged — with a dress present it
-still rejects only a bottom, a second dress, or a second pair of shoes.
+styling decision, not a hard ban. `evaluateOutfitStructure` preserves that ruling — with a dress
+present it still rejects only a bottom, a second dress, or a second pair of shoes.
 
 **[by design] What is enforced is that the card accounts for it.** `outfitLayersTopWithDress` is a
 category-group fact; `unexplainedLayeredTops` then checks whether the card's own prose names the

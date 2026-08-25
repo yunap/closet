@@ -54,7 +54,7 @@ Settled precedent, restated only by citation:
   truth and output form."*
 - Decision B (owner, 2026-06-25): advisor mode exists so **code does not censor composer results**.
 
-Dress+top is a taste dimension. It stays legal, and `isOutfitStructurallyValid` is **not** changed.
+Dress+top is a taste dimension. It stays legal, and the category-structure contract is **not** changed.
 
 **Prompt-only instruction will not work, and both arcs proved it.** Capsule criterion 8: the
 functional-demonstration clause was in the workbench, the jacket was in the allowed IDs, and the
@@ -150,14 +150,14 @@ share a label) depends on §5.2(2) and remains open with it.
 2. No card asserts "one-piece column" while carrying a top.
 3. Two dress outfits with materially different structures do not receive the same label.
 4. A dress outfit with no extra top is unchanged, end to end.
-5. `isOutfitStructurallyValid` is untouched; `npm test` green; the 30-scenario candidate A/B
+5. The category-structure contract is untouched; `npm test` green; the 30-scenario candidate A/B
    byte-identical (this spec touches description and validation, never selection).
 6. `docs/engine-behaviour-map.md` amended in the same commit, per AGENTS.md.
 
 ## 7. Out of scope
 
 Hard-gating dress+top. Scoring pressure on layering. Retagging. Changing
-`isOutfitStructurallyValid`. Any change to *which* pieces get selected.
+the category-structure contract. Any change to *which* pieces get selected.
 
 ## 8. Open — needs an owner ruling before this ships
 

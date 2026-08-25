@@ -16,11 +16,17 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
-const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, pieceWeatherScores, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, pieceWeatherScores, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { evaluateAutomaticUsePiecePool } = await import('../styling-engine/eligibility.js')
 const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit, pieceFiberBreathability, pieceOcclusiveFitDegree, pieceExposureDegree } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
+
+function generationPool(pieces, context) {
+  const result = evaluateAutomaticUsePiecePool({ pieces, context, policy: { hotOuterwearCap: 3 } })
+  return { allowedPieces: result.eligiblePieces, suppressedPieces: result.underlyingExcludedPieces }
+}
 
 // These IDs mirror real pieces from the developer's personal wardrobe (the
 // shapes this suite's regression tests are anchored on), seeded into this
@@ -423,18 +429,18 @@ test('scoreWholeWardrobeCandidate applies occasion mismatch penalty and outerwea
   assert.ok(outerwearRes.reasons.includes('hot weather: penalize outerwear/layering'), 'Must apply outerwear penalty in hot weather')
 })
 
-test('filterWholeWardrobePiecesForGeneration and wholeWardrobePieceTrustDecision weather-aware filtering', () => {
+test('shared automatic-use pool and wholeWardrobePieceTrustDecision are weather-aware', () => {
   const pHeavy = { id: 9001, name: 'Heavy Wool Coat', category: 'outerwear', fabric_weight: 'heavy' }
   const pShorts = { id: 9002, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } }
   const pLight = { id: 9003, name: 'Linen Shirt', category: 'top', fabric_weight: 'light' }
   const allPieces = [pHeavy, pShorts, pLight]
 
   // 1. Unfiltered / neutral weather
-  const resNeutral = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: false, isCold: false } })
+  const resNeutral = generationPool(allPieces, { weatherProfile: { isHot: false, isCold: false } })
   assert.equal(resNeutral.allowedPieces.length, 3, 'Should allow all pieces in neutral weather')
 
   // 2. Hot weather
-  const resHot = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: true, isCold: false } })
+  const resHot = generationPool(allPieces, { weatherProfile: { isHot: true, isCold: false } })
   const allowedHotIds = resHot.allowedPieces.map(p => p.id)
   assert.ok(!allowedHotIds.includes(9001), 'Heavy piece should be suppressed in hot weather')
   assert.ok(allowedHotIds.includes(9002), 'Shorts should be allowed in hot weather')
@@ -445,7 +451,7 @@ test('filterWholeWardrobePiecesForGeneration and wholeWardrobePieceTrustDecision
   assert.ok(suppressedHeavy.reasons.includes('hot weather: insulating piece'), 'Should have hot weather reason')
 
   // 3. Cold weather
-  const resCold = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: false, isCold: true } })
+  const resCold = generationPool(allPieces, { weatherProfile: { isHot: false, isCold: true } })
   const allowedColdIds = resCold.allowedPieces.map(p => p.id)
   assert.ok(!allowedColdIds.includes(9002), 'Shorts should be suppressed in cold weather')
   assert.ok(allowedColdIds.includes(9001), 'Coat should be allowed in cold weather')
@@ -693,12 +699,12 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   assert.ok(scoredSuedeNormal.reasons.includes('activity profile: discouraged material (suede)'), 'Suede should be discouraged in all weather')
 
   // Test 3: Taupe suede ankle boots piece ID 200 is absent from the hiking pre-roster pool AND
-  // the hiking visual roster (spec 8, 2026-07-09: filterWholeWardrobePiecesForGeneration is now a
-  // real gate everywhere, not a broad diagnostic-only pool — closes the gap where
+  // the hiking visual roster (spec 8, 2026-07-09: the shared automatic-use pool is now a real
+  // gate everywhere, not a broad diagnostic-only pool — closes the gap where
   // composeOutfitSet (styling-engine/outfitSetPlanner.js, née buildLocalTripSlotOutfits)/the `/ask` fallback tier had no downstream re-gate to catch what this
   // pre-filter let through unfiltered).
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const allowedRes = filterWholeWardrobePiecesForGeneration(allPieces, { occasion: 'casual', request: 'hiking' })
+  const allowedRes = generationPool(allPieces, { occasion: 'casual', request: 'hiking' })
   const allowedIds = allowedRes.allowedPieces.map(p => Number(p.id))
   assert.ok(!allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) must be excluded from the hiking pre-roster pool')
   assert.match(

@@ -33,9 +33,7 @@ import {
 } from '../styling-engine/provider.js'
 
 import {
-  resolveComfortFootwearConstraint,
   applyComfortFootwearRepair,
-  resolveActivityProfile,
   ACTIVITY_PROFILES
 } from '../styling-engine/footwear-comfort.js'
 
@@ -48,12 +46,13 @@ import {
 } from '../styling-engine/promptRuntime.js'
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan } from '../styling-engine/outfitSetPlanner.js'
 
-import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
+import { OCCASION_PROFILES } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
   pieceMatchesMaterial,
   pieceMatchesFootwear,
+  pieceRequiresBaseLayer,
   pieceVisualDetailPolicy
 } from '../styling-engine/attributes.js'
 import {
@@ -62,7 +61,8 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { getCurrentWeatherProfile, serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -71,19 +71,15 @@ import { randomUUID } from 'node:crypto'
 
 import {
   isStyleSelectedQuestion,
-  weatherProfileFromContext,
-  buildVisualComposerRoster,
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
-  filterWholeWardrobePiecesForGeneration,
   getRecentWholeWardrobeSessionInfluence,
   buildWholeWardrobeCandidateOutfits,
   wholeWardrobeCandidateFormulaCounts,
   wholeWardrobeFormulaFamily,
   wholeWardrobeArchetypeFor,
   saveWholeWardrobeSession,
-  selectCandidatesForOutfitGeneration,
   getOutfitsForPieceMemory,
   getStylistFeedbackMemory,
   getProvisionalWrongChoiceMemory,
@@ -130,19 +126,28 @@ import {
   locallyGateWholeWardrobeOutfits,
   formatWholeWardrobeOutfitFeedback,
   repairWholeWardrobeOutfit,
-  isOutfitStructurallyValid,
   rewriteWholeWardrobeOutfitWithArchetype,
   hasWholeWardrobePlaceholder,
   hasGenericWholeWardrobeText,
   sortByStylisticStrength,
   pieceGarmentIntelligence,
-  wholeWardrobeOutfitLooksQuestionable
+  wholeWardrobeOutfitVisualReviewFindings
 } from '../styling-engine/rules.js'
+import {
+  evaluateAutomaticUsePiecePool,
+  evaluateVisualComposerPiecePool,
+  selectAutomaticUseCandidatesForOutfitGeneration,
+} from '../styling-engine/eligibility.js'
+import { categoryOutfitStructurePromptRule, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
+import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
+import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
   composeStructuredOutfitsForPiece,
   buildLocalFallbackOutfitDirections,
+  validateSelectedRecoveryOutfit,
   normalizeGeneratedOutfitObject,
   formatStructuredOutfitFeedback,
   boardPlanFromStructuredOutfits,
@@ -965,7 +970,9 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   activity = '',
   memoryText = '',
   weatherProfile = null,
-  comfortConstraint = null
+  comfortConstraint = null,
+  occasionProfile = null,
+  activityProfile = null
 }) {
   const routeStartedAt = Date.now()
   const selectedId = Number(selectedPiece.id)
@@ -974,22 +981,87 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     .filter(p => p && Number(p.id) !== selectedId)
   const candidatePool = [selectedPiece, ...supportCandidates]
   const poolById = new Map(candidatePool.map(p => [Number(p.id), p]))
-  const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: question })
-  const occasionProfile = resolveOccasionProfile(occasion, mood)
-  const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(candidatePool, {
-    occasion,
-    weatherProfile,
-    sessionInfluence: null,
-    maxImages: 54,
-    mood,
-    activity,
-    request: question,
-    question,
-    occasionProfile,
-    activityProfile
+  const poolEvaluation = evaluateVisualComposerPiecePool({
+    pieces: candidatePool,
+    context: { occasion, weatherProfile, mood, activity, requestText: question, question, occasionProfile, activityProfile },
+    policy: { selectedPieceId: selectedId, maxImages: 54 },
   })
-  const rosterPieces = [selectedPiece, ...roster.filter(p => Number(p.id) !== selectedId)]
-  const candidatePieces = [...new Map(rosterPieces.map(p => [Number(p.id), p])).values()]
+  const { eligiblePieces: candidatePieces, excludedPieces: excluded, debug: rosterDebug } = poolEvaluation
+  const recoveryEvaluation = evaluateVisualComposerPiecePool({
+    pieces: allPieces,
+    context: { occasion, weatherProfile, mood, activity, requestText: question, question, occasionProfile, activityProfile },
+    policy: {
+      selectedPieceId: selectedId,
+      includeAccessories: true,
+      maxImages: Math.max(1, allPieces.length),
+      recordMetadataTodos: false,
+    },
+  })
+  const recoveryRankedCandidates = rankedCandidates.filter(candidate =>
+    recoveryEvaluation.recoveryEligibleIds.has(Number(candidate?.piece?.id))
+  )
+  const structureShortfall = projectCandidateSetShortfall(rosterDebug.coverageReport, { anchorPiece: selectedPiece })
+  if (structureShortfall) {
+    const selectedDependencyValidation = pieceRequiresBaseLayer(selectedPiece)
+      ? evaluateWearableOutfit([selectedPiece], { requireShoes: true })
+      : null
+    const dependencyFinding = selectedDependencyValidation?.hardFindings
+      .find(finding => finding.kind === 'required_base') || null
+    const incompleteAnchorCard = dependencyFinding
+      ? normalizeOutfitResult({
+          label: `${selectedPiece.name || 'Selected garment'} — Needs review`,
+          title: `${selectedPiece.name || 'Selected garment'} — Needs review`,
+          pieceIds: [Number(selectedPiece.id)],
+          pieces: [selectedPiece],
+          selectedPieceId: Number(selectedPiece.id),
+          broken: true,
+          diagnosticOnly: true,
+          strength: 'needs review',
+          rejectionReason: dependencyFinding.message,
+          reason: 'The selected garment remains the premise, but the wardrobe does not currently prove a complete wearable outfit around it.',
+          source: 'selected-anchor-incomplete',
+        }, {
+          disposition: 'rejected',
+          findings: [dependencyFinding],
+          provenance: { flow: 'selected_piece_visual', source: 'selected-anchor-incomplete', composedBy: 'engine', stage: 'candidate_supply' },
+        })
+      : null
+    return {
+      outfits: incompleteAnchorCard ? [incompleteAnchorCard] : [],
+      recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
+      rejected: [],
+      skip: structureShortfall,
+      saveableLearning: '',
+      compositionSkipped: 'incomplete_candidate_supply',
+      debug: {
+        shownPieceCount: 0,
+        rosterCount: candidatePieces.length,
+        excludedCount: excluded.length,
+        excludedCounts: rosterDebug.excludedCounts,
+        registerCeiling: rosterDebug.registerCeiling,
+        formalityIntent: rosterDebug.formalityIntent,
+        postGatePoolSize: rosterDebug.postGatePoolSize,
+        capApplied: rosterDebug.capApplied,
+        capCutPieces: rosterDebug.capCutPieces,
+        slotCoverage: rosterDebug.slotCoverage,
+        coverageReport: rosterDebug.coverageReport,
+        structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+        compositionSkipped: 'incomplete_candidate_supply',
+        imageDetail: null,
+        thumbPx: 768,
+        aiReturnedCount: 0,
+        composerError: null,
+        composerUsage: null,
+        timings: { thumbPrepMs: 0, composerMs: 0 },
+        resolvedActivity: rosterDebug.resolvedActivity,
+        activitySource: rosterDebug.activitySource,
+        walkable: rosterDebug.walkable,
+        rosterCounts: rosterDebug.categoryCounts,
+        unresolvedReferences: [],
+        unresolvedReferencesCount: 0
+      }
+    }
+  }
   const composerThumbPx = 768
   const composerImageDetail = visualComposerImageDetailForRoster(candidatePieces.length)
   const candidateIds = new Set(candidatePieces.map(p => Number(p.id)))
@@ -1141,13 +1213,33 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
   }).filter(o => o.pieces.some(p => Number(p.id) === selectedId) && o.pieces.length >= 2)
 
-  let outfits = resolved.map(o =>
+  const selectedModelOutfits = resolved.map(o =>
     repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood, { season, weatherProfile, activity }))
     .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
-    .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+  const selectedValidation = new Map(selectedModelOutfits.map(outfit => [
+    outfit,
+    evaluateWearableOutfit(outfit.pieces, {
+      requireShoes: true,
+      seenPieceIds: new Set(shownPieces.map(piece => Number(piece.id))),
+    }),
+  ]))
+  const needsReviewOutfits = selectedModelOutfits
+    .filter(outfit => !selectedValidation.get(outfit).hardValid)
+    .map(outfit => normalizeOutfitResult({
+      ...outfit,
+      broken: true,
+      diagnosticOnly: true,
+      strength: 'needs review',
+      rejectionReason: selectedValidation.get(outfit).primaryFinding?.message || 'Hard outfit validation failed.',
+    }, {
+      disposition: 'rejected',
+      findings: selectedValidation.get(outfit).hardFindings,
+      provenance: { flow: 'selected_piece_visual', source: 'model-rejected', composedBy: 'model', stage: 'shared_validation' },
+    }))
+  let outfits = selectedModelOutfits.filter(outfit => selectedValidation.get(outfit).hardValid)
 
   if (!outfits.length) {
-    const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates, { occasion })
+    const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, recoveryRankedCandidates, { occasion })
     outfits = localFallback
       .map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePool))
       .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
@@ -1158,12 +1250,12 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     outfits = outfits.map(o => {
       const repairedFromShown = applyComfortFootwearRepair(o, visibleRepairPool, comfortConstraint, { weatherProfile, occasion, mood, activity })
       return repairedFromShown === o
-        ? applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
+        ? applyComfortFootwearRepair(o, recoveryEvaluation.recoveryEligiblePieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
         : repairedFromShown
     })
   }
 
-  outfits = outfits.slice(0, 4).map(outfit => ({
+  outfits = [...outfits.slice(0, 4), ...needsReviewOutfits].map(outfit => ({
     ...outfit,
     selectedPieceId: selectedPiece.id,
     wholeWardrobe: false,
@@ -1172,6 +1264,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 
   return {
     outfits,
+    recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
     rejected: parsed.rejected || [],
     skip: parsed.skip || '',
     saveableLearning: parsed.saveableLearning || '',
@@ -1186,6 +1279,9 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       capApplied: rosterDebug.capApplied,
       capCutPieces: rosterDebug.capCutPieces,
       slotCoverage: rosterDebug.slotCoverage,
+      coverageReport: rosterDebug.coverageReport,
+      structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+      compositionSkipped: null,
       imageDetail: composerImageDetail,
       thumbPx: composerThumbPx,
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
@@ -1497,7 +1593,12 @@ export async function generateOutfitsForPieceInternal({
   history,
   includeMissingPieces = false,
   idealOnly = false,
-  activity = ''
+  activity = '',
+  location = '',
+  date = null,
+  currentDate = null,
+  statedWeather = '',
+  resolvedWeatherProfile = null
 }) {
   console.log(`\n[0] 🧥 generateOutfitsForPieceInternal called:`)
   console.log(`    - pieceId: ${pieceId}`)
@@ -1510,17 +1611,51 @@ export async function generateOutfitsForPieceInternal({
   }
 
   const parsedPiece = parsePiece(piece)
+  const stylingContext = await resolveStylingContext({
+    explicitRequest: {
+      occasion,
+      activity,
+      season,
+      mission,
+      mood,
+      requestText: question,
+      location: location || getHomeLocation(),
+      date: date || currentDate || new Date(),
+      statedWeather,
+      weatherProfile: resolvedWeatherProfile,
+    },
+    policy: { allowLiveWeather: true },
+  })
+  occasion = stylingContext.occasion
+  activity = stylingContext.activity
+  season = stylingContext.season
+  mission = stylingContext.mission
+  mood = stylingContext.mood
+  question = stylingContext.requestText
   const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
   const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const weatherProfile = weatherProfileFromContext({ mood, season })
-  const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question, activity })
-  let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
+  const {
+    weatherProfile,
+    comfortConstraint,
+    occasionProfile,
+    activityProfile,
+  } = stylingContext
+  let { rankedCandidates } = selectAutomaticUseCandidatesForOutfitGeneration({
+    anchorPiece: parsedPiece,
+    pieces: allPieces,
+    limit: 32,
+    context: { occasion, mission, mood, season, currentDate: stylingContext.date, weatherProfile, comfortConstraint, activity, request: question, question },
+  })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
+  const feedbackApplicabilityContext = projectStylingApplicabilityContext(stylingContext, {
+    weatherText: [mood, question].filter(Boolean).join(' '),
+    requestText: [occasion, activity, mood, question].filter(Boolean).join(' '),
+  })
   const ownerGuidanceContext = {
-    requestContext: { occasion, activity, season, weather: weatherProfile, weatherText: [mood, question].filter(Boolean).join(' '), requestText: [occasion, activity, mood, question].filter(Boolean).join(' ') },
+    requestContext: feedbackApplicabilityContext,
     pieces: [parsedPiece, ...rankedCandidates.map(candidate => candidate?.piece).filter(Boolean)],
   }
   const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16, { ownerGuidanceContext })
@@ -1528,7 +1663,8 @@ export async function generateOutfitsForPieceInternal({
   const exactOutfitReactionText = getExactOutfitReactionMemory(selectedPieceRosterIds, {
     occasion,
     activity,
-    season,
+    season: feedbackApplicabilityContext.season,
+    currentDate: feedbackApplicabilityContext.currentDate,
     limit: 3,
   })
   const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(
@@ -1539,8 +1675,7 @@ export async function generateOutfitsForPieceInternal({
     pieceIds: selectedPieceRosterIds,
     occasion,
     activity,
-    season,
-    weather: [mood, question].filter(Boolean).join(' '),
+    ...feedbackApplicabilityContext,
   })
   const calibrationMemoryText = getCalibrationMemoryForStylist(32)
 
@@ -1569,7 +1704,9 @@ export async function generateOutfitsForPieceInternal({
       activity,
       memoryText,
       weatherProfile,
-      comfortConstraint
+      comfortConstraint,
+      occasionProfile,
+      activityProfile
     })
     visualCriticDebug = composed.debug || null
   } else {
@@ -1608,19 +1745,24 @@ export async function generateOutfitsForPieceInternal({
     })
   }
 
+  const recoveryPieces = (!idealMode && !idealOnlyMode && Array.isArray(composed.recoveryEligiblePieces))
+    ? composed.recoveryEligiblePieces
+    : allPieces
+  const recoveryIds = new Set(recoveryPieces.map(piece => Number(piece.id)))
+  const recoveryRankedCandidates = rankedCandidates.filter(candidate => recoveryIds.has(Number(candidate?.piece?.id)))
   let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
   if (structuredOutfits.length > 0) {
     console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
-  } else if (!idealOnlyMode) {
+  } else if (!idealOnlyMode && !composed.compositionSkipped) {
     console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
-    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, rankedCandidates, { occasion })
+    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, recoveryRankedCandidates, { occasion })
   }
-  if (!structuredOutfits.length) {
+  if (!structuredOutfits.length && !composed.compositionSkipped) {
     console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
-    const candidates = (rankedCandidates || []).map(r => r.piece).filter(Boolean)
+    const candidates = recoveryRankedCandidates.map(r => r.piece).filter(Boolean)
     const selectedGroup = wardrobeCategoryGroup(parsedPiece)
     const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
-    structuredOutfits = [normalizeGeneratedOutfitObject({
+    const absoluteCandidate = normalizeGeneratedOutfitObject({
       label: 'Best available wardrobe direction',
       strength: 'usable',
       dominantDirection: 'simple closet-based pairing using the selected garment',
@@ -1635,12 +1777,31 @@ export async function generateOutfitsForPieceInternal({
         worn_photo: p.worn_photo || null
       })).slice(0, 5),
       reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
-    }, parsedPiece, [parsedPiece, ...candidates])]
+    }, parsedPiece, [parsedPiece, ...candidates])
+    const absoluteFallback = validatedFallback({
+      candidates: [absoluteCandidate],
+      limit: 1,
+      validate: outfit => validateSelectedRecoveryOutfit(outfit, parsedPiece, candidates),
+      context: { flow: 'selected_piece_absolute', selectedPieceId: Number(parsedPiece.id) },
+    })
+    structuredOutfits = absoluteFallback.values
+    if (!structuredOutfits.length) {
+      composed.recoveryShortfall = absoluteFallback.report
+      if (!composed.skip) composed.skip = absoluteFallback.report.message
+    }
   }
 
   if (comfortConstraint) {
-    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
+    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, recoveryPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
   }
+  structuredOutfits = structuredOutfits.map(outfit => normalizeDeliveredOutfit(outfit, {
+    provenance: {
+      flow: 'selected_piece',
+      source: outfit.source || (idealOnlyMode ? 'ideal-only' : idealMode ? 'ideal' : 'model'),
+      composedBy: outfit.composedBy || 'model',
+      stage: 'selected_response',
+    },
+  }))
   if (!idealMode && !idealOnlyMode && visualCriticDebug) {
     persistGenerationRun({
       flow: 'anchor_visual',
@@ -1675,7 +1836,9 @@ export async function generateOutfitsForPieceInternal({
     debug: {
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
-      weatherProfile
+      recoveryShortfall: composed.recoveryShortfall || null,
+      weatherProfile,
+      stylingContext: stylingContext.debug
     }
   }
 }
@@ -1747,14 +1910,6 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
   }
 })
 
-export function resolveWholeWardrobeWeatherProfile({ mood = '', stylingRequest = '', season = '', resolvedWeatherProfile = null } = {}) {
-  // A live forecast is physical evidence. Calendar/season language may still shape the composer's
-  // aesthetic brief, but must not recompute hard hot/cold gates (live Larkspur: 78°F became hot
-  // solely because the execution router supplied `season: summer`).
-  if (['live', 'unavailable'].includes(resolvedWeatherProfile?.weatherSource)) return resolvedWeatherProfile
-  return weatherProfileFromContext({ mood: [mood, stylingRequest].filter(Boolean).join(' '), season })
-}
-
 export async function generateWholeWardrobeOutfitsVisualInternal({
   occasion = 'casual',
   season = 'current season',
@@ -1767,21 +1922,43 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   activity = '',
   savedOutfitSeed = null,
   resolvedWeatherProfile = null,
+  statedWeather = '',
+  location = '',
+  date = null,
+  currentDate = null,
   adaptiveVisualDetail = false,
   comparisonSetGuidance = true
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
-    const stylingRequest = String(request || question || '').trim()
-    const weatherProfile = resolveWholeWardrobeWeatherProfile({ mood, stylingRequest, season, resolvedWeatherProfile })
-    const occasionProfile = resolveOccasionProfile(occasion, mood)
-    const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: request || question || '' })
-    const comfortConstraint = resolveComfortFootwearConstraint({
-      occasion,
-      mood,
-      request: request || question || '',
-      activity
+    const stylingContext = await resolveStylingContext({
+      explicitRequest: {
+        occasion,
+        activity,
+        season,
+        mission,
+        mood,
+        requestText: request || question,
+        location: location || getHomeLocation(),
+        date: date || currentDate || new Date(),
+        statedWeather,
+        weatherProfile: resolvedWeatherProfile,
+      },
+      policy: { allowLiveWeather: true },
     })
+    occasion = stylingContext.occasion
+    activity = stylingContext.activity
+    season = stylingContext.season
+    mission = stylingContext.mission
+    mood = stylingContext.mood
+    const stylingRequest = stylingContext.requestText
+    request = stylingRequest
+    const {
+      weatherProfile,
+      occasionProfile,
+      activityProfile,
+      comfortConstraint,
+    } = stylingContext
     let occasionProfileGuidance = ''
     if (occasionProfile) {
       const preferred = [
@@ -1891,15 +2068,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         : 'Formula-similar mode: use only shown wardrobe pieces. Preserve the source outfit formula and its focal/support relationship while substituting owned pieces. Do not simply repeat the exact saved outfit; each result must be a useful alternate realization of the same formula.',
     ].filter(Boolean).join('\n') : ''
 
-    // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
-    let { allowedPieces, suppressedPieces } =
-      filterWholeWardrobePiecesForGeneration(allPieces, { occasion, season, explorationMode, weatherProfile, mood, activity })
+    const automaticUseEvaluation = evaluateAutomaticUsePiecePool({
+      pieces: allPieces,
+      context: { occasion, season, calendarSeason: stylingContext.calendarSeason, currentDate: stylingContext.date, explorationMode, weatherProfile, mood, activity },
+      policy: {
+        anchorPieceIds: savedMainPieceId ? [savedMainPieceId] : [],
+        hotOuterwearCap: 3,
+      },
+    })
+    let allowedPieces = automaticUseEvaluation.eligiblePieces
+    const suppressedPieces = automaticUseEvaluation.underlyingExcludedPieces
+    const savedMainDecision = savedMainPieceId
+      ? automaticUseEvaluation.decisionsById.get(savedMainPieceId)
+      : null
     const savedMainSuppression = savedMainPiece
       ? suppressedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       : null
-    const savedMainBypassedSuppression = Boolean(savedMainSuppression)
-    if (savedMainPiece && savedMainBypassedSuppression && !allowedPieces.some(piece => Number(piece.id) === savedMainPieceId)) {
-      allowedPieces = [savedMainPiece, ...allowedPieces]
+    const savedMainBypassedSuppression = Boolean(savedMainDecision?.bypassed)
+    if (savedMainPiece && savedMainBypassedSuppression) {
+      allowedPieces = [savedMainPiece, ...allowedPieces.filter(piece => Number(piece.id) !== savedMainPieceId)]
     }
     const suppressedReasonCounts = suppressedPieces.reduce((acc, piece) => {
       for (const reason of (piece.reasons || [])) {
@@ -1920,40 +2107,112 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Memory context (reuse existing builders, keep it lean)
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
     // Compute weather profile and filter the visual composer roster
-    let { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
-      occasion,
-      weatherProfile,
-      sessionInfluence,
-      maxImages: 90,
-      mood,
-      activity,
-      request: stylingRequest,
-      question,
-      occasionProfile,
-      activityProfile
+    const poolEvaluation = evaluateVisualComposerPiecePool({
+      pieces: allowedPieces,
+      context: { occasion, weatherProfile, mood, activity, requestText: stylingRequest, question, occasionProfile, activityProfile },
+      policy: { selectedPieceId: savedMainPieceId, sessionInfluence, maxImages: 90 },
     })
+    let { eligiblePieces: roster, excludedPieces: excluded, debug: rosterDebug } = poolEvaluation
     if (savedMainPiece) {
       const allowedMain = allowedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       if (!allowedMain) {
         throw new Error(`The selected Main piece is unavailable because it is no longer active. Choose another Main piece.`)
       }
-      if (!roster.some(piece => Number(piece.id) === savedMainPieceId)) {
-        roster = [allowedMain, ...roster.filter(piece => Number(piece.id) !== savedMainPieceId)].slice(0, 90)
+    }
+    const structureShortfall = projectCandidateSetShortfall(rosterDebug.coverageReport, {
+      anchorPiece: savedMainPiece,
+    })
+    if (structureShortfall) {
+      const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile, activityProfile)
+      const profileCoverageNote = formatCoverageNote(topCoverage, shoeCoverage, { occasion, occasionProfile, activityProfile })
+      const responseCoverageNote = [structureShortfall, profileCoverageNote].filter(Boolean).join('\n')
+      persistGenerationRun({
+        flow: 'whole_wardrobe_visual',
+        occasion,
+        weather: weatherProfile,
+        rosterDebug,
+        rosterCount: roster.length,
+        requested: requestedLimit,
+        delivered: 0,
+        coverageGaps: rosterDebug.structureCoverageGaps || [],
+      })
+      return {
+        feedback: `**No complete wardrobe outfit is available**\n\n${responseCoverageNote}`,
+        structuredOutfits: [],
+        provider: AI_PROVIDER,
+        mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
+        pipeline: savedVariantMode ? 'saved_outfit_wardrobe_variant_composer' : 'full_wardrobe_visual_composer',
+        savedOutfitVariantMode: savedVariantMode,
+        sourceOutfit: savedOutfitSeed || null,
+        coverageNote: responseCoverageNote,
+        debug: {
+          profileCoverage: { tops: topCoverage, shoes: shoeCoverage },
+          shownPieceCount: 0,
+          suppressedCount: suppressedPieces.length,
+          suppressedReasonCounts,
+          weatherProfile,
+          stylingContext: stylingContext.debug,
+          savedMainBypassedSuppression,
+          savedMainSuppressionReasons: savedMainSuppression?.reasons || [],
+          savedSourceHasLayeredTopFormula,
+          aiReturnedCount: 0,
+          locallyGeneratedCount: 0,
+          finalReturnedCount: 0,
+          deliveredCount: 0,
+          brokenCardCount: 0,
+          advisorFlaggedCount: 0,
+          localFillAddedCount: 0,
+          imageDetail: null,
+          thumbPx: adaptiveVisualDetail ? null : 768,
+          adaptiveVisualDetail,
+          imageSizeCounts: {},
+          composerUsage: null,
+          finalSelection: null,
+          sessionMemory: null,
+          composerError: null,
+          compositionSkipped: 'incomplete_candidate_supply',
+          timings: { thumbPrepMs: 0, composerMs: 0 },
+          rosterCount: roster.length,
+          excludedCounts: rosterDebug.excludedCounts,
+          activityCoverageGaps: rosterDebug.activityCoverageGaps || [],
+          activityTagEnforcedGroups: rosterDebug.activityTagEnforcedGroups || [],
+          registerCeiling: rosterDebug.registerCeiling,
+          registerTarget: rosterDebug.registerTarget,
+          registerTargetCoverageGaps: rosterDebug.registerTargetCoverageGaps || [],
+          registerTargetEnforcedGroups: rosterDebug.registerTargetEnforcedGroups || [],
+          formalityIntent: rosterDebug.formalityIntent,
+          postGatePoolSize: rosterDebug.postGatePoolSize,
+          capApplied: rosterDebug.capApplied,
+          capCutPieces: rosterDebug.capCutPieces,
+          slotCoverage: rosterDebug.slotCoverage,
+          coverageReport: rosterDebug.coverageReport,
+          structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+          excluded,
+          resolvedActivity: rosterDebug.resolvedActivity,
+          activitySource: rosterDebug.activitySource,
+          walkable: rosterDebug.walkable,
+          rosterCounts: rosterDebug.categoryCounts,
+          modelPickedSuppressedCount: 0,
+          unresolvedReferences: [],
+          unresolvedReferencesCount: 0,
+        }
       }
     }
     const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(roster.map(piece => piece.id), 3)
+    const feedbackApplicabilityContext = projectStylingApplicabilityContext(stylingContext, {
+      weatherText: [mood, stylingRequest].filter(Boolean).join(' '),
+      requestText: [occasion, activity, mood, stylingRequest].filter(Boolean).join(' '),
+    })
     const exactOutfitReactionText = getExactOutfitReactionMemory(roster.map(piece => piece.id), {
       occasion,
       activity,
-      season,
+      season: feedbackApplicabilityContext.season,
+      currentDate: feedbackApplicabilityContext.currentDate,
       limit: 3,
     })
     const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
       pieceIds: roster.map(piece => piece.id),
-      occasion,
-      activity,
-      season,
-      weather: [mood, stylingRequest].filter(Boolean).join(' '),
+      ...feedbackApplicabilityContext,
     })
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
@@ -2120,24 +2379,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const normalizedModelOutfits = resolved.map(o =>
       sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject(o, allowedPieces))
     )
-    const structuralRejectionReason = (outfit) => {
-      const groups = (outfit?.pieces || []).map(piece => wardrobeCategoryGroup(piece))
-      const shoeCount = groups.filter(group => group === 'shoes').length
-      const bottomCount = groups.filter(group => group === 'bottom').length
-      const dressCount = groups.filter(group => group === 'dress').length
-      const topCount = groups.filter(group => group === 'top').length
-      if (shoeCount > 1) return 'structural: more than one shoe'
-      if (shoeCount !== 1) return 'structural: missing shoes'
-      if (bottomCount > 1) return 'structural: more than one bottom'
-      if (dressCount > 1) return 'structural: more than one dress'
-      if (dressCount === 1 && bottomCount > 0) return 'structural: dress plus bottom'
-      if (dressCount !== 1 && topCount < 1) return 'structural: missing top'
-      if (dressCount !== 1 && bottomCount !== 1) return 'structural: missing bottom'
-      return 'structural: not a complete wardrobe outfit'
-    }
+    const validationByOutfit = new Map(normalizedModelOutfits.map(outfit => [
+      outfit,
+      evaluateWearableOutfit(outfit.pieces, { requireShoes: true }),
+    ]))
+    const structuralRejectionReason = (validation) => ({
+      multiple_shoes: 'structural: more than one shoe',
+      missing_shoes: 'structural: missing shoes',
+      multiple_bottoms: 'structural: more than one bottom',
+      multiple_dresses: 'structural: more than one dress',
+      dress_with_bottom: 'structural: dress plus bottom',
+      missing_top_or_dress: 'structural: missing top',
+      multiple_tops_without_bottom: 'structural: missing bottom',
+      missing_bottom: 'structural: missing bottom',
+      required_base_missing: 'dependency: required base layer is missing',
+      required_base_incompatible: 'dependency: required base layer is incompatible',
+    }[validation?.primaryFinding?.code] || validation?.primaryFinding?.message || 'structural: not a complete wardrobe outfit')
     const structurallyRejectedModelOutfits = normalizedModelOutfits
-      .filter(o => !isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
-      .map(outfit => ({ outfit, reason: structuralRejectionReason(outfit) }))
+      .filter(outfit => !validationByOutfit.get(outfit).hardValid)
+      .map(outfit => ({ outfit, reason: structuralRejectionReason(validationByOutfit.get(outfit)) }))
 
     // The composer above proposes from ISOLATED per-garment photos and never sees two pieces
     // together — its own written "reason" can rationalize a pairing that the actual photos, side
@@ -2148,17 +2408,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // opinion nobody asked for. Non-fatal: a critic failure must never block the whole turn.
     let visualClashDebug = null
     let clashFlaggedByOutfit = new Map()
-    const structurallyValidForClashReview = normalizedModelOutfits.filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+    const structurallyValidForClashReview = normalizedModelOutfits.filter(outfit => validationByOutfit.get(outfit).hardValid)
     // normalizeWholeWardrobeOutfitObject trims outfit.pieces to {id, name, category, photo,
     // worn_photo} — pattern_complexity and style_profile_json are gone by here, so the
     // questionable-check would silently see nothing to flag. Rehydrate against allowedPieces by
     // id for the check only; the outfit objects that ship to the client stay trimmed as-is.
     const allowedPieceById = new Map(allowedPieces.map(piece => [Number(piece.id), piece]))
-    const questionableForClashReview = structurallyValidForClashReview.filter(outfit =>
-      wholeWardrobeOutfitLooksQuestionable({
+    const visualReviewCandidates = structurallyValidForClashReview.map(outfit => ({
+      outfit,
+      findings: wholeWardrobeOutfitVisualReviewFindings({
         pieces: (outfit.pieces || []).map(piece => allowedPieceById.get(Number(piece.id)) || piece)
-      })
-    )
+      }),
+    })).filter(candidate => candidate.findings.length)
+    const questionableForClashReview = visualReviewCandidates.map(candidate => candidate.outfit)
+    const visualReviewFindingCounts = visualReviewCandidates
+      .flatMap(candidate => candidate.findings)
+      .reduce((counts, finding) => {
+        counts[finding.code] = (counts[finding.code] || 0) + 1
+        return counts
+      }, {})
     if (questionableForClashReview.length) {
       try {
         const clashReview = await withTimeout(reviewComposedWholeWardrobeOutfitsForClash({
@@ -2174,14 +2442,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         visualClashDebug = {
           reviewedCount: clashReview?.reviewedCount || 0,
           flaggedCount: clashFlaggedByOutfit.size,
-          skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length
+          skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length,
+          findingCounts: visualReviewFindingCounts,
         }
       } catch (err) {
         console.warn('Whole-wardrobe clash critic fallback:', err.message)
         visualClashDebug = { error: err.message }
       }
     } else if (structurallyValidForClashReview.length) {
-      visualClashDebug = { reviewedCount: 0, flaggedCount: 0, skippedNotQuestionable: structurallyValidForClashReview.length }
+      visualClashDebug = {
+        reviewedCount: 0,
+        flaggedCount: 0,
+        skippedNotQuestionable: structurallyValidForClashReview.length,
+        findingCounts: {},
+      }
     }
     const visuallyRejectedModelOutfits = [...clashFlaggedByOutfit.entries()]
       .map(([outfit, reason]) => ({ outfit, reason: `visual critic: ${reason}` }))
@@ -2193,11 +2467,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       ? normalizedModelOutfits.filter(outfit => !includesSavedMain(outfit)).length
       : 0
     const modelLayeredTopFormulaRejectedCount = savedFormulaRequiresLayeredTop
-      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && isOutfitStructurallyValid(outfit.pieces, { requireShoes: true }) && !hasLayeredTopFormula(outfit)).length
+      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && validationByOutfit.get(outfit).hardValid && !hasLayeredTopFormula(outfit)).length
       : 0
     let modelOutfits = normalizedModelOutfits
       .filter(includesSavedMain)
-      .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+      .filter(outfit => validationByOutfit.get(outfit).hardValid)
       .filter(o => !clashFlaggedByOutfit.has(o))
       .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
       .map(outfit => ({
@@ -2208,6 +2482,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }))
 
     let localBackfillOutfits = []
+    let localBackfillRecoveryReport = null
     let localBackfillCandidateCount = 0
     let localBackfillMissingMainRejectedCount = 0
     let diagnosticBackfillOutfits = []
@@ -2338,8 +2613,21 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     if (structuredOutfits.length < requestedLimit) {
       if (!modelOutfits.length || savedFormulaRequiresLayeredTop) {
         if (!modelOutfits.length) console.log(`    - Visual Composer AI returned 0 structurally valid outfits. Filling from local candidate generation.`)
+        const localFallbackCandidates = buildVisualLocalBackfill()
+        const localFallbackRecovery = validatedFallback({
+          candidates: localFallbackCandidates,
+          limit: requestedLimit,
+          validate: candidate => locallyGateWholeWardrobeOutfits(
+            [candidate],
+            1,
+            { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: roster, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
+          ),
+          accept: validation => validation.outfits.length > 0,
+          context: { flow: 'whole_wardrobe_visual' },
+        })
+        localBackfillRecoveryReport = localFallbackRecovery.report
         gatedLocal = locallyGateWholeWardrobeOutfits(
-          buildVisualLocalBackfill(),
+          localFallbackRecovery.values,
           requestedLimit,
           { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: roster, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
         )
@@ -2395,8 +2683,28 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         structuredOutfits = [...structuredOutfits, ...diagnostics]
       }
     }
+    // A paid composition attempt remains visible even when enough sibling looks passed.
+    // Validation controls disposition, not visibility: hard findings become Needs review
+    // cards with the actual reason and never consume the requested valid-card count.
+    const deliveredKeys = new Set(structuredOutfits.map(outfitKey))
+    const paidRejectedDiagnostics = [
+      ...structurallyRejectedModelOutfits,
+      ...visuallyRejectedModelOutfits,
+      ...gatedModel.rejected
+        .filter(item => item?.outfit)
+        .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' })),
+    ]
+    for (const candidate of paidRejectedDiagnostics) {
+      const key = outfitKey(candidate.outfit)
+      if (!key || deliveredKeys.has(key)) continue
+      const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason)
+      structuredOutfits.push(diagnostic)
+      deliveredKeys.add(key)
+      diagnosticBrokenCount += 1
+    }
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
+    visualDebugLog.localBackfillRecovery = localBackfillRecoveryReport
     visualDebugLog.localBackfillMissingMainRejected = localBackfillMissingMainRejectedCount
     visualDebugLog.diagnosticBackfillCandidates = diagnosticBackfillCandidateCount
     visualDebugLog.diagnosticBackfillOutfits = diagnosticBackfillOutfits.length
@@ -2424,7 +2732,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     console.log('[Visual Composer Final Selection]', visualDebugLog)
 
     // Mission labeling stays post-generation:
-    structuredOutfits = structuredOutfits.slice(0, requestedLimit).map((outfit, index) => {
+    const readyOutfits = structuredOutfits.filter(outfit => !outfit.broken).slice(0, requestedLimit)
+    const reviewOutfits = structuredOutfits.filter(outfit => outfit.broken)
+    structuredOutfits = [...readyOutfits, ...reviewOutfits].map((outfit, index) => {
       const missionPieces = fullPiecesForMissionCheck(outfit, allowedPieces)
       const qualifiedMission = mission && mission !== 'mix'
         ? (() => {
@@ -2436,13 +2746,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
             }
           })()
         : qualifiedMissionForPieces(missionPieces, { occasion, mood, activity })
-      return {
+      return normalizeDeliveredOutfit({
         ...outfit,
         strength: outfit.broken ? 'needs review' : (index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')),
         formulaFamily: outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allowedPieces, occasion),
         missionId: qualifiedMission.missionId,
         missionLabel: qualifiedMission.missionLabel
-      }
+      }, {
+        provenance: {
+          flow: 'whole_wardrobe_visual',
+          source: outfit.source || 'model',
+          composedBy: outfit.composedBy || (outfit.source === 'local-fill' ? 'engine' : 'model'),
+          stage: 'advisor_gate',
+        },
+      })
     })
 
     const deliveredOutfitsForDiversity = structuredOutfits.filter(outfit => !outfit.broken)
@@ -2514,6 +2831,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         suppressedCount: suppressedPieces.length,
         suppressedReasonCounts,
         weatherProfile,
+        stylingContext: stylingContext.debug,
         savedMainBypassedSuppression,
         savedMainSuppressionReasons: savedMainSuppression?.reasons || [],
         savedSourceHasLayeredTopFormula,
@@ -2554,6 +2872,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         capApplied: rosterDebug.capApplied,
         capCutPieces: rosterDebug.capCutPieces,
         slotCoverage: rosterDebug.slotCoverage,
+        coverageReport: rosterDebug.coverageReport,
+        structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+        compositionSkipped: null,
         excluded,
         resolvedActivity: rosterDebug.resolvedActivity,
         activitySource: rosterDebug.activitySource,
@@ -2579,34 +2900,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
 }
 
-export async function resolveDirectVisualComposerWeather({
-  season = 'current season',
-  location = '',
-  date = new Date(),
-  mood = '',
-  fetchImpl
-} = {}) {
-  const normalizedSeason = String(season || 'current season').trim().toLowerCase()
-  if (normalizedSeason !== 'current season') return null
-  return getCurrentWeatherProfile({
-    date,
-    location,
-    mood,
-    season,
-    ...(fetchImpl ? { fetchImpl } : {})
-  })
-}
-
 router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
   try {
     const input = req.body || {}
-    const resolvedWeatherProfile = input.resolvedWeatherProfile || await resolveDirectVisualComposerWeather({
-      season: input.season,
+    const result = await generateWholeWardrobeOutfitsVisualInternal({
+      ...input,
       location: input.location || getHomeLocation(),
       date: input.date || input.currentDate || new Date(),
-      mood: [input.mood, input.request, input.question].filter(Boolean).join(' ')
     })
-    const result = await generateWholeWardrobeOutfitsVisualInternal({ ...input, resolvedWeatherProfile })
     res.json(result)
   } catch (err) {
     console.error('Visual wardrobe composer error:', err)
@@ -2623,7 +2924,12 @@ router.post('/generate-outfit-boards', async (req, res) => {
 
     const selectedPiece = parsePiece(piece)
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const rankedCandidates = selectCandidatesForOutfitGeneration(selectedPiece, allPieces, 48, { occasion, season })
+    const { rankedCandidates } = selectAutomaticUseCandidatesForOutfitGeneration({
+      anchorPiece: selectedPiece,
+      pieces: allPieces,
+      limit: 48,
+      context: { occasion, season },
+    })
     const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
     const allowedIds = new Set(candidatePieces.map(p => Number(p.id)))
     const pieceById = new Map(candidatePieces.map(p => [Number(p.id), p]))
@@ -3256,7 +3562,7 @@ function capsuleExpansionSystemPrompt() {
 Return ONLY valid JSON in this exact shape:
 {"title":"short evocative title","piece_ids":[1,2,3],"reason":"one specific visual reason"}
 
-Use only IDs in the supplied allowed roster. The outfit must contain exactly one top plus one bottom, or one dress; exactly one pair of shoes; and at most one optional layer. Choose a new main core not already represented. Do not add accessories. Do not reinterpret the weather, occasion, roster, or capsule brief. If the catalog cannot support another credible outfit, return {"title":"","piece_ids":[],"reason":"no credible unused combination"}.
+Use only IDs in the supplied allowed roster. ${categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false })} Choose a new main core not already represented. Do not reinterpret the weather, occasion, roster, or capsule brief. If the catalog cannot support another credible outfit, return {"title":"","piece_ids":[],"reason":"no credible unused combination"}.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -3623,11 +3929,13 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
   const capsuleSeason = isSummer ? 'summer' : (isWinter ? 'winter' : '')
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
-    contexts: slots.map(slot => ({
+    contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
       occasion: slot?.occasion || '',
       activity: slot?.activity || '',
-      season: slot?.season || capsuleSeason,
-      weather: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      season: slot?.requestedSeason || slot?.transitSeason || slot?.season || capsuleSeason,
+      currentDate: slot?.stylingContext?.date || slot?.date || null,
+      weatherText: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
   const content = capsuleRosterSelectionContent({
@@ -3874,7 +4182,7 @@ ${catalog}`
       })
     }
     const acceptedOutfit = accepted[0]
-    const structuredOutfit = {
+    const structuredOutfit = normalizeOutfitResult({
       ...acceptedOutfit,
       label: contextSlot.label,
       title: acceptedOutfit.title || contextSlot.label,
@@ -3888,7 +4196,10 @@ ${catalog}`
       source: 'plan_outfit_set',
       composedBy: 'model',
       capsulePlanContext: req.body.planContext
-    }
+    }, {
+      disposition: 'accepted',
+      provenance: { flow: 'capsule_expansion', source: 'plan_outfit_set', composedBy: 'model', stage: 'plan_validation' },
+    })
     return res.json({
       answer: `Added one more ${contextSlot.label} look from the existing capsule roster.`,
       structuredOutfits: [structuredOutfit],
@@ -3989,18 +4300,21 @@ router.post('/repair-capsule-look', async (req, res) => {
       const additions = allowedPieces
         .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !originalIds.includes(Number(piece.id)))
         .sort((a, b) => Number(a.id) - Number(b.id))
-      for (const candidate of additions) {
-        const pieceIds = [...originalIds, Number(candidate.id)]
-        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+      const completion = validatedComplete({
+        subject: originalIds,
+        candidates: additions,
+        mutate: (pieceIds, candidate) => [...pieceIds, Number(candidate.id)],
+        validate: pieceIds => validateSubmittedPlanOutfits(pendingPlan, [{
           slot_id: contextSlot.id,
           title: String(req.body?.title || contextSlot.label || '').trim(),
           piece_ids: pieceIds,
           reason: ''
-        }])
-        if (accepted.length) {
-          attempts.push({ accepted: accepted[0], replaced: null, replacement: candidate, added: true })
-          break
-        }
+        }]),
+        accept: validation => validation.accepted.length > 0,
+        context: { flow: 'capsule_look', slotId: contextSlot.id, missingGroup },
+      })
+      if (completion.status === 'recovered') {
+        attempts.push({ accepted: completion.validation.accepted[0], replaced: null, replacement: completion.candidate, added: true })
       }
     }
     for (const targetId of attempts.length ? [] : swapTargets) {
@@ -4009,18 +4323,22 @@ router.post('/repair-capsule-look', async (req, res) => {
       const candidates = allowedPieces
         .filter(piece => wardrobeCategoryGroup(piece) === targetGroup && !originalIds.includes(Number(piece.id)))
         .sort((a, b) => Number(a.id) - Number(b.id))
-      for (const candidate of candidates) {
-        const pieceIds = originalIds.map(id => (id === targetId ? Number(candidate.id) : id))
-        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+      const substitution = validatedSubstitute({
+        subject: originalIds,
+        target: targetId,
+        candidates,
+        mutate: (pieceIds, candidate, replacedId) => pieceIds.map(id => id === replacedId ? Number(candidate.id) : id),
+        validate: pieceIds => validateSubmittedPlanOutfits(pendingPlan, [{
           slot_id: contextSlot.id,
           title: String(req.body?.title || contextSlot.label || '').trim(),
           piece_ids: pieceIds,
           reason: ''
-        }])
-        if (accepted.length) {
-          attempts.push({ accepted: accepted[0], replaced: targetPiece, replacement: candidate })
-          break
-        }
+        }]),
+        accept: validation => validation.accepted.length > 0,
+        context: { flow: 'capsule_look', slotId: contextSlot.id, targetId },
+      })
+      if (substitution.status === 'recovered') {
+        attempts.push({ accepted: substitution.validation.accepted[0], replaced: targetPiece, replacement: substitution.candidate })
       }
       if (attempts.length) break
     }
@@ -4030,12 +4348,22 @@ router.post('/repair-capsule-look', async (req, res) => {
         error: missingGroup
           ? `That look is missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}, and nothing in this capsule's roster for ${contextSlot.label} completes it.`
           : 'No single swap from this capsule roster fixes that look — the pieces it would need are not in this capsule.',
-        debug: { providerCalls: 0, swapsTried: swapTargets.length, missingGroup: missingGroup || null }
+        debug: {
+          providerCalls: 0,
+          swapsTried: swapTargets.length,
+          missingGroup: missingGroup || null,
+          recoveryShortfall: discloseRecoveryShortfall({
+            operation: missingGroup ? 'complete' : 'substitute',
+            reason: 'capsule_roster_exhausted',
+            context: { flow: 'capsule_look', slotId: contextSlot.id, missingGroup: missingGroup || null },
+          }),
+        }
       })
     }
 
     const { accepted: acceptedOutfit, replaced, replacement, added } = attempts[0]
-    const structuredOutfit = {
+    const recoveryOperation = added ? 'complete' : 'substitute'
+    const structuredOutfit = normalizeOutfitResult({
       ...acceptedOutfit,
       label: contextSlot.label,
       title: acceptedOutfit.title || contextSlot.label,
@@ -4052,7 +4380,16 @@ router.post('/repair-capsule-look', async (req, res) => {
         ? `Added ${replacement.name} — the look was missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}.`
         : `Swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
       capsulePlanContext: req.body.planContext
-    }
+    }, {
+      disposition: 'accepted',
+      provenance: {
+        flow: 'capsule_repair',
+        source: 'plan_outfit_set',
+        composedBy: 'engine',
+        stage: 'validated_recovery',
+        recovery: { operation: recoveryOperation },
+      },
+    })
     return res.json({
       answer: added
         ? `Fixed that ${contextSlot.label} look — added ${replacement.name}.`

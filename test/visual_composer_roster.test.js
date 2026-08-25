@@ -246,6 +246,36 @@ test('Visual Composer Roster - debug reports exact cap cuts and slot coverage', 
   }
 })
 
+test('Visual Composer Roster - hard image cap preserves one complete outfit path', () => {
+  const pieces = [
+    { id: 1, name: 'Top A', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 2, name: 'Top B', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 3, name: 'Top C', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 4, name: 'Bottom', category: 'bottom', photo: 'img.jpg', formality: 'everyday' },
+    { id: 5, name: 'Shoes', category: 'shoes', photo: 'img.jpg', formality: 'everyday' },
+  ]
+  const { roster, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'casual',
+    maxImages: 3,
+  })
+
+  assert.equal(roster.length, 3)
+  assert.deepEqual(new Set(roster.map(piece => piece.category)), new Set(['top', 'bottom', 'shoes']))
+  assert.equal(debug.coverageReport.complete, true)
+  assert.deepEqual(debug.structureCoverageGaps, [])
+})
+
+test('Visual Composer Roster - impossible complete supply is surfaced without overflowing the cap', () => {
+  const pieces = [
+    { id: 1, name: 'Top A', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 2, name: 'Top B', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+  ]
+  const { roster, debug } = buildVisualComposerRoster(pieces, { occasion: 'casual', maxImages: 1 })
+  assert.equal(roster.length, 0, 'the prior category-cap result is preserved when supply itself cannot form a look')
+  assert.equal(debug.coverageReport.complete, false)
+  assert.deepEqual(debug.structureCoverageGaps, ['required_structure_unavailable'])
+})
+
 test('Visual Composer Roster - Determinism and stable tie-breaking', () => {
   const pieces = [
     { id: 4, name: 'Top 4', category: 'top', photo: 'img.jpg' },

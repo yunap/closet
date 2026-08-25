@@ -1,10 +1,17 @@
 # Selected-piece composer — "Style this piece"
 
+**Status:** Active
+**Last verified:** 2026-08-25
+
 You open one garment and ask the stylist to build outfits around it. Unlike
 [Use my wardrobe](use-my-wardrobe.md), the selected piece is the **anchor**: it
 is pinned into every outfit and the candidate pool is pre-narrowed to its best
 supporting pieces. The main path composes **wardrobe** outfits; a secondary
 `idealMode` path re-ranks candidates and may suggest pieces you don't own.
+
+**[2026-08-25] Response contract:** Every delivered direction carries the shared versioned
+`result` envelope with its accepted/annotated/rejected meaning and `selected_piece` provenance.
+The existing card fields and fallback behavior are unchanged.
 
 Same reading convention as the rest of the atlas (see
 [use-my-wardrobe.md](use-my-wardrobe.md)): **rectangles are the app's own code,
@@ -23,9 +30,12 @@ hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**
 
 ```mermaid
 flowchart TD
-    A["You open a piece<br/>+ occasion, mood, mode"] --> B["Load anchor + active wardrobe"]
+    A["You open a piece<br/>+ occasion, mood, mode"] --> X["Resolve shared styling context<br/>values + source provenance"]
+    X --> B["Load anchor + active wardrobe"]
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
-    C --> D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
+    C --> Q{"Anchor has a complete<br/>outfit path?"}
+    Q -->|no| S["Return explicit wardrobe shortfall<br/>dependent anchor stays Needs review"]
+    Q -->|yes| D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"idealMode?<br/>set by free-text regex"}
     M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
     M -->|"yes — free-typed 'ideal/missing'"| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
@@ -38,10 +48,10 @@ flowchart TD
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class A,B,R app;
+    class A,X,B,R app;
     class C,D rules;
     class E,V,E2 model;
-    class M,F,G check;
+    class Q,M,F,G check;
 ```
 
 Three things a PM should take away:
@@ -55,16 +65,19 @@ Three things a PM should take away:
   composer that may suggest pieces you don't own. The **"Explore additions"
   button does not use this path** — it routes to
   [editorial ideal additions](editorial-ideal-additions.md).
-- **This flow always returns something** — and unlike advisor mode, it *does*
-  repair (see below).
+- **This flow accepts cards only from viable supply.** Unlike advisor mode, it repairs ordinary
+  model failures. A structurally incomplete gated roster returns an explicit shortfall before the
+  model call. If the selected premise itself says `needs_base` and no compatible base exists, the
+  anchor remains visible as an incomplete Needs review card; the dependency is not waived.
 
 ### Stage map
 
 | Stage | What happens                            | Where                                                             |
 | ----- | --------------------------------------- | ----------------------------------------------------------------- |
 | A     | User picks a piece + options            | `StylistChat.jsx` → `POST /api/ai/generate-outfits-for-piece`     |
-| B–G   | Server composes outfits                 | `generateOutfitsForPieceInternal` — `routes/ai.js:2091`           |
-| C     | Candidate ranking                       | `selectCandidatesForOutfitGeneration`                             |
+| B–G   | Server resolves context and composes outfits | `generateOutfitsForPieceInternal` — `routes/ai.js`             |
+| X     | Normalize values, choose field authority, build profiles and weather | `resolveStylingContext` — `styling-engine/stylingContext.js` |
+| C     | Shared automatic-use findings, then anchor-specific candidate ranking | `selectAutomaticUseCandidatesForOutfitGeneration` |
 | E     | Wardrobe-mode visual composer           | `composeSelectedPieceVisualWardrobeOutfits` — `routes/ai.js:1587` |
 | V,E2  | Ideal-mode critic + text composer       | `rankSelectedPieceCandidatesWithVision`, `composeStructuredOutfitsForPiece` |
 
@@ -72,7 +85,7 @@ Three things a PM should take away:
 
 ## How it differs from "Use my wardrobe"
 
-Same roster builder (`buildVisualComposerRoster`), different framing:
+Same finite-pool authority (`evaluateVisualComposerPiecePool`), different framing:
 
 | Aspect            | Use my wardrobe                    | Selected-piece composer                          |
 | ----------------- | ---------------------------------- | ------------------------------------------------ |
@@ -82,9 +95,34 @@ Same roster builder (`buildVisualComposerRoster`), different framing:
 | Memory            | lean (feedback + favorites)        | rich, garment-specific (outfits, gold feedback, saved boards, calibration) (`ai.js:2130`) |
 | Modes             | one (advisor)                      | three: wardrobe / ideal directions / ideal-only (`ai.js:2114`) |
 | Repair            | **no** (advisor mode)              | **yes** — `applyComfortFootwearRepair` (`ai.js:2226`) |
-| Fallback          | local backfill or diagnostic cards | local fallback direction → basic backfill (always non-empty) (`ai.js:2200`) |
+| Fallback          | validated local backfill or explicit shortfall | validated local direction → validated basic backfill (`generateOutfitsForPieceInternal`) |
 
 Engineer notes:
+
+- **Shared context authority** (`resolveStylingContext`): selected-piece composition now uses the
+  same field-specific precedence, normalized occasion/activity profiles, and physical-weather
+  authority as whole-wardrobe composition. Current-season requests can use live weather from the
+  saved home location. Explicit hypothetical seasons stay hypothetical. Response debug records the
+  chosen source and ignored conflicts for each field.
+
+- **Shared eligibility authority** (`evaluateVisualComposerPiecePool`): the model sees the bounded
+  eligible photo roster. Local fallback and comfort repair receive a recovery projection from the
+  same findings. Presentation/capacity omissions may remain usable, but a weather, register,
+  activity, footwear, metadata, or other validity exclusion cannot return through fallback. When
+  the selected anchor is itself footwear, the full wardrobe is evaluated through the same authority
+  before choosing a comfort substitute.
+
+- **Shared support eligibility** (`selectAutomaticUseCandidatesForOutfitGeneration`): supporting
+  pieces are evaluated once by `evaluateAutomaticUsePiecePool`; the existing anchor-specific score
+  and category quotas consume those decisions instead of re-running the hard gate. Blocked rows
+  retain the same score/reason representation for parity, while the later visual pool remains the
+  binding finite roster. Piece concept-board planning uses the same adapter with its larger limit.
+
+- **Shared bounded structural coverage** (`buildCoveredCandidateSet`): the selected quota result
+  and final visual roster must retain a complete path around the pinned anchor. For a dependent
+  anchor that path includes its required coverage base. If no such path survives the hard gates,
+  the wardrobe branch stops before the visual composer and returns the coverage report; local and
+  absolute backfill are reserved for provider/model-output failure after viable supply existed.
 
 - **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
   request booleans *or* a regex on the question ("ideal", "missing", "not in my
@@ -108,6 +146,23 @@ Engineer notes:
   swaps in comfortable footwear when a comfort constraint (all-day walking /
   hiking) is active (`ai.js:2225`) — the deliberate no-repair rule only applies
   to the whole-wardrobe advisor flow.
-- **Always non-empty**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
-  still 0 → a hand-built basic backfill using the anchor + top supports
-  (`ai.js:2200`).
+- **Fallback after viable supply**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
+  still 0 → a hand-built basic backfill using the anchor + recovery-safe supports. Neither fallback
+  can reopen a validity-excluded piece. Since 2026-08-25 both use `validatedFallback`: the local
+  directions must preserve the anchor and pass category structure plus required-base validation;
+  the absolute candidate is checked against those same hard facts before it can become a card. If
+  it fails, the response carries a machine-readable recovery shortfall instead of preserving the
+  old “always non-empty” behavior. Comfort shoe swaps use `validatedSubstitute` and validate the
+  exact mutated outfit before returning it.
+- **Shared hard validation and paid-result visibility (2026-08-25):** model proposals consume
+  `evaluateWearableOutfit`. Hard-invalid proposals do not become accepted cards, but they are no
+  longer silently discarded: they return beside valid/fallback cards as Needs review with the
+  actual hard finding.
+
+### Recorded follow-up — malformed/truncated composer JSON
+
+`thread_1787624360787` reached the model's 2,000-output-token ceiling, returned malformed JSON, and
+then correctly used the local fallback. The eligibility consolidation worked—the fallback did not
+reintroduce the excluded lounge/athletic shoes—but the paid composer call produced no usable model
+outfits. Treat response sizing, truncation detection, and bounded local JSON recovery as a separate
+reliability investigation; do not weaken eligibility or mix that repair into an architecture slice.

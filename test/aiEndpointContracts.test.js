@@ -66,6 +66,7 @@ function resetTables() {
     'freeform_generation_runs',
     'calibration_images',
     'stylist_conversation_state',
+    'owner_constraints',
   ]) {
     db.prepare(`DELETE FROM ${table}`).run()
   }
@@ -246,6 +247,30 @@ async function postJson(pathname, body) {
   const json = await response.json()
   assert.equal(response.status, 200, `${pathname} failed: ${JSON.stringify(json)}`)
   return json
+}
+
+function insertAcceptedSeasonLesson(pieceId, proposedText) {
+  const batchId = Number(db.prepare(`
+    INSERT INTO feedback_synthesis_batches (status, feedback_ids, compact_input, input_hash, provider, model)
+    VALUES ('completed', '[]', '', ?, 'test', 'test')
+  `).run(`season-lesson-${Date.now()}-${pieceId}`).lastInsertRowid)
+  db.prepare(`
+    INSERT INTO feedback_synthesis_drafts
+      (batch_id, disposition, title, proposed_text, boundary, source_feedback_ids, status, payload)
+    VALUES (?, 'personal_contextual_lesson', 'Summer shoe', ?, 'Summer only.', '[]', 'accepted', ?)
+  `).run(
+    batchId,
+    proposedText,
+    JSON.stringify({ applicability: {
+      version: 1,
+      scope: 'piece_context',
+      piece_ids: [pieceId],
+      occasions: [],
+      activities: [],
+      seasons: ['summer'],
+      weather_terms: [],
+    } }),
+  )
 }
 
 function mockAiHandler({ system, messages, maxTokens }) {
@@ -554,6 +579,8 @@ test('selected-piece generator returns structured outfit cards', async () => {
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
+  assert.equal(json.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(json.structuredOutfits[0].result.provenance.flow, 'selected_piece')
   assert.ok('visualCritic' in json.debug)
   assert.ok(json.debug.visualCritic.shownPieceCount > 0)
   assert.equal(json.debug.visualCritic.thumbPx, 768)
@@ -586,6 +613,23 @@ test('selected-piece generator returns structured outfit cards', async () => {
     ['high', 'auto'].includes(content[index + 1]?.detail)
   ))
   assert.ok(!content.some(part => part.type === 'image' && part.detail === 'low'))
+})
+
+test('selected-piece generator reports a structural shortfall without calling the composer', async () => {
+  db.prepare("UPDATE pieces SET status = 'inactive' WHERE category = 'shoes'").run()
+
+  const json = await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.deepEqual(json.structuredOutfits, [])
+  assert.equal(json.debug.visualCritic.compositionSkipped, 'incomplete_candidate_supply')
+  assert.equal(json.debug.visualCritic.coverageReport.complete, false)
+  assert.deepEqual(json.debug.visualCritic.structureCoverageGaps, ['required_structure_unavailable'])
+  assert.match(json.feedback, /do not contain a complete outfit path/i)
+  assert.equal(aiCalls.some(call => call.system.includes('SELECTED-ANCHOR CONTRACT')), false)
 })
 
 test('selected-piece styling receives only exact applicable board reactions, not global rejected-board prose', async () => {
@@ -691,6 +735,8 @@ test('selected-piece visual composer pins the selected anchor when model omits i
 })
 
 test('selected-piece visual composer excludes boots from the June walking roster', async () => {
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker', formality = 'everyday' WHERE id = ?").run(seeded.shoe)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'low', shoe_type = 'boot', formality = 'everyday' WHERE id = ?").run(seeded.boot)
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
     return {
@@ -713,8 +759,9 @@ test('selected-piece visual composer excludes boots from the June walking roster
   const json = await postJson('/api/ai/generate-outfits-for-piece', {
     pieceId: seeded.bottom,
     occasion: 'casual',
-    season: 'current season',
+    season: 'warm',
     activity: 'walking',
+    resolvedWeatherProfile: { isHot: true, isCold: false, highF: 88, lowF: 68, weatherSource: 'live' },
   })
 
   const first = json.structuredOutfits[0]
@@ -784,6 +831,7 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(json.pipeline, 'full_wardrobe_visual_composer')
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
+  assert.equal(json.structuredOutfits[0].result.provenance.flow, 'whole_wardrobe_visual')
   assert.ok(json.debug.shownPieceCount > 0)
   assert.ok(json.debug.rosterCount > 0)
   assert.equal(json.debug.thumbPx, 768)
@@ -810,6 +858,47 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(resetJson.mode, 'reset_whole_wardrobe_session_memory')
   assert.equal(resetJson.itemCount, 0)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
+})
+
+test('whole-wardrobe generator reports a structural shortfall without composer or local-fill cards', async () => {
+  db.prepare("UPDATE pieces SET status = 'inactive' WHERE category = 'shoes'").run()
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    limit: 3,
+  })
+
+  assert.deepEqual(json.structuredOutfits, [])
+  assert.equal(json.coverageNote.includes('complete outfit path'), true)
+  assert.equal(json.debug.compositionSkipped, 'incomplete_candidate_supply')
+  assert.equal(json.debug.coverageReport.complete, false)
+  assert.deepEqual(json.debug.structureCoverageGaps, ['required_structure_unavailable'])
+  assert.equal(aiCalls.some(call => call.system.includes('personal stylist. You are looking at photos')), false)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
+})
+
+test('whole-wardrobe current-season composition receives applicable summer lessons', async () => {
+  insertAcceptedSeasonLesson(
+    seeded.shoe,
+    'The cream slip-ons stand in for the live olive suede lesson and are not preferred for summer outfits.',
+  )
+
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    currentDate: '2026-07-15T12:00:00-07:00',
+    limit: 1,
+  })
+
+  const composerCall = aiCalls.find(call => call.system.includes('personal stylist. You are looking at photos'))
+  assert.ok(composerCall)
+  const promptText = composerCall.messages
+    .flatMap(message => Array.isArray(message.content) ? message.content : [])
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.match(promptText, /not preferred for summer outfits/)
 })
 
 test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hints', async () => {
@@ -954,6 +1043,8 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
 
 test('visual wardrobe composer endpoint propagates activity parameter to LLM prompt', async () => {
   aiCalls = []
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker', formality = 'everyday' WHERE id = ?").run(seeded.shoe)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'medium', shoe_type = 'boot', formality = 'everyday' WHERE id = ?").run(seeded.boot)
 
   const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
@@ -973,28 +1064,9 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
   assert.match(returnedNames, /brown ankle boots/, 'visual composer should keep the model-selected shoe visible')
   assert.ok(json.structuredOutfits.some(outfit => outfit.systemSuggestion?.type === 'comfort' && Number(outfit.systemSuggestion.swapOut) === Number(seeded.boot)))
-  const broken = json.structuredOutfits.find(outfit => outfit.broken)
-  assert.ok(broken, 'shortfall should show the broken diagnostic local-fill card')
-  assert.equal(broken.source, 'local-fill')
-  assert.ok(broken.rejectionReason && broken.rejectionReason.length > 0)
-  assert.ok(Array.isArray(broken.brokenPieces) && broken.brokenPieces.length >= 1)
-  assert.ok(
-    !String(broken.reason || '').includes(broken.rejectionReason),
-    `reason field leaked the raw rejectionReason: ${broken.reason}`
-  )
-  assert.ok(
-    broken.watchFor === undefined || !String(broken.watchFor).includes(broken.rejectionReason),
-    `watchFor leaked the raw rejectionReason: ${broken.watchFor}`
-  )
-  const brokenFlagMessages = Array.isArray(broken.systemFlags) ? broken.systemFlags.map(f => f.message) : []
-  assert.ok(
-    !brokenFlagMessages.some(msg => String(msg || '').includes(broken.rejectionReason)),
-    `systemFlags leaked the raw rejectionReason: ${JSON.stringify(brokenFlagMessages)}`
-  )
   assert.equal(json.debug.finalSelection.localFillAdded, 0)
-  assert.equal(json.debug.finalSelection.diagnosticBrokenAdded, 1)
   assert.equal(json.debug.deliveredCount, 1)
-  assert.equal(json.debug.brokenCardCount, 1)
+  assert.equal(json.debug.brokenCardCount, 0)
 })
 
 test('visual wardrobe composer derives hot weather from styling request text before building roster', async () => {
@@ -1026,6 +1098,8 @@ test('visual wardrobe composer derives hot weather from styling request text bef
 
 test('visual wardrobe composer excludes lightweight linen bottoms for cold request weather', async () => {
   aiCalls = []
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker', formality = 'everyday' WHERE id = ?").run(seeded.shoe)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'medium', shoe_type = 'boot', formality = 'everyday' WHERE id = ?").run(seeded.boot)
 
   const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
@@ -1091,7 +1165,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
     occasion: 'city',
     season: 'indoor',
     mood: '',
-    limit: 3,
+    limit: 1,
   })
 
   assert.equal(json.debug.aiReturnedCount, 3)
@@ -1111,6 +1185,8 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
   // also leak, raw, through any other ungated field (reason suffix, watchFor, systemFlags) —
   // see docs/stylist-bugfix-spec.md item 1.
   for (const outfit of brokenCards) {
+    assert.equal(outfit.result.disposition, 'rejected')
+    assert.equal(outfit.result.provenance.flow, 'whole_wardrobe_visual')
     assert.ok(outfit.rejectionReason, 'broken card must carry a structured rejectionReason')
     assert.ok(
       !String(outfit.reason || '').includes(outfit.rejectionReason),
@@ -1159,7 +1235,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   const goodBottomPhoto = await makeImage('outdoor-good-bottom.png', '#15120f')
   const goodShoePhoto = await makeImage('outdoor-good-shoe.png', '#111111')
 
-  insertPiece({
+  const badTopId = insertPiece({
     name: 'multicolor floral hooded sweatshirt',
     category: 'top',
     colors: ['multi'],
@@ -1176,7 +1252,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
     fabric_category: 'cotton',
     fabric_weight: 'medium',
   })
-  insertPiece({
+  const badShoeId = insertPiece({
     name: 'light grey knit athletic shoes',
     category: 'shoes',
     colors: ['grey'],
@@ -1184,8 +1260,9 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
     photo: badShoePhoto,
     reads_as: 'athletic running shoes gym shoes',
     fabric_category: 'knit',
+    formality: 'elevated',
   })
-  insertPiece({
+  const goodTopId = insertPiece({
     name: 'olive ruffled sleeveless top',
     category: 'top',
     colors: ['olive'],
@@ -1195,8 +1272,9 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
     silhouette: 'structured sleeveless top',
     fabric_category: 'cotton',
     fabric_weight: 'light',
+    formality: 'elevated',
   })
-  insertPiece({
+  const goodBottomId = insertPiece({
     name: 'black cream botanical tiered midi skirt',
     category: 'bottom',
     colors: ['black', 'cream'],
@@ -1210,15 +1288,20 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
     fabric_category: 'cotton',
     fabric_weight: 'light',
     length_hits_at: 'midi',
+    formality: 'elevated',
   })
-  insertPiece({
+  const goodShoeId = insertPiece({
     name: 'black slip-on loafers',
     category: 'shoes',
     colors: ['black'],
     occasions: ['outdoor_daytime_social', 'city'],
     photo: goodShoePhoto,
     reads_as: 'grounded black loafers lightweight flats',
+    formality: 'elevated',
   })
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker' WHERE id = ?").run(badShoeId)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'loafer' WHERE id = ?").run(goodShoeId)
+  assert.ok(badTopId && badShoeId && goodTopId && goodBottomId && goodShoeId)
 
   const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'outdoor_daytime_social',
@@ -1236,6 +1319,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   assert.ok(flaggedOutfit)
   assert.ok(Array.isArray(flaggedOutfit.systemFlags))
   assert.ok(flaggedOutfit.systemFlags.some(flag => flag.type === 'occasion'))
+  assert.equal(flaggedOutfit.result.disposition, 'annotated')
   assert.equal(json.debug.finalSelection.localFillAdded, 0)
   assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
 
@@ -2760,6 +2844,9 @@ test('capsule look repair swaps the blocked piece from the saved roster with no 
   )
   assert.equal(data.repairedPieceId, seeded.shoe)
   assert.match(data.answer, /swapped/i)
+  assert.equal(data.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(data.structuredOutfits[0].result.provenance.flow, 'capsule_repair')
+  assert.equal(data.structuredOutfits[0].result.provenance.recovery.operation, 'substitute')
 })
 
 // Live failure (thread_1785348988259): a dinner look was submitted with no shoes
@@ -2841,6 +2928,9 @@ test('capsule look repair reports honestly when the roster cannot fix the look',
   assert.equal(response.status, 409)
   assert.match(body.error, /not in this capsule/i)
   assert.equal(body.debug.providerCalls, 0, 'an unfixable look must not escalate to a billed guess')
+  assert.equal(body.debug.recoveryShortfall.code, 'recovery_shortfall')
+  assert.equal(body.debug.recoveryShortfall.operation, 'substitute')
+  assert.equal(body.debug.recoveryShortfall.reason, 'capsule_roster_exhausted')
 })
 
 test('capsule expansion uses one bounded model call, the saved roster, and the saved indoor slot context', async () => {
@@ -2906,6 +2996,8 @@ test('capsule expansion uses one bounded model call, the saved roster, and the s
   assert.deepEqual(data.structuredOutfits[0].pieceIds, [alternateTop, seeded.bottom, seeded.shoe])
   assert.equal(data.structuredOutfits[0].tripSlot, 'casual_indoors')
   assert.deepEqual(data.structuredOutfits[0].capsulePlanContext, planContext)
+  assert.equal(data.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(data.structuredOutfits[0].result.provenance.flow, 'capsule_expansion')
 })
 
 test('capsule expansion stops after one invalid composition instead of silently retrying', async () => {
@@ -3440,6 +3532,29 @@ test('executeTool search_wardrobe uses toolContext weather when model omits weat
   assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
 })
 
+test('freeform eligibility evaluates current season against the resolved request date', async () => {
+  db.prepare(`INSERT INTO owner_constraints
+    (status, selector_type, selector_values, context_dimension, context_values, reason)
+    VALUES ('active', 'piece_ids', ?, 'season', '["winter"]', 'Do not use these boots in winter.')
+  `).run(JSON.stringify([seeded.boot]))
+
+  const winter = await executeTool('search_wardrobe', {
+    category: 'shoes', occasion: 'casual',
+  }, {
+    season: 'current season',
+    currentDate: new Date('2026-01-15T12:00:00-08:00'),
+  })
+  assert.equal(winter.some(piece => piece.id === seeded.boot), false)
+
+  const summer = await executeTool('search_wardrobe', {
+    category: 'shoes', occasion: 'casual',
+  }, {
+    season: 'current season',
+    currentDate: new Date('2026-07-15T12:00:00-07:00'),
+  })
+  assert.equal(summer.some(piece => piece.id === seeded.boot), true)
+})
+
 test('executeTool search_wardrobe visual mode attaches capped low-detail thumbnails', async () => {
   const visualResults = await executeTool('search_wardrobe', {
     occasion: 'city',
@@ -3500,6 +3615,8 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   assert.deepEqual(card.missingPieces, ['lightweight rain shell'])
   assert.equal(card.previewOnly, true)
   assert.equal(card.stylingInstructions, 'Leave the top untucked over the wide-leg pants.')
+  assert.equal(card.result.disposition, 'accepted')
+  assert.equal(card.result.provenance.flow, 'freeform_propose_outfit')
 })
 
 test('executeTool propose_outfit defaults stylingInstructions to an empty string when the model omits it', async () => {
@@ -3558,6 +3675,29 @@ test('executeTool propose_outfit rejects an unresolved role collision (two prima
   assert.equal(vContext.generatedOutfits.length, 1)
   assert.equal(vContext.generatedOutfits[0].broken, true)
   assert.match(vContext.generatedOutfits[0].rejectionReason, /unresolved top slot/)
+  assert.equal(vContext.generatedOutfits[0].result.disposition, 'repairable')
+  assert.equal(vContext.generatedOutfits[0].result.repair.operation, 'complete')
+})
+
+test('executeTool propose_outfit treats missing_gaps as disclosure, not a footwear substitute', async () => {
+  const toolContext = {
+    generatedOutfits: [],
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom])
+  }
+  const invalid = await executeTool('propose_outfit', {
+    label: 'Shoeless attempt',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' }
+    ],
+    missing_gaps: ['walkable flat sandal, no suitable shoe in wardrobe']
+  }, toolContext)
+
+  assert.equal(invalid.status, 'validation_error')
+  assert.match(invalid.issues.join(' '), /missing shoes/)
+  assert.equal(toolContext.generatedOutfits[0].broken, true)
+  assert.match(toolContext.generatedOutfits[0].rejectionReason, /missing_gaps may explain/)
 })
 
 test('contentToOpenAI preserves image_url blocks without stringifying them', () => {
@@ -4375,7 +4515,9 @@ test('getCalibrationReferenceImagesForGeneration priority-starred random rotatio
 })
 
 test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit Missions', async () => {
-  const { buildWholeWardrobeCandidateOutfits, isOutfitStructurallyValid, weatherProfileFromContext } = await import('../styling-engine/rules.js')
+  const { buildWholeWardrobeCandidateOutfits, weatherProfileFromContext } = await import('../styling-engine/rules.js')
+  const { evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
+  const structureValid = pieces => evaluateOutfitStructure(pieces, { requireShoes: true }).valid
 
   const allPieces = [
     { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
@@ -4424,7 +4566,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredDressCandidates.length > 0, 'dress Main should produce local candidates')
   assert.ok(requiredDressCandidates.every(candidate => candidate.pieceIds.includes(7)), 'dress Main candidates must include the required dress')
-  assert.ok(requiredDressCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'dress Main candidates must be complete outfits')
+  assert.ok(requiredDressCandidates.every(candidate => structureValid(candidate.pieces)), 'dress Main candidates must be complete outfits')
   assert.ok(requiredDressCandidates.every(candidate => !candidate.pieces.some(piece => piece.category === 'bottom')), 'dress Main candidates must not include bottoms')
   const requiredJacketCandidates = buildWholeWardrobeCandidateOutfits([
     ...allPieces,
@@ -4436,7 +4578,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredJacketCandidates.length > 0, 'jacket Main should produce local candidates')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieceIds.includes(8)), 'jacket Main candidates must include the required jacket')
-  assert.ok(requiredJacketCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'jacket Main candidates must be complete outfits')
+  assert.ok(requiredJacketCandidates.every(candidate => structureValid(candidate.pieces)), 'jacket Main candidates must be complete outfits')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'top')), 'jacket Main candidates still need a real top')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'bottom')), 'jacket Main candidates still need a real bottom')
   const requiredJacketStructuralFallback = buildWholeWardrobeCandidateOutfits([
@@ -4451,7 +4593,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredJacketStructuralFallback.length > 0, 'jacket Main should fall back to structural candidates when missions do not match')
   assert.ok(requiredJacketStructuralFallback.every(candidate => candidate.pieceIds.includes(12)), 'structural fallback must still include jacket Main')
-  assert.ok(requiredJacketStructuralFallback.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'structural fallback candidates must be complete outfits')
+  assert.ok(requiredJacketStructuralFallback.every(candidate => structureValid(candidate.pieces)), 'structural fallback candidates must be complete outfits')
   assert.equal(weatherProfileFromContext({ season: 'warm' }).isHot, true)
   const layeredTopMainCandidates = buildWholeWardrobeCandidateOutfits([
     { id: 13, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit base tank', colors: ['black'], styling_rules_learned: [], occasions: ['city'] },
@@ -4477,25 +4619,25 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
 })
 
 test('Visual composer occasion profile prompt block and wardrobe coverage contract tests', async () => {
-  // Test 1: Visual composer user message with occasion "hiking" vs "casual"
+  // An uncovered request now stops before composition instead of asking the model to invent
+  // completeness from a roster with no viable outfit path.
   aiCalls = []
-  
-  // Call with hiking
-  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
+  const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'casual',
+    activity: 'hiking',
     season: 'current season',
-    mood: 'artistic minimalist',
+    mood: '',
     limit: 1
   })
-  
-  const hikeCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
-  assert.ok(hikeCall, 'Should have visual composer call')
-  const hikeUserMessage = hikeCall.messages[0].content.map(part => part?.text || '').join('\n')
-  assert.ok(hikeUserMessage.includes('Occasion guidance:'), 'Should contain occasion guidance header')
-  assert.ok(hikeUserMessage.includes('use sparingly and justify in watchFor'), 'Should contain use-sparingly block')
-  assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
-  assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
-  
+
+  assert.equal(aiCalls.some(c => c.system.includes("personal stylist. You are looking at photos")), false)
+  assert.equal(coverageJson.debug.compositionSkipped, 'incomplete_candidate_supply')
+  assert.ok(coverageJson.debug.profileCoverage, 'profileCoverage must be populated in debug')
+  assert.equal(coverageJson.debug.profileCoverage.tops, 0, 'Seed pool has 0 trail-ready tops')
+  assert.equal(coverageJson.debug.profileCoverage.shoes, 0, 'Seed pool has 0 trail-ready shoes')
+  assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-ready tops and footwear'), 'Feedback must report limited tops and footwear')
+
+  // A covered casual request still reaches composition and carries its profile prompt.
   // Call with casual and empty mood
   aiCalls = []
   await postJson('/api/ai/generate-wardrobe-outfits-visual', {
@@ -4513,19 +4655,6 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(casualUserMessage.includes('Mood:'), false, 'Empty mood should be omitted from the visual composer prompt')
   assert.equal(casualUserMessage.includes('artistic minimalist'), false, 'Empty mood must not fall back to artistic minimalist')
 
-  // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
-  const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
-    season: 'current season',
-    mood: '',
-    limit: 1
-  })
-  
-  assert.ok(coverageJson.debug.profileCoverage, 'profileCoverage must be populated in debug')
-  assert.equal(coverageJson.debug.profileCoverage.tops, 0, 'Seed pool has 0 trail-ready tops')
-  assert.equal(coverageJson.debug.profileCoverage.shoes, 0, 'Seed pool has 0 trail-ready shoes')
-  assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-ready tops and footwear'), 'Feedback must report limited tops and footwear')
-
   const cityCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
     season: 'current season',
@@ -4536,27 +4665,45 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.ok(cityCoverageJson.feedback.includes('Your wardrobe has limited city smart casual / everyday tops'), 'Feedback must use the matched occasion label')
   assert.ok(!cityCoverageJson.feedback.includes('trail-specific'), 'Non-hiking coverage feedback must not mention trail-specific pieces')
 
-  // Now seed trail-ready pieces to test ample coverage behavior
+  // Now seed a complete trail-ready supply to test ample coverage and the hiking prompt.
   for (let i = 0; i < 5; i++) {
     insertPiece({
       name: `cotton hiking tee ${i}`,
       category: 'top',
       occasions: ['casual', 'outdoor'],
-      reads_as: 'cotton blend tee'
+      reads_as: 'cotton blend hiking trail tee',
+      photo: seeded.photos.top,
+      formality: 'everyday',
     })
   }
-  
+
   for (let i = 0; i < 3; i++) {
-    insertPiece({
+    const trailShoeId = insertPiece({
       name: `rugged trail sneakers ${i}`,
       category: 'shoes',
       occasions: ['casual', 'outdoor'],
-      reads_as: 'comfortable running sneakers'
+      reads_as: 'comfortable rugged trail running sneakers',
+      photo: seeded.photos.shoe,
+      formality: 'everyday',
     })
+    db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker' WHERE id = ?").run(trailShoeId)
   }
-  
+
+  insertPiece({
+    name: 'rugged cotton hiking trousers',
+    category: 'bottom',
+    occasions: ['casual', 'outdoor'],
+    reads_as: 'rugged hiking trail trousers',
+    photo: seeded.photos.bottom,
+    fabric_category: 'cotton',
+    fabric_weight: 'medium',
+    formality: 'everyday',
+  })
+
+  aiCalls = []
   const ampleCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
+    occasion: 'casual',
+    activity: 'hiking',
     season: 'current season',
     mood: '',
     limit: 1
@@ -4565,6 +4712,13 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(ampleCoverageJson.debug.profileCoverage.tops >= 5, true, 'Should now have >= 5 trail-ready tops')
   assert.equal(ampleCoverageJson.debug.profileCoverage.shoes >= 3, true, 'Should now have >= 3 trail-ready shoes')
   assert.ok(!ampleCoverageJson.feedback.includes('limited trail-ready'), 'Feedback must not contain limited coverage note with ample coverage')
+  const hikeCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
+  assert.ok(hikeCall, 'complete hiking supply should reach the visual composer')
+  const hikeUserMessage = hikeCall.messages[0].content.map(part => part?.text || '').join('\n')
+  assert.ok(hikeUserMessage.includes('Occasion guidance:'), 'Should contain occasion guidance header')
+  assert.ok(hikeUserMessage.includes('use sparingly and justify in watchFor'), 'Should contain use-sparingly block')
+  assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
+  assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
 })
 
 test('prompt cache breakpoint splits the system into stable + volatile blocks', () => {
@@ -4815,6 +4969,82 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
 
   // get_garment_details attaches the photo → the layer piece is now seen.
   await executeTool('get_garment_details', { ids: [layerTopId] }, toolContext)
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+})
+
+test('propose_outfit allows unknown ordinary layer direction only after both pieces are seen', async () => {
+  const ordinaryLayerId = insertPiece({
+    name: 'soft silk tee',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'soft short sleeve tee',
+    fabric_weight: 'light',
+  })
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, ordinaryLayerId]),
+  }
+  const outfitArgs = {
+    label: 'Visually judged layer',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: ordinaryLayerId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }
+
+  const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /layer direction is unknown/)
+  assert.equal(toolContext.freeformDiagnostics.proposeUnknownLayerDirectionBlocks, 1)
+
+  toolContext.visuallySeenPieceIds = new Set([Number(seeded.top), Number(ordinaryLayerId)])
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+  assert.equal(toolContext.freeformDiagnostics.proposeVisualLayerDirectionAllows, 1)
+})
+
+test('propose_outfit requires sight of both garments when legacy base-layer facts are incomplete', async () => {
+  const dependentId = insertPiece({
+    name: 'open crochet dependent top',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'open crochet overlay worn over a base',
+  })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, dependentId]),
+  }
+  const outfitArgs = {
+    label: 'Dependent layer look',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: dependentId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }
+
+  const unseen = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(unseen.status, 'validation_error')
+  assert.match(unseen.message, /required base-layer compatibility is unknown/)
+  assert.match(unseen.message, new RegExp(String(dependentId)))
+  assert.match(unseen.message, new RegExp(String(seeded.top)))
+
+  toolContext.visuallySeenPieceIds = new Set([Number(dependentId), Number(seeded.top)])
   const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
   assert.equal(accepted.status, 'success')
 })
@@ -5836,6 +6066,34 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
   assert.equal(keeps.messages[0].role, 'user')
   assert.equal(keeps.messages[1].role, 'assistant')
+})
+
+test('freeform current-season prompts receive applicable calendar-season lessons', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  insertAcceptedSeasonLesson(
+    seeded.shoe,
+    'The olive suede slip-ons read autumnal and are not preferred for summer outfits.',
+  )
+
+  const summer = await buildStylistConversationPayload({
+    question: 'Style this shoe.',
+    conversationMode: 'new_request',
+    sessionId: 'current-season-summer',
+    activeContext: { type: 'piece', id: seeded.shoe },
+    season: 'current season',
+    currentDate: '2026-07-15T12:00:00-07:00',
+  })
+  assert.match(String(summer.system), /olive suede slip-ons read autumnal/)
+
+  const winter = await buildStylistConversationPayload({
+    question: 'Style this shoe.',
+    conversationMode: 'new_request',
+    sessionId: 'current-season-winter',
+    activeContext: { type: 'piece', id: seeded.shoe },
+    season: 'current season',
+    currentDate: '2026-01-15T12:00:00-08:00',
+  })
+  assert.doesNotMatch(String(winter.system), /olive suede slip-ons read autumnal/)
 })
 
 test('bounded multi-look routing is unconditional in the freeform controller prompt', async () => {

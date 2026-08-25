@@ -3,6 +3,7 @@
 // add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
+import { categoryOutfitStructurePromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
@@ -1245,7 +1246,7 @@ ${c.lane_neutrality}
 ${EXPRESSIVE_HIERARCHY_RULES}
 
 Composition rules:
-- Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
+- ${categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false })}
 - If no suitable shoe (or any required slot) exists among the shown pieces, you must still output a placeholder for that slot: use the string '[missing wardrobe gap: category]' (e.g. '[missing wardrobe gap: shoes]') as the id/name in the 'pieces' array for that slot rather than substituting a piece from another slot or omitting the slot silently.
 - Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.
 - Do not invent a physical activity. An occasion's vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in \`bestFor\`/\`silhouette\`/\`watchFor\` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").
@@ -1254,7 +1255,7 @@ Composition rules:
 - Each outfit must have a different visual thesis — different grounding strategy, proportion logic, or focal/support relationship. Do not return five variations of one formula.
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
 - Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print's ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.
-- Base-layer compatibility: a piece labeled \`needs_base: yes\` (or visibly sheer/open-weave in its photo) requires a base underneath whose \`fit_on_body\` is \`skims\`, \`clings_stretchy\`, or \`clings_drapey\` — close enough to the body to sit cleanly under an open or sheer layer without its own excess fabric bunching or showing through unevenly. A candidate base tagged \`drapes\`, \`hangs_straight\`, or \`none\` does not satisfy this even if it is otherwise the right color or otherwise a good match — treat that as disqualifying for the base-layer slot specifically, not a minor style note. When two pieces share a near-identical name (e.g. two "emerald green v-neck top" entries), check each candidate's own \`fit_on_body\` by its ID — never assume they are interchangeable.
+${requiredBaseLayerPromptRule()}
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.

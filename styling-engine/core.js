@@ -83,7 +83,11 @@ import {
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
-import { visuallyPrioritizedPieces } from './attributes.js'
+import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
+import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
+import { validatedFallback } from './recovery.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
+import { projectStylingApplicabilityContext } from './stylingContext.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -612,6 +616,22 @@ export function locallyGateOutfitDirections(outfits = [], selectedPiece) {
   return sortByStylisticStrength(accepted, selectedPiece).slice(0, 5)
 }
 
+export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, candidatePieces = []) {
+  const pieceById = new Map([selectedPiece, ...(candidatePieces || [])]
+    .filter(Boolean)
+    .map(piece => [Number(piece.id), piece]))
+  const pieces = (outfit.pieceIds || []).map(id => pieceById.get(Number(id))).filter(Boolean)
+  if (!pieces.some(piece => Number(piece.id) === Number(selectedPiece?.id))) {
+    return { valid: false, reason: 'selected_anchor_missing' }
+  }
+  const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
+  if (!structure.valid) return structure
+  const dependencies = evaluateRequiredBaseLayers(pieces)
+  return dependencies.verdict === 'incompatible'
+    ? { valid: false, primaryFinding: dependencies.primaryFinding }
+    : { valid: true }
+}
+
 export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece, { closetOnly = false, minCount = 3 } = {}) {
   const selectedId = Number(selectedPiece?.id)
   const merged = []
@@ -714,7 +734,7 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
   // only option, never displacing a standalone piece that needed no layering
   // this fallback can't provide.
   for (const cat of ['top', 'dress', 'outerwear']) {
-    byCategory[cat].sort((a, b) => (a.needs_base === 'yes' ? 1 : 0) - (b.needs_base === 'yes' ? 1 : 0))
+    byCategory[cat].sort((a, b) => Number(pieceRequiresBaseLayer(a)) - Number(pieceRequiresBaseLayer(b)))
   }
 
   const pick = (cat, used = new Set(), predicate = null) => (byCategory[cat] || []).find(p => {
@@ -959,7 +979,15 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
     }
   }
 
-  return locallyGateOutfitDirections(outfits, selected).slice(0, 3)
+  const locallyGated = locallyGateOutfitDirections(outfits, selected).slice(0, 3)
+  const recoveryPieces = rankedCandidates.map(entry => entry?.piece || entry).filter(Boolean)
+  const fallback = validatedFallback({
+    candidates: locallyGated,
+    limit: 3,
+    validate: outfit => validateSelectedRecoveryOutfit(outfit, selected, recoveryPieces),
+    context: { flow: 'selected_piece', selectedPieceId: Number(selected?.id) || null },
+  })
+  return fallback.values
 }
 
 export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season, outfits = [], skip = '', saveableLearning = '' }) {
@@ -1073,6 +1101,12 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     outfits = mergeOutfitDirections(outfits, localFallback, selectedPiece, { closetOnly: true, minCount: 4 })
     console.log(`    - After mergeOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     outfits = sanitizeSelectedPieceOutfitDirections(outfits, selectedPiece, candidatePieces, { occasion })
+    outfits = validatedFallback({
+      candidates: outfits,
+      limit: outfits.length,
+      validate: outfit => validateSelectedRecoveryOutfit(outfit, selectedPiece, candidatePieces),
+      context: { flow: 'selected_piece_post_sanitize', selectedPieceId: Number(selectedPiece?.id) || null },
+    }).values
     console.log(`    - After sanitizeSelectedPieceOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     if (!outfits.length) {
       console.log(`    - Final outfits list empty, fallback to sanitized localFallback.`)
@@ -2082,7 +2116,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
         : (piece.tuck_behavior ? `respect its ${String(piece.tuck_behavior).replaceAll('_', ' ')} wear behavior` : ''),
       piece.waistband_type ? `preserve the ${String(piece.waistband_type).replaceAll('_', ' ')} waistband` : '',
       piece.opacity && piece.opacity !== 'opaque' ? `preserve its ${String(piece.opacity).replaceAll('_', ' ')} opacity` : '',
-      piece.needs_base === 'yes' ? 'show it with a base layer' : '',
+      pieceRequiresBaseLayer(piece) ? 'show it with a base layer' : '',
     ].filter(Boolean)
     return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
   }).join('\n')
@@ -4158,6 +4192,19 @@ export async function buildStylistConversationPayload(body) {
     : ''
 
   const now = currentDate ? new Date(currentDate) : new Date()
+  const effectiveCalendarSeason = resolveCalendarSeason(effectiveSeason, now)
+  const feedbackApplicabilityContext = projectStylingApplicabilityContext({
+    occasion: effectiveOccasion,
+    activity: effectiveActivity,
+    season: effectiveSeason,
+    calendarSeason: effectiveCalendarSeason,
+    date: now,
+    weatherProfile: effectiveWeatherProfile || {},
+    statedWeather: extractedWeather,
+    requestText: [question, effectiveOccasion, effectiveActivity].filter(Boolean).join(' '),
+  }, {
+    weatherText: String(extractedWeather || ''),
+  })
   const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -4425,14 +4472,7 @@ export async function buildStylistConversationPayload(body) {
     ? db.prepare(`SELECT * FROM pieces WHERE id IN (${ownerGuidancePieceIds.map(() => '?').join(',')})`).all(...ownerGuidancePieceIds).map(parsePiece)
     : []
   const ownerGuidanceContext = {
-    requestContext: {
-      occasion: effectiveOccasion,
-      activity: effectiveActivity,
-      season: effectiveSeason,
-      weather: extractedWeather,
-      weatherText: String(extractedWeather || ''),
-      requestText: [question, effectiveOccasion, effectiveActivity].filter(Boolean).join(' '),
-    },
+    requestContext: feedbackApplicabilityContext,
     pieces: ownerGuidancePieces,
   }
   if (activeOutfit && activeOutfit.id) {
@@ -4464,10 +4504,7 @@ export async function buildStylistConversationPayload(body) {
   ].filter(Boolean))]
   const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: acceptedLessonPieceIds,
-    occasion: effectiveOccasion,
-    activity: effectiveActivity,
-    season: effectiveSeason,
-    weather: extractedWeather,
+    ...feedbackApplicabilityContext,
   })
   if (acceptedSynthesisText) {
     feedbackMemoryParts.push(`Owner-accepted personal or contextual lessons:\n${acceptedSynthesisText}`)

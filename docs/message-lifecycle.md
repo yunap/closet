@@ -480,4 +480,4 @@ blob.
 | Gates, scores, caches | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | Who reads a memory back, and with what authority | [feedback-and-memory-map.md](feedback-and-memory-map.md) |
 | Where the tokens sit, and the levers left | [freeform-prompt-cache-levers.md](freeform-prompt-cache-levers.md), [search-payload-spec.md](search-payload-spec.md) |
-| `/expand-capsule`, `/repair-capsule-look` | **Nothing.** No diagram exists; the gap is now recorded in flows/README |
+| `/expand-capsule`, `/repair-capsule-look` | [flows/capsule-expansion-and-repair.md](flows/capsule-expansion-and-repair.md) |

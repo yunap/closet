@@ -52,7 +52,7 @@ Two things a PM should take away:
 | ----- | ----------------------------------------- | ------------------------------------------------------------ |
 | A     | User clicks "boards" on an outfit result  | `generateVisualBoards` — `src/components/StylistChat.jsx:2777` |
 | B–OUT | Server builds boards                      | `POST /generate-outfit-boards` — `routes/ai.js:2918`         |
-| C     | Candidate ranking → allowed ids           | `selectCandidatesForOutfitGeneration(piece, all, 48, …)`     |
+| C     | Candidate ranking → allowed ids           | `selectAutomaticUseCandidatesForOutfitGeneration({ anchorPiece, pieces, limit: 48, context })` |
 | P     | Plan source resolution (3-way)            | `boardPlanFromStructuredOutfits` / `structuredOutfitsFromGeneratedText` / `OUTFIT_BOARD_PLANNER_SYSTEM` |
 | IMG   | Local board collage                       | `createOutfitBoardImage` (sharp) — `styling-engine/core.js:1906` |
 

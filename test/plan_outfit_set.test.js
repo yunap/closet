@@ -20,10 +20,10 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
-const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
+const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
@@ -36,6 +36,19 @@ function planOutfitSetSlotSchema() {
   const tool = STYLIST_TOOLS.find(entry => entry.name === 'plan_outfit_set')
   return tool?.input_schema?.properties?.slots?.items || {}
 }
+
+test('plan workbench cap preserves a complete outfit path instead of filling with one category', () => {
+  const pieces = [
+    { id: 1, name: 'Top A', category: 'top' },
+    { id: 2, name: 'Top B', category: 'top' },
+    { id: 3, name: 'Top C', category: 'top' },
+    { id: 4, name: 'Bottom', category: 'bottom' },
+    { id: 5, name: 'Shoes', category: 'shoes' },
+  ]
+  const result = selectPlanWorkbenchPieces(pieces, { occasion: 'casual' }, { limit: 3 })
+  assert.equal(result.report.complete, true)
+  assert.deepEqual(new Set(result.pieces.map(item => item.category)), new Set(['top', 'bottom', 'shoes']))
+})
 
 test('capsule planning preserves the original palette through a lifestyle clarification turn', () => {
   const question = capsulePlanQuestion('Mostly errands, museums, restaurants, and nature walks.', [
@@ -174,12 +187,17 @@ test('provider-free replay exercises the complete capsule tool contract without 
           const pieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all()
             .map(parsePiece)
             .filter(piece => allowed.has(Number(piece.id)))
-          const first = group => pieces.find(piece => wardrobeCategoryGroup(piece) === group)
+          const first = group => pieces.find(piece => wardrobeCategoryGroup(piece) === group && (group !== 'top' || !pieceRequiresBaseLayer(piece)))
           return {
             outfits: [{
               slot_id: slot.id,
               label: 'Replay Casual Look',
-              piece_ids: [first('top')?.id, first('bottom')?.id, first('shoes')?.id].filter(Boolean),
+              piece_ids: [
+                first('top')?.id,
+                first('bottom')?.id,
+                first('shoes')?.id,
+                first('outerwear')?.id,
+              ].filter(Boolean),
               reason: 'A conventional solid casual combination for an offline contract replay.'
             }]
           }
@@ -198,7 +216,7 @@ test('provider-free replay exercises the complete capsule tool contract without 
   const planResult = replay.results.find(step => step.name === 'plan_outfit_set').result
   const submitResult = replay.results.find(step => step.name === 'submit_plan_outfits').result
   assert.equal(planResult.status, 'slot_rosters')
-  assert.equal(submitResult.status, 'success')
+  assert.equal(submitResult.status, 'success', JSON.stringify(submitResult))
   assert.equal(toolContext.generatedOutfits.length, 1)
   const planLines = toolContext.generatedOutfits[0].tripPlanLines.join(' ')
   assert.match(planLines, /Piece roster \(\d+\)/, 'the report must describe the curated roster, not only pieces used by the displayed card')
@@ -623,6 +641,7 @@ test('an indoor slot in extreme heat keeps transit heat and permits only light A
 
   assert.equal(slots[0].statedWeather, 'indoor')
   assert.equal(slots[0].transitSeason, 'hot, highs 100-105F, sunny')
+  assert.equal(slots[0].requestedSeason, 'current season', 'indoor weather must not become the executable season')
 
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'museum visit during a 100F trip' })
   const allowed = new Set(workbench.slots[0].allowed_piece_ids)
@@ -634,6 +653,19 @@ test('an indoor slot in extreme heat keeps transit heat and permits only light A
   assert.equal(allowed.has(heavyMain), false, 'a heavy main is still rejected for hot transit')
   assert.match(workbench.slots[0].submission_requirements.join(' '), /breathable hot-weather base for transit/)
   assert.match(workbench.slots[0].submission_requirements.join(' '), /optional light layer/)
+})
+
+test('an indoor summer plan preserves summer applicability separately from indoor weather', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Summer Museum', occasion: 'city', activity: 'none', environment: 'indoor', season: 'summer', date: '2026-07-15', count: 1,
+  }])
+  assert.equal(slots[0].season, 'indoor')
+  assert.equal(slots[0].requestedSeason, 'summer')
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'summer museum visit' })
+  assert.equal(workbench.slots[0].styling_context.season, 'summer')
+  assert.equal(workbench.slots[0].styling_context.calendarSeason, 'summer')
+  assert.equal(workbench.slots[0].styling_context.weatherProfile.isIndoor, true)
 })
 
 test('extreme heat and active movement reach the model as independent pre-composition assessments', async () => {
@@ -1184,7 +1216,7 @@ test('capsule workbench states validator requirements before the model composes'
   })
   const requirements = workbench.slots[0].submission_requirements.join(' ')
 
-  assert.match(requirements, /exactly one top plus one bottom, OR one dress/)
+  assert.match(requirements, /exactly one top plus one bottom, or exactly one dress/)
   assert.match(requirements, /exactly one pair of shoes/)
   assert.match(requirements, /Outerwear never replaces the required top/)
   assert.match(requirements, /sleeveless top must include a medium\/heavy cardigan/)
@@ -2201,8 +2233,27 @@ test('a blind top-over-dress submission is rejected with view_pieces coaching', 
 
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
-  assert.match(reasons, /layers a top over a dress/)
+  assert.match(reasons, /visual relationship that saved garment facts cannot resolve/)
   assert.match(reasons, /call view_pieces/)
+  assert.match(reasons, /judging it from sight/)
+})
+
+test('an unrecorded top-dress direction is provisionally accepted after both pieces are seen', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'plain midi dress', occasions: ['city'] })
+  const topId = insertPiece({ category: 'top', name: 'plain blouse', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'flat shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dressId), Number(topId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([Number(dressId), Number(topId)]) })
+
+  assert.equal(result.failures.length, 0, JSON.stringify(result.failures))
+  assert.equal(result.accepted.length, 1)
 })
 
 test('an explicit overlay top over a dress is accepted once both pieces have been visually seen', async () => {
@@ -2260,7 +2311,7 @@ test('offline replay rejects the stale white-tank plus lace-dress IDs from threa
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
   assert.match(reasons, /reason revises itself mid-sentence/)
-  assert.match(reasons, /no recorded layering relationship/)
+  assert.doesNotMatch(reasons, /no recorded layering relationship/)
 })
 
 test('a plain top+bottom outfit is unaffected by the layering sight check (no dress present)', async () => {
@@ -3672,7 +3723,7 @@ test('buildCapsuleBench honours the per-slot minimum — a low-ranked piece that
   }
   // The gate's occasion filter passes casual tops/shoes for an 'evening'
   // slot on trust/formality grounds even without an 'evening' occasion tag
-  // (measured: filterWholeWardrobePiecesForGeneration), but excludes
+  // (measured: evaluateAutomaticUsePiecePool), but excludes
   // bottoms lacking one — so this bottom is the only thing that can complete
   // a Restaurant Dinner core, low-scoring (single occasion tag, patterned,
   // non-neutral) so a plain rank cut would leave it out.
@@ -4642,6 +4693,9 @@ test('a rejected capsule look survives as a needs-review card carrying its block
   assert.deepEqual(card.brokenPieces.map(p => p.name), ['burgundy cork wedges'], 'only the blocked garment is flagged, not the whole outfit')
   assert.deepEqual(card.capsuleRepair, { slotId: 'city_museum', blockedPieceIds: [199] }, 'enough state to swap one garment without re-planning')
   assert.equal(card.title, 'Museum Day', "the model's own title survives")
+  assert.equal(card.result.disposition, 'repairable')
+  assert.equal(card.result.provenance.flow, 'plan_outfit_set')
+  assert.equal(card.result.repair.action, 'repair_capsule_look')
 })
 
 // A needs-review card appended after every other slot reads as unrelated to the
@@ -5646,6 +5700,7 @@ test('a submitted outfit cannot ship a dependent top without a standalone base',
   const dependentId = insertPiece({ category: 'top', name: 'geometric tassel top', occasions: ['casual'], formality: 'everyday' })
   db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
   const baseId = insertPiece({ category: 'top', name: 'orange ribbed tank', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET opacity = ?, fit_on_body = ? WHERE id = ?').run('opaque', 'skims', baseId)
   const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
   const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
@@ -5688,7 +5743,57 @@ test('a submitted outfit cannot use a sheer top as the dependent\'s base', async
     piece_ids: [Number(dependentId), Number(sheerBaseId), Number(bottomId), Number(shoesId)],
   }])
   assert.equal(result.accepted.length, 0)
-  assert.match(result.failures[0].reasons.join(' '), /cannot be worn alone/)
+  assert.match(result.failures[0].reasons.join(' '), /cannot provide the required coverage/)
+})
+
+test('a submitted outfit cannot use a known loose top as the dependent\'s required base layer', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'open crochet top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const looseBaseId = insertPiece({ category: 'top', name: 'draped blouse', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET opacity = ?, fit_on_body = ? WHERE id = ?').run('opaque', 'drapes', looseBaseId)
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const workbench = await buildPlanSlotWorkbench(
+    normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }]),
+    { allPieces, question: 'city day' },
+  )
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(dependentId), Number(looseBaseId), Number(bottomId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([dependentId, looseBaseId]) })
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /rather than close-fitting/)
+})
+
+test('missing base-layer fit or opacity requires sight, then remains model-judged', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'open crochet top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const unknownBaseId = insertPiece({ category: 'top', name: 'legacy tank', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const workbench = await buildPlanSlotWorkbench(
+    normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }]),
+    { allPieces, question: 'city day' },
+  )
+  const submission = [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(dependentId), Number(unknownBaseId), Number(bottomId), Number(shoesId)],
+  }]
+
+  const unseen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(unseen.accepted.length, 0)
+  assert.match(unseen.failures[0].reasons.join(' '), /saved garment facts cannot resolve/)
+  assert.match(unseen.failures[0].reasons.join(' '), /view_pieces/)
+
+  const seen = validateSubmittedPlanOutfits(workbench.pendingPlan, submission, {
+    visuallySeenPieceIds: new Set([dependentId, unknownBaseId]),
+  })
+  assert.equal(seen.accepted.length, 1, `sight-backed unknown should remain model-judged: ${JSON.stringify(seen.failures)}`)
 })
 
 test('a standalone-only outfit is unaffected by the dependent-base check', async () => {

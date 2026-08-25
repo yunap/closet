@@ -1,5 +1,7 @@
 # Role vocabulary: document the split, defer the fix
 
+**Status:** Active — decision record introduced by PR 253 on 2026-08-24.
+
 The tagger writes a piece's compositional role using unsuffixed values (`hero`, `support`,
 `grounding`, ...). Code that matches roles against outfit archetypes reads only the suffixed
 form (`hero_piece`, `support_piece`, `grounding_piece`). A third, overlapping vocabulary exists

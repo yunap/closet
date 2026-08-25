@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
+import { requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
 
 const snapshot = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'test/fixtures/prompts_yuna_snapshot.json'), 'utf8'))
 
@@ -76,11 +77,13 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     // correctly elsewhere in the same turn, so this was a base-layer compatibility check the model
     // never had a stated rule for, not a missing garment. Moved ex-ante into the composition rules
     // rather than left to post-hoc repair, per owner instruction: "repair is a bit late I want model
-    // to know that garments structure or silhouette won't work for what it wants it to do."
+    // to know that garments structure or silhouette won't work for what it wants it to do." The
+    // architecture pass now projects the line from the executable contract so its value lists
+    // cannot drift from validation.
     if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
       expected = expected.replace(
         '- Respect the rotation warnings and any rejected-pairing memory provided.',
-        '- Base-layer compatibility: a piece labeled `needs_base: yes` (or visibly sheer/open-weave in its photo) requires a base underneath whose `fit_on_body` is `skims`, `clings_stretchy`, or `clings_drapey` — close enough to the body to sit cleanly under an open or sheer layer without its own excess fabric bunching or showing through unevenly. A candidate base tagged `drapes`, `hangs_straight`, or `none` does not satisfy this even if it is otherwise the right color or otherwise a good match — treat that as disqualifying for the base-layer slot specifically, not a minor style note. When two pieces share a near-identical name (e.g. two "emerald green v-neck top" entries), check each candidate\'s own `fit_on_body` by its ID — never assume they are interchangeable.\n- Respect the rotation warnings and any rejected-pairing memory provided.'
+        `${requiredBaseLayerPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
       )
     }
     // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a

@@ -1,5 +1,20 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Architecture ownership completion, 2026-08-25:** freeform search, proposal, slot swaps, and
+> bounded generation now resolve named request/artifact/thread/inference evidence through
+> `resolveToolStylingContext` → `resolveStylingContext`; the former tool-local stated/live weather
+> resolver is retired. Proposal/correction/swap hard meaning now comes from
+> `evaluateWearableOutfit`. Unknown evidence may request sight, while known hard incompatibility
+> remains hard and visible as Needs review. Tool schemas and the ten-iteration protocol are
+> unchanged.
+
+> **Projection/result ownership, 2026-08-25:** `propose_outfit` no longer owns a separately worded
+> definition of explicit-role structure. Its tool description and validation retry project the
+> contract from `outfitValidation.js`. Proposal cards use the shared versioned `outfitResult.js`
+> envelope: successful cards are accepted (or annotated after a validated correction), and visible
+> validation failures are repairable with a retry action. Tool arguments, tool-loop sequencing,
+> cache boundaries, and the current top-level UI fields are unchanged.
+
 > **2026-08-18 bounded-execution expansion:** the philosophy below remains authoritative: the
 > conversational model owns intent and code owns truth/constraints. The next cost phase does not
 > add a keyword pre-route. It promotes the existing one-call visual `generate_outfits` pipeline for
@@ -525,7 +540,7 @@ against the real wardrobe DB (no LLM calls):
 
    **Fixed mechanically instead**, consistent with this codebase's existing
    preference for hard gates over prompt-only compliance on anything that
-   must be correct (see `validateOutfitRoles` replacing prompt-based layering
+   must be correct (see `evaluateOutfitRoles` replacing prompt-based layering
    rules). `propose_outfit`'s contract-issue check (`tools.js`, alongside the
    existing declared-intent / unverified-piece / unseen-layer blocks) now
    also blocks when `toolContext.source === 'plan_outfit_set'` and
@@ -1553,6 +1568,16 @@ camisole. `composerPieceLineSuffix` now transmits opacity plus either explicit b
 shared prompt forbids contradicting those fields or inventing an underlayer for an independently
 wearable garment.
 
+**2026-08-24 required-base consolidation:** the whole-wardrobe composer no longer owns a separate
+list of acceptable base-layer fits. Its instruction is projected by
+`requiredBaseLayerPromptRule` from the same module that executes `evaluateBaseLayerCandidate` and
+`evaluateRequiredBaseLayers`. The established card fact remains “Needs a base layer.” For that
+specific dependency, known sheer/open coverage or a known loose fit is incompatible; incomplete
+legacy fit/opacity requires seeing both garments in `propose_outfit`, after which visual success is
+still model judgment. Ordinary inner-garment/outer-layer styling is explicitly outside the
+close-fit rule. The prompt no longer promotes visual inference over an explicit `needs_base` value.
+Tool schemas and the model-call sequence did not change.
+
 ## 2026-08-19 — compact text-profile follow-up arc
 
 `docs/freeform-followup-profiles-spec.md` begins the next cost phase without changing visual
@@ -1939,6 +1964,14 @@ against every row of a multi-turn thread; and a single-category turn was being r
 batching.
 
 ## Gotchas for the next assistant
+
+**Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared
+over/under contract for plan submission, `propose_outfit`, and participating slot swaps. Missing
+legacy direction facts are `unknown`: both photos must be seen, then the model may make a
+provisional judgment for that turn. The allowance is separately counted as
+`proposeVisualLayerDirectionAllows`, stores no garment truth, and should be removed centrally if
+live styling quality is poor. The former tee/tank keyword veto is gone; required coverage beneath
+a `needs_base` garment remains a separate hard contract.
 
 - **Branch off fresh main before every piece of work** (recurring slip: twice a
   new family/step was committed onto the previous branch).

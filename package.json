@@ -12,6 +12,7 @@
     "test:capsule:roster-utility": "node scratch/audit_summer_capsule_roster_utility.js",
     "test:capsule:bench": "node scratch/diagnose_capsule_bench.js",
     "test:capsule:compare": "node scratch/compare_capsule_rosters.js",
+    "test:architecture:baseline": "node scratch/capture_cross_flow_architecture.js --check",
     "inspect:piece": "node scratch/inspect_piece.js",
     "apply:soft-score-floors": "node scratch/apply_soft_score_floors.js",
     "bench:openai-persistence": "node scratch/openai_persistence_benchmark.mjs",

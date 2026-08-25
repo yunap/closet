@@ -25,6 +25,12 @@ decisions.
 > asking why a message behaved differently than you expected.** This document
 > begins one layer down, once the turn is already inside `/ask`.
 
+> **[amended 2026-08-25] Proposal structure and card state have shared owners.** The
+> `propose_outfit` schema and retry message project explicit-role structure from
+> `outfitValidation.js`. Accepted, corrected/annotated, and retryable broken proposal cards carry
+> the versioned `result` envelope with `freeform_propose_outfit` provenance. Tool-loop retries,
+> retrieval/sight gates, and the existing visible card fields are unchanged.
+
 ## Pipeline overview (PM altitude)
 
 ```mermaid
@@ -153,6 +159,29 @@ an ordinary successful search returns the piece list unchanged. Climbing rungs d
 even when broadening then finds other pieces.
 
 See [freeform-batched-discovery-spec.md](../freeform-batched-discovery-spec.md).
+
+**[2026-08-24] One hard-gate result, three deliberate dispositions.** `search_wardrobe`,
+`propose_outfit`, and `suggest_slot_swaps` now obtain automatic-use findings from
+`evaluateAutomaticUsePiecePool`. Search still removes owner vetoes before broadening but leaves
+other profile findings for its existing annotated/explain behavior; proposal and slot-swap paths
+reject those findings. An explicit user-requested anchor changes proposal disposition while the
+shared result retains its underlying findings. The tools no longer parse hard-gate reason strings
+or call the piece verdict independently.
+
+**[2026-08-25] Corrected cards use shared validated substitution.** When a later
+`propose_outfit` call replaces one piece from this turn's retryable broken card, the model still
+chooses the replacement and the tool-loop still owns its paid iteration budget. Before the broken
+card is superseded, `validatedSubstitute` runs the exact corrected card through the same explicit-role
+and required-base hard checks. A failed mutation remains a validation error; it cannot become the
+surviving card merely because it overlaps the prior attempt.
+
+**[2026-08-25] Freeform context and wearable validation use the shared owners.** Search,
+`propose_outfit`, slot swaps, and bounded generation pass named current-request, action-artifact,
+established-thread, and inference evidence through `resolveToolStylingContext` to
+`resolveStylingContext`; the tool module no longer owns a parallel stated/live weather resolver.
+Proposal, corrected-card recovery, and slot swaps consume `evaluateWearableOutfit`. Unknown visual
+evidence asks for sight only when required; known hard incompatibility remains hard and a rejected
+proposal remains visible as Needs review.
 
 **[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
 accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
@@ -689,10 +718,23 @@ atlas showed to be working.
 ## Step 6 resolution — the planning engine (designed 2026-07-12, **shipped**)
 
 > **[status 2026-08-20]** This section's heading said "not yet built". It is built:
-> `buildPlanSlotWorkbench` ([outfitSetPlanner.js:3278](../../styling-engine/outfitSetPlanner.js#L3278))
+> `buildPlanSlotWorkbench` (`styling-engine/outfitSetPlanner.js`)
 > is what `plan_outfit_set` composes through, with `submit_plan_outfits` closing the
 > loop, and there is no engine-mode fallback left. Read the design below as the
 > record of *why* it has its shape.
+
+> **[eligibility ownership, 2026-08-24]** Each slot workbench now consumes
+> `evaluateAutomaticUsePiecePool` through the planner adapter before plan-specific ranking and caps.
+> Slot weather, activity, register escalation, owner-exclusion occasion, and the existing
+> hot-weather outerwear capacity remain unchanged; the migration changes ownership, not planning
+> strategy or the model-call sequence.
+
+> **[candidate-set ownership, 2026-08-25]** Each slot workbench now passes its existing ranked,
+> capped selection through `buildCoveredCandidateSet`. The cap protects anchors and retains one
+> complete top + bottom + shoes or dress + shoes path, including a required coverage base for a
+> dependent garment. An uncoverable slot is emitted with `targetOutfits: 0` and a visible wardrobe-
+> gap line, so coverable slots can still compose while the model is never asked to fabricate the
+> impossible portion.
 
 Live trip tests settled step 6 with evidence in both directions: the model CAN
 self-compose planning turns, but the trip precompose produces something the

@@ -6,9 +6,9 @@ import { pathToFileURL } from 'url'
 import { db, parsePiece } from '../db.js'
 import {
   buildVisualComposerRoster,
-  filterWholeWardrobePiecesForGeneration,
   weatherProfileFromContext
 } from '../styling-engine/rules.js'
+import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
 
 const OUTPUT_PATH = 'scratch/recall_at_cap_report.json'
 const ACCESSORY_CATEGORIES = new Set(['accessory', 'accessories', 'jewelry', 'bag', 'bags', 'belt', 'belts', 'scarf', 'scarves', 'hat', 'hats', 'sunglasses'])
@@ -157,12 +157,16 @@ export function recordReplayPiece(flowReport, { outfit, piece, hit, weatherProfi
 
 function replayWholeWardrobe(outfit, allActivePieces, report) {
   const weatherProfile = weatherProfileFromContext({ mood: '', season: outfit.season })
-  const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allActivePieces, {
-    occasion: outfit.occasion,
-    explorationMode: 'moderate',
-    weatherProfile,
-    mood: '',
-    activity: ''
+  const { eligiblePieces: allowedPieces, underlyingExcludedPieces: suppressedPieces } = evaluateAutomaticUsePiecePool({
+    pieces: allActivePieces,
+    context: {
+      occasion: outfit.occasion,
+      explorationMode: 'moderate',
+      weatherProfile,
+      mood: '',
+      activity: ''
+    },
+    policy: { hotOuterwearCap: 3 },
   })
   const { roster, excluded, debug } = buildVisualComposerRoster(allowedPieces, {
     occasion: outfit.occasion,

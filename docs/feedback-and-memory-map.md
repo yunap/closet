@@ -8,7 +8,8 @@ is written, and which consumer — if any — reads it back.**
 **Ratified 2026-08-09** as the baseline description of the current system, after five review
 rounds; **amended 2026-08-12** for the owner-guidance work (footwear constraint selectors, shared
 season resolution, the `reported` synthesis status and its delete route, exclusion `changedAt`, and
-guidance becoming read-only). Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
+guidance becoming read-only); **amended 2026-08-25** for the canonical season/weather applicability
+projection. Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
 [`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather than
 restate it. Ideas for hardening the verification tooling are out of scope here and live in
 [`feedback-audit-backlog.md`](feedback-audit-backlog.md).
@@ -260,12 +261,21 @@ linked prose owner rule so the same instruction is not also prompt authority. Th
 trust gate reads active rows before roster assembly, slot replacement, complementary ranking and
 each capsule-plan slot; missing context is a no-op. A matched row hard-blocks the garment and emits
 its constraint ID/dimension in suppression reasons. Retiring the row is the undo. Season matching
-normalizes through `resolveSeasonTerm` (`lib/ownerConstraints.js`), so the request selector values
+normalizes through `resolveCalendarSeason` (`lib/seasonContext.js`), so the request selector values
 `warm`, `autumn` and the unresolved default `current season` are resolved to a real season before
-comparison — `current season` against `requestContext.currentDate` rather than always "now". The
-same helper resolves the season recorded on synthesis evidence, so a reaction stored with the
-literal placeholder no longer surfaces `current season` as if it were a season. Item 12's review
-surface is deferred, but its bounded storage, routing and undo contract is executable.
+comparison — `current season` against `requestContext.currentDate` rather than always "now".
+`resolveCalendarSeason` (`lib/seasonContext.js`) is the one projection used by hard constraints,
+direct owner guidance, accepted synthesis lessons and historical exact-outfit reactions. The
+public resolved request may remain `current season` for weather/UI policy; prompt-memory matching
+uses the accompanying canonical `calendarSeason`. Historical evidence that stored the literal
+placeholder resolves it against that row's creation date. This was extended on 2026-08-25 after
+live thread `thread_1787651275782` showed an accepted summer lesson omitted from a current-season
+prompt. The same live-validation pass added `projectStylingApplicabilityContext`: feedback readers
+now receive one canonical Occasion, Activity, Calendar Season, request-date and structured-weather
+shape across selected, whole, freeform, plan and capsule flows. Structured Weather Profile keys
+(`isHot`, `isCold`, `isRainy`, `isWetExposure`) and their canonical applicability keys are
+equivalent at the owner-guidance boundary; prose remains a fallback, not a competing authority.
+Item 12's review surface is deferred, but its bounded storage, routing and undo contract is executable.
 
 ### 7 · Thread-scoped conversation state
 
