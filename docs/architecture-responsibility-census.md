@@ -31,25 +31,29 @@ names below are citations; line numbers are deliberately omitted because they ro
 
 ## 1. Outcome
 
-Closet has reusable low-level readers and verdict helpers, but it does not yet have a reusable
-outfit-production pipeline. Each major flow assembles its own sequence of context resolution,
-eligibility, ranking, truncation, composition, validation, recovery, and response handling. Even
-when two flows call the same fact reader, they can diverge before or after that call and produce
-different behavior from the same wardrobe and context.
+Closet now has reusable executable modules for context resolution, automatic-use eligibility,
+dependency-aware structural coverage, wearable validation, validated recovery, and result
+normalization. Each major flow still assembles its own sequence because selected-piece,
+whole-wardrobe, freeform, plan, and capsule are different products with different ranking,
+composition, cost, and retry policy. That orchestration difference is intentional; a single
+mega-pipeline is not the target.
 
-That is not merely a maintenance problem. Parallel runtime paths mean:
+The remaining architecture risk is narrower. A new or legacy adapter can still recreate a semantic
+decision outside the shared interface, or a flow-specific selector can be mistaken for shared
+meaning. When that happens:
 
 - a fixed rule reaches some products but not others;
 - a fallback can bypass a constraint enforced by the primary path;
 - tests prove one implementation while another remains wrong;
 - missing context is resolved differently before the same shared gate runs;
-- hard caps remove different structural supply from equivalent requests;
+- a new hard cap can remove structural supply unless it consumes the shared coverage contract;
 - telemetry cannot compare flows at the same stage because their stage boundaries differ.
 
-The architecture target is therefore **shared executable stages with flow policy passed as data**.
+The architecture target remains **shared executable stages with flow policy passed as data**.
 Selected-piece, whole-wardrobe, freeform, and capsule remain distinct products, but their
-orchestrators should call the same context, eligibility, candidate-set, validation, and recovery
-implementations. Strategy may vary; fundamental work should not be reimplemented.
+orchestrators call the same context, eligibility, structural-coverage, validation, and recovery
+implementations where those semantics apply. Ranking, retrieval, composition, and cost strategy may
+vary; fundamental meaning must not be reimplemented.
 
 Layer/base behavior is one high-value fixture because it currently crosses every stage. It is not
 the center of the architecture and should not determine the migration order. The same reuse must be
@@ -68,7 +72,7 @@ fixtures.
 | `projection` | Serialization for a model, tool, UI, log, or response. |
 | `duplicate` | Independent implementation of the same semantic question. |
 | `legacy` | Active or reachable superseded behavior that should be removed after migration. |
-| `unresolved` | Intent or missing-data semantics require an owner ruling before code changes. |
+| `unresolved` | Intent, evidence, or missing-data semantics require a named decision before code changes. |
 
 A function can have different classifications for different decisions. For example,
 `buildVisualComposerRoster` is a specialization for photo-budget policy and an adapter over shared
@@ -99,7 +103,7 @@ Image-only rendering, evaluation, comparison, and intake/tagging flows do not cr
 selection and are therefore outside the pipeline matrix. Their provider calls remain indexed in
 [flows/README.md](flows/README.md).
 
-### 3.1 Cross-flow reuse scorecard
+### 3.1 Cross-flow reuse scorecard — reconciled after Slice 7
 
 The affected-flow counts use the eleven active outfit-producing pipelines above. A flow counts when
 it executes the stage itself or delegates to another active pipeline that does. The count ranks
@@ -108,21 +112,24 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 | Shared stage | Affected pipelines | Current reusable core | Independently assembled work that remains | Divergence risk | Priority |
 |---|---:|---|---|---|---:|
 | Context resolution | 10 consumer families | `resolveStylingContext` owns field precedence, normalization, profiles, weather authority, conflicts, and provenance for direct, freeform, and plan composition consumers | Flow adapters supply named evidence and bounded live-weather policy; storage remains distinct | Reduced: active outfit-producing context consumers no longer own parallel precedence branches | 1 |
-| Piece eligibility | 11 | `evaluateAutomaticUsePiecePool` over `wholeWardrobePieceTrustDecision` and narrow verdict helpers | Visual presentation policy, retrieval broadening, explicit anchor disposition, and post-composition validators still add flow policy | Critical: remaining compatibility and validation callers can still diverge until migrated | 2 |
+| Piece eligibility | 11 | `evaluateAutomaticUsePiecePool` over `wholeWardrobePieceTrustDecision` and narrow verdict helpers | Visual presentation, retrieval broadening, explicit Anchor Piece disposition, and post-composition validation remain named flow policy | Reduced / guarded: all named runtime consumers receive the shared underlying findings; risk is a future adapter reintroducing a private hard gate | 2 |
 | Outfit validation | 11 | `evaluateWearableOutfit` composes the canonical category/role structure, required-base, optional direction, unknown-evidence, and sight results | Slot/set/context extensions and disposition remain bounded policy; concept boards intentionally use their lighter allowlist/anchor checks | Reduced: hard wearable meaning is shared while product disposition remains explicit | 3 |
-| Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
+| Candidate-set construction | 10 | `candidateSet.js` owns protected IDs, dependency-aware structural coverage, hard capacity, and explicit shortfall | Selected quotas, visual photo/category caps, search retrieval budgets, capsule recombination, plan slot ranking, and fallback ordering remain objective-specific policy | Reduced / monitored: outfit-producing caps consume the shared coverage owner; local fallback selection is the remaining parity candidate, while search is intentionally retrieval-only | 4 |
 | Recovery and fallback | 8 | `recovery.js` owns validated substitute, complete, fallback, and shortfall mechanics; flow strategies inject their authoritative validator | Candidate ordering, retry/cost budgets, and visible disposition remain flow policy; diagnostic broken cards remain explicitly rejected evidence rather than accepted recovery | Reduced: no migrated mutation can return as recovered before its primary hard validator accepts the exact result | 5 |
 | Prompt fact projection | 10 | Style Constitution exports plus structure/finding serializers in `outfitValidation.js` | Flow prompts still own composition strategy and output schema; unrelated context and eligibility facts remain later projection work | Reduced for migrated structure facts: validator wording is emitted by its owner instead of independently restated | 6 |
 | Response normalization | 11 | `outfitResult.js` normalizes delivered outfit disposition, findings, annotations, repair capability, and provenance | Flow labels, display copy, plan context, UI actions, and legacy aliases remain local | Reduced: selected, whole, freeform proposal, plan, capsule expansion, and capsule repair now expose the same semantic envelope | 7 |
 | Provider invocation and usage | 10 provider-crossing pipelines | `askStylist*` abstraction and telemetry context | Nested-call attribution and direct image/Responses calls remain specialized | Medium but well documented; no broad rewrite justified now | 8 |
 
-Context, eligibility, validation, candidate construction, and recovery are the consolidation core.
-Provider unification is intentionally lower priority because it has less effect on domain behavior
-and is already substantially shared.
+No scorecard stage remains Critical after the completed Slice 0–7 consumer migrations. “Reduced”
+does not mean “finished forever”: it means the semantic owner exists, named consumers use it, and
+remaining differences are explicit policy or bounded roadmap work. The residual risks and their
+evidence gates are recorded in
+[post-254-architecture-roadmap.md](post-254-architecture-roadmap.md). Provider unification remains
+lower priority because it has less effect on domain behavior and is already substantially shared.
 
-### 3.2 Target reusable pipeline
+### 3.2 Shared-stage composition model
 
-The target is composition, not inheritance and not one giant stylist function:
+This is a responsibility model, not a required universal orchestrator or call stack:
 
 ```text
 raw request + established state
@@ -136,7 +143,8 @@ raw request + established state
 → normalizeOutfitResponse()
 ```
 
-The names are illustrative; the contracts matter. A flow policy may choose an anchor ranking,
+The names are illustrative; the contracts matter. Existing flows may call these responsibilities
+through their own adapters and in a different order where the product requires it. A flow policy may choose an anchor ranking,
 capsule recombination, advisor annotation, or zero-retry behavior. It may not supply a second
 implementation of context precedence, eligibility, structure, or post-mutation validation.
 
@@ -191,13 +199,12 @@ reinterpret them.
 - A projection can omit facts for budget but cannot assign a different meaning to the facts it
   includes.
 
-**Proposed owner:** Keep the ownership chain `field reference/schema → attributes reader → domain
-verdict → projection`. Migrate rule predicates away from `rules.js`'s private text blob or prove
-that the function is only a serializer and rename it accordingly.
-
-**Owner ruling required:** Is any input difference between `attributePieceTextBlob` and
-`pieceTextBlob` intentional and relied upon? Until fixture comparison answers that, deletion is not
-authorized.
+**Canonical direction:** Keep the ownership chain `field reference/schema → attributes reader →
+domain verdict → projection`. `pieceTextBlob` remains a real duplicate candidate, not approved
+policy. Before migration, compare both blobs over structured, missing-data, notes-heavy, and
+learned-rule fixtures and classify every difference. If it is projection-only, rename it; if it
+drives semantics, move those decisions behind attribute readers. Until that comparison exists,
+deletion is not authorized. This is roadmap R1, not an unfinished Slice 2 consumer migration.
 
 ### 4.2 Eligibility and hard gates
 
@@ -225,7 +232,7 @@ requirements but may not redefine the underlying verdict.
 - Supply-aware roster policy can distinguish “unknown/inappropriate but alternatives exist” from
   “only available supply,” provided the relaxation is disclosed.
 
-**Proposed owner:** `wholeWardrobePieceTrustDecision` remains the aggregate answer to “may the app
+**Canonical owner:** `wholeWardrobePieceTrustDecision` remains the aggregate answer to “may the app
 automatically use this piece in this context?” Its narrow inputs remain owned by their fact and
 verdict helpers. Visual-photo eligibility, finite roster capacity, and explicit anchor override stay
 outside it as named policy layers.
@@ -252,7 +259,7 @@ reasons. Ranking must not hide validity as a large penalty.
 | `search_wardrobe` ordering | Query match, profile/weather/activity fit, and per-category visual supply | `specialization` | Freeform retrieval |
 | Slot-swap ranking | Preserve an accepted outfit while replacing one role | `specialization` | Freeform `suggest_slot_swaps` |
 
-**Proposed owner:** Do not create a universal score. Share fact readers and hard verdicts; keep one
+**Canonical direction:** Do not create a universal score. Share fact readers and hard verdicts; keep one
 named strategy per objective with reason strings. The roster-coverage contract in §4.4 operates
 after ranking and before hard truncation.
 
@@ -262,7 +269,7 @@ zero diff.
 
 ### 4.4 Roster and retrieval construction
 
-**Semantic contract proposed for consolidation:**
+**Implemented shared semantic contract:**
 
 ```text
 eligible candidates
@@ -282,7 +289,7 @@ eligible candidates
 | `buildCapsuleBench` | Seeds deterministic roster and protects categories/slots for model selection | `specialization` |
 | `selectCapsuleRosterViaModel` | Bounded model selection with allowlist validation and deterministic fallback | `specialization` |
 | `buildPlanSlotWorkbench` / `selectPlanWorkbenchPieces` | Slot-specific gate-passing set with a hard workbench limit and explicit structural coverage report | `specialization` over the shared coverage contract |
-| Selected and whole local fallback selectors | Directly choose leading candidates | `legacy` with respect to future shared coverage; active until parity fixtures exist |
+| Selected and whole local fallback selectors | Directly choose leading candidates, then pass accepted output through shared recovery validation | `specialization` for reduced-ambition ordering; residual `legacy` only where pre-composition coverage is independently assembled, pending parity evidence |
 
 **Shared invariants**
 
@@ -301,30 +308,33 @@ selected, visual, search, and capsule selectors. Do not place the generic contra
 complete structural path whenever eligible supply exists; retrieval-only search may return partial
 supply with an explicit gap.
 
+The selected quota, visual cap, capsule roster/bench, plan workbench, and search budget are not
+therefore one unresolved duplicate implementation. They optimize different objectives. The shared
+interface owns only structure under capacity; callers own ranking and product budgets. Local
+fallback selection is the remaining bounded parity candidate. See roadmap R3.
+
 ### 4.5 Layering and base-layer semantics
 
-There is currently no single owner. The shared concept must be split into six questions.
+There is intentionally no single “layering” owner. The overloaded concept is split into six narrow
+questions with separate fact/verdict owners and one composed wearable verdict.
 
-| Contract | Current surfaces | Current missing-data behavior | Classification / proposed owner |
+| Contract | Current surfaces | Current missing-data behavior | Classification / owner |
 |---|---|---|---|
 | Dependent status: does this piece need something beneath it? | Structured `needs_base` through `pieceRequiresBaseLayer`; prompt lines are projections | Only explicit `yes` is dependent; unset and explicit `no` preserve the independent default | `canonical` reader in `attributes.js`; candidate, capsule, fallback, rendering, and swap decisions consume it |
 | Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate` | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
 | Pair mechanics: can base A physically sit beneath dependent piece B? | `evaluateRequiredBaseLayers`, consumed by plan submission and freeform proposal/swap validation; visual composer prompt projects the same close-fit values | Missing opacity or fit returns `unknown` with `sightRequired: both` | `canonical` typed pair/outfit verdict consuming the structured coverage verdict |
 | Layer direction: which piece may sit over/under which? | `evaluateLayerDirections`, consuming `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, dependency, role and category facts | Missing direction is `unknown`; both photos are required, after which the model may make a provisional one-turn judgment | `canonical` typed verdict in `outfitValidation.js`; plan submission, freeform proposal, and participating slot swaps consume it |
-| Sight requirement: must photos be inspected? | Tool sight gates, visual roster, composer prompt | Varies by path and image availability | Shared verdict should name `none`, `one`, or `both`; flow controls whether unavailable sight rejects or discloses uncertainty |
+| Sight requirement: must photos be inspected? | `evaluateRequiredBaseLayers`, `evaluateLayerDirections`, and `evaluateWearableOutfit`; tool/plan adapters enact it | Shared results name required IDs/pairs; disposition still varies when photos are unavailable | Canonical evidence requirement in `outfitValidation.js`; unavailable-evidence disposition is roadmap R4 |
 | Visual success: do neckline, bulk, texture, color, and proportion work? | Visual composer and stylist model | Not deterministically inferable | Model-owned judgment; never converted into keyword taste rules |
 
-**Known parity gaps**
+**Remaining gap:** Pair mechanics, dependency validation, recovery, and capsule capacity now consume
+the shared verdict family. The unresolved edge is disposition when a required visual fact is
+unknown and one or both photographs are unavailable: the verdict can require sight that the flow
+cannot obtain. That must become explicit disclosure or Needs review policy rather than a futile
+retry or a guessed fact. See roadmap R4.
 
-- `buildLocalFallbackOutfitDirections` only pushes `needs_base` pieces later; it does not prove a
-  viable base pairing.
-- The selected absolute backfill and `repairWholeWardrobeOutfit` have no general dependent-piece
-  completion contract.
-- Capsule capacity and base postconditions use a different independent-coverage assumption than
-  freeform role validation.
-
-**Proposed result shape:** `{ verdict: 'compatible' | 'incompatible' | 'unknown', reasons,
-evidence, sightRequired }`. Dependent status and independent coverage can expose narrower verdicts,
+**Implemented result family:** `{ verdict: 'compatible' | 'incompatible' | 'unknown', reasons,
+evidence, sightRequired }`, composed into `evaluateWearableOutfit`. Dependent status and independent coverage expose narrower verdicts,
 while pair mechanics consumes both pieces. Flow policy decides what to do with `unknown`; the
 fact owner does not silently turn it into allow or reject.
 
@@ -348,7 +358,7 @@ an incomplete Needs review card carrying the hard dependency reason.
 | Freeform tool schemas and controller prompt | Conversation protocol, roles, retrieval/sight requirements | Existing owner map in [freeform-prompt-ownership.md](freeform-prompt-ownership.md) |
 | Capsule roster/composition prompts and slot submission requirements | Finite capsule strategy and plan output schema | `specialization`; `projection` for hard validator facts |
 | Saved-variant request framing | Preserve formula/Main piece or explore adjacent style neighborhood | `specialization` |
-| Local candidate generators | Deterministic reduced-ambition composition | `legacy` where they restate hard constraints incompletely |
+| Local candidate generators | Deterministic reduced-ambition composition | `specialization`; shared recovery validation owns hard acceptance, while pre-composition selection parity remains roadmap R3 |
 
 **Implemented owner, 2026-08-25:** Domain invariants originate in code/data verdicts and have one
 serializer that projects the result into each prompt that needs it. `outfitValidation.js` now owns
@@ -356,15 +366,16 @@ category-structure, explicit-role, and typed-finding projections consumed by who
 freeform proposal, plan workbench, and capsule expansion prompts. Flow prompts continue to own
 strategy and output shape; no prompt was merged and no cache boundary moved.
 
-**Ratchet needed after implementation:** For every canonical invariant, fixtures prove each required
-prompt projection still contains its serialized contract and each mechanical validator consumes the
-same verdict. Prompt presence alone is not enforcement.
+**Ratchet status:** Slice 7 covers shared structure/role/finding projections and their mechanical
+validators. Context and eligibility facts do not yet have equivalent coverage across every prompt;
+add such a fixture only when a canonical fact has two active projections or live evidence shows a
+prompt/validator contradiction. Prompt presence alone is never enforcement. See roadmap R5.
 
 ### 4.7 Outfit validation
 
 | Decision surface | Verdict | Classification | Disposition |
 |---|---|---|---|
-| `evaluateOutfitStructure` | Typed category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural verdict | Boolean, diagnosis, and future composed validators |
+| `evaluateOutfitStructure` | Typed category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural verdict | Diagnosis and `evaluateWearableOutfit` composition |
 | `describeOutfitStructureGap` | Primary-finding message projection of `evaluateOutfitStructure` | `projection` | Capsule repair diagnosis and plan failures |
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
@@ -427,13 +438,15 @@ in [capsule-expansion-and-repair.md](flows/capsule-expansion-and-repair.md).
 | Direct OpenAI Responses and image calls | `core.js` rendering/editorial helpers | Separate image/vision execution paths documented by their flow pages. |
 | Importer/tagger and feedback calls | `routes/ai.js`, `routes/feedback.js`, importer routes | Non-outfit selection, but active and retained in atlas census. |
 
-**Proposed owner:** No provider consolidation in this pass. Preserve the provider abstraction where
+**Retained owner:** No provider consolidation is planned without a concrete defect. Preserve the provider abstraction where
 already used, and require every nested call to attribute usage to its parent user turn. Direct image
 calls remain separate until a correctness or telemetry defect justifies migration.
 
 **Finding:** `capsuleExpansionCoreCapacity` is parallel to the fuller capsule capacity owner. It is
 classified `duplicate/unresolved`: the route prefers saved canonical capacity, but legacy/fallback
-state can activate the simpler local calculation.
+state can activate the simpler local calculation. This is roadmap R6: compare legacy-card capacity
+against `capsuleOutfitCoreCapacity`, then delete or adapt the route-local calculation after live
+validation.
 
 ### 4.10 Conversation state authority per field
 
@@ -466,27 +479,27 @@ context-authority ambiguity.
 
 ---
 
-## 5. Proposed ownership decisions
+## 5. Ownership registry after PR 254
 
-| Contract | Proposed canonical owner | Allowed specialization | Surfaces to migrate/delete after approval |
+| Contract | Canonical owner | Allowed specialization | Residual status / roadmap |
 |---|---|---|---|
-| Piece text fallback | `attributes.js` readers and `attributePieceTextBlob` | Prompt/tool serializers may choose fields and formatting | Compare then remove/rename `rules.js` `pieceTextBlob`; migrate any semantic callers |
-| Automatic-use eligibility | `wholeWardrobePieceTrustDecision` composed from narrow verdict owners | Anchor override, visual-photo policy, supply-aware disclosed relaxation, finite provider caps | Parallel gate branches in visual roster and plan/freeform validators that restate the same verdict |
-| Normalized styling context | New shared builder composed from the existing normalizers, profile resolvers, weather resolver, and explicit provenance | Flow declares required fields and whether live lookup is permitted | Route/tool-local precedence and default assembly after consumers migrate |
-| Layer/base facts and pair mechanics | Tri-state verdict family built on `attributes.js`, consumed inside shared eligibility/validation | Flow policy for `unknown`; model visual judgment; sight availability disposition | Capsule-local base predicates, freeform standalone wrapper, prompt-only fit rule, fallback heuristics |
-| Outfit core structure | `evaluateOutfitStructure` typed findings | Role, slot, set, advisor/gate disposition | No parallel category-core implementation remains; richer validators still need composition work |
-| Bounded structural roster coverage | New dependency-neutral verdict/selection contract built on the shared eligibility and validation interfaces | Selected relevance, visual photo budget, capsule recombination, plan slot limits | Category-only protection and silent final trims where complete structure is required |
+| Piece text fallback | `attributes.js` readers and `attributePieceTextBlob` | Prompt/tool serializers may choose fields and formatting | `pieceTextBlob` comparison/deletion remains roadmap R1 |
+| Automatic-use eligibility | `wholeWardrobePieceTrustDecision` composed through `evaluateAutomaticUsePiecePool` | Anchor override, visual-photo policy, supply-aware disclosed relaxation, finite provider caps | Runtime migration complete; guard adapter drift under roadmap R2 |
+| Normalized styling context | `resolveStylingContext` | Flow declares required fields and whether live lookup is permitted | Runtime migration complete; separate storage lifetimes remain roadmap R8 |
+| Layer/base facts and pair mechanics | Tri-state verdict family in `attributes.js` / `outfitValidation.js`, composed by `evaluateWearableOutfit` | Flow policy for `unknown`; model visual judgment; sight availability disposition | Runtime migration complete; unavailable-sight disposition remains roadmap R4 |
+| Outfit core structure | `evaluateOutfitStructure` / `evaluateOutfitRoles`, composed by `evaluateWearableOutfit` | Role, slot, set, advisor/gate disposition | Runtime migration complete; concept-board light validation remains intentional |
+| Bounded structural roster coverage | `candidateSet.js` | Selected relevance, visual photo budget, capsule recombination, plan slot limits | Main outfit-producing caps migrated; local fallback parity remains roadmap R3 |
 | Ranking | One existing strategy per objective, consuming shared facts/verdicts | Objective-specific weights, diversity, recency, anchor relevance | Hidden gate-like penalties only; do not merge strategies |
-| Candidate-set construction | Shared builder combining an injected ranking strategy, structural coverage, protected IDs, and hard capacity | Anchor relevance, whole breadth, capsule recombination, search retrieval mode | Flow-local quota/cap implementations once their policy is representable |
-| Repair/fallback validity | Shared post-mutation validation adapter and recovery primitives over canonical verdicts | Flow-local allowed mutations and cost/disclosure policy | Unvalidated selected fallback/backfill behavior and duplicated mutation loops |
-| Response normalization | `outfitResult.js`: stable accepted/annotated/repairable/rejected result with provenance, findings, annotations, and optional repair capability | Flow labels, actions, display copy, plan context, and compatibility aliases | New outfit-producing consumers must use the common result envelope rather than inventing semantic result shapes |
-| Prompt invariant projection | Canonical verdict serializer adjacent to verdict owner | Flow prompt strategy and output schema | Independently worded domain definitions after all consumers migrate |
-| Provider execution | Existing `provider.js` abstraction and flow atlas | Direct image execution when documented | Only untraced calls or telemetry bypasses; no broad provider rewrite |
-| Conversation state | Per-field authority: persistent server, ephemeral evidence, delivered card | Explicit current-request override and versioned card capability | Conflicting field writers only after a separate state slice |
+| Candidate-set construction | `buildCoveredCandidateSet` for structural coverage under capacity | Anchor relevance, whole breadth, capsule recombination, search retrieval mode | No universal selector planned; objective-specific adapters and R3 define the end-state |
+| Repair/fallback validity | `recovery.js` primitives over canonical validators | Flow-local allowed mutations and cost/disclosure policy | Runtime migration complete; naming/locality concern remains roadmap R10 |
+| Response normalization | `outfitResult.js`: stable accepted/annotated/repairable/rejected result with provenance, findings, annotations, and optional repair capability | Flow labels, actions, display copy, plan context, and compatibility aliases | Runtime migration complete; alias last-reader removal and new-consumer guard are roadmap R9 |
+| Prompt invariant projection | Canonical verdict serializer adjacent to verdict owner | Flow prompt strategy and output schema | Structure migrated; evidence-triggered context/eligibility projection work is roadmap R5 |
+| Provider execution | Existing `provider.js` abstraction and flow atlas | Direct image execution when documented | Defect-triggered only under roadmap R7; no broad provider rewrite |
+| Conversation state | Per-field authority: persistent server, ephemeral evidence, delivered card | Explicit current-request override and versioned card capability | Lifecycle questions remain separate, defect-triggered roadmap R8 |
 
 ---
 
-## 6. Recommended migration sequence after owner review
+## 6. Completed Slice 0–7 migration record
 
 ### Module-design gate
 
@@ -872,7 +885,31 @@ notes elsewhere in the census are backlog findings, not pending product-policy d
 
 ---
 
-## 8. Verification and observability inventory
+## 8. Post-254 architecture roadmap
+
+The completed slices establish semantic owners; they do not erase every intentional flow adapter or
+every legacy fallback. The active residual roadmap is
+[post-254-architecture-roadmap.md](post-254-architecture-roadmap.md). It records, for every
+remaining census shortfall:
+
+- what is still independently implemented;
+- whether the difference is intentional policy or unresolved duplication;
+- risk, canonical interface, consumers, and regression ratchet; and
+- whether action is allowed now, after PR 254 live validation, or only after a concrete defect.
+
+The strongest bounded deletion candidate is the duplicate capsule-expansion capacity fallback.
+The broadest monitoring concern is candidate selection, but its status is no longer Critical:
+`candidateSet.js` owns structural survival under hard capacity, while ranking and product budgets
+remain explicit specializations. Piece eligibility is likewise no longer Critical because all named
+runtime consumers receive the shared underlying verdict; roadmap R2 guards against a future adapter
+reintroducing a private hard gate.
+
+No roadmap item authorizes a universal selector or orchestrator. Implementation after live testing
+still requires the evidence gate named by that item.
+
+---
+
+## 9. Verification and observability inventory
 
 ### Slice 0 cross-flow baseline — implemented 2026-08-24
 
@@ -896,18 +933,18 @@ node scratch/capture_cross_flow_architecture.js       # inspect current JSON
 node scratch/capture_cross_flow_architecture.js --write # deliberately accept a reviewed change
 ```
 
-The first capture records architecture evidence rather than only the triggering layering case:
+The current schema-5 capture records architecture evidence rather than only the triggering layering
+case:
 
-- With a fixed August date, `current season` resolves hot in the heuristic context while the same
-  scenario carries an explicitly supplied neutral weather profile. Existing stages do not all use
-  the same source.
-- A persisted “no fixture boots in summer” owner constraint suppresses the boots in the per-piece
-  trust verdict and shared automatic-use pool. The neutral visual roster and plan workbench retain
-  them because
-  those paths assemble eligibility/context differently.
+- With a fixed August date, `current season` is hot under the heuristic while the same fixture also
+  supplies a neutral profile. `resolveStylingContext` records the supplied profile as authoritative
+  with provenance, so this is now an explicit evidence difference rather than caller-owned source
+  precedence.
+- The hot-hiking scenario proves the per-piece hard gate and `evaluateAutomaticUsePiecePool`
+  return the same underlying eligible IDs and findings, including the owner constraint.
 - An otherwise valid shoe with missing comfort metadata is allowed by the shared trust aggregate,
   excluded by the hiking visual roster, and retained in other bounded sets according to their own
-  unknown-data policy.
+  named unknown-data policy. This is intentional adapter behavior and remains observable.
 - A five-image visual cap, four-piece selected-candidate cap, six-piece capsule budget, and
   five-piece capsule bench target record what each independent truncation strategy protects or
   drops under pressure. The first capture exposed a five-image visual roster with one top, one
@@ -915,15 +952,17 @@ The first capture records architecture evidence rather than only the triggering 
   baseline now records the intended correction: all five places are used and at least one
   top + bottom + shoes path survives. Selected and capsule paths retain their distinct ranking and
   policy mixes; only the bounded structural-supply invariant is shared.
-- Missing shoes and duplicate shoes agree at the hard-validity level but expose four different
-  result shapes and messages.
-- A dependent top without a base is accepted by the narrow core, freeform-role, and whole validators
-  but rejected by plan validation. A dress-plus-top structure is accepted by the narrow core and
-  whole validator, rejected by freeform roles, and rejected by plan validation for missing recorded
-  direction and sight.
+- Missing shoes, duplicate shoes, and a dependent top without its required base now agree through
+  `evaluateWearableOutfit` and every full wearable consumer at the hard-validity level. Narrow core
+  and role validators still expose only their deliberately smaller question; flow messages remain
+  projections of the shared findings.
+- A dress-plus-top relationship is hard-valid at category level but requires visual review when its
+  direction is unknown. Whole advisor policy may annotate it, explicit freeform roles may reject an
+  invalid role assignment, and plan submission may require sight; the shared result records the
+  unresolved pair rather than guessing.
 - Selected fallback constructs a replacement direction directly; plan completion mutates the
-  submitted outfit and revalidates it. Both are captured as recovery behavior, not treated as one
-  implementation.
+  submitted outfit. Both inject their authoritative shared validator through `recovery.js`; their
+  mutation strategies intentionally remain different.
 
 These are baseline facts, not ratified desired behavior. A consolidation slice may change them only
 with reviewed policy, an explained baseline update, caller migration, and deletion of the replaced
@@ -942,8 +981,8 @@ Existing offline coverage already exercises the main owners:
 
 The implemented suite now covers the original cross-flow corpus, typed eligibility/validation
 findings, selected and plan recovery validation, bounded structural coverage, dependency/base
-semantics, normalized result dispositions, and the deleted-symbol ratchets. The remaining partial
-Slice 1 and Slice 3 questions are policy questions listed in §7, not permission for a caller to
-reintroduce a private implementation while those decisions wait.
+semantics, normalized result dispositions, and the deleted-symbol ratchets. Slices 0–7 are complete;
+the residual risks are sequenced in §8 and do not permit a caller to reintroduce a private semantic
+implementation.
 
 No paid model, vision, or image call is part of this deterministic architecture corpus.

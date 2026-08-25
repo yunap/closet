@@ -99,6 +99,7 @@ proposal is not evidence the capability is absent.
 | [cleanup-inventory.md](cleanup-inventory.md) | Dead-code / duplicate-authority sweep (spec 20), with an explicit scope note |
 | [architecture-ownership-consolidation-spec.md](architecture-ownership-consolidation-spec.md) | Proposed executable-reuse and consolidation protocol across context, Piece facts, eligibility, candidate sets, validation, recovery, prompts, provider paths and state. Stage 1 is census-only and stops for owner review before code changes |
 | [architecture-responsibility-census.md](architecture-responsibility-census.md) | Stage 1 cross-flow reuse census at baseline `c1693a8`: eleven outfit pipelines, duplicated runtime stages ranked by reach and risk, target shared pipeline, migration slices, and eight owner rulings |
+| [post-254-architecture-roadmap.md](post-254-architecture-roadmap.md) | Residual architecture risks after Slices 0–7: canonical end-state, intentional flow specializations versus real duplication, consumer migrations, ratchets, and evidence-based sequencing after PR 254 live validation |
 
 ## 4 · Flow atlas
 
