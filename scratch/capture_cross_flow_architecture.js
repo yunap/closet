@@ -34,14 +34,13 @@ const {
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
-const { evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
+const { evaluateOutfitRoles, evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
 const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
 const { buildLocalFallbackOutfitDirections } = await import('../styling-engine/core.js')
-const { validateOutfitRoles } = await import('../styling-engine/tools.js')
 const {
   buildCapsuleBench,
   buildPlanSlotWorkbench,
@@ -609,7 +608,7 @@ function captureValidationStages() {
         valid: evaluateOutfitStructure(pieces).valid,
         gap: describeOutfitStructureGap(pieces),
       },
-      freeformRoles: { issues: validateOutfitRoles(rolePieces, []) },
+      freeformRoles: { issues: evaluateOutfitRoles(rolePieces).findings.map(finding => finding.message) },
       wholeGate: {
         accepted: gate.outfits.length === 1,
         rejectedReasons: gate.rejected.map(item => item.reason),

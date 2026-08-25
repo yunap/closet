@@ -7,8 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
-**Status:** Active — Stage 1 census approved 2026-08-24; Slice 0 baseline complete. Proposed
-ownership decisions marked unresolved still require the named owner ruling before implementation.
+**Status:** Active — Stage 1 and Slice 0 complete; Slice 2 complete; Slices 1 and 3 in progress as
+of 2026-08-24. Proposed ownership decisions marked unresolved still require the named owner ruling
+before implementation.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -89,7 +90,7 @@ authority.
 | Piece concept boards | Selected piece plus supplied structured outfits or concept text | `selectAutomaticUseCandidatesForOutfitGeneration` with a larger support limit; allowed IDs fixed before planning | Reuses supplied structured outfits, parses concept text, or calls the board planner once; then image rendering per accepted board | ID allowlist, selected-anchor insertion, dedupe, minimum two pieces; no full shared outfit validator | Unusable boards are skipped; zero usable boards is an error. See [piece-concept-boards.md](flows/piece-concept-boards.md). |
 | Whole-wardrobe Visual Composer | Active wardrobe plus resolved request/occasion/activity/season/weather and recent-memory context | `evaluateAutomaticUsePiecePool` with saved-Main/hot-outerwear policy, then `evaluateVisualComposerPiecePool` and visual relevance/caps | Whole-wardrobe visual composer | `locallyGateWholeWardrobeOutfits` in advisor mode: hard ownership/structure issues reject; many aesthetic or contextual findings annotate; no mechanical reinvention | Local candidate backfill can fill missing count; diagnostic broken cards disclose when no acceptable set is available. See [use-my-wardrobe.md](flows/use-my-wardrobe.md). |
 | Saved-outfit Similar / Creative variants | Saved outfit IDs, chosen Main piece, source occasion/season, mode | Adapter calls `generateWholeWardrobeOutfitsVisualInternal`; saved seed and Main piece alter framing and comparison guidance, not gate ownership | Same whole-wardrobe visual composer | Same advisor-mode validation | Same whole-wardrobe fallback; response adds source-outfit debug. See [saved-outfit-variants.md](flows/saved-outfit-variants.md). |
-| `/ask` serial search → propose | Persistent thread context plus ephemeral `toolContext`; model chooses search shape | `search_wardrobe` consumes `evaluateAutomaticUsePiecePool`, then applies retrieval ranking, supply-aware broadening, and per-category image budget. It is retrieval, not a finite outfit roster | Model calls `propose_outfit` with explicit role assignments | ID retrieval/sight gates, `validateOutfitRoles`, shared eligibility findings with strict proposal disposition, and output guards; a rejected attempt may remain visible as needs-review | Model may search or propose again within the ten-iteration tool loop; accepted cards govern closing prose. See [freeform-stylist-chat.md](flows/freeform-stylist-chat.md). |
+| `/ask` serial search → propose | Persistent thread context plus ephemeral `toolContext`; model chooses search shape | `search_wardrobe` consumes `evaluateAutomaticUsePiecePool`, then applies retrieval ranking, supply-aware broadening, and per-category image budget. It is retrieval, not a finite outfit roster | Model calls `propose_outfit` with explicit role assignments | ID retrieval/sight gates, typed `evaluateOutfitRoles` findings, shared eligibility findings with strict proposal disposition, and output guards; a rejected attempt may remain visible as needs-review | Model may search or propose again within the ten-iteration tool loop; accepted cards govern closing prose. See [freeform-stylist-chat.md](flows/freeform-stylist-chat.md). |
 | `/ask` bounded `generate_outfits` | Fresh request classified as bounded or tool-selected bounded generation | Tool resolves shared context; selected-piece requests delegate to `generateOutfitsForPieceInternal`, otherwise to `generateWholeWardrobeOutfitsVisualInternal` | Nested selected or whole composer call; usage is recorded into the parent turn | Delegated flow validation plus accepted-card output guards | Incomplete direct routing falls through to the full stylist; nested flow fallbacks remain active. |
 | `/ask` coordinated plan | Model calls `plan_outfit_set` with normalized slots and constraints | `buildPlanSlotWorkbench` resolves each slot and consumes `evaluateAutomaticUsePiecePool`, then applies plan-owned ranking and workbench caps | Model submits via `submit_plan_outfits` | `completeSubmittedPlanOutfits` may fill structural absence; `validateSubmittedPlanOutfits` checks structure, role/dependency, slot, set, repetition, and ownership constraints | Failures are returned to the tool loop for revision; accepted and rejected plan cards are assembled separately. See [freeform-stylist-chat.md](flows/freeform-stylist-chat.md). |
 | Atomic seasonal capsule | Same plan entry, `plan_kind: seasonal_capsule` | Capsule slot unions and elevated-demand reserves consume `evaluateAutomaticUsePiecePool`; `selectCapsuleRoster`, `buildCapsuleBench`, optional model selection, postconditions, core capacity and rotation remain capsule strategy | `composeCapsulePlanOnce`, one structured visual composition of the complete rotation | `completeSubmittedPlanOutfits`, then `validateSubmittedPlanOutfits`; utilization and shortfalls are disclosed | Rejected cards are assembled as needs-review; saved versioned plan context enables follow-ons. Capsule behavior authority: [capsule-index-and-plan.md](capsule-index-and-plan.md). |
@@ -110,7 +111,7 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 |---|---:|---|---|---|---:|
 | Context resolution | 10 consumer families; 2 now migrated | `resolveStylingContext` now owns selected-piece and whole-wardrobe context; remaining consumers still use `normalizeOccasion`, `normalizeActivity`, `resolveOccasionProfile`, `resolveActivityProfile`, and `weatherProfileFromContext` directly | Freeform search/propose/swaps/generate and plan slots still independently choose precedence, defaults, live-weather behavior, and mutation | Critical: the same words can still reach later gates with different structured context until the remaining consumers migrate | 1 |
 | Piece eligibility | 11 | `evaluateAutomaticUsePiecePool` over `wholeWardrobePieceTrustDecision` and narrow verdict helpers | Visual presentation policy, retrieval broadening, explicit anchor disposition, and post-composition validators still add flow policy | Critical: remaining compatibility and validation callers can still diverge until migrated | 2 |
-| Outfit validation | 11 | `evaluateOutfitStructure` now owns typed category-core findings; boolean and diagnosis are projections | Selected gates, whole advisor/gate, freeform roles, plan submission, concept boards, and route-local checks still compose different additional invariants and dispositions | Critical: identical outfits can still be accepted, annotated, repaired, or rejected for accidental reasons outside the shared category core | 3 |
+| Outfit validation | 11 | `evaluateOutfitStructure` owns typed category-core findings and `evaluateOutfitRoles` owns typed explicit-role findings | Selected gates, whole advisor/gate, plan submission, concept boards, and route-local checks still compose different dependency, context, slot/set, and disposition rules | Critical: identical outfits can still be accepted, annotated, repaired, or rejected for accidental reasons outside the two shared structural cores | 3 |
 | Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
 | Recovery and fallback | 8 | Some shared validators and footwear helpers | Selected local/absolute fallback, whole backfill, plan completion, capsule repair, freeform retry, and diagnostic cards independently mutate or replace results | High: error paths silently weaken the primary path's contract | 5 |
 | Prompt fact projection | 10 | Style Constitution exports and some serializers | Composer, selected-anchor, freeform tool, plan, capsule, board, and saved-variant prompts restate overlapping runtime facts | High: a code fix can be absent from the model-visible contract, or prompt wording can invent another rule | 6 |
@@ -215,7 +216,7 @@ requirements but may not redefine the underlying verdict.
 | `buildVisualComposerRoster` | Photo availability, metadata completeness, supply-aware register/activity policy, visual relevance, category ceilings and global image cap | `specialization`; `adapter` where it calls shared verdicts; `unresolved` for parallel gate branches | Selected visual and whole visual composers |
 | `search_wardrobe` filtering and broadening | Active/category/owner exclusions are fixed; descriptive and occasion filters may relax with disclosure | `specialization` | Freeform serial retrieval |
 | Capsule slot filtering in `buildPlanSlotWorkbench` and capsule selectors | Shared automatic-use findings plus slot weather/activity/register; finite budget, capsule supply, and postconditions remain plan strategy | `adapter` to shared eligibility plus `specialization` | Coordinated plans and capsules |
-| `validateOutfitRoles` / `validateSubmittedPlanOutfits` per-piece checks | Reject a composition after selection | `adapter` to shared eligibility where delegated; otherwise covered under validation below | Freeform cards and plan submissions |
+| `evaluateOutfitRoles` / `validateSubmittedPlanOutfits` per-piece checks | Reject a composition after selection | Typed role-structure owner and plan validation orchestration; eligibility delegation is covered below | Freeform cards and plan submissions |
 
 **Intentional differences**
 
@@ -367,15 +368,16 @@ same verdict. Prompt presence alone is not enforcement.
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
 | `locallyGateWholeWardrobeOutfits` | Composes typed category structure with ownership, context/profile findings, and diversity | `adapter` plus disposition specialization | Structural errors reject in both modes; advisor annotates many later concerns and does not reinvent |
-| `validateOutfitRoles` | Freeform explicit role cardinality, shoes, missing gaps, base independence | `specialization`; `unresolved` where base logic differs | Reject proposed card with issues |
+| `evaluateOutfitRoles` | Typed explicit-role cardinality, shoes, primary core, role/category compatibility, and standalone-top-as-layer findings | `canonical` explicit-role structure; standalone-base reader remains the current narrow dependency | Freeform proposal and slot-swap consumers project finding messages and reject exactly as before |
 | `validateCapsuleRoster` | Finite roster quotas, base/structure supply, slots and budget | `specialization` | Reject or report roster gaps |
 | `validateSlotOutfitConstraints` | Slot weather/activity/register/season and plan requirements | `specialization` | Failure reason for plan submission |
 | `validateSubmittedPlanOutfits` | Composes typed category structure with ownership, dependency, slot, repetition, core uniqueness, and set rules | `canonical` plan validator / orchestration | Accept or return structured failures |
 | Route-local board filters | Allowed IDs, anchor, dedupe, minimum piece count | `specialization`; incomplete by design for concept boards | Skip unusable boards |
 
-**Current owner:** `evaluateOutfitStructure` returns the structured verdict with reason codes;
-`describeOutfitStructureGap` projects its primary message. Role, slot, and set validators remain
-specializations that compose shared structure, eligibility, and layer/base verdicts.
+**Current owners:** `evaluateOutfitStructure` owns category structure and `evaluateOutfitRoles`
+owns explicit-role structure; both return the same typed result shape with ordered reason codes and
+evidence. `describeOutfitStructureGap` projects the category primary message. Dependency, slot, and
+set validators remain specializations awaiting composition with those shared findings.
 
 **Owner rulings required:** Confirm that concept boards are permitted to remain a looser
 visualization surface, and enumerate which advisor findings remain annotation rather than rejection.
@@ -672,6 +674,17 @@ the temporary boolean adapter was deleted. Contract tests and the tracked cross-
 assert `evaluateOutfitStructure(...).valid` directly, and an architecture ratchet prevents the
 export from returning. `describeOutfitStructureGap` remains because it is a deliberate human-
 message projection with active plan/capsule consumers.
+
+**Explicit-role migration, 2026-08-24:** the freeform tool module's prose-only role validator was
+replaced by `evaluateOutfitRoles` in `outfitValidation.js`. The owner now emits typed findings for
+invalid/multiple roles, footwear and primary-core absence, dress/primary conflicts, orphan layers,
+role/category mismatch, and standalone tops mislabeled as layers. `propose_outfit`, slot swaps,
+contract tests, and the tracked cross-flow diagnostic consume that result directly. Existing
+finding order, public messages, broken-card visibility, retry behavior, and dress-plus-layer roles
+are unchanged; the unused `missingGaps` validator argument was removed because it never decided a
+finding. An architecture ratchet prevents the former tool-local validator and category helper from
+returning. Pair mechanics, layer direction/sight, plan slot/set checks, and disposition composition
+remain later Slice 3 work.
 
 ### Slice 4 — reusable candidate-set construction
 

@@ -7,9 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Spec — Closet architecture ownership and consolidation pass
 
-**Status:** Active — Stage 1 approved 2026-08-24; Slice 0 baseline complete. Production
-consolidation proceeds one reviewed semantic contract at a time, with unresolved behavior rulings
-still required before their owning slice changes runtime behavior.
+**Status:** Active — Stage 1 and Slice 0 complete; Slice 2 complete; Slices 1 and 3 in progress as
+of 2026-08-24. Production consolidation proceeds one reviewed semantic contract at a time, with
+unresolved behavior rulings still required before their owning slice changes runtime behavior.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 This commit contains the selected-piece category-starvation fix, the current visual-composer
@@ -398,7 +398,7 @@ Verified current decision surfaces include:
 - capsule-local `pieceNeedsBase()` and `isCapsuleBaseCandidate()`;
 - `pieceHasExplicitTopLayerEvidence()`, `pieceHasExplicitBaseLayerEvidence()`, and
   `pieceDressSupportsUnderlayer()`;
-- `validateOutfitRoles()`;
+- `evaluateOutfitRoles()`;
 - `validateSubmittedPlanOutfits()`;
 - `capsuleOutfitCoreCapacity()` and capsule roster postconditions;
 - the fit-specific base rule in `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`;
@@ -415,7 +415,7 @@ Inventory constraints across:
 
 - `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` and selected-anchor additions;
 - `OUTFIT_COMPOSER_SYSTEM` and evaluator gate;
-- freeform tool roles and `validateOutfitRoles()`;
+- freeform tool roles and `evaluateOutfitRoles()`;
 - capsule roster/composition prompts;
 - plan slot contracts;
 - saved-variant contracts;
@@ -442,7 +442,7 @@ Inspect:
 - `sanitizeSelectedPieceOutfitDirections()`;
 - category-core validation (now `evaluateOutfitStructure()`);
 - `locallyGateWholeWardrobeOutfits()` in both `gate` and `advisor` modes;
-- `validateOutfitRoles()`;
+- `evaluateOutfitRoles()`;
 - `validateCapsuleRoster()`;
 - `validateSlotOutfitConstraints()`;
 - `validateSubmittedPlanOutfits()`;
@@ -542,7 +542,7 @@ These findings seed the census and prevent rediscovery. They do not authorize a 
    non-identical questions and currently have no shared pair verdict.
 4. **Structural validation is not one layer.** Category-core validation is shared by several
    selected/whole/plan paths, while freeform cards use explicit roles through
-   `validateOutfitRoles()`, capsule submission adds slot/set rules, and
+   `evaluateOutfitRoles()`, capsule submission adds slot/set rules, and
    `locallyGateOutfitDirections()` checks only anchor presence, minimum count, and duplication.
 5. **Disposition is intentionally different.** Whole-wardrobe advisor mode annotates many findings
    and avoids repair; selected-piece visual generation repairs and filters; capsule bounded

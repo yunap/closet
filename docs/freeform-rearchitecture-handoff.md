@@ -525,7 +525,7 @@ against the real wardrobe DB (no LLM calls):
 
    **Fixed mechanically instead**, consistent with this codebase's existing
    preference for hard gates over prompt-only compliance on anything that
-   must be correct (see `validateOutfitRoles` replacing prompt-based layering
+   must be correct (see `evaluateOutfitRoles` replacing prompt-based layering
    rules). `propose_outfit`'s contract-issue check (`tools.js`, alongside the
    existing declared-intent / unverified-piece / unseen-layer blocks) now
    also blocks when `toolContext.source === 'plan_outfit_set'` and

@@ -9,7 +9,8 @@ import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
-import { wardrobeCategoryGroup } from './attributes.js'
+import { bottomKind, wardrobeCategoryGroup } from './attributes.js'
+import { evaluateOutfitRoles, OUTFIT_ROLES } from './outfitValidation.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
@@ -35,7 +36,6 @@ import {
   MIN_ENFORCED_CAPSULE_BUDGET
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
-import { bottomKind, pieceReadsAsStandaloneBaseTop } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
 import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
@@ -363,8 +363,6 @@ export async function resolveStatedOrLiveWeather({ statedWeather = '', date = ne
   return getCurrentWeatherProfile({ date, location, mood, season: fallbackSeason, ...(fetchImpl ? { fetchImpl } : {}) })
 }
 
-export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
-
 function requestExclusionReasonsForPiece(piece = {}, requestText = '') {
   const text = String(requestText || '').toLowerCase()
   const reasons = []
@@ -400,75 +398,6 @@ function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = ''
     walkable: activityProfile?.id === 'walking' || activityProfile?.id === 'hiking',
     registerCeiling: registerCeiling?.ceiling || registerCeiling || 'none'
   }
-}
-
-function isStandaloneBaseTopAsLayer(piece) {
-  if (piece.role !== 'layer_top') return false
-  return pieceReadsAsStandaloneBaseTop(piece)
-}
-
-function roleCategoryIssue(piece = {}) {
-  const role = String(piece.role || '').trim()
-  const category = String(piece.category || '').toLowerCase().trim()
-  if (!role || !category) return ''
-  const expected = {
-    primary_top: ['top'],
-    layer_top: ['top', 'outerwear'],
-    primary_bottom: ['bottom'],
-    layer_bottom: ['bottom'],
-    dress: ['dress'],
-    shoes: ['shoes'],
-    outerwear: ['outerwear'],
-    accessory: ['accessory']
-  }[role]
-  if (!expected || expected.includes(category)) return ''
-  return `${piece.name || `piece ${piece.id}`} is category "${piece.category}" but was assigned role "${role}"`
-}
-
-// Validate an outfit's role structure (roles only, no layerOf). Returns a list of human-readable
-// issues; empty means valid. Represents intentional layering as valid (primary_top + layer_top) while
-// catching unresolved slot collisions (two primary_top) — the malformed-vs-intentional distinction.
-export function validateOutfitRoles(pieces = [], missingGaps = []) {
-  const issues = []
-  const counts = Object.fromEntries(OUTFIT_ROLES.map(r => [r, 0]))
-  for (const p of pieces) {
-    if (!OUTFIT_ROLES.includes(p.role)) issues.push(`piece ${p.id} has an invalid or missing role`)
-    else counts[p.role] += 1
-  }
-  if (issues.length) return issues
-
-  // Single-occupancy core slots — a second one is an unresolved collision, not a style choice.
-  if (counts.primary_top > 1) issues.push('two primary_top pieces — unresolved top slot (use layer_top for intentional layering)')
-  if (counts.primary_bottom > 1) issues.push('two primary_bottom pieces — unresolved bottom slot (use layer_bottom for intentional layering)')
-  if (counts.dress > 1) issues.push('two dress pieces — unresolved dress slot')
-  if (counts.shoes > 1) issues.push('more than one shoes — unresolved shoes slot')
-  // 2026-07-10: this was the one structural gap the whole-wardrobe visual composer's prompt already
-  // closed ("EXACTLY one pair of shoes... never omit the slot silently") but freeform chat's
-  // propose_outfit never mechanically enforced at all — a zero-shoes outfit passed validation cleanly
-  // and rendered as a normal, unflagged card. A missing_gaps note may explain the wardrobe gap, but it
-  // must not make an incomplete outfit render as a finished outfit card.
-  if (counts.shoes < 1) {
-    issues.push('outfit is missing shoes — every proposed outfit card needs actual footwear; missing_gaps may explain the wardrobe gap but cannot satisfy the shoes slot')
-  }
-
-  // Core coverage: separates (top+bottom) OR a single dress, and the two are mutually exclusive.
-  const hasSeparatesCore = counts.primary_top >= 1 && counts.primary_bottom >= 1
-  const hasDressCore = counts.dress === 1
-  if (!hasSeparatesCore && !hasDressCore) issues.push('outfit needs a primary_top plus primary_bottom, or a single dress')
-  if (counts.dress >= 1 && (counts.primary_top >= 1 || counts.primary_bottom >= 1)) {
-    issues.push('a dress cannot be combined with a primary_top/primary_bottom — choose separates or a dress')
-  }
-  // A layer must have a primary (or dress) to layer with — distinguishes intentional layering from a stray second piece.
-  if (counts.layer_top >= 1 && counts.primary_top < 1 && counts.dress < 1) issues.push('layer_top has no primary_top or dress to layer with')
-  if (counts.layer_bottom >= 1 && counts.primary_bottom < 1 && counts.dress < 1) issues.push('layer_bottom has no primary_bottom or dress to layer with')
-  for (const p of pieces) {
-    const categoryIssue = roleCategoryIssue(p)
-    if (categoryIssue) issues.push(categoryIssue)
-    if (isStandaloneBaseTopAsLayer(p)) {
-      issues.push(`${p.name || `piece ${p.id}`} is assigned as layer_top but reads as a standalone top, not a layer`)
-    }
-  }
-  return issues
 }
 
 function roleForPieceCategory(piece = {}) {
@@ -1618,7 +1547,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
         })
 
         // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
-        const issues = validateOutfitRoles(resolved, missing_gaps)
+        const roleValidation = evaluateOutfitRoles(resolved)
+        const issues = roleValidation.findings.map(finding => finding.message)
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
           // broken diagnostic card (same "needs review" treatment as the composer's rejected proposals)
@@ -1983,7 +1913,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             .map(piece => ({ ...piece, role: roleForPieceCategory(piece) }))
           resolved.push({ ...replacement, role: slotRole })
           resolved.sort((a, b) => OUTFIT_ROLES.indexOf(a.role) - OUTFIT_ROLES.indexOf(b.role))
-          const roleIssues = validateOutfitRoles(resolved, [])
+          const roleIssues = evaluateOutfitRoles(resolved).findings.map(finding => finding.message)
           const hardGateIssues = candidate.trust.allowed
             ? []
             : [`${replacement.name}: ${candidate.trust.reasons.join(', ')}`]

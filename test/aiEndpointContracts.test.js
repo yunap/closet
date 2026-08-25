@@ -3560,6 +3560,27 @@ test('executeTool propose_outfit rejects an unresolved role collision (two prima
   assert.match(vContext.generatedOutfits[0].rejectionReason, /unresolved top slot/)
 })
 
+test('executeTool propose_outfit treats missing_gaps as disclosure, not a footwear substitute', async () => {
+  const toolContext = {
+    generatedOutfits: [],
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom])
+  }
+  const invalid = await executeTool('propose_outfit', {
+    label: 'Shoeless attempt',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' }
+    ],
+    missing_gaps: ['walkable flat sandal, no suitable shoe in wardrobe']
+  }, toolContext)
+
+  assert.equal(invalid.status, 'validation_error')
+  assert.match(invalid.issues.join(' '), /missing shoes/)
+  assert.equal(toolContext.generatedOutfits[0].broken, true)
+  assert.match(toolContext.generatedOutfits[0].rejectionReason, /missing_gaps may explain/)
+})
+
 test('contentToOpenAI preserves image_url blocks without stringifying them', () => {
   const content = [
     { type: 'text', text: 'Hello!' },

@@ -945,8 +945,8 @@ settled: today it does not, and no path can make it.
 ### What is not in this stack
 
 Structural validity (`evaluateOutfitStructure` with its `describeOutfitStructureGap` message
-projection, plus specialized `validateOutfitRoles` — needs
-shoes, needs top+bottom or a dress, a layer needs its base) is a *separate* check on the assembled outfit, and
+projection, plus typed `evaluateOutfitRoles` — needs shoes, needs primary top+bottom or a dress, and
+a layer role needs its primary) is a *separate* check on the assembled outfit, and
 it runs **before** the piece gate in `propose_outfit`. Diversity, dedup and repair run after — see
 the next section. None of those are piece-eligibility questions, which is why they are not here.
 
@@ -974,6 +974,15 @@ typed result per normalized model outfit and reuses it for structural diagnostic
 eligibility, saved-variant accounting, and final filtering. Its public diagnostic vocabulary is a
 projection from finding codes, so existing strings and generation-run counts remain stable. Visual
 critic policy, local fallback, saved-Main handling, and accepted-card behavior are unchanged.
+
+**[validation-ownership consolidation, explicit-role migration, 2026-08-24] Freeform role
+structure now has a typed owner outside the tool executor.** `evaluateOutfitRoles` returns ordered
+error findings and role-count evidence for explicit role validity/cardinality, footwear and core
+completeness, dress/primary conflicts, orphan layers, role/category mismatches, and standalone tops
+misassigned as `layer_top`. `propose_outfit` and slot-swap validation project the same messages and
+retain the same reject/retry behavior. The former tool-local prose validator and its unused
+`missingGaps` parameter are gone. This does not settle pair mechanics, direction, sight, plan
+slot/set findings, or advisor disposition.
 
 ---
 
