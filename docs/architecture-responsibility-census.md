@@ -363,7 +363,7 @@ same verdict. Prompt presence alone is not enforcement.
 | Decision surface | Verdict | Classification | Disposition |
 |---|---|---|---|
 | `evaluateOutfitStructure` | Typed category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural verdict | Boolean, diagnosis, and future composed validators |
-| `isOutfitStructurallyValid` | Boolean projection of `evaluateOutfitStructure` | `legacy` compatibility adapter | Selected/whole/plan callers pending direct finding migration |
+| `isOutfitStructurallyValid` | Boolean projection of `evaluateOutfitStructure` | `legacy` compatibility adapter | Historical contract tests only; no production consumer |
 | `describeOutfitStructureGap` | Primary-finding message projection of `evaluateOutfitStructure` | `projection` | Capsule repair diagnosis and plan failures |
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
@@ -659,6 +659,16 @@ the shared primary message previously supplied by `describeOutfitStructureGap`, 
 their dependency, winter-indoor, slot, register, repetition, and set validators only as before.
 No acceptance rule or model-call sequence changed. The boolean compatibility adapter remains for
 route filters and other callers awaiting bounded migration.
+
+**Third consumer migration, 2026-08-24:** route-level selected and whole visual composition now
+consume `evaluateOutfitStructure` directly. Selected-piece resolution keeps its existing valid-only
+filter. Whole visual composition evaluates each normalized model outfit once and reuses that result
+for diagnostic rejection logging, visual-critic eligibility, saved-variant layered-formula counts,
+and final model-output filtering. The former route-local category recount is replaced by a stable
+finding-code → existing diagnostic-message projection, preserving strings such as
+`structural: missing shoes` and `structural: dress plus bottom`. No critic, fallback, saved-Main, or
+response disposition changed. `isOutfitStructurallyValid` now remains only as a historical test
+compatibility export; freeform role validation remains intentionally richer.
 
 ### Slice 4 — reusable candidate-set construction
 

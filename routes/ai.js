@@ -125,7 +125,6 @@ import {
   locallyGateWholeWardrobeOutfits,
   formatWholeWardrobeOutfitFeedback,
   repairWholeWardrobeOutfit,
-  isOutfitStructurallyValid,
   rewriteWholeWardrobeOutfitWithArchetype,
   hasWholeWardrobePlaceholder,
   hasGenericWholeWardrobeText,
@@ -138,6 +137,7 @@ import {
   evaluateVisualComposerPiecePool,
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
+import { evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -1149,7 +1149,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let outfits = resolved.map(o =>
     repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood, { season, weatherProfile, activity }))
     .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
-    .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+    .filter(o => evaluateOutfitStructure(o.pieces, { requireShoes: true }).valid)
 
   if (!outfits.length) {
     const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, recoveryRankedCandidates, { occasion })
@@ -2184,24 +2184,23 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const normalizedModelOutfits = resolved.map(o =>
       sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject(o, allowedPieces))
     )
-    const structuralRejectionReason = (outfit) => {
-      const groups = (outfit?.pieces || []).map(piece => wardrobeCategoryGroup(piece))
-      const shoeCount = groups.filter(group => group === 'shoes').length
-      const bottomCount = groups.filter(group => group === 'bottom').length
-      const dressCount = groups.filter(group => group === 'dress').length
-      const topCount = groups.filter(group => group === 'top').length
-      if (shoeCount > 1) return 'structural: more than one shoe'
-      if (shoeCount !== 1) return 'structural: missing shoes'
-      if (bottomCount > 1) return 'structural: more than one bottom'
-      if (dressCount > 1) return 'structural: more than one dress'
-      if (dressCount === 1 && bottomCount > 0) return 'structural: dress plus bottom'
-      if (dressCount !== 1 && topCount < 1) return 'structural: missing top'
-      if (dressCount !== 1 && bottomCount !== 1) return 'structural: missing bottom'
-      return 'structural: not a complete wardrobe outfit'
-    }
+    const structureByOutfit = new Map(normalizedModelOutfits.map(outfit => [
+      outfit,
+      evaluateOutfitStructure(outfit.pieces, { requireShoes: true }),
+    ]))
+    const structuralRejectionReason = (structure) => ({
+      multiple_shoes: 'structural: more than one shoe',
+      missing_shoes: 'structural: missing shoes',
+      multiple_bottoms: 'structural: more than one bottom',
+      multiple_dresses: 'structural: more than one dress',
+      dress_with_bottom: 'structural: dress plus bottom',
+      missing_top_or_dress: 'structural: missing top',
+      multiple_tops_without_bottom: 'structural: missing bottom',
+      missing_bottom: 'structural: missing bottom',
+    }[structure?.primaryFinding?.code] || 'structural: not a complete wardrobe outfit')
     const structurallyRejectedModelOutfits = normalizedModelOutfits
-      .filter(o => !isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
-      .map(outfit => ({ outfit, reason: structuralRejectionReason(outfit) }))
+      .filter(outfit => !structureByOutfit.get(outfit).valid)
+      .map(outfit => ({ outfit, reason: structuralRejectionReason(structureByOutfit.get(outfit)) }))
 
     // The composer above proposes from ISOLATED per-garment photos and never sees two pieces
     // together — its own written "reason" can rationalize a pairing that the actual photos, side
@@ -2212,7 +2211,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // opinion nobody asked for. Non-fatal: a critic failure must never block the whole turn.
     let visualClashDebug = null
     let clashFlaggedByOutfit = new Map()
-    const structurallyValidForClashReview = normalizedModelOutfits.filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+    const structurallyValidForClashReview = normalizedModelOutfits.filter(outfit => structureByOutfit.get(outfit).valid)
     // normalizeWholeWardrobeOutfitObject trims outfit.pieces to {id, name, category, photo,
     // worn_photo} — pattern_complexity and style_profile_json are gone by here, so the
     // questionable-check would silently see nothing to flag. Rehydrate against allowedPieces by
@@ -2271,11 +2270,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       ? normalizedModelOutfits.filter(outfit => !includesSavedMain(outfit)).length
       : 0
     const modelLayeredTopFormulaRejectedCount = savedFormulaRequiresLayeredTop
-      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && isOutfitStructurallyValid(outfit.pieces, { requireShoes: true }) && !hasLayeredTopFormula(outfit)).length
+      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && structureByOutfit.get(outfit).valid && !hasLayeredTopFormula(outfit)).length
       : 0
     let modelOutfits = normalizedModelOutfits
       .filter(includesSavedMain)
-      .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+      .filter(outfit => structureByOutfit.get(outfit).valid)
       .filter(o => !clashFlaggedByOutfit.has(o))
       .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
       .map(outfit => ({

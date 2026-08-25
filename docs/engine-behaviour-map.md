@@ -967,6 +967,14 @@ message before its dependency, slot, repetition, and set checks. The former plan
 diagnosis double evaluation is gone. Structural acceptance, rejection wording, advisor behavior,
 and model-call sequence are unchanged.
 
+**[validation-ownership consolidation, third consumer migration, 2026-08-24] Route-level visual
+composition no longer reimplements or repeatedly recomputes category structure.** Selected-piece
+resolution filters on `evaluateOutfitStructure(...).valid`. Whole visual composition caches one
+typed result per normalized model outfit and reuses it for structural diagnostics, clash-review
+eligibility, saved-variant accounting, and final filtering. Its public diagnostic vocabulary is a
+projection from finding codes, so existing strings and generation-run counts remain stable. Visual
+critic policy, local fallback, saved-Main handling, and accepted-card behavior are unchanged.
+
 ---
 
 ## The shape of a turn, and how many round-trips it takes

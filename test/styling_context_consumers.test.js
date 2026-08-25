@@ -126,3 +126,15 @@ test('whole-wardrobe and submitted-plan gates consume typed structure findings d
   assert.doesNotMatch(plan, /isOutfitStructurallyValid\(/)
   assert.doesNotMatch(plan, /describeOutfitStructureGap\(/)
 })
+
+test('route-level structure filters reuse typed findings and contain no category recount', () => {
+  assert.match(routeSource, /import \{ evaluateOutfitStructure \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
+  const whole = sourceBlock(
+    'export async function generateWholeWardrobeOutfitsVisualInternal',
+    "router.post('/generate-wardrobe-outfits-visual'",
+  )
+  assert.match(whole, /const structureByOutfit = new Map\(/)
+  assert.match(whole, /structureByOutfit\.get\(outfit\)\.valid/)
+  assert.doesNotMatch(whole, /const structuralRejectionReason = \(outfit\)/)
+})
