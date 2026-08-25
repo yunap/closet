@@ -394,7 +394,8 @@ Do not define one vague `compatibleBase` boolean. Audit and assign separate owne
 
 Verified current decision surfaces include:
 
-- `pieceReadsAsStandaloneBaseTop()` for freeform role validation;
+- `pieceReadsAsStandaloneBaseTop` for freeform role validation (historical snapshot; retired by the
+  2026-08-24 shared layer-direction migration);
 - shared `pieceRequiresBaseLayer()` and capsule-local `isCapsuleBaseCandidate()`;
 - `pieceHasExplicitTopLayerEvidence()`, `pieceHasExplicitBaseLayerEvidence()`, and
   `pieceDressSupportsUnderlayer()`;

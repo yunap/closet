@@ -4845,6 +4845,44 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
   assert.equal(accepted.status, 'success')
 })
 
+test('propose_outfit allows unknown ordinary layer direction only after both pieces are seen', async () => {
+  const ordinaryLayerId = insertPiece({
+    name: 'soft silk tee',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'soft short sleeve tee',
+    fabric_weight: 'light',
+  })
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, ordinaryLayerId]),
+  }
+  const outfitArgs = {
+    label: 'Visually judged layer',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: ordinaryLayerId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }
+
+  const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /layer direction is unknown/)
+  assert.equal(toolContext.freeformDiagnostics.proposeUnknownLayerDirectionBlocks, 1)
+
+  toolContext.visuallySeenPieceIds = new Set([Number(seeded.top), Number(ordinaryLayerId)])
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+  assert.equal(toolContext.freeformDiagnostics.proposeVisualLayerDirectionAllows, 1)
+})
+
 test('propose_outfit requires sight of both garments when legacy base-layer facts are incomplete', async () => {
   const dependentId = insertPiece({
     name: 'open crochet dependent top',

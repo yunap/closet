@@ -1,5 +1,7 @@
 import {
-  pieceReadsAsStandaloneBaseTop,
+  pieceDressSupportsUnderlayer,
+  pieceHasExplicitBaseLayerEvidence,
+  pieceHasExplicitTopLayerEvidence,
   pieceRequiresBaseLayer,
   wardrobeCategoryGroup,
 } from './attributes.js'
@@ -169,6 +171,143 @@ export function evaluateRequiredBaseLayers(pieces = [], { roleAware = false } = 
   }
 }
 
+function layerDirectionFinding(code, message, severity, evidence = {}) {
+  return {
+    code,
+    message,
+    kind: 'layer_direction',
+    severity,
+    evidence,
+  }
+}
+
+function layerDirectionPair(addedPiece, basePiece, { relationship, direction = null, source = null, sightRequired = 'both' } = {}) {
+  const addedId = Number(addedPiece?.id) || null
+  const baseId = Number(basePiece?.id) || null
+  if (direction) {
+    return {
+      verdict: 'compatible',
+      addedPiece,
+      basePiece,
+      direction,
+      findings: [],
+      evidence: { addedId, baseId, relationship, source },
+      sightRequired,
+    }
+  }
+  const finding = layerDirectionFinding(
+    'layer_direction_unknown',
+    `${addedPiece?.name || `piece ${addedId}`} + ${basePiece?.name || `piece ${baseId}`} has no recorded over/under direction; inspect both pieces and make the stylistic decision visually`,
+    'warning',
+    {
+      addedId,
+      baseId,
+      relationship,
+      sightRequired: 'both',
+      resolutionPolicy: 'provisional_visual_judgment',
+    },
+  )
+  return {
+    verdict: 'unknown',
+    addedPiece,
+    basePiece,
+    direction: null,
+    findings: [finding],
+    evidence: finding.evidence,
+    sightRequired: 'both',
+  }
+}
+
+// Canonical direction verdict for ordinary layering. Recorded construction/intent establishes a
+// known over/under relationship; absent legacy metadata is unknown, never proof of incompatibility.
+// `unknown` may be resolved only by a caller that has shown both photos to the stylist model. That
+// allowance is deliberately tagged as provisional and never writes a reusable garment fact.
+export function evaluateLayerDirections(pieces = [], { roleAware = false } = {}) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const pairs = []
+
+  if (!roleAware) {
+    const dresses = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
+    const tops = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'top')
+    for (const dress of dresses) {
+      for (const top of tops) {
+        const overlay = pieceHasExplicitTopLayerEvidence(top)
+        const underlay = pieceHasExplicitBaseLayerEvidence(top) ||
+          pieceDressSupportsUnderlayer(dress) || pieceRequiresBaseLayer(dress)
+        pairs.push(layerDirectionPair(top, dress, {
+          relationship: 'top_dress',
+          direction: underlay ? 'top_under_dress' : (overlay ? 'top_over_dress' : null),
+          source: underlay ? 'underlayer_evidence' : (overlay ? 'top_overlay_evidence' : null),
+          sightRequired: 'both',
+        }))
+      }
+    }
+  } else {
+    const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top')
+    const dresses = normalizedPieces.filter(piece => piece.role === 'dress')
+    const primaryTops = normalizedPieces.filter(piece => piece.role === 'primary_top')
+    for (const layerTop of layerTops) {
+      if (dresses.length) {
+        for (const dress of dresses) {
+          const overlay = pieceHasExplicitTopLayerEvidence(layerTop)
+          const underlay = pieceHasExplicitBaseLayerEvidence(layerTop) ||
+            pieceDressSupportsUnderlayer(dress) || pieceRequiresBaseLayer(dress)
+          pairs.push(layerDirectionPair(layerTop, dress, {
+            relationship: 'layer_top_dress',
+            direction: underlay ? 'top_under_dress' : (overlay ? 'top_over_dress' : null),
+            source: underlay ? 'underlayer_evidence' : (overlay ? 'top_overlay_evidence' : null),
+            sightRequired: 'both',
+          }))
+        }
+        continue
+      }
+      for (const primaryTop of primaryTops) {
+        const categoryGroup = wardrobeCategoryGroup(layerTop)
+        const overlay = categoryGroup === 'outerwear' || pieceRequiresBaseLayer(layerTop) ||
+          pieceHasExplicitTopLayerEvidence(layerTop)
+        const underlay = pieceHasExplicitBaseLayerEvidence(layerTop)
+        pairs.push(layerDirectionPair(layerTop, primaryTop, {
+          relationship: 'layer_top_primary_top',
+          direction: overlay ? 'layer_top_over_primary_top' : (underlay ? 'layer_top_under_primary_top' : null),
+          source: categoryGroup === 'outerwear'
+            ? 'outerwear_category'
+            : (pieceRequiresBaseLayer(layerTop)
+                ? 'dependent_layer_requires_base'
+                : (overlay ? 'top_overlay_evidence' : (underlay ? 'underlayer_evidence' : null))),
+          sightRequired: overlay || underlay ? 'one' : 'both',
+        }))
+      }
+    }
+  }
+
+  const findings = pairs.flatMap(pair => pair.findings)
+  const verdict = pairs.some(pair => pair.verdict === 'incompatible')
+    ? 'incompatible'
+    : (pairs.some(pair => pair.verdict === 'unknown') ? 'unknown' : 'compatible')
+  return {
+    verdict,
+    findings,
+    primaryFinding: findings[0] || null,
+    pairs,
+    evidence: {
+      roleAware: Boolean(roleAware),
+      resolvedDirections: pairs.filter(pair => pair.direction).map(pair => ({
+        addedId: Number(pair.addedPiece?.id) || null,
+        baseId: Number(pair.basePiece?.id) || null,
+        direction: pair.direction,
+        source: pair.evidence.source,
+      })),
+      provisionalVisualPairIds: pairs.filter(pair => pair.verdict === 'unknown').map(pair => [
+        Number(pair.addedPiece?.id) || null,
+        Number(pair.basePiece?.id) || null,
+      ]),
+    },
+    sightRequired: pairs.some(pair => pair.sightRequired === 'both')
+      ? 'both'
+      : (pairs.some(pair => pair.sightRequired === 'one') ? 'one' : 'none'),
+  }
+}
+
 function structureFinding(code, message, evidence = {}) {
   return {
     code,
@@ -274,13 +413,6 @@ export function evaluateOutfitRoles(pieces = []) {
   for (const piece of normalizedPieces) {
     const categoryFinding = roleCategoryFinding(piece)
     if (categoryFinding) findings.push(categoryFinding)
-    if (piece.role === 'layer_top' && pieceReadsAsStandaloneBaseTop(piece)) {
-      findings.push(roleStructureFinding(
-        'standalone_top_as_layer',
-        `${piece.name || `piece ${piece.id}`} is assigned as layer_top but reads as a standalone top, not a layer`,
-        { pieceId: piece.id, role: piece.role },
-      ))
-    }
   }
 
   return {

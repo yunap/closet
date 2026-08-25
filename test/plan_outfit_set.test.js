@@ -2201,8 +2201,27 @@ test('a blind top-over-dress submission is rejected with view_pieces coaching', 
 
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
-  assert.match(reasons, /layers a top over a dress/)
+  assert.match(reasons, /layers a top with a dress/)
   assert.match(reasons, /call view_pieces/)
+  assert.match(reasons, /model must decide it from both photos/)
+})
+
+test('an unrecorded top-dress direction is provisionally accepted after both pieces are seen', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'plain midi dress', occasions: ['city'] })
+  const topId = insertPiece({ category: 'top', name: 'plain blouse', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'flat shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dressId), Number(topId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([Number(dressId), Number(topId)]) })
+
+  assert.equal(result.failures.length, 0, JSON.stringify(result.failures))
+  assert.equal(result.accepted.length, 1)
 })
 
 test('an explicit overlay top over a dress is accepted once both pieces have been visually seen', async () => {
@@ -2260,7 +2279,7 @@ test('offline replay rejects the stale white-tank plus lace-dress IDs from threa
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
   assert.match(reasons, /reason revises itself mid-sentence/)
-  assert.match(reasons, /no recorded layering relationship/)
+  assert.doesNotMatch(reasons, /no recorded layering relationship/)
 })
 
 test('a plain top+bottom outfit is unaffected by the layering sight check (no dress present)', async () => {

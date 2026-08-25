@@ -1436,7 +1436,6 @@ test('executeTool propose_outfit rejects shoe missing_gaps as a substitute for a
 
     assert.equal(result.status, 'validation_error')
     assert.match(result.issues.join(' '), /missing shoes/)
-    assert.match(result.issues.join(' '), /standalone top/)
     assert.equal(toolContext.generatedOutfits.length, 1)
     assert.equal(toolContext.generatedOutfits[0].broken, true)
   } finally {

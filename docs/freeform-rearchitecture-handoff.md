@@ -1950,6 +1950,14 @@ batching.
 
 ## Gotchas for the next assistant
 
+**Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared
+over/under contract for plan submission, `propose_outfit`, and participating slot swaps. Missing
+legacy direction facts are `unknown`: both photos must be seen, then the model may make a
+provisional judgment for that turn. The allowance is separately counted as
+`proposeVisualLayerDirectionAllows`, stores no garment truth, and should be removed centrally if
+live styling quality is poor. The former tee/tank keyword veto is gone; required coverage beneath
+a `needs_base` garment remains a separate hard contract.
+
 - **Branch off fresh main before every piece of work** (recurring slip: twice a
   new family/step was committed onto the previous branch).
 - **User conventions:** they merge PRs to view them; they may have uncommitted

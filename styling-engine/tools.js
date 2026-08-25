@@ -10,7 +10,7 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
-import { evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES } from './outfitValidation.js'
+import { evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES } from './outfitValidation.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
@@ -1515,6 +1515,26 @@ async function executeToolInternal(name, args, toolContext = {}) {
             contractIssues.push(`required base-layer compatibility is unknown from the saved fit/opacity fields: call view_pieces (size:'large') for [${idsToSee.join(', ')}] and confirm the base sits cleanly beneath the dependent garment`)
           }
         }
+        const roleValidation = evaluateOutfitRoles(resolved)
+        const layerDirections = evaluateLayerDirections(resolved, { roleAware: true })
+        if (layerDirections.verdict === 'unknown' && roleValidation.valid) {
+          const unresolvedPairs = layerDirections.pairs.filter(pair => pair.verdict === 'unknown')
+          const unseenDirectionPairs = unresolvedPairs.filter(pair =>
+            !seenIdsThisTurn.has(Number(pair.addedPiece.id)) ||
+            !seenIdsThisTurn.has(Number(pair.basePiece.id)))
+          if (unseenDirectionPairs.length) {
+            const idsToSee = [...new Set(unseenDirectionPairs.flatMap(pair => [
+              Number(pair.addedPiece.id),
+              Number(pair.basePiece.id),
+            ]).filter(Boolean))]
+            bumpFreeformDiagnostic(toolContext, 'proposeUnknownLayerDirectionBlocks')
+            contractIssues.push(`layer direction is unknown from the saved garment facts: call view_pieces (size:'large') for [${idsToSee.join(', ')}], decide visually which piece sits over or under, and only keep the pairing if that relationship works`)
+          } else {
+            // Deliberately provisional: this records a one-turn visual judgment, not a reusable
+            // garment fact. If live results are poor, this single allowance can be retired.
+            bumpFreeformDiagnostic(toolContext, 'proposeVisualLayerDirectionAllows')
+          }
+        }
         // Spec 26 Part 1: same mid-revision reason check as
         // validateSubmittedPlanOutfits — a proposed outfit's why_it_works
         // revising itself mid-sentence while `pieces` stays the un-revised
@@ -1560,10 +1580,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         })
 
         // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
-        const roleValidation = evaluateOutfitRoles(resolved)
         const issues = [
           ...roleValidation.findings,
           ...requiredBaseLayers.findings.filter(finding => finding.severity === 'error'),
+          ...layerDirections.findings.filter(finding => finding.severity === 'error'),
         ].map(finding => finding.message)
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
@@ -1929,11 +1949,25 @@ async function executeToolInternal(name, args, toolContext = {}) {
             .map(piece => ({ ...piece, role: roleForPieceCategory(piece) }))
           resolved.push({ ...replacement, role: slotRole })
           resolved.sort((a, b) => OUTFIT_ROLES.indexOf(a.role) - OUTFIT_ROLES.indexOf(b.role))
+          const layerDirections = evaluateLayerDirections(resolved, { roleAware: true })
+          const directionParticipatingRole = ['layer_top', 'primary_top', 'dress'].includes(slotRole)
+          const unseenUnknownDirectionPairs = directionParticipatingRole
+            ? layerDirections.pairs.filter(pair => pair.verdict === 'unknown' && (
+                !toolContext.visuallySeenPieceIds?.has(Number(pair.addedPiece.id)) ||
+                !toolContext.visuallySeenPieceIds?.has(Number(pair.basePiece.id))))
+            : []
           const roleIssues = [
             ...evaluateOutfitRoles(resolved).findings,
             ...evaluateRequiredBaseLayers(resolved, { roleAware: true }).findings
               .filter(finding => finding.severity === 'error'),
+            ...layerDirections.findings.filter(finding => finding.severity === 'error'),
           ].map(finding => finding.message)
+          if (unseenUnknownDirectionPairs.length) {
+            const idsToSee = [...new Set(unseenUnknownDirectionPairs.flatMap(pair => [
+              Number(pair.addedPiece.id), Number(pair.basePiece.id),
+            ]).filter(Boolean))]
+            roleIssues.push(`layer direction is unknown from the saved garment facts; view both pieces [${idsToSee.join(', ')}] before making this swap`)
+          }
           const hardGateIssues = candidate.trust.allowed
             ? []
             : [`${replacement.name}: ${candidate.trust.reasons.join(', ')}`]

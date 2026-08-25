@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   evaluateBaseLayerCandidate,
+  evaluateLayerDirections,
   evaluateOutfitRoles,
   evaluateRequiredBaseLayers,
 } from '../styling-engine/outfitValidation.js'
@@ -143,24 +144,28 @@ test('invalid: no shoes and no missing_gaps entry for shoes', () => {
   assert.match(issues.join(' '), /missing shoes/)
 })
 
-test('invalid: standalone tee cannot be laundered into layer_top', () => {
-  const issues = roleIssues([
+test('ordinary tee in layer_top is structurally valid but has unknown direction', () => {
+  const pieces = [
     { id: 1, role: 'primary_top', name: 'ivory graphic print crew tee', category: 'top', reads_as: 'graphic crew tee' },
     { id: 2, role: 'layer_top', name: 'black graphic cat tee', category: 'top', reads_as: 'graphic tee' },
     p(3, 'primary_bottom'),
     p(4, 'shoes')
-  ])
-  assert.match(issues.join(' '), /standalone top/)
+  ]
+  assert.deepEqual(roleIssues(pieces), [])
+  const direction = evaluateLayerDirections(pieces, { roleAware: true })
+  assert.equal(direction.verdict, 'unknown')
+  assert.equal(direction.sightRequired, 'both')
+  assert.equal(direction.primaryFinding.evidence.resolutionPolicy, 'provisional_visual_judgment')
 })
 
-test('invalid: ordinary tank cannot be laundered into layer_top', () => {
-  const issues = roleIssues([
-    { id: 1, role: 'primary_top', name: 'ivory graphic print crew tee', category: 'top', reads_as: 'graphic crew tee' },
-    { id: 2, role: 'layer_top', name: 'ribbed cotton tank', category: 'top', reads_as: 'fitted tank' },
-    p(3, 'primary_bottom'),
-    p(4, 'shoes')
-  ])
-  assert.match(issues.join(' '), /standalone top/)
+test('explicit top-layer evidence records a known over direction', () => {
+  const result = evaluateLayerDirections([
+    { id: 1, role: 'primary_top', category: 'top' },
+    { id: 2, role: 'layer_top', category: 'top', engine_notes: 'Wear open over a fitted tee.' },
+  ], { roleAware: true })
+  assert.equal(result.verdict, 'compatible')
+  assert.equal(result.pairs[0].direction, 'layer_top_over_primary_top')
+  assert.equal(result.pairs[0].evidence.source, 'top_overlay_evidence')
 })
 
 test('valid: tank with explicit overlay evidence can be layer_top', () => {
@@ -177,4 +182,29 @@ test('valid: tank with explicit overlay evidence can be layer_top', () => {
     p(3, 'primary_bottom'),
     p(4, 'shoes')
   ]), [])
+})
+
+test('top plus dress direction distinguishes explicit underlayer from visual unknown', () => {
+  const known = evaluateLayerDirections([
+    { id: 1, category: 'dress', name: 'pinafore dress' },
+    { id: 2, category: 'top', name: 'fitted top', engine_notes: 'Base layer worn under dresses.' },
+  ])
+  assert.equal(known.verdict, 'compatible')
+  assert.equal(known.pairs[0].direction, 'top_under_dress')
+
+  const unknown = evaluateLayerDirections([
+    { id: 3, category: 'dress', name: 'plain midi dress' },
+    { id: 4, category: 'top', name: 'plain blouse' },
+  ])
+  assert.equal(unknown.verdict, 'unknown')
+  assert.deepEqual(unknown.evidence.provisionalVisualPairIds, [[4, 3]])
+})
+
+test('a top worn over a base layer is not misread as the base layer', () => {
+  const result = evaluateLayerDirections([
+    { id: 1, category: 'dress', name: 'plain midi dress' },
+    { id: 2, category: 'top', name: 'open knit', engine_notes: 'Top layer worn over a base layer.' },
+  ])
+  assert.equal(result.verdict, 'compatible')
+  assert.equal(result.pairs[0].direction, 'top_over_dress')
 })

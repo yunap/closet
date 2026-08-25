@@ -1244,8 +1244,7 @@
       "plan": {
         "accepted": false,
         "failureReasons": [
-          "Navy cotton tee + Blue cotton day dress has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer",
-          "this outfit layers a top over a dress — call view_pieces on [301, 101] first, then resubmit; layering is a sight-required decision."
+          "this outfit layers a top with a dress — call view_pieces on [301, 101] first, then resubmit; layering is a sight-required decision. The saved garment facts do not establish over/under direction, so the model must decide it from both photos."
         ]
       }
     }

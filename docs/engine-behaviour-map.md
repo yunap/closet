@@ -978,11 +978,20 @@ critic policy, local fallback, saved-Main handling, and accepted-card behavior a
 **[validation-ownership consolidation, explicit-role migration, 2026-08-24] Freeform role
 structure now has a typed owner outside the tool executor.** `evaluateOutfitRoles` returns ordered
 error findings and role-count evidence for explicit role validity/cardinality, footwear and core
-completeness, dress/primary conflicts, orphan layers, role/category mismatches, and standalone tops
-misassigned as `layer_top`. `propose_outfit` and slot-swap validation project the same messages and
+completeness, dress/primary conflicts, orphan layers, and role/category mismatches.
+`propose_outfit` and slot-swap validation project the same messages and
 retain the same reject/retry behavior. The former tool-local prose validator and its unused
 `missingGaps` parameter are gone. This does not settle pair mechanics, direction, sight, plan
 slot/set findings, or advisor disposition.
+
+**[validation-ownership consolidation, layer direction, 2026-08-24] Ordinary over/under direction
+is now a shared typed verdict.** `evaluateLayerDirections` resolves explicit overlay, underlayer,
+dependent-garment, role, and outerwear evidence. Missing direction is `unknown`, requires sight of
+both garments, and may then be accepted as a provisional one-turn model judgment; it is not saved
+as garment truth. Freeform diagnostics distinguish blocked unknown direction from visually allowed
+unknown direction, so the allowance can be evaluated and removed centrally. Submitted plans and
+direction-participating slot swaps consume the same verdict. The former tee/tank keyword veto was
+removed; required coverage mechanics remain a separate hard contract.
 
 ---
 

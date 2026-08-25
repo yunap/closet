@@ -314,9 +314,9 @@ There is currently no single owner. The shared concept must be split into six qu
 | Contract | Current surfaces | Current missing-data behavior | Classification / proposed owner |
 |---|---|---|---|
 | Dependent status: does this piece need something beneath it? | Structured `needs_base` through `pieceRequiresBaseLayer`; prompt lines are projections | Only explicit `yes` is dependent; unset and explicit `no` preserve the independent default | `canonical` reader in `attributes.js`; candidate, capsule, fallback, rendering, and swap decisions consume it |
-| Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate`; the older `pieceReadsAsStandaloneBaseTop` remains only in ordinary explicit-role direction validation | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
+| Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate` | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
 | Pair mechanics: can base A physically sit beneath dependent piece B? | `evaluateRequiredBaseLayers`, consumed by plan submission and freeform proposal/swap validation; visual composer prompt projects the same close-fit values | Missing opacity or fit returns `unknown` with `sightRequired: both` | `canonical` typed pair/outfit verdict consuming the structured coverage verdict |
-| Layer direction: which piece may sit over/under which? | `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`; plan/freeform checks | Explicit evidence required for unusual direction | Existing attribute readers stay canonical; add a shared direction verdict rather than prompt-only restatement |
+| Layer direction: which piece may sit over/under which? | `evaluateLayerDirections`, consuming `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, dependency, role and category facts | Missing direction is `unknown`; both photos are required, after which the model may make a provisional one-turn judgment | `canonical` typed verdict in `outfitValidation.js`; plan submission, freeform proposal, and participating slot swaps consume it |
 | Sight requirement: must photos be inspected? | Tool sight gates, visual roster, composer prompt | Varies by path and image availability | Shared verdict should name `none`, `one`, or `both`; flow controls whether unavailable sight rejects or discloses uncertainty |
 | Visual success: do neckline, bulk, texture, color, and proportion work? | Visual composer and stylist model | Not deterministically inferable | Model-owned judgment; never converted into keyword taste rules |
 
@@ -372,7 +372,8 @@ same verdict. Prompt presence alone is not enforcement.
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
 | `locallyGateWholeWardrobeOutfits` | Composes typed category structure with ownership, context/profile findings, and diversity | `adapter` plus disposition specialization | Structural errors reject in both modes; advisor annotates many later concerns and does not reinvent |
-| `evaluateOutfitRoles` | Typed explicit-role cardinality, shoes, primary core, role/category compatibility, and standalone-top-as-layer findings | `canonical` explicit-role structure; standalone-base reader remains the current narrow dependency | Freeform proposal and slot-swap consumers project finding messages and reject exactly as before |
+| `evaluateOutfitRoles` | Typed explicit-role cardinality, shoes, primary core, and role/category compatibility | `canonical` explicit-role structure; ordinary layer direction is a separate verdict | Freeform proposal and slot-swap consumers project finding messages |
+| `evaluateLayerDirections` | Typed known/unknown over-under relationships, evidence source, per-pair sight requirement, and provisional visual-resolution marker | `canonical` ordinary-layer direction; missing metadata never proves incompatibility | Plan submission, freeform proposal, and direction-participating slot swaps |
 | `validateCapsuleRoster` | Finite roster quotas, base/structure supply, slots and budget | `specialization` | Reject or report roster gaps |
 | `validateSlotOutfitConstraints` | Slot weather/activity/register/season and plan requirements | `specialization` | Failure reason for plan submission |
 | `validateSubmittedPlanOutfits` | Composes typed category structure with ownership, dependency, slot, repetition, core uniqueness, and set rules | `canonical` plan validator / orchestration | Accept or return structured failures |
@@ -713,6 +714,18 @@ even after sight. Slot swaps consume the same hard findings. Tests distinguish t
 blouse under ordinary outerwear, which remains outside the contract. The exact cross-flow baseline
 is unchanged because its dependency fixture has no candidate base; new fixtures cover known close,
 known loose, sheer, dependent, missing metadata, sight-backed unknown, and the ordinary-layer no-op.
+
+**Layer-direction contract migration, 2026-08-24:** `evaluateLayerDirections` now owns the distinct
+ordinary-layer question “which piece sits over or under which?” across submitted plans, freeform
+proposals, and direction-participating slot swaps. Explicit overlay, underlayer, dependency, role,
+and outerwear facts produce a known direction. Missing legacy direction data produces `unknown`,
+not a taste-coded rejection: both garments must be visually seen, then the stylist model may make a
+provisional one-turn judgment. That allowance is marked `provisional_visual_judgment` in typed
+evidence and counted separately as `proposeVisualLayerDirectionAllows`; it writes no garment fact
+and can be removed at the shared disposition point if live decisions are poor. The former
+`pieceReadsAsStandaloneBaseTop` tee/tank keyword veto was retired. Known construction
+incompatibilities remain governed separately by `evaluateRequiredBaseLayers` and cannot be
+overridden by sight.
 
 ### Slice 4 — reusable candidate-set construction
 

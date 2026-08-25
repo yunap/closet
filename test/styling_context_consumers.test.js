@@ -141,9 +141,13 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume typed role findings', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const roleValidation = evaluateOutfitRoles\(resolved\)/)
   assert.match(toolSource, /evaluateOutfitRoles\(resolved\)\.findings/)
+  assert.match(validationSource, /export function evaluateLayerDirections\(/)
+  assert.match(toolSource, /evaluateLayerDirections\(resolved, \{ roleAware: true \}\)/)
+  assert.match(plannerSource, /evaluateLayerDirections\(\[dressPiece, topPiece\]\)/)
+  assert.doesNotMatch(attributesSource, /pieceReadsAsStandaloneBaseTop/)
   assert.doesNotMatch(toolSource, /export function validateOutfitRoles\(/)
   assert.doesNotMatch(toolSource, /function roleCategoryIssue\(/)
 })

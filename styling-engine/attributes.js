@@ -869,14 +869,15 @@ function pieceLayerIntentText(piece = {}) {
 export function pieceHasExplicitTopLayerEvidence(piece = {}) {
   const text = pieceLayerIntentText(piece)
   return /\b(cardigan|jacket|overshirt|button[- ]?(up|down)|shirt[- ]?jacket|vest|kimono|wrap|coat|blazer)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
-    /\b(layering|layer|top layer|overlayer|overlay|over-piece|over piece)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(layering (piece|top|garment)|top layer|overlayer|overlay|over-piece|over piece)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
     /\b(worn|wear)\s+(open|over)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
     /\b(over|on top of)\s+(a\s+)?(tee|t-shirt|t shirt|tank|camisole|base|dress)\b/.test(text) // ratchet-allow: fallback for missing layering_role
 }
 
 export function pieceHasExplicitBaseLayerEvidence(piece = {}) {
   const text = pieceLayerIntentText(piece)
-  return /\b(base layer|underlayer|under-layer)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+  return /\b(is|as|acts? as|serves? as|intended as|fitted)\s+(a\s+)?(base layer|underlayer|under-layer)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(base layer|underlayer|under-layer)\s+(tee|top|tank|camisole|cami|shell)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
     /\b(worn|wear)\s+under\b/.test(text) || // ratchet-allow: fallback for missing layering_role
     /\bunder\s+(a\s+)?(dress|pinafore|jumper dress)\b/.test(text) // ratchet-allow: fallback for missing layering_role
 }
@@ -885,12 +886,6 @@ export function pieceDressSupportsUnderlayer(piece = {}) {
   const text = pieceLayerIntentText(piece)
   return /\b(pinafore|jumper dress)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
     /\b(worn|wear)\s+over\s+(a\s+)?(top|tee|t-shirt|t shirt|tank|camisole|base layer)\b/.test(text) // ratchet-allow: fallback for missing layering_role
-}
-
-export function pieceReadsAsStandaloneBaseTop(piece = {}) {
-  const text = pieceLayerIntentText(piece)
-  return /\b(tee|t-shirt|t shirt|crew tee|graphic tee|tank|camisole|cami|shell)\b/.test(text) && // ratchet-allow: fallback for missing layering_role
-    !pieceHasExplicitTopLayerEvidence(piece)
 }
 
 /**

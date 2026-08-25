@@ -41,6 +41,7 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import {
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
+  evaluateLayerDirections,
   evaluateOutfitStructure,
   evaluateRequiredBaseLayers,
 } from './outfitValidation.js'
@@ -57,9 +58,6 @@ import {
   pieceCoverage,
   shoeCoverage,
   sleeveCoverage,
-  pieceHasExplicitTopLayerEvidence,
-  pieceHasExplicitBaseLayerEvidence,
-  pieceDressSupportsUnderlayer,
   pieceRequiresBaseLayer
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -4052,16 +4050,13 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (dressPair && topPair) {
         const dressPiece = planPiecesById.get(dressPair.id)
         const topPiece = planPiecesById.get(topPair.id)
-        const supportsOverlay = pieceHasExplicitTopLayerEvidence(topPiece)
-        const supportsUnderlayer = pieceHasExplicitBaseLayerEvidence(topPiece) ||
-          pieceDressSupportsUnderlayer(dressPiece) ||
-          (pieceRequiresBaseLayer(dressPiece) && isCapsuleBaseCandidate(topPiece))
-        if (!supportsOverlay && !supportsUnderlayer) {
-          reasons.push(`${topPiece?.name || `piece ${topPair.id}`} + ${dressPiece?.name || `piece ${dressPair.id}`} has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer`)
-        }
+        const direction = evaluateLayerDirections([dressPiece, topPiece])
         const unseenIds = [dressPair.id, topPair.id].filter(id => !seenPieceIds.has(id))
         if (unseenIds.length) {
-          reasons.push(`this outfit layers a top over a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.`)
+          const unknownNote = direction.verdict === 'unknown'
+            ? ' The saved garment facts do not establish over/under direction, so the model must decide it from both photos.'
+            : ''
+          reasons.push(`this outfit layers a top with a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.${unknownNote}`)
         }
       }
       const printIssue = printPairingSightIssue(pieces, seenPieceIds)
