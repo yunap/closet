@@ -213,7 +213,11 @@ provider-enforced (forced Anthropic tool / strict OpenAI JSON Schema), not merel
 prompt prose; this was hardened after the first live one-call attempt narrated until its token cap.
 Each saved slot also carries its distinct core capacity. Exhausted slots suppress the expansion
 action, and the endpoint repeats that capacity check before the provider boundary (`providerCalls:
-0`), so stale clients cannot purchase a composition the roster cannot possibly supply.
+0`), so stale clients cannot purchase a composition the roster cannot possibly supply. **Amended
+2026-08-25:** a persisted zero is an authoritative exhausted-slot verdict, not missing data. If a
+version-1 card lacks the field, the route derives it through `capsuleOutfitCoreCapacity`; the
+former route-local top × bottom + dress fallback was deleted because it overcounted unsupported
+dependent tops.
 
 **[by design] Plan validation requirements are disclosed before composition.** Each model workbench
 slot carries `submission_requirements` generated from the same structured context the validator

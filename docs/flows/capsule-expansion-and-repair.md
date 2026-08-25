@@ -6,7 +6,8 @@ the pieces from the database, and pass any proposed result through the same plan
 by `submit_plan_outfits`.
 
 **Status:** Current behavior, traced 2026-08-24 at
-`ea2a6976ca32e74993caa26c95fd81158d4ada3b`; recovery ownership amended 2026-08-25.
+`ea2a6976ca32e74993caa26c95fd81158d4ada3b`; recovery and legacy-capacity ownership
+amended 2026-08-25.
 
 The two actions deliberately have different execution boundaries:
 
@@ -48,15 +49,18 @@ flowchart TD
 |---|---|---|
 | Source and context | `useCapsuleExpansion` in `StylistChat.jsx`; `normalizedCapsuleExpansionContext` in `routes/ai.js` | The card supplies versioned plan context, the requested slot, and existing capsule outfits. |
 | Eligibility | `/expand-capsule` route in `routes/ai.js` | Only still-active saved-roster pieces that remain in the slot's saved `allowedIds` may be used. The route does not search the wider wardrobe. |
-| Capacity | `capsuleExpansionCoreKey`; saved slot `coreCapacity`, with `capsuleExpansionCoreCapacity` as a fallback | A new top-bottom pair or dress must remain. Exhaustion stops before the provider boundary. |
+| Capacity | `capsuleExpansionCoreKey`; saved slot `coreCapacity`, with `capsuleOutfitCoreCapacity` as the legacy-card fallback | A new top-bottom pair or dress must remain. Exhaustion stops before the provider boundary. |
 | Composition | `capsuleExpansionSystemPrompt` and `askStylistStructuredWithUsage` | One strict-schema response, one outfit, no tool loop, no retry. |
 | Validation | `validateSubmittedPlanOutfits` | Reconstruct a one-slot pending plan and apply normal structure, slot, ownership, repetition, weather, activity, register, and dependency checks. |
 | Disposition | `/expand-capsule` route | Accept one card, or return the first failure visibly. It does not repair or silently broaden the roster. |
 | Response and persistence | `/expand-capsule`; `useCapsuleExpansion` | The response is marked `plan_outfit_set` / `composedBy: model`, carries the original plan context, and adds the shared accepted `result` with `capsule_expansion` provenance before the browser appends it. |
 
-`capsuleExpansionCoreCapacity` is a route-local fallback calculation. The saved slot capacity is
-preferred. Its relationship to the fuller `capsuleOutfitCoreCapacity` contract is an architecture
-census question, not a reason to change behavior in this documentation pass.
+**2026-08-25 architecture amendment:** Saved slot capacity remains preferred—including zero,
+because zero can be the planner's deliberate result after cross-slot competition. When a version-1
+legacy card omits that field, expansion now adapts the active saved-slot roster into
+`capsuleOutfitCoreCapacity` instead of recomputing top × bottom + dress locally. This makes
+unsupported dependent tops, dresses, shoe supply, and ordinary separate cores mean the same thing
+before planning and before expansion.
 
 ## Fix one rejected capsule outfit — `/repair-capsule-look`
 

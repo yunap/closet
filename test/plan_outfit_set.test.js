@@ -5030,6 +5030,50 @@ test('capsule capacity counts distinct gate-valid cores, not displayed cards', (
   assert.ok(capsuleOutfitCoreCapacity(roster, slots) > 2, 'capacity is independent of how many representative cards are shown')
 })
 
+test('legacy capsule expansion capacity comparison classifies parity and dependent-top divergence', () => {
+  const legacyExpansionCapacity = pieces => {
+    if (!pieces.some(piece => piece.category === 'shoes')) return 0
+    const tops = pieces.filter(piece => piece.category === 'top')
+    const bottoms = pieces.filter(piece => piece.category === 'bottom')
+    const dresses = pieces.filter(piece => piece.category === 'dress')
+    return (tops.length * bottoms.length) + dresses.length
+  }
+  const canonicalCapacity = (roster, allowedIds = roster.map(piece => piece.id)) =>
+    capsuleOutfitCoreCapacity(roster, [{ gateAllowedIds: new Set(allowedIds) }])
+  const ordinary = [
+    { id: 1, category: 'top' },
+    { id: 2, category: 'bottom' },
+    { id: 3, category: 'shoes' },
+  ]
+  const dress = [
+    { id: 4, category: 'dress' },
+    { id: 5, category: 'shoes' },
+  ]
+  const dependentWithoutBase = [
+    { id: 6, category: 'top', needs_base: 'yes' },
+    { id: 7, category: 'bottom' },
+    { id: 8, category: 'shoes' },
+  ]
+  const repeatedCompatibility = [
+    { id: 9, category: 'top' },
+    { id: 10, category: 'bottom' },
+    { id: 11, category: 'shoes' },
+  ]
+
+  assert.equal(legacyExpansionCapacity(ordinary), canonicalCapacity(ordinary), 'ordinary separates are a parity case')
+  assert.equal(legacyExpansionCapacity(dress), canonicalCapacity(dress), 'dress cores are a parity case')
+  assert.equal(legacyExpansionCapacity(dependentWithoutBase), 1, 'the deleted implementation overcounted this legacy card')
+  assert.equal(canonicalCapacity(dependentWithoutBase), 0, 'the canonical module requires a base for the dependent top')
+  assert.equal(
+    capsuleOutfitCoreCapacity(repeatedCompatibility, [
+      { gateAllowedIds: new Set([9, 10, 11]) },
+      { gateAllowedIds: new Set([9, 10, 11]) },
+    ]),
+    1,
+    'the canonical module deduplicates one core repeated across compatible slots'
+  )
+})
+
 test('capsule rotation allocates coverage before recurring multiplicity and respects slot capacity', () => {
   const roster = [
     { id: 1, category: 'top' },

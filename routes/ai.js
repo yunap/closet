@@ -44,7 +44,7 @@ import {
   TAG_PIECE_SYSTEM,
   EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
@@ -3543,7 +3543,9 @@ function normalizedCapsuleExpansionContext(raw = {}) {
     register: String(slot?.register || '').trim(),
     weatherLabel: String(slot?.weather_label || '').trim(),
     weatherProfile: slot?.weather_profile && typeof slot.weather_profile === 'object' ? slot.weather_profile : {},
-    coreCapacity: Math.max(0, Number(slot?.core_capacity) || 0),
+    coreCapacity: slot?.core_capacity === undefined || slot?.core_capacity === null
+      ? null
+      : Math.max(0, Number(slot.core_capacity) || 0),
     allowedIds: [...new Set((Array.isArray(slot?.allowed_piece_ids) ? slot.allowed_piece_ids : [])
       .map(Number).filter(id => rosterIds.includes(id)))]
   })).filter(slot => slot.id && slot.label)
@@ -3586,14 +3588,6 @@ function capsuleExpansionCoreKey(pieces = []) {
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
   return top && bottom ? `separates:${Number(top.id)}:${Number(bottom.id)}` : ''
-}
-
-function capsuleExpansionCoreCapacity(pieces = []) {
-  if (!pieces.some(piece => wardrobeCategoryGroup(piece) === 'shoes')) return 0
-  const tops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top')
-  const bottoms = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'bottom')
-  const dresses = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
-  return (tops.length * bottoms.length) + dresses.length
 }
 
 const CAPSULE_EXPANSION_SCHEMA = {
@@ -4114,7 +4108,10 @@ router.post('/expand-capsule', async (req, res) => {
       .filter(outfit => !outfit._slotId || outfit._slotId === contextSlot.id)
       .map(outfit => capsuleExpansionCoreKey(outfit.pieces))
       .filter(Boolean))
-    const slotCoreCapacity = contextSlot.coreCapacity || capsuleExpansionCoreCapacity(allowedPieces)
+    const slotCoreCapacity = contextSlot.coreCapacity ?? capsuleOutfitCoreCapacity(allowedPieces, [{
+      ...contextSlot,
+      gateAllowedIds: allowedIds
+    }])
     if (usedSlotCores.size >= slotCoreCapacity) {
       return res.status(409).json({
         error: `Full available rotation shown for ${contextSlot.label}; this capsule roster has no unused outfit core for that use case.`,
