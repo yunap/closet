@@ -16,6 +16,7 @@ import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerCon
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
 import { evaluateOutfitStructure } from './outfitValidation.js'
+import { validatedSubstitute } from './recovery.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
   ownerGuidanceApplicabilityFromSynthesis,
@@ -4865,16 +4866,30 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
             if (scoreA !== scoreB) return scoreB - scoreA
             return a.id - b.id
           })
-          const bestShoe = candidateShoes[0]
-          
-          if (Array.isArray(repaired.pieceIds)) {
-            repaired.pieceIds = repaired.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+          const substitution = validatedSubstitute({
+            subject: repaired,
+            target: currentShoe,
+            candidates: candidateShoes,
+            mutate: (currentOutfit, bestShoe) => ({
+              ...currentOutfit,
+              pieceIds: Array.isArray(currentOutfit.pieceIds)
+                ? currentOutfit.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+                : currentOutfit.pieceIds,
+              pieces: Array.isArray(currentOutfit.pieces)
+                ? currentOutfit.pieces.map(piece => Number(piece.id) === Number(currentShoe.id) ? bestShoe : piece)
+                : currentOutfit.pieces,
+            }),
+            validate: trial => evaluateOutfitStructure(wholeWardrobeFullPieces(trial, candidatePieces), { requireShoes: true }),
+            context: { flow: 'whole_wardrobe', reason: 'required_footwear' },
+          })
+          if (substitution.status === 'recovered') {
+            const updatedRepaired = rewriteWholeWardrobeOutfitWithArchetype(substitution.value, candidatePieces, occasion)
+            Object.assign(repaired, updatedRepaired)
+          } else {
+            const warning = "footwear is not trail-rated — closest available match."
+            if (!repaired.watchFor || repaired.watchFor === 'none') repaired.watchFor = warning
+            else if (!repaired.watchFor.includes(warning)) repaired.watchFor = `${repaired.watchFor}; ${warning}`
           }
-          if (Array.isArray(repaired.pieces)) {
-            repaired.pieces = repaired.pieces.map(p => Number(p.id) === Number(currentShoe.id) ? bestShoe : p)
-          }
-          const updatedRepaired = rewriteWholeWardrobeOutfitWithArchetype(repaired, candidatePieces, occasion)
-          Object.assign(repaired, updatedRepaired)
         } else {
           const warning = "footwear is not trail-rated — closest available match."
           if (!repaired.watchFor || repaired.watchFor === 'none') {

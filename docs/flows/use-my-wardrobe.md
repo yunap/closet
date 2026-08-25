@@ -58,6 +58,11 @@ Two things worth knowing at this altitude:
   broken outfit. Invalid outfits are dropped; then the app either backfills with
   locally-generated real outfits (only when the model produced *zero* valid ones)
   or pads the remaining slots with diagnostic "needs review" cards.
+- **Backfill is validator-bound, 2026-08-25.** `validatedFallback` now enumerates the locally ranked
+  candidates and immediately runs each through `locallyGateWholeWardrobeOutfits` with the same
+  advisor policy before it can enter the fill set. The caller still owns ranking, diversity, count,
+  and whether an explicitly rejected diagnostic card is displayed; the shared recovery primitive
+  owns only the rule that an ordinary recovered card cannot bypass the primary hard gate.
 
 > **Weather-location correction, 2026-08-19:** the Visual Composer header exposed the saved
 > weather location, but `POST /generate-wardrobe-outfits-visual` did not read it; "Current season"

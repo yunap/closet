@@ -84,6 +84,8 @@ import {
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
+import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
+import { validatedFallback } from './recovery.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -612,6 +614,22 @@ export function locallyGateOutfitDirections(outfits = [], selectedPiece) {
   return sortByStylisticStrength(accepted, selectedPiece).slice(0, 5)
 }
 
+export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, candidatePieces = []) {
+  const pieceById = new Map([selectedPiece, ...(candidatePieces || [])]
+    .filter(Boolean)
+    .map(piece => [Number(piece.id), piece]))
+  const pieces = (outfit.pieceIds || []).map(id => pieceById.get(Number(id))).filter(Boolean)
+  if (!pieces.some(piece => Number(piece.id) === Number(selectedPiece?.id))) {
+    return { valid: false, reason: 'selected_anchor_missing' }
+  }
+  const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
+  if (!structure.valid) return structure
+  const dependencies = evaluateRequiredBaseLayers(pieces)
+  return dependencies.verdict === 'incompatible'
+    ? { valid: false, primaryFinding: dependencies.primaryFinding }
+    : { valid: true }
+}
+
 export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece, { closetOnly = false, minCount = 3 } = {}) {
   const selectedId = Number(selectedPiece?.id)
   const merged = []
@@ -959,7 +977,15 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
     }
   }
 
-  return locallyGateOutfitDirections(outfits, selected).slice(0, 3)
+  const locallyGated = locallyGateOutfitDirections(outfits, selected).slice(0, 3)
+  const recoveryPieces = rankedCandidates.map(entry => entry?.piece || entry).filter(Boolean)
+  const fallback = validatedFallback({
+    candidates: locallyGated,
+    limit: 3,
+    validate: outfit => validateSelectedRecoveryOutfit(outfit, selected, recoveryPieces),
+    context: { flow: 'selected_piece', selectedPieceId: Number(selected?.id) || null },
+  })
+  return fallback.values
 }
 
 export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season, outfits = [], skip = '', saveableLearning = '' }) {
@@ -1073,6 +1099,12 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     outfits = mergeOutfitDirections(outfits, localFallback, selectedPiece, { closetOnly: true, minCount: 4 })
     console.log(`    - After mergeOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     outfits = sanitizeSelectedPieceOutfitDirections(outfits, selectedPiece, candidatePieces, { occasion })
+    outfits = validatedFallback({
+      candidates: outfits,
+      limit: outfits.length,
+      validate: outfit => validateSelectedRecoveryOutfit(outfit, selectedPiece, candidatePieces),
+      context: { flow: 'selected_piece_post_sanitize', selectedPieceId: Number(selectedPiece?.id) || null },
+    }).values
     console.log(`    - After sanitizeSelectedPieceOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     if (!outfits.length) {
       console.log(`    - Final outfits list empty, fallback to sanitized localFallback.`)

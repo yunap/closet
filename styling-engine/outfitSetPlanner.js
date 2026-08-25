@@ -39,6 +39,7 @@ import {
 } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
+import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
 import {
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
@@ -418,18 +419,20 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         return named !== 0 ? named : Number(a.id) - Number(b.id)
       })
 
-    let filled = null
-    for (const candidate of candidates) {
-      const trial = current.map((entry, position) => position === index
+    const completion = validatedComplete({
+      subject: current,
+      candidates,
+      mutate: (submissionsToComplete, candidate) => submissionsToComplete.map((entry, position) => position === index
         ? { ...entry, piece_ids: [...presentIds, Number(candidate.id)] }
-        : entry)
-      const trialResult = validateSubmittedPlanOutfits(pendingPlan, trial, options)
-      if (trialResult.accepted.length > result.accepted.length) {
-        current = trial
-        result = trialResult
-        filled = candidate
-        break
-      }
+        : entry),
+      validate: trial => validateSubmittedPlanOutfits(pendingPlan, trial, options),
+      accept: trialResult => trialResult.accepted.length > result.accepted.length,
+      context: { flow: 'plan_outfit_set', slotId: failure.slot_id, missingGroup },
+    })
+    const filled = completion.status === 'recovered' ? completion.candidate : null
+    if (completion.status === 'recovered') {
+      current = completion.value
+      result = completion.validation
     }
     completions.push({
       slotId: failure.slot_id,
@@ -449,7 +452,16 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     accepted: result.accepted,
     failures: result.failures,
     submissions: current,
-    completions: completions.filter(entry => entry.filled)
+    completions: completions.filter(entry => entry.filled),
+    shortfall: result.failures.length
+      ? discloseRecoveryShortfall({
+          operation: 'complete',
+          requestedCount: current.length,
+          recoveredCount: result.accepted.length,
+          reason: 'plan_completion_exhausted',
+          context: { flow: 'plan_outfit_set' },
+        })
+      : null,
   }
 }
 
@@ -3130,22 +3142,27 @@ export async function selectCapsuleRosterViaModel({
       requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
     )
     while (capsuleNeutralBaseCount(roster) > neutralPlan.maximum) {
-      let swapped = false
-      for (const replacement of accentCandidates) {
-        const replaceIndex = roster.findIndex(piece =>
+      const swaps = accentCandidates.map(replacement => ({
+        replacement,
+        replaceIndex: roster.findIndex(piece =>
           colorsArePaletteNeutral(piece?.colors) &&
           wardrobeCategoryGroup(piece) === wardrobeCategoryGroup(replacement)
-        )
-        if (replaceIndex < 0) continue
-        const trial = [...roster]
-        trial[replaceIndex] = replacement
-        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).ok) continue
-        roster = trial
-        accentCandidates.splice(accentCandidates.indexOf(replacement), 1)
-        swapped = true
-        break
-      }
-      if (!swapped) break
+        ),
+      })).filter(candidate => candidate.replaceIndex >= 0)
+      const substitution = validatedSubstitute({
+        subject: roster,
+        candidates: swaps,
+        mutate: (currentRoster, candidate) => currentRoster.map((piece, index) =>
+          index === candidate.replaceIndex ? candidate.replacement : piece),
+        validate: trial => validateCapsuleRoster(trial, {
+          slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool,
+        }),
+        context: { flow: 'capsule_roster', reason: 'palette_neutral_ceiling' },
+      })
+      if (substitution.status !== 'recovered') break
+      roster = substitution.value
+      const usedReplacement = substitution.candidate.replacement
+      accentCandidates.splice(accentCandidates.indexOf(usedReplacement), 1)
     }
     return roster
   }

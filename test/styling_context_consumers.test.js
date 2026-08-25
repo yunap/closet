@@ -9,6 +9,8 @@ const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/o
 const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
 const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
 const candidateSetSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/candidateSet.js'), 'utf8')
+const recoverySource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/recovery.js'), 'utf8')
+const footwearSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/footwear-comfort.js'), 'utf8')
 const attributesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/attributes.js'), 'utf8')
 const coreSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
 const promptSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
@@ -119,6 +121,23 @@ test('visual composition stops before its provider call when structural supply i
     const provider = block.indexOf('askStylistWithUsage({')
     assert.ok(guard >= 0 && provider > guard, 'structural shortfall must return before the composer boundary')
   }
+})
+
+test('active recovery paths delegate mutations to one validator-enforcing owner', () => {
+  assert.match(recoverySource, /export function validatedSubstitute\(/)
+  assert.match(recoverySource, /export function validatedComplete\(/)
+  assert.match(recoverySource, /export function validatedFallback\(/)
+  assert.match(recoverySource, /export function discloseRecoveryShortfall\(/)
+  assert.match(coreSource, /validatedFallback\(\{/)
+  assert.match(coreSource, /export function validateSelectedRecoveryOutfit\(/)
+  assert.match(rulesSource, /validatedSubstitute\(\{/)
+  assert.match(footwearSource, /validatedSubstitute\(\{/)
+  assert.match(plannerSource, /validatedComplete\(\{/)
+  assert.match(plannerSource, /validatedSubstitute\(\{/)
+  assert.match(routeSource, /validatedComplete\(\{/)
+  assert.match(routeSource, /validatedSubstitute\(\{/)
+  assert.match(routeSource, /validatedFallback\(\{/)
+  assert.match(toolSource, /validatedSubstitute\(\{/)
 })
 
 test('whole-wardrobe footwear recovery consumes the shared automatic-use pool core', () => {

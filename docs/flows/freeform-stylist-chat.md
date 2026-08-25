@@ -162,6 +162,13 @@ reject those findings. An explicit user-requested anchor changes proposal dispos
 shared result retains its underlying findings. The tools no longer parse hard-gate reason strings
 or call the piece verdict independently.
 
+**[2026-08-25] Corrected cards use shared validated substitution.** When a later
+`propose_outfit` call replaces one piece from this turn's retryable broken card, the model still
+chooses the replacement and the tool-loop still owns its paid iteration budget. Before the broken
+card is superseded, `validatedSubstitute` runs the exact corrected card through the same explicit-role
+and required-base hard checks. A failed mutation remains a validation error; it cannot become the
+surviving card merely because it overlaps the prior attempt.
+
 **[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
 accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
 the commentary drifting from what it commented on: a follow-up called the loafers the grounding

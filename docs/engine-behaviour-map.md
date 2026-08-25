@@ -1167,6 +1167,19 @@ composer call and return no fallback card when the final gated roster is incompl
 continue only for the coverable portion and disclose each unfilled slot. Search remains retrieval
 and does not inherit the composition-coverage requirement.
 
+**[recovery ownership, 2026-08-25] A fallback or mutation cannot weaken the primary hard
+contract.** `recovery.js` owns four mechanics: `validatedSubstitute`, `validatedComplete`,
+`validatedFallback`, and `discloseRecoveryShortfall`. The first three require a validator callback
+and run it immediately against each exact mutated/replacement result; rejected attempts remain
+attempt evidence and are never returned as recovered. Selected local/absolute fallbacks inject
+anchor, structure, and required-base checks; whole backfill injects
+`locallyGateWholeWardrobeOutfits`; comfort and required-footwear swaps inject category structure;
+plan/capsule mutations inject `validateSubmittedPlanOutfits` or `validateCapsuleRoster`; freeform
+correction supersession injects explicit-role and required-base checks. Candidate ordering, whether
+unknown visual evidence may proceed, retry/provider budgets, and visible disposition remain local
+policy. Exhaustion uses one structured `recovery_shortfall` report while existing human-facing
+wording stays flow-specific.
+
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
 pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review

@@ -171,6 +171,12 @@ at composition time instead of rejecting it to a needs-review card. The logic al
 On the live run this converts **7 good + 3 needs-review into 9 good + 1**, at no model cost.
 Testable offline against the saved thread. Implemented as `completeSubmittedPlanOutfits`; only
 structural absence is completed, and the entire rotation is revalidated after each completion.
+Since 2026-08-25 the enumeration runs through shared `validatedComplete`: the capsule still owns
+its stable candidate order and zero-call budget, while the primitive makes the
+`validateSubmittedPlanOutfits` postcondition mandatory and emits the standard recovery-shortfall
+shape when no allowed addition validates. The same split applies to deterministic capsule-card
+repair (`validatedComplete` for absence, `validatedSubstitute` for a blocked piece) and palette
+roster swaps (`validatedSubstitute` with `validateCapsuleRoster`).
 
 ### Step 2 — slot facts *(complete 2026-07-30)*
 

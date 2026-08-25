@@ -11,6 +11,7 @@ import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
 import { evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES } from './outfitValidation.js'
+import { validatedSubstitute } from './recovery.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
@@ -1752,9 +1753,38 @@ async function executeToolInternal(name, args, toolContext = {}) {
           previewOnly: true,
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }
+        const removedForRecovery = supersededBroken
+          ? (supersededBroken.pieces || []).find(piece => !proposedPieceIdSet.has(Number(piece?.id)))
+          : null
+        const correctionRecovery = removedForRecovery
+          ? validatedSubstitute({
+              subject: supersededBroken,
+              target: removedForRecovery,
+              candidates: [proposedOutfit],
+              // The model has already supplied the complete corrected card. Treat that exact card
+              // as the substitution result; do not reconstruct it and risk losing roles or text.
+              mutate: (_broken, corrected) => corrected,
+              validate: corrected => {
+                const roles = evaluateOutfitRoles(corrected.pieces)
+                if (!roles.valid) return roles
+                const dependencies = evaluateRequiredBaseLayers(corrected.pieces, { roleAware: true })
+                return dependencies.verdict === 'incompatible'
+                  ? { valid: false, primaryFinding: dependencies.primaryFinding }
+                  : { valid: true }
+              },
+              context: { flow: 'freeform_propose_outfit', supersededLabel: supersededBroken.label || '' },
+            })
+          : null
+        if (correctionRecovery && correctionRecovery.status !== 'recovered') {
+          bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
+          return {
+            status: 'validation_error',
+            message: 'The corrected outfit still fails the same hard outfit validator after substitution. Search for another replacement and re-propose the complete card.',
+          }
+        }
         toolContext.generatedOutfits = [
           ...existingOutfits.filter(outfit => outfit !== supersededBroken),
-          proposedOutfit
+          correctionRecovery?.value || proposedOutfit
         ]
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
@@ -2447,7 +2477,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // free — shipping it as a needs-review card makes the person do by
           // hand what the repair endpoint would have done in one click.
           const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
-          const { accepted, failures, completions } = completeSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+          const { accepted, failures, completions, shortfall: recoveryShortfall } = completeSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
             visuallySeenPieceIds: seenForValidation
           })
           for (const completion of completions) {
@@ -2588,6 +2618,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             bounded_composition: true,
             message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
             plan_lines: planLinesForResponse,
+            recovery_shortfall: recoveryShortfall,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
               coverage: outfit.coveragePosition,

@@ -7,9 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
-**Status:** Active — Stage 1 and Slices 0, 2, and 4 complete; Slices 1 and 3 in progress as of
+**Status:** Active — Stage 1 and Slices 0, 2, 4, and 5 complete; Slices 1 and 3 in progress as of
 2026-08-25. Proposed ownership decisions marked unresolved still require the named owner ruling
-before implementation. Slice 5 is next.
+before implementation. Slice 6 is next.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -113,7 +113,7 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 | Piece eligibility | 11 | `evaluateAutomaticUsePiecePool` over `wholeWardrobePieceTrustDecision` and narrow verdict helpers | Visual presentation policy, retrieval broadening, explicit anchor disposition, and post-composition validators still add flow policy | Critical: remaining compatibility and validation callers can still diverge until migrated | 2 |
 | Outfit validation | 11 | `evaluateOutfitStructure` owns typed category-core findings and `evaluateOutfitRoles` owns typed explicit-role findings | Selected gates, whole advisor/gate, plan submission, concept boards, and route-local checks still compose different dependency, context, slot/set, and disposition rules | Critical: identical outfits can still be accepted, annotated, repaired, or rejected for accidental reasons outside the two shared structural cores | 3 |
 | Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
-| Recovery and fallback | 8 | Some shared validators and footwear helpers | Selected local/absolute fallback, whole backfill, plan completion, capsule repair, freeform retry, and diagnostic cards independently mutate or replace results | High: error paths silently weaken the primary path's contract | 5 |
+| Recovery and fallback | 8 | `recovery.js` owns validated substitute, complete, fallback, and shortfall mechanics; flow strategies inject their authoritative validator | Candidate ordering, retry/cost budgets, and visible disposition remain flow policy; diagnostic broken cards remain explicitly rejected evidence rather than accepted recovery | Reduced: no migrated mutation can return as recovered before its primary hard validator accepts the exact result | 5 |
 | Prompt fact projection | 10 | Style Constitution exports and some serializers | Composer, selected-anchor, freeform tool, plan, capsule, board, and saved-variant prompts restate overlapping runtime facts | High: a code fix can be absent from the model-visible contract, or prompt wording can invent another rule | 6 |
 | Response normalization | 11 | Several normalization/card assemblers | Source labels, debug reasons, validation failures, needs-review state, plan context, and persistence are assembled per route/tool | Medium: downstream UI and follow-up state see semantically different shapes | 7 |
 | Provider invocation and usage | 10 provider-crossing pipelines | `askStylist*` abstraction and telemetry context | Nested-call attribution and direct image/Responses calls remain specialized | Medium but well documented; no broad rewrite justified now | 8 |
@@ -398,21 +398,22 @@ The ratified whole-wardrobe no-reinvention rule stays intact.
 | `/repair-capsule-look` | Deterministic missing-piece addition or one-for-one same-category swap, validating every attempt | `specialization` |
 | `/expand-capsule` | No repair; one composition and one validation pass | `specialization` / explicit no-retry disposition |
 | Freeform tool-loop correction | Model can act on validation failures in a later iteration | `specialization` / paid retry boundary |
-| Selected local fallback and absolute backfill | Reduced-ambition deterministic directions | `legacy` relative to shared hard-parity requirement; active |
-| Whole local candidate backfill | Ranked local candidates passed through whole gating | `specialization` with stronger shared parity |
+| Selected local fallback and absolute backfill | Reduced-ambition deterministic directions passed through shared validated fallback with anchor, structure, and dependency checks | `specialization` |
+| Whole local candidate backfill | Ranked local candidates passed through shared validated fallback using the whole advisor gate | `specialization` |
 | Whole diagnostic cards | Surface why acceptable cards could not be produced | `canonical` disclosure disposition for advisor failure |
 
-**Shared invariant proposed:** Primary, repair, completion, and fallback paths consume the same hard
+**Shared invariant implemented 2026-08-25:** Primary, repair, completion, and fallback paths consume the same hard
 ownership, eligibility, structure, and dependency verdicts. They may differ in ambition, aesthetic
 judgment, retry cost, and whether a soft finding annotates or rejects.
 
-**Proposed owner:** Keep repair strategies local to the flow; share the verdicts they test. Add a
-common “validate candidate after mutation” adapter so a repair cannot return an unvalidated card.
-Rename functions only in the migration slice where callers and docs change together.
+`recovery.js` is the common post-mutation adapter. `validatedSubstitute`, `validatedComplete`, and
+`validatedFallback` enumerate caller-ranked candidates and return only exact results accepted by
+the injected validator; `discloseRecoveryShortfall` supplies one machine-readable exhaustion shape.
+Repair strategy, ranking, and provider budget stay local.
 
-**Owner rulings required:** Should the selected absolute fallback be allowed to return a needs-review
-card when no fully valid composition exists, or should it disclose an empty/gap result? Should local
-fallback ever proceed with an unknown base pairing if photos are unavailable?
+**Owner rulings applied:** selected fallback does not ship a structurally/dependency-invalid
+needs-review substitute; it discloses the gap. An unknown historical base pairing remains eligible
+for visual judgment, while an explicitly incompatible pairing cannot pass fallback.
 
 ### 4.9 Provider execution and telemetry
 
@@ -767,6 +768,17 @@ retry budgets remain flow policy.
 
 **Required proof:** no recovery path can return a result the corresponding primary validator would
 reject on a hard invariant.
+
+**Implemented 2026-08-25:** `recovery.js` now provides validator-mandatory `validatedSubstitute`,
+`validatedComplete`, and `validatedFallback` operations plus `discloseRecoveryShortfall`. Selected
+local and absolute fallback use anchor + category structure + required-base validation; whole local
+backfill injects `locallyGateWholeWardrobeOutfits`; both footwear repair implementations validate
+the exact shoe-mutated outfit; plan completion and capsule completion/substitution inject
+`validateSubmittedPlanOutfits`; capsule roster palette substitution injects
+`validateCapsuleRoster`; and a freeform correction that supersedes a broken proposal validates the
+exact corrected card before replacement. Candidate order, one-call/no-call policies, and retry
+budgets remain with their flows. Permanent unit and source-ratchet tests prove the common owner is
+present at every migrated recovery boundary.
 
 ### Slice 6 — projections and response normalization
 

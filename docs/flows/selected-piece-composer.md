@@ -90,7 +90,7 @@ Same finite-pool authority (`evaluateVisualComposerPiecePool`), different framin
 | Memory            | lean (feedback + favorites)        | rich, garment-specific (outfits, gold feedback, saved boards, calibration) (`ai.js:2130`) |
 | Modes             | one (advisor)                      | three: wardrobe / ideal directions / ideal-only (`ai.js:2114`) |
 | Repair            | **no** (advisor mode)              | **yes** — `applyComfortFootwearRepair` (`ai.js:2226`) |
-| Fallback          | local backfill or diagnostic cards | local fallback direction → basic backfill (always non-empty) (`ai.js:2200`) |
+| Fallback          | validated local backfill or explicit shortfall | validated local direction → validated basic backfill (`generateOutfitsForPieceInternal`) |
 
 Engineer notes:
 
@@ -143,7 +143,12 @@ Engineer notes:
   to the whole-wardrobe advisor flow.
 - **Fallback after viable supply**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
   still 0 → a hand-built basic backfill using the anchor + recovery-safe supports. Neither fallback
-  can reopen a validity-excluded piece.
+  can reopen a validity-excluded piece. Since 2026-08-25 both use `validatedFallback`: the local
+  directions must preserve the anchor and pass category structure plus required-base validation;
+  the absolute candidate is checked against those same hard facts before it can become a card. If
+  it fails, the response carries a machine-readable recovery shortfall instead of preserving the
+  old “always non-empty” behavior. Comfort shoe swaps use `validatedSubstitute` and validate the
+  exact mutated outfit before returning it.
 
 ### Recorded follow-up — malformed/truncated composer JSON
 

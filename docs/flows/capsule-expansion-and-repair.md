@@ -6,7 +6,7 @@ the pieces from the database, and pass any proposed result through the same plan
 by `submit_plan_outfits`.
 
 **Status:** Current behavior, traced 2026-08-24 at
-`ea2a6976ca32e74993caa26c95fd81158d4ada3b`.
+`ea2a6976ca32e74993caa26c95fd81158d4ada3b`; recovery ownership amended 2026-08-25.
 
 The two actions deliberately have different execution boundaries:
 
@@ -89,10 +89,15 @@ flowchart TD
 | Source and context | Capsule repair action in `StylistChat.jsx`; `normalizedCapsuleExpansionContext` in `routes/ai.js` | The rejected card supplies original IDs, any specifically blocked IDs, its slot, sibling accepted looks, and saved plan context. |
 | Eligibility | `/repair-capsule-look` route | Candidates are limited to still-active members of the slot's saved gate-passing roster. |
 | Diagnosis | `describeOutfitStructureGap` in `outfitSetPlanner.js` | Missing shoes, bottom, or top is treated as an addition problem; other failures become substitution attempts. |
-| Repair | `/repair-capsule-look` route | Add one missing category, or swap a blocked/original piece with another allowed piece from the same wardrobe category. Candidate order is deterministic. |
+| Repair | `/repair-capsule-look` route + shared `validatedComplete` / `validatedSubstitute` | Add one missing category, or swap a blocked/original piece with another allowed piece from the same wardrobe category. Candidate order is deterministic and remains route policy. |
 | Validation | `validateSubmittedPlanOutfits` | Every attempted card is checked against the real one-slot pending plan and its held sibling outfits. |
 | Disposition and fallback | `/repair-capsule-look` route | Return the first accepted repair. If none exists, disclose the local shortfall. There is no billed fallback and no wider-wardrobe search. |
 | Response | `/repair-capsule-look`; capsule repair handler in `StylistChat.jsx` | The card is replaced in place, marked `plan_outfit_set` / `composedBy: engine`, and includes a short engine note naming the addition or swap. |
+
+The 2026-08-25 ownership change does not alter the model-call sequence or widen the saved roster.
+The shared primitive calls `validateSubmittedPlanOutfits` immediately after each exact mutation and
+cannot return the mutation as recovered unless it passes. Exhaustion uses
+`discloseRecoveryShortfall`, surfaced in response debug alongside the existing human 409 message.
 
 ## Shared boundary and deliberate differences
 

@@ -138,11 +138,13 @@ import {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
 import { evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
   composeStructuredOutfitsForPiece,
   buildLocalFallbackOutfitDirections,
+  validateSelectedRecoveryOutfit,
   normalizeGeneratedOutfitObject,
   formatStructuredOutfitFeedback,
   boardPlanFromStructuredOutfits,
@@ -1722,7 +1724,7 @@ export async function generateOutfitsForPieceInternal({
     const candidates = recoveryRankedCandidates.map(r => r.piece).filter(Boolean)
     const selectedGroup = wardrobeCategoryGroup(parsedPiece)
     const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
-    structuredOutfits = [normalizeGeneratedOutfitObject({
+    const absoluteCandidate = normalizeGeneratedOutfitObject({
       label: 'Best available wardrobe direction',
       strength: 'usable',
       dominantDirection: 'simple closet-based pairing using the selected garment',
@@ -1737,7 +1739,18 @@ export async function generateOutfitsForPieceInternal({
         worn_photo: p.worn_photo || null
       })).slice(0, 5),
       reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
-    }, parsedPiece, [parsedPiece, ...candidates])]
+    }, parsedPiece, [parsedPiece, ...candidates])
+    const absoluteFallback = validatedFallback({
+      candidates: [absoluteCandidate],
+      limit: 1,
+      validate: outfit => validateSelectedRecoveryOutfit(outfit, parsedPiece, candidates),
+      context: { flow: 'selected_piece_absolute', selectedPieceId: Number(parsedPiece.id) },
+    })
+    structuredOutfits = absoluteFallback.values
+    if (!structuredOutfits.length) {
+      composed.recoveryShortfall = absoluteFallback.report
+      if (!composed.skip) composed.skip = absoluteFallback.report.message
+    }
   }
 
   if (comfortConstraint) {
@@ -1777,6 +1790,7 @@ export async function generateOutfitsForPieceInternal({
     debug: {
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
+      recoveryShortfall: composed.recoveryShortfall || null,
       weatherProfile,
       stylingContext: stylingContext.debug
     }
@@ -2418,6 +2432,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }))
 
     let localBackfillOutfits = []
+    let localBackfillRecoveryReport = null
     let localBackfillCandidateCount = 0
     let localBackfillMissingMainRejectedCount = 0
     let diagnosticBackfillOutfits = []
@@ -2548,8 +2563,21 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     if (structuredOutfits.length < requestedLimit) {
       if (!modelOutfits.length || savedFormulaRequiresLayeredTop) {
         if (!modelOutfits.length) console.log(`    - Visual Composer AI returned 0 structurally valid outfits. Filling from local candidate generation.`)
+        const localFallbackCandidates = buildVisualLocalBackfill()
+        const localFallbackRecovery = validatedFallback({
+          candidates: localFallbackCandidates,
+          limit: requestedLimit,
+          validate: candidate => locallyGateWholeWardrobeOutfits(
+            [candidate],
+            1,
+            { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: roster, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
+          ),
+          accept: validation => validation.outfits.length > 0,
+          context: { flow: 'whole_wardrobe_visual' },
+        })
+        localBackfillRecoveryReport = localFallbackRecovery.report
         gatedLocal = locallyGateWholeWardrobeOutfits(
-          buildVisualLocalBackfill(),
+          localFallbackRecovery.values,
           requestedLimit,
           { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: roster, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
         )
@@ -2607,6 +2635,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
+    visualDebugLog.localBackfillRecovery = localBackfillRecoveryReport
     visualDebugLog.localBackfillMissingMainRejected = localBackfillMissingMainRejectedCount
     visualDebugLog.diagnosticBackfillCandidates = diagnosticBackfillCandidateCount
     visualDebugLog.diagnosticBackfillOutfits = diagnosticBackfillOutfits.length
@@ -4188,18 +4217,21 @@ router.post('/repair-capsule-look', async (req, res) => {
       const additions = allowedPieces
         .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !originalIds.includes(Number(piece.id)))
         .sort((a, b) => Number(a.id) - Number(b.id))
-      for (const candidate of additions) {
-        const pieceIds = [...originalIds, Number(candidate.id)]
-        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+      const completion = validatedComplete({
+        subject: originalIds,
+        candidates: additions,
+        mutate: (pieceIds, candidate) => [...pieceIds, Number(candidate.id)],
+        validate: pieceIds => validateSubmittedPlanOutfits(pendingPlan, [{
           slot_id: contextSlot.id,
           title: String(req.body?.title || contextSlot.label || '').trim(),
           piece_ids: pieceIds,
           reason: ''
-        }])
-        if (accepted.length) {
-          attempts.push({ accepted: accepted[0], replaced: null, replacement: candidate, added: true })
-          break
-        }
+        }]),
+        accept: validation => validation.accepted.length > 0,
+        context: { flow: 'capsule_look', slotId: contextSlot.id, missingGroup },
+      })
+      if (completion.status === 'recovered') {
+        attempts.push({ accepted: completion.validation.accepted[0], replaced: null, replacement: completion.candidate, added: true })
       }
     }
     for (const targetId of attempts.length ? [] : swapTargets) {
@@ -4208,18 +4240,22 @@ router.post('/repair-capsule-look', async (req, res) => {
       const candidates = allowedPieces
         .filter(piece => wardrobeCategoryGroup(piece) === targetGroup && !originalIds.includes(Number(piece.id)))
         .sort((a, b) => Number(a.id) - Number(b.id))
-      for (const candidate of candidates) {
-        const pieceIds = originalIds.map(id => (id === targetId ? Number(candidate.id) : id))
-        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+      const substitution = validatedSubstitute({
+        subject: originalIds,
+        target: targetId,
+        candidates,
+        mutate: (pieceIds, candidate, replacedId) => pieceIds.map(id => id === replacedId ? Number(candidate.id) : id),
+        validate: pieceIds => validateSubmittedPlanOutfits(pendingPlan, [{
           slot_id: contextSlot.id,
           title: String(req.body?.title || contextSlot.label || '').trim(),
           piece_ids: pieceIds,
           reason: ''
-        }])
-        if (accepted.length) {
-          attempts.push({ accepted: accepted[0], replaced: targetPiece, replacement: candidate })
-          break
-        }
+        }]),
+        accept: validation => validation.accepted.length > 0,
+        context: { flow: 'capsule_look', slotId: contextSlot.id, targetId },
+      })
+      if (substitution.status === 'recovered') {
+        attempts.push({ accepted: substitution.validation.accepted[0], replaced: targetPiece, replacement: substitution.candidate })
       }
       if (attempts.length) break
     }
@@ -4229,7 +4265,16 @@ router.post('/repair-capsule-look', async (req, res) => {
         error: missingGroup
           ? `That look is missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}, and nothing in this capsule's roster for ${contextSlot.label} completes it.`
           : 'No single swap from this capsule roster fixes that look — the pieces it would need are not in this capsule.',
-        debug: { providerCalls: 0, swapsTried: swapTargets.length, missingGroup: missingGroup || null }
+        debug: {
+          providerCalls: 0,
+          swapsTried: swapTargets.length,
+          missingGroup: missingGroup || null,
+          recoveryShortfall: discloseRecoveryShortfall({
+            operation: missingGroup ? 'complete' : 'substitute',
+            reason: 'capsule_roster_exhausted',
+            context: { flow: 'capsule_look', slotId: contextSlot.id, missingGroup: missingGroup || null },
+          }),
+        }
       })
     }
 

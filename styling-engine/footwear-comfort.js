@@ -4,6 +4,8 @@
 // Activity is a STRUCTURED axis: only the resolved enum reaches these gates, never request prose.
 import { pieceMatchesFootwear, pieceOccasionScore, pieceMatchesMaterial, wardrobeCategoryGroup } from './attributes.js'
 import { resolveOccasionProfile } from './occasions.js'
+import { evaluateOutfitStructure } from './outfitValidation.js'
+import { validatedSubstitute } from './recovery.js'
 
 export const ACTIVITY_PROFILES = [
   {
@@ -224,19 +226,24 @@ export function applyComfortFootwearRepair(outfit, candidatePieces = [], constra
         return a.id - b.id
       })
 
-      const bestShoe = candidateShoes[0]
-
-      const repaired = { ...outfit }
-      if (Array.isArray(repaired.pieceIds)) {
-        repaired.pieceIds = repaired.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
-      }
-      if (Array.isArray(repaired.pieces)) {
-        repaired.pieces = repaired.pieces.map(p => {
-          const cat = p.category || wardrobeCategoryGroup(p)
-          if (cat === 'shoes') return bestShoe
-          return p
-        })
-      }
+      const substitution = validatedSubstitute({
+        subject: outfit,
+        target: currentShoe,
+        candidates: candidateShoes,
+        mutate: (currentOutfit, bestShoe) => ({
+          ...currentOutfit,
+          pieceIds: Array.isArray(currentOutfit.pieceIds)
+            ? currentOutfit.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+            : currentOutfit.pieceIds,
+          pieces: Array.isArray(currentOutfit.pieces)
+            ? currentOutfit.pieces.map(piece => wardrobeCategoryGroup(piece) === 'shoes' ? bestShoe : piece)
+            : currentOutfit.pieces,
+        }),
+        validate: trial => evaluateOutfitStructure(trial.pieces, { requireShoes: true }),
+        context: { flow: 'footwear_comfort', reason: constraint.reason },
+      })
+      if (substitution.status !== 'recovered') return outfit
+      const repaired = substitution.value
 
       if (!repaired.watchFor || repaired.watchFor === 'none') {
         repaired.watchFor = warning

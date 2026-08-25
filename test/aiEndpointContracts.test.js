@@ -2871,6 +2871,9 @@ test('capsule look repair reports honestly when the roster cannot fix the look',
   assert.equal(response.status, 409)
   assert.match(body.error, /not in this capsule/i)
   assert.equal(body.debug.providerCalls, 0, 'an unfixable look must not escalate to a billed guess')
+  assert.equal(body.debug.recoveryShortfall.code, 'recovery_shortfall')
+  assert.equal(body.debug.recoveryShortfall.operation, 'substitute')
+  assert.equal(body.debug.recoveryShortfall.reason, 'capsule_roster_exhausted')
 })
 
 test('capsule expansion uses one bounded model call, the saved roster, and the saved indoor slot context', async () => {
