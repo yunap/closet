@@ -81,6 +81,17 @@ async function seedWardrobe() {
     VALUES (?, ?, 'active', ?, ?, ?)
   `).run('brown ankle boots', 'shoes', JSON.stringify(['brown']), bootPhoto, 'brown leather ankle boots').lastInsertRowid
 
+  // These are composer-plumbing fixtures, not missing-metadata fixtures. Keep at least one
+  // complete gate-valid path available now that visual composition correctly stops before the
+  // provider when its footwear supply is structurally incomplete.
+  db.prepare(`
+    UPDATE pieces
+    SET formality = 'everyday', heel_height = 'flat', walk_support = 'high',
+        shoe_type = 'sneaker', occasions = '["casual","city","evening","outdoor"]'
+    WHERE category = 'shoes'
+  `).run()
+  db.prepare("UPDATE pieces SET formality = 'everyday' WHERE category != 'shoes'").run()
+
   seeded = {
     top: topId,
     bottom: bottomId,
@@ -379,6 +390,8 @@ test('7b. Selected-piece local fallback cannot reintroduce a roster validity exc
     WHERE category = 'shoes'
   `).run()
   db.prepare("UPDATE pieces SET formality = 'lounge' WHERE id = ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE category = 'shoes' AND id != ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE id = ?").run(seeded.bottom)
 
   const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = args => {
@@ -408,6 +421,7 @@ test('7b. Selected-piece local fallback cannot reintroduce a roster validity exc
 })
 
 test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activity parameter', async () => {
+  db.prepare("UPDATE pieces SET formality = 'elevated' WHERE id = ?").run(seeded.sneaker)
   let capturedSystem = null
   let capturedMessages = null
   const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
@@ -419,7 +433,7 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
 
   try {
     const result = await generateWholeWardrobeOutfitsVisualInternal({
-      occasion: 'evening',
+      occasion: 'casual',
       season: 'current season',
       activity: 'walking',
       limit: 2
@@ -429,7 +443,7 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
     assert.equal(result.debug.stylingContext.provenanceByField.activity.source, 'explicit_request')
     assert.equal(result.debug.stylingContext.resolved.activity, 'walking')
 
-    assert.ok(capturedMessages, 'AI must have been called')
+    assert.ok(capturedMessages, `AI must have been called: ${JSON.stringify(result.debug)}`)
     const userText = Array.isArray(capturedMessages[0].content)
       ? capturedMessages[0].content.map(part => part?.text || '').join('\n')
       : String(capturedMessages[0].content || '')

@@ -940,6 +940,19 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
+function structuralCoverageShortfallText(coverageReport = null, { selectedPiece = null } = {}) {
+  if (coverageReport?.complete !== false) return ''
+  const capacityOnly = (coverageReport.shortfalls || []).every(shortfall =>
+    shortfall?.code === 'required_structure_exceeds_capacity'
+  )
+  const subject = selectedPiece
+    ? `around ${selectedPiece.name || 'the selected item'}`
+    : 'for this request'
+  return capacityOnly
+    ? `I couldn't retain a complete outfit path ${subject} within the candidate limit, so I stopped before composition instead of asking the stylist to work from an incomplete roster.`
+    : `Your currently eligible wardrobe pieces do not contain a complete outfit path ${subject} (a dress or top + bottom, plus shoes, including any required coverage layer). I stopped before composition instead of inventing or forcing a weak outfit.`
+}
+
 export const composerPieceLineSuffix = piece => {
   const doNotPairRules = pieceGarmentIntelligence(piece).doNotPairRules
   return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
@@ -995,6 +1008,44 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   const recoveryRankedCandidates = rankedCandidates.filter(candidate =>
     recoveryEvaluation.recoveryEligibleIds.has(Number(candidate?.piece?.id))
   )
+  const structureShortfall = structuralCoverageShortfallText(rosterDebug.coverageReport, { selectedPiece })
+  if (structureShortfall) {
+    return {
+      outfits: [],
+      recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
+      rejected: [],
+      skip: structureShortfall,
+      saveableLearning: '',
+      compositionSkipped: 'incomplete_candidate_supply',
+      debug: {
+        shownPieceCount: 0,
+        rosterCount: candidatePieces.length,
+        excludedCount: excluded.length,
+        excludedCounts: rosterDebug.excludedCounts,
+        registerCeiling: rosterDebug.registerCeiling,
+        formalityIntent: rosterDebug.formalityIntent,
+        postGatePoolSize: rosterDebug.postGatePoolSize,
+        capApplied: rosterDebug.capApplied,
+        capCutPieces: rosterDebug.capCutPieces,
+        slotCoverage: rosterDebug.slotCoverage,
+        coverageReport: rosterDebug.coverageReport,
+        structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+        compositionSkipped: 'incomplete_candidate_supply',
+        imageDetail: null,
+        thumbPx: 768,
+        aiReturnedCount: 0,
+        composerError: null,
+        composerUsage: null,
+        timings: { thumbPrepMs: 0, composerMs: 0 },
+        resolvedActivity: rosterDebug.resolvedActivity,
+        activitySource: rosterDebug.activitySource,
+        walkable: rosterDebug.walkable,
+        rosterCounts: rosterDebug.categoryCounts,
+        unresolvedReferences: [],
+        unresolvedReferencesCount: 0
+      }
+    }
+  }
   const composerThumbPx = 768
   const composerImageDetail = visualComposerImageDetailForRoster(candidatePieces.length)
   const candidateIds = new Set(candidatePieces.map(p => Number(p.id)))
@@ -1192,6 +1243,9 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       capApplied: rosterDebug.capApplied,
       capCutPieces: rosterDebug.capCutPieces,
       slotCoverage: rosterDebug.slotCoverage,
+      coverageReport: rosterDebug.coverageReport,
+      structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+      compositionSkipped: null,
       imageDetail: composerImageDetail,
       thumbPx: composerThumbPx,
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
@@ -1659,11 +1713,11 @@ export async function generateOutfitsForPieceInternal({
   let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
   if (structuredOutfits.length > 0) {
     console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
-  } else if (!idealOnlyMode) {
+  } else if (!idealOnlyMode && !composed.compositionSkipped) {
     console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
     structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, recoveryRankedCandidates, { occasion })
   }
-  if (!structuredOutfits.length) {
+  if (!structuredOutfits.length && !composed.compositionSkipped) {
     console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
     const candidates = recoveryRankedCandidates.map(r => r.piece).filter(Boolean)
     const selectedGroup = wardrobeCategoryGroup(parsedPiece)
@@ -2003,6 +2057,85 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const allowedMain = allowedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       if (!allowedMain) {
         throw new Error(`The selected Main piece is unavailable because it is no longer active. Choose another Main piece.`)
+      }
+    }
+    const structureShortfall = structuralCoverageShortfallText(rosterDebug.coverageReport, {
+      selectedPiece: savedMainPiece,
+    })
+    if (structureShortfall) {
+      const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile, activityProfile)
+      const profileCoverageNote = formatCoverageNote(topCoverage, shoeCoverage, { occasion, occasionProfile, activityProfile })
+      const responseCoverageNote = [structureShortfall, profileCoverageNote].filter(Boolean).join('\n')
+      persistGenerationRun({
+        flow: 'whole_wardrobe_visual',
+        occasion,
+        weather: weatherProfile,
+        rosterDebug,
+        rosterCount: roster.length,
+        requested: requestedLimit,
+        delivered: 0,
+        coverageGaps: rosterDebug.structureCoverageGaps || [],
+      })
+      return {
+        feedback: `**No complete wardrobe outfit is available**\n\n${responseCoverageNote}`,
+        structuredOutfits: [],
+        provider: AI_PROVIDER,
+        mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
+        pipeline: savedVariantMode ? 'saved_outfit_wardrobe_variant_composer' : 'full_wardrobe_visual_composer',
+        savedOutfitVariantMode: savedVariantMode,
+        sourceOutfit: savedOutfitSeed || null,
+        coverageNote: responseCoverageNote,
+        debug: {
+          profileCoverage: { tops: topCoverage, shoes: shoeCoverage },
+          shownPieceCount: 0,
+          suppressedCount: suppressedPieces.length,
+          suppressedReasonCounts,
+          weatherProfile,
+          stylingContext: stylingContext.debug,
+          savedMainBypassedSuppression,
+          savedMainSuppressionReasons: savedMainSuppression?.reasons || [],
+          savedSourceHasLayeredTopFormula,
+          aiReturnedCount: 0,
+          locallyGeneratedCount: 0,
+          finalReturnedCount: 0,
+          deliveredCount: 0,
+          brokenCardCount: 0,
+          advisorFlaggedCount: 0,
+          localFillAddedCount: 0,
+          imageDetail: null,
+          thumbPx: adaptiveVisualDetail ? null : 768,
+          adaptiveVisualDetail,
+          imageSizeCounts: {},
+          composerUsage: null,
+          finalSelection: null,
+          sessionMemory: null,
+          composerError: null,
+          compositionSkipped: 'incomplete_candidate_supply',
+          timings: { thumbPrepMs: 0, composerMs: 0 },
+          rosterCount: roster.length,
+          excludedCounts: rosterDebug.excludedCounts,
+          activityCoverageGaps: rosterDebug.activityCoverageGaps || [],
+          activityTagEnforcedGroups: rosterDebug.activityTagEnforcedGroups || [],
+          registerCeiling: rosterDebug.registerCeiling,
+          registerTarget: rosterDebug.registerTarget,
+          registerTargetCoverageGaps: rosterDebug.registerTargetCoverageGaps || [],
+          registerTargetEnforcedGroups: rosterDebug.registerTargetEnforcedGroups || [],
+          formalityIntent: rosterDebug.formalityIntent,
+          postGatePoolSize: rosterDebug.postGatePoolSize,
+          capApplied: rosterDebug.capApplied,
+          capCutPieces: rosterDebug.capCutPieces,
+          slotCoverage: rosterDebug.slotCoverage,
+          coverageReport: rosterDebug.coverageReport,
+          structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+          excluded,
+          resolvedActivity: rosterDebug.resolvedActivity,
+          activitySource: rosterDebug.activitySource,
+          walkable: rosterDebug.walkable,
+          rosterCounts: rosterDebug.categoryCounts,
+          modelPickedSuppressedCount: 0,
+          unresolvedReferences: [],
+          unresolvedReferencesCount: 0,
+        }
       }
     }
     const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(roster.map(piece => piece.id), 3)
@@ -2632,6 +2765,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         capApplied: rosterDebug.capApplied,
         capCutPieces: rosterDebug.capCutPieces,
         slotCoverage: rosterDebug.slotCoverage,
+        coverageReport: rosterDebug.coverageReport,
+        structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
+        compositionSkipped: null,
         excluded,
         resolvedActivity: rosterDebug.resolvedActivity,
         activitySource: rosterDebug.activitySource,

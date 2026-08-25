@@ -38,6 +38,7 @@ import {
   getOwnerRuleNotes,
 } from './rules.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
+import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import {
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
@@ -2151,41 +2152,34 @@ export function buildCapsuleBench(pool = [], {
   // complete core (top+bottom or dress, plus a shoe) for every requested slot
   // the wardrobe can actually cover — a slot it genuinely can't cover stays
   // uncovered and is recorded, never fabricated.
-  const perSlot = []
-  const uncoverableSlots = []
-  normalizedSlots.forEach((slot, index) => {
+  const slotCoverageInputs = normalizedSlots.map((slot, index) => {
     const slotEligible = slotGateEligiblePieces(eligible, slot, { isSummer, isWinter })
     const slotLabel = slot.slot || slot.label || `slot_${index}`
-    const byGroupForSlot = { top: [], bottom: [], dress: [], shoes: [] }
-    for (const piece of slotEligible) {
-      const group = wardrobeCategoryGroup(piece)
-      if (byGroupForSlot[group]) byGroupForSlot[group].push(piece)
+    return {
+      slotLabel,
+      slotEligible,
+      requirement: restrictSupplyRequirement(
+        completeOutfitSupplyRequirement({ id: `capsule_slot:${slotLabel}` }),
+        new Set(slotEligible.map(piece => Number(piece.id))),
+      ),
     }
-    const canFormCore = (byGroupForSlot.top.length && byGroupForSlot.bottom.length || byGroupForSlot.dress.length) &&
-      byGroupForSlot.shoes.length
-    perSlot.push({ slot: slotLabel, eligibleCount: slotEligible.length, canFormCore: Boolean(canFormCore) })
-    if (!canFormCore) { uncoverableSlots.push(slotLabel); return }
-
-    const benchHasCoreForSlot = () => {
-      const benchIdsForSlot = bench.filter(piece => admittedIds.has(Number(piece.id)) && slotEligible.includes(piece))
-      const hasTop = benchIdsForSlot.some(piece => wardrobeCategoryGroup(piece) === 'top')
-      const hasBottom = benchIdsForSlot.some(piece => wardrobeCategoryGroup(piece) === 'bottom')
-      const hasDress = benchIdsForSlot.some(piece => wardrobeCategoryGroup(piece) === 'dress')
-      const hasShoe = benchIdsForSlot.some(piece => wardrobeCategoryGroup(piece) === 'shoes')
-      return ((hasTop && hasBottom) || hasDress) && hasShoe
-    }
-    if (benchHasCoreForSlot()) return
-    // Best-ranked candidates within this slot's own eligibility (already rank
-    // ordered since slotEligible is filtered from `eligible`, which is rank
-    // ordered) — admit whichever combination the wardrobe can supply.
-    const bestDress = byGroupForSlot.dress[0]
-    const bestTop = byGroupForSlot.top[0]
-    const bestBottom = byGroupForSlot.bottom[0]
-    const bestShoe = byGroupForSlot.shoes[0]
-    if (bestTop && bestBottom) { admit(bestTop, true); admit(bestBottom, true) }
-    else if (bestDress) { admit(bestDress, true) }
-    admit(bestShoe, true)
   })
+  const coveredBench = buildCoveredCandidateSet({
+    rankedPieces: ranked,
+    initialSelection: bench,
+    capacity: benchSize,
+    requirements: slotCoverageInputs.map(input => input.requirement),
+  })
+  for (const piece of coveredBench.pieces) {
+    if (!admittedIds.has(Number(piece.id))) admit(piece, true)
+  }
+  const resultById = new Map(coveredBench.report.requirementResults.map(result => [result.id, result]))
+  const perSlot = slotCoverageInputs.map(({ slotLabel, slotEligible, requirement }) => ({
+    slot: slotLabel,
+    eligibleCount: slotEligible.length,
+    canFormCore: resultById.get(requirement.id)?.status === 'covered',
+  }))
+  const uncoverableSlots = perSlot.filter(slot => !slot.canFormCore).map(slot => slot.slot)
 
   // Protagonist / Statement Piece Guarantee: reserve candidate slots for expressive/hero pieces
   // (pattern_complexity === 'loud' || visual_roles includes 'hero_piece').
@@ -2313,7 +2307,8 @@ export function buildCapsuleBench(pool = [], {
     uncoverableSlots,
     unmetTargets,
     admittedByGuaranteeIds: [...admittedByGuarantee],
-    admittedByGuaranteeCount: admittedByGuarantee.size
+    admittedByGuaranteeCount: admittedByGuarantee.size,
+    structuralCoverageReport: coveredBench.report,
   }
 
   return { bench, diagnostics }
@@ -2933,7 +2928,7 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(),
   return score
 }
 
-function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
+export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
   const scored = allowedPieces
     .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase }) }))
     .sort((a, b) => b.score - a.score || Number(b.piece.id || 0) - Number(a.piece.id || 0) || a.index - b.index)
@@ -2965,7 +2960,20 @@ function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = 
   }
 
   for (const item of scored) add(item)
-  return selected
+  const relevantAnchors = allowedPieces.filter(piece => anchorIds.has(Number(piece.id)))
+  const requirements = relevantAnchors.length
+    ? relevantAnchors.map(piece => completeOutfitSupplyRequirement({
+        anchorPiece: piece,
+        id: `plan_anchor_${Number(piece.id)}_outfit_path`,
+      }))
+    : [completeOutfitSupplyRequirement({ id: 'plan_slot_outfit_path' })]
+  return buildCoveredCandidateSet({
+    rankedPieces: scored.map(item => item.piece),
+    initialSelection: selected,
+    capacity: limit,
+    protectedPieceIds: relevantAnchors.map(piece => Number(piece.id)),
+    requirements,
+  })
 }
 
 function registerRankName(rank = null) {
@@ -3339,7 +3347,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
-    const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })
+    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })
+    const shownPieces = workbenchSelection.pieces
+    const workbenchCoverage = workbenchSelection.report
+    const targetOutfits = workbenchCoverage.complete
+      ? Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
+      : 0
+    if (!workbenchCoverage.complete) {
+      coverageGaps.push(`[missing wardrobe gap: "${slot.label}" has no complete gate-valid outfit path; this slot was left unfilled rather than sent to composition]`)
+    }
     for (const piece of shownPieces) {
       const id = Number(piece?.id)
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
@@ -3353,13 +3369,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       activity: slot.activity,
       environment: slot.environment || '',
       register: slot.register || '',
-      target_outfits: Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)),
+      target_outfits: targetOutfits,
       weather_used: weatherLabel,
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
       allowed_piece_ids: shownPieces.map(piece => Number(piece.id)).filter(Boolean),
       piece_assessments: shownPieces.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase })),
-      suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`
+      suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
+      coverage_report: workbenchCoverage,
     })
     slot._modelWorkbench = {
       weatherProfile,
@@ -3369,7 +3386,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       gateAllowedIds: idSetForPieces(allowedPieces),
       suppressedReasonsById: suppressedReasonMap(suppressedPieces),
       originalIndex: index,
-      slotRequestText
+      slotRequestText,
+      targetOutfits,
+      coverageReport: workbenchCoverage,
     }
   }
   const pieceCatalog = [...catalogById.values()]
@@ -3471,6 +3490,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   let pendingSlots = slots.map((slot, index) => ({
     ...slot,
     originalIndex: index,
+    targetOutfits: slot._modelWorkbench?.targetOutfits ?? slot.targetOutfits,
     weatherProfile: slot._modelWorkbench?.weatherProfile || null,
     weatherLabel: slot._modelWorkbench?.weatherLabel || '',
     allowedPieces: slot._modelWorkbench?.allowedPieces || [],

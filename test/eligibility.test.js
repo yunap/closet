@@ -133,6 +133,25 @@ test('selected candidate adapter preserves the existing ranking while reusing on
   assert.equal(shared.eligibility.decisionsById.size, candidates.length)
 })
 
+test('selected candidate cap preserves the anchor completion path instead of spending every slot on bottoms', () => {
+  const anchor = piece(60, { category: 'top', name: 'Selected top' })
+  const candidates = [
+    piece(61, { category: 'bottom', name: 'Bottom A' }),
+    piece(62, { category: 'bottom', name: 'Bottom B' }),
+    piece(63, { category: 'shoes', name: 'Shoes' }),
+  ]
+  const result = selectAutomaticUseCandidatesForOutfitGeneration({
+    anchorPiece: anchor,
+    pieces: candidates,
+    limit: 2,
+    context: { occasion: 'casual', weatherProfile: {} },
+  })
+
+  assert.deepEqual(new Set(result.rankedCandidates.map(row => row.piece.category)), new Set(['bottom', 'shoes']))
+  assert.equal(result.coverageReport.complete, true)
+  assert.deepEqual(result.coverageReport.addedForCoverageIds, [63])
+})
+
 test('shared pool findings bind recovery to validity while preserving presentation-only pieces', () => {
   const anchor = piece(1, { category: 'top', name: 'Anchor top', formality: 'elevated' })
   const loungeShoe = piece(2, { name: 'Lounge athletic shoe', formality: 'lounge' })

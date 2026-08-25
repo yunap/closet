@@ -938,8 +938,11 @@
         },
         "visualRoster": {
           "rosterIds": [
+            501,
             101,
-            201
+            201,
+            504,
+            104
           ],
           "recoveryEligibleIds": [
             101,
@@ -957,31 +960,28 @@
           "excluded": {
             "102": "roster cap: category limit",
             "103": "register: elevated exceeds everyday ceiling",
-            "104": "roster cap: category limit",
             "202": "roster cap: category limit",
             "203": "register: elevated exceeds everyday ceiling",
             "301": "roster cap: category limit",
             "302": "register: dressy exceeds everyday ceiling",
             "401": "roster cap: category limit",
-            "501": "roster cap: category limit",
             "502": "roster cap: category limit",
-            "503": "roster cap: category limit",
-            "504": "roster cap: category limit"
+            "503": "roster cap: category limit"
           },
           "excludedCounts": {
             "register: dressy exceeds everyday ceiling": 1,
             "register: elevated exceeds everyday ceiling": 2,
-            "roster cap: category limit": 9
+            "roster cap: category limit": 6
           },
           "findingCounts": {
-            "capacity": 9,
+            "capacity": 6,
             "validity": 3
           },
           "slotCoverage": {
-            "top": 1,
+            "top": 2,
             "bottom": 1,
             "dress": 0,
-            "shoes": 0,
+            "shoes": 2,
             "outerwear": 0,
             "accessory": 0
           },
@@ -989,11 +989,8 @@
             "requested": 5,
             "applied": true,
             "cutPieceIds": [
-              104,
               102,
               202,
-              501,
-              504,
               502,
               503,
               301,

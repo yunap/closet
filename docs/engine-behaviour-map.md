@@ -1155,6 +1155,18 @@ the public `evaluateAutomaticUsePiecePool` remains the domain entry point for ev
 tests. Hiking activation, eligible shoe supply, scoring, tie-breaking, and the single-swap behavior
 are unchanged.
 
+**[candidate-set ownership, 2026-08-25] Hard caps preserve executable outfit supply before they
+preserve category abundance.** `buildCoveredCandidateSet` is the shared bounded-set owner for
+selected support candidates, visual photo rosters, coordinated-plan workbenches, and capsule model
+benches. Caller-specific ranking remains intact, but a cap may replace a lower-priority duplicate
+category piece with the ranked top/bottom/shoe or dress/shoe path needed to leave composition
+possible. A `needs_base` anchor or path also reserves a base whose shared construction verdict is
+not known incompatible. Already-complete selections keep their exact order. Missing wardrobe
+supply and insufficient hard capacity are distinct report codes. Direct visual flows make no
+composer call and return no fallback card when the final gated roster is incomplete; plan slots
+continue only for the coverable portion and disclose each unfilled slot. Search remains retrieval
+and does not inherit the composition-coverage requirement.
+
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
 pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review

@@ -60,6 +60,9 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
   const capped = baseline.scenarios.capacity_pressure.candidates
   assert.equal(capped.visualRoster.cap.requested, 5)
   assert.ok(capped.visualRoster.cap.cutPieceIds.length)
-  assert.equal(capped.visualRoster.slotCoverage.shoes, 0, 'fixture must exercise structural starvation under the small visual cap')
+  assert.equal(capped.visualRoster.rosterIds.length, 5, 'small visual cap should spend every available image slot')
+  assert.ok(capped.visualRoster.slotCoverage.top > 0)
+  assert.ok(capped.visualRoster.slotCoverage.bottom > 0)
+  assert.ok(capped.visualRoster.slotCoverage.shoes > 0, 'shared coverage must prevent structural starvation under the small visual cap')
   assert.ok(capped.selectedPieceCandidates.some(entry => [501, 504].includes(entry.id)), 'selected strategy must retain a shoe under its independent cap')
 })

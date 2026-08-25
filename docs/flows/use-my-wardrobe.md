@@ -29,7 +29,9 @@ flowchart TD
     A["You set the brief<br/>occasion, season, mood, request"] --> X["Resolve shared styling context<br/>values + source provenance"]
     X --> B["Gather your wardrobe<br/>all active closet pieces"]
     B --> C["Filter to a roster<br/>hide unsuitable, cap photos"]
-    C --> D["Assemble AI context<br/>weather, feedback, favorites"]
+    C --> Q{"Complete outfit path<br/>still available?"}
+    Q -->|no| S["Return explicit wardrobe shortfall<br/>no model or local-fill card"]
+    Q -->|yes| D["Assemble AI context<br/>weather, feedback, favorites"]
     D --> E{{"LLM · composes outfits<br/>sees every piece's photo"}}
     E --> F{"Structurally valid<br/>outfits?"}
     F -->|enough| I["Show outfit cards<br/>in a new thread"]
@@ -43,13 +45,15 @@ flowchart TD
     class A,X,B,I app;
     class C,D rules;
     class E model;
-    class F,G,H check;
+    class Q,F,G,H check;
 ```
 
 Two things worth knowing at this altitude:
 
 - There is **exactly one model call** (stage E). No tools, no multi-turn — the
-  model gets one shot with a photo of every rostered piece.
+  model gets one shot with a photo of every rostered piece. When the gated
+  roster has no complete core plus shoes, there are zero calls: the response
+  states the wardrobe shortfall before thumbnail preparation.
 - **Nothing is "repaired."** In advisor mode the app never swaps pieces to fix a
   broken outfit. Invalid outfits are dropped; then the app either backfills with
   locally-generated real outfits (only when the model produced *zero* valid ones)
@@ -104,14 +108,15 @@ flowchart TD
     S2 --> S3["Step 3 — weather / register / footwear<br/>register ceiling, footwear comfort,<br/>hot: insulating; cold: shorts, bare, linen"]
     S3 --> S4["Register-target + activity-tag gates<br/>enforce a formality floor & activity rating"]
     S4 --> CAP{"Pool > 90<br/>images?"}
-    CAP -->|no| R["Roster<br/>grouped by category"]
-    CAP -->|yes| CAT["Step 4 — image budget cap<br/>per-category ceilings (top 30, bottom 25,<br/>shoes 15, dress 10, outerwear 8, other 5),<br/>then global trim by relevance score"] --> R
+    CAP -->|no| COVER["Shared structural coverage check<br/>preserve top + bottom + shoes<br/>or dress + shoes"]
+    CAP -->|yes| CAT["Step 4 — image budget cap<br/>per-category ceilings (top 30, bottom 25,<br/>shoes 15, dress 10, outerwear 8, other 5),<br/>then global trim by relevance score"] --> COVER
+    COVER --> R["Roster<br/>grouped by category"]
 
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     class P,R app;
-    class S,S1,S2,S3,S4,CAT rules;
+    class S,S1,S2,S3,S4,CAT,COVER rules;
     class CAP check;
 ```
 
@@ -139,6 +144,11 @@ Engineer notes:
   and anything over its ceiling is excluded as `roster cap: category limit`. A
   final global trim (`rules.js:2651`) handles the rare case where per-category
   limits still overflow.
+- **Structural supply is checked after those presentation caps**
+  (`buildCoveredCandidateSet`). If eligible supply and capacity permit, the roster exchanges a
+  lower-priority redundant piece for the missing core/shoe path. If they do not, debug reports the
+  structural gap and the endpoint returns before the composer instead of making a paid call from
+  an impossible roster.
 - **Everything excluded is recorded** in `excluded[]` with a reason and counted
   in `debug.excludedCounts` — this is what powers the diagnostic cards in stage 7
   and the `[Visual Composer Roster]` server log.

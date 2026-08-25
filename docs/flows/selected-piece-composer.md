@@ -1,7 +1,7 @@
 # Selected-piece composer — "Style this piece"
 
 **Status:** Active
-**Last verified:** 2026-08-24
+**Last verified:** 2026-08-25
 
 You open one garment and ask the stylist to build outfits around it. Unlike
 [Use my wardrobe](use-my-wardrobe.md), the selected piece is the **anchor**: it
@@ -29,7 +29,9 @@ flowchart TD
     A["You open a piece<br/>+ occasion, mood, mode"] --> X["Resolve shared styling context<br/>values + source provenance"]
     X --> B["Load anchor + active wardrobe"]
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
-    C --> D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
+    C --> Q{"Anchor has a complete<br/>outfit path?"}
+    Q -->|no| S["Return explicit wardrobe shortfall<br/>no model or fallback card"]
+    Q -->|yes| D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"idealMode?<br/>set by free-text regex"}
     M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
     M -->|"yes — free-typed 'ideal/missing'"| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
@@ -45,7 +47,7 @@ flowchart TD
     class A,X,B,R app;
     class C,D rules;
     class E,V,E2 model;
-    class M,F,G check;
+    class Q,M,F,G check;
 ```
 
 Three things a PM should take away:
@@ -59,8 +61,9 @@ Three things a PM should take away:
   composer that may suggest pieces you don't own. The **"Explore additions"
   button does not use this path** — it routes to
   [editorial ideal additions](editorial-ideal-additions.md).
-- **This flow always returns something** — and unlike advisor mode, it *does*
-  repair (see below).
+- **This flow returns cards only from viable supply.** Unlike advisor mode, it does repair ordinary
+  model failures. A structurally incomplete gated roster is different: it returns an explicit
+  shortfall before the model call and does not fabricate a fallback card.
 
 ### Stage map
 
@@ -110,6 +113,12 @@ Engineer notes:
   retain the same score/reason representation for parity, while the later visual pool remains the
   binding finite roster. Piece concept-board planning uses the same adapter with its larger limit.
 
+- **Shared bounded structural coverage** (`buildCoveredCandidateSet`): the selected quota result
+  and final visual roster must retain a complete path around the pinned anchor. For a dependent
+  anchor that path includes its required coverage base. If no such path survives the hard gates,
+  the wardrobe branch stops before the visual composer and returns the coverage report; local and
+  absolute backfill are reserved for provider/model-output failure after viable supply existed.
+
 - **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
   request booleans *or* a regex on the question ("ideal", "missing", "not in my
   wardrobe", …). In practice the booleans are unreachable from the UI — the only
@@ -132,7 +141,7 @@ Engineer notes:
   swaps in comfortable footwear when a comfort constraint (all-day walking /
   hiking) is active (`ai.js:2225`) — the deliberate no-repair rule only applies
   to the whole-wardrobe advisor flow.
-- **Always non-empty**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
+- **Fallback after viable supply**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
   still 0 → a hand-built basic backfill using the anchor + recovery-safe supports. Neither fallback
   can reopen a validity-excluded piece.
 

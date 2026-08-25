@@ -14,6 +14,7 @@ import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRO
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
+import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
 import { evaluateOutfitStructure } from './outfitValidation.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
@@ -1593,11 +1594,21 @@ export function selectCandidatesForOutfitGeneration(piece, allPieces, limit = 30
   }
 
   const seen = new Set()
-  return mixed.filter(r => {
+  const initialSelection = mixed.filter(r => {
     if (seen.has(r.piece.id)) return false
     seen.add(r.piece.id)
     return true
   }).slice(0, limit)
+  const rowById = new Map(ranked.map(row => [Number(row.piece.id), row]))
+  const covered = buildCoveredCandidateSet({
+    rankedPieces: ranked.map(row => row.piece).filter(candidate => Number(candidate.id) !== Number(piece?.id)),
+    initialSelection: initialSelection.map(row => row.piece),
+    capacity: limit,
+    requirements: [completeOutfitSupplyRequirement({ anchorPiece: piece, id: 'selected_anchor_outfit_path' })],
+  })
+  const result = covered.pieces.map(candidate => rowById.get(Number(candidate.id))).filter(Boolean)
+  Object.defineProperty(result, 'coverageReport', { value: covered.report, enumerable: false })
+  return result
 }
 
 export function buildOutfitGenerationCandidateText(rankedCandidates) {
@@ -3414,6 +3425,44 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   } else {
     roster.push(...afterStep4)
   }
+
+  const protectedRosterPieces = afterActivityGate.filter(isSelected)
+  const coverageRequirements = protectedRosterPieces.length
+    ? protectedRosterPieces.map(anchorPiece => completeOutfitSupplyRequirement({
+        anchorPiece,
+        id: `visual_anchor_${Number(anchorPiece.id)}_outfit_path`,
+      }))
+    : [completeOutfitSupplyRequirement({ id: 'visual_roster_outfit_path' })]
+  const coveredRoster = buildCoveredCandidateSet({
+    rankedPieces: [...afterActivityGate].sort((a, b) => comparePieces(a, b)),
+    initialSelection: roster,
+    capacity: maxImages,
+    protectedPieceIds: protectedRosterPieces.map(piece => Number(piece.id)),
+    requirements: coverageRequirements,
+  })
+  const originalRosterIds = new Set(roster.map(piece => Number(piece.id)))
+  const coveredRosterIds = new Set(coveredRoster.pieces.map(piece => Number(piece.id)))
+  const rosterChanged = originalRosterIds.size !== coveredRosterIds.size ||
+    [...originalRosterIds].some(id => !coveredRosterIds.has(id))
+  if (rosterChanged) {
+    const addedIds = new Set([...coveredRosterIds].filter(id => !originalRosterIds.has(id)))
+    const finalIds = new Set(coveredRoster.pieces.map(piece => Number(piece.id)))
+    for (let index = excluded.length - 1; index >= 0; index -= 1) {
+      const item = excluded[index]
+      if (!addedIds.has(Number(item.pieceId)) || !capCutReasons.has(item.reason)) continue
+      excluded.splice(index, 1)
+      debug.excludedCounts[item.reason] = Math.max(0, (debug.excludedCounts[item.reason] || 0) - 1)
+    }
+    for (const piece of roster) {
+      if (finalIds.has(Number(piece.id))) continue
+      if (!excluded.some(item => Number(item.pieceId) === Number(piece.id) && capCutReasons.has(item.reason))) {
+        exclude(piece, 'roster cap: global limit')
+      }
+    }
+    roster.splice(0, roster.length, ...coveredRoster.pieces)
+  }
+  debug.coverageReport = coveredRoster.report
+  debug.structureCoverageGaps = coveredRoster.report.shortfalls.map(shortfall => shortfall.code)
 
   // Populate debug category counts
   for (const p of roster) {

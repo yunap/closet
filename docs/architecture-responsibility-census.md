@@ -7,9 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
-**Status:** Active — Stage 1 and Slice 0 complete; Slice 2 complete; Slices 1 and 3 in progress as
-of 2026-08-24. Proposed ownership decisions marked unresolved still require the named owner ruling
-before implementation.
+**Status:** Active — Stage 1 and Slices 0, 2, and 4 complete; Slices 1 and 3 in progress as of
+2026-08-25. Proposed ownership decisions marked unresolved still require the named owner ruling
+before implementation. Slice 5 is next.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -738,6 +738,26 @@ eligibility and cap primitives.
 **Required proof:** no hard cap silently removes the last viable structure when capacity permits;
 impossible coverage is surfaced consistently.
 
+**Shared owner and first consumer migration, 2026-08-25:** `candidateSet.js` now owns bounded
+structural supply independently of taste. `completeOutfitSupplyRequirement` describes the valid
+top + bottom + shoes and dress + shoes paths, including a compatible-or-unknown required coverage
+base when a dependent garment participates; `buildCoveredCandidateSet` combines those requirements
+with caller ranking, protected IDs, and a hard capacity. It is an exact order no-op when the
+caller's original selection already covers the requirement. When it does not, it swaps in only the
+minimum ranked supply needed; when the wardrobe or capacity cannot cover the requirement, it
+returns `required_structure_unavailable` or `required_structure_exceeds_capacity` rather than
+silently spending the slot.
+
+Selected-piece quotas, the visual roster's category/global trim, coordinated-plan slot workbench
+limits, and the capsule model bench now consume this owner. Selected anchors remain protected;
+each plan slot and each capsule slot gets its own context-restricted requirement; search remains a
+retrieval flow. Direct selected-piece and whole-wardrobe visual generation stop before thumbnail
+preparation and the paid composer when their final gated roster has no complete path. They return
+an explicit shortfall and no locally fabricated or diagnostic outfit card. Multi-slot planning
+sets an uncoverable slot's requested composition count to zero and discloses that slot while other
+coverable slots continue. Existing capsule roster quotas and postconditions remain capsule policy;
+the shared primitive replaces only the bench's parallel category-core admission logic.
+
 ### Slice 5 — shared recovery primitives
 
 Implement validated `substitute`, `complete`, `fallback`, and `discloseShortfall` operations. Every
@@ -830,10 +850,11 @@ The first capture records architecture evidence rather than only the triggering 
   unknown-data policy.
 - A five-image visual cap, four-piece selected-candidate cap, six-piece capsule budget, and
   five-piece capsule bench target record what each independent truncation strategy protects or
-  drops under pressure. In the first capture, the five-image visual policy returns only one top and
-  one bottom—no shoes—because its category ceilings round small capacities down independently; the
-  selected four-piece set retains two bottoms and two shoes, while the capsule paths protect a
-  different category mix. This is a candidate-set architecture finding, not a layering finding.
+  drops under pressure. The first capture exposed a five-image visual roster with one top, one
+  bottom, and no shoes because category ceilings rounded down independently. The 2026-08-25 Slice 4
+  baseline now records the intended correction: all five places are used and at least one
+  top + bottom + shoes path survives. Selected and capsule paths retain their distinct ranking and
+  policy mixes; only the bounded structural-supply invariant is shared.
 - Missing shoes and duplicate shoes agree at the hard-validity level but expose four different
   result shapes and messages.
 - A dependent top without a base is accepted by the narrow core, freeform-role, and whole validators

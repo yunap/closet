@@ -708,6 +708,13 @@ atlas showed to be working.
 > hot-weather outerwear capacity remain unchanged; the migration changes ownership, not planning
 > strategy or the model-call sequence.
 
+> **[candidate-set ownership, 2026-08-25]** Each slot workbench now passes its existing ranked,
+> capped selection through `buildCoveredCandidateSet`. The cap protects anchors and retains one
+> complete top + bottom + shoes or dress + shoes path, including a required coverage base for a
+> dependent garment. An uncoverable slot is emitted with `targetOutfits: 0` and a visible wardrobe-
+> gap line, so coverable slots can still compose while the model is never asked to fabricate the
+> impossible portion.
+
 Live trip tests settled step 6 with evidence in both directions: the model CAN
 self-compose planning turns, but the trip precompose produces something the
 model cannot — the **plan**: slot coverage and cross-outfit piece-reuse

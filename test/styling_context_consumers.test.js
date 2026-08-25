@@ -8,6 +8,7 @@ const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tool
 const plannerSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
 const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
 const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
+const candidateSetSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/candidateSet.js'), 'utf8')
 const attributesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/attributes.js'), 'utf8')
 const coreSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
 const promptSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
@@ -91,6 +92,33 @@ test('selected ranking and whole generation consume shared automatic-use pool ad
 test('plan workbenches and capsule eligibility consume the shared automatic-use pool', () => {
   assert.match(plannerSource, /evaluateAutomaticUsePiecePool\(\{/)
   assert.doesNotMatch(plannerSource, /filterWholeWardrobePiecesForGeneration\(/)
+})
+
+test('bounded composition consumers share one structural candidate-set owner', () => {
+  assert.match(candidateSetSource, /export function buildCoveredCandidateSet\(/)
+  assert.match(candidateSetSource, /export function completeOutfitSupplyRequirement\(/)
+  assert.match(candidateSetSource, /export function restrictSupplyRequirement\(/)
+  assert.match(rulesSource, /buildCoveredCandidateSet\(\{/)
+  assert.match(rulesSource, /completeOutfitSupplyRequirement\(\{/)
+  assert.match(plannerSource, /buildCoveredCandidateSet\(\{/)
+  assert.match(plannerSource, /completeOutfitSupplyRequirement\(\{/)
+  assert.match(plannerSource, /restrictSupplyRequirement\(/)
+})
+
+test('visual composition stops before its provider call when structural supply is incomplete', () => {
+  const selected = sourceBlock(
+    'async function composeSelectedPieceVisualWardrobeOutfits',
+    "router.post('/evaluate-piece'",
+  )
+  const whole = sourceBlock(
+    'export async function generateWholeWardrobeOutfitsVisualInternal',
+    "router.post('/generate-wardrobe-outfits-visual'",
+  )
+  for (const block of [selected, whole]) {
+    const guard = block.indexOf("compositionSkipped: 'incomplete_candidate_supply'")
+    const provider = block.indexOf('askStylistWithUsage({')
+    assert.ok(guard >= 0 && provider > guard, 'structural shortfall must return before the composer boundary')
+  }
 })
 
 test('whole-wardrobe footwear recovery consumes the shared automatic-use pool core', () => {

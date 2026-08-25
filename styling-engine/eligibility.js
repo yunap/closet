@@ -56,7 +56,7 @@ export function selectAutomaticUseCandidatesForOutfitGeneration({
     ...context,
     eligibilityDecisionsById: eligibility.decisionsById,
   })
-  return { rankedCandidates, eligibility }
+  return { rankedCandidates, eligibility, coverageReport: rankedCandidates.coverageReport || null }
 }
 
 /**

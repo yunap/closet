@@ -390,6 +390,15 @@ deferred):**
    strong-vs-weak-dependency judgment, matching how hero/support/wearability guidance was already
    written. No deterministic score, no exclusion — model judgment, as designed.
 
+**[candidate-set ownership, 2026-08-25] Capsule bench structural admission now uses the same
+bounded-set primitive as selected, visual, and coordinated-plan composition.** Each capsule slot
+restricts a shared complete-outfit requirement to its own gate-eligible IDs, so the finite model
+bench retains a top + bottom + shoes or dress + shoes path when supply and bench capacity permit.
+Dependent paths reserve a usable required base through the shared construction verdict. The
+capsule's ranking, deterministic roster seed, category choice targets, protagonist/palette supply,
+roster quotas, and postconditions remain capsule policy. `diagnostics.structuralCoverageReport`
+distinguishes true wardrobe supply gaps from a bench-capacity shortfall.
+
 **Ranking A/B: 0 scenarios differ — the corrected version is the no-op the V1 correction was too.**
 The first implementation of item 2 was NOT `validatorOnly` like `layer_floor:outerwear`, and it
 changed the deterministic path in one scenario: piece 258 (`formality: everyday`, `needs_base: yes`)
