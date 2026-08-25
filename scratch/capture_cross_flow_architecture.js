@@ -28,7 +28,6 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tempRoot, 'uploads')
 
 const { db } = await import('../db.js')
 const {
-  buildVisualComposerRoster,
   filterWholeWardrobePiecesForGeneration,
   isOutfitStructurallyValid,
   locallyGateWholeWardrobeOutfits,
@@ -36,6 +35,7 @@ const {
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
+const { evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -398,12 +398,21 @@ async function captureCandidateStages(definition) {
   }
   const trust = wardrobe.map(item => ({ id: item.id, ...wholeWardrobePieceTrustDecision(item, options) }))
   const filtered = filterWholeWardrobePiecesForGeneration(wardrobe, options)
-  const visual = buildVisualComposerRoster(wardrobe, {
-    ...options,
-    maxImages: visualImages,
-    selectedPieceId: null,
-    includeAccessories: false,
-    recordMetadataTodos: false,
+  const visual = evaluateVisualComposerPiecePool({
+    pieces: wardrobe,
+    context: {
+      occasion: options.occasion,
+      season: options.season,
+      mood: options.mood,
+      activity: options.activity,
+      requestText: options.request,
+      weatherProfile: options.weatherProfile,
+    },
+    policy: {
+      maxImages: visualImages,
+      includeAccessories: false,
+      recordMetadataTodos: false,
+    },
   })
   const selected = selectCandidatesForOutfitGeneration(pieceById.get(101), wardrobe, selectedCandidateLimit, options)
   const slots = [structuredClone(definition.slot)]
@@ -449,11 +458,13 @@ async function captureCandidateStages(definition) {
       suppressed: reasonsById(filtered.suppressedPieces),
     },
     visualRoster: {
-      rosterIds: ids(visual.roster),
-      excluded: Object.fromEntries((visual.excluded || [])
+      rosterIds: ids(visual.eligiblePieces),
+      recoveryEligibleIds: ids(visual.recoveryEligiblePieces),
+      excluded: Object.fromEntries((visual.excludedPieces || [])
         .map(entry => [String(entry.pieceId), entry.reason])
         .sort(([a], [b]) => Number(a) - Number(b))),
       excludedCounts: sortedObject(visual.debug?.excludedCounts),
+      findingCounts: sortedObject(visual.debug?.findingCounts),
       slotCoverage: visual.debug?.slotCoverage || {},
       cap: {
         requested: visualImages,

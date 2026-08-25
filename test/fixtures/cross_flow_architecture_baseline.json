@@ -194,6 +194,19 @@
             501,
             301
           ],
+          "recoveryEligibleIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
           "excluded": {
             "103": "register: elevated exceeds everyday ceiling",
             "203": "register: elevated exceeds everyday ceiling",
@@ -207,6 +220,10 @@
             "register: dressy exceeds everyday ceiling": 1,
             "register: elevated exceeds everyday ceiling": 2,
             "roster cap: category limit": 4
+          },
+          "findingCounts": {
+            "capacity": 4,
+            "validity": 3
           },
           "slotCoverage": {
             "top": 3,
@@ -512,6 +529,15 @@
             501,
             401
           ],
+          "recoveryEligibleIds": [
+            101,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501
+          ],
           "excluded": {
             "102": "hot weather: insulating fiber",
             "103": "register: elevated exceeds everyday ceiling",
@@ -528,6 +554,9 @@
             "metadata missing: footwear comfort (activity gate active)": 1,
             "register: dressy exceeds everyday ceiling": 1,
             "register: elevated exceeds everyday ceiling": 2
+          },
+          "findingCounts": {
+            "validity": 7
           },
           "slotCoverage": {
             "top": 2,
@@ -810,6 +839,19 @@
             101,
             201
           ],
+          "recoveryEligibleIds": [
+            101,
+            102,
+            104,
+            201,
+            202,
+            301,
+            401,
+            501,
+            502,
+            503,
+            504
+          ],
           "excluded": {
             "102": "roster cap: category limit",
             "103": "register: elevated exceeds everyday ceiling",
@@ -828,6 +870,10 @@
             "register: dressy exceeds everyday ceiling": 1,
             "register: elevated exceeds everyday ceiling": 2,
             "roster cap: category limit": 9
+          },
+          "findingCounts": {
+            "capacity": 9,
+            "validity": 3
           },
           "slotCoverage": {
             "top": 1,

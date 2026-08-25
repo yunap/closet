@@ -1916,33 +1916,30 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
-// Cheap, tag-based pre-filter for whether a composed outfit is worth the extra visual-critic
-// call — not a replacement for it. Deliberately over-inclusive: pattern_complexity/do_not_pair_rules
-// may be missing or wrong (the tagger or the user may never have set them), so this also falls back
-// to scanning each piece's own name/notes text for pattern words, the same signal a human would
-// have if the tags did not exist.
-const QUESTIONABLE_PATTERN_WORD_RE = /\b(floral|paisley|botanical|abstract|graphic|print|printed|pattern|patterned|stripe|striped|animal print|tropical|tie-dye|camo)\b/i
-// A do-not-pair rule about patterns/prints (e.g. "avoid another loud pattern") is only ever
-// actually implicated when a second patterned piece is present — that risk is already covered
-// by the patternedCount check above. Counting it on its own presence, regardless of whether
-// anything else in the outfit is patterned, flagged nearly every outfit containing a single
-// printed hero piece as "questionable" (most wardrobe pieces carry some do_not_pair_rule) and
-// sent it to the visual critic with nothing for the critic to actually judge — it then had to
-// invent a clash to justify the call. Non-pattern rules (silhouette, texture, color, formality)
-// still count on presence alone; those need the photo to verify and can't be cheaply checked.
-const PATTERN_DO_NOT_PAIR_RE = /\b(pattern|print|printed|patterned)\b/i
-export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
+// Cheap, structured pre-filter for whether a composed outfit is worth the extra visual-critic
+// call — not a replacement for it. Legacy garment-intelligence prose was produced by several
+// tagger generations without stable provenance. Its mere presence is not executable evidence and
+// must never activate a paid review or rejection path.
+export function wholeWardrobeOutfitVisualReviewFindings(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const patternedCount = pieces.filter(piece => {
+  const patternedPieceIds = pieces.filter(piece => {
     const complexity = String(piece.pattern_complexity || '').toLowerCase().trim()
     if (complexity === 'loud' || complexity === 'medium') return true
-    if (complexity) return false // explicitly tagged solid/quiet — trust the tag over the name scan
-    return QUESTIONABLE_PATTERN_WORD_RE.test(pieceNameBlob(piece))
-  }).length
-  if (patternedCount >= 2) return true
-  return pieces.some(piece =>
-    pieceGarmentIntelligence(piece).doNotPairRules.some(rule => !PATTERN_DO_NOT_PAIR_RE.test(rule))
-  )
+    if (complexity) return false
+    const patternType = String(piece.pattern_type || '').toLowerCase().trim()
+    return Boolean(patternType && !['solid', 'none', 'unknown'].includes(patternType))
+  }).map(piece => Number(piece.id)).filter(Number.isFinite)
+  if (patternedPieceIds.length < 2) return []
+  return [{
+    code: 'multiple_patterned_pieces',
+    reason: 'two or more pieces carry a concrete pattern signal',
+    pieceIds: patternedPieceIds,
+    source: 'structured_piece_facts',
+  }]
+}
+
+export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
+  return wholeWardrobeOutfitVisualReviewFindings(outfit).length > 0
 }
 
 export function inferWholeWardrobePieceRoles(piece = {}) {

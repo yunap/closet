@@ -77,7 +77,7 @@ Three things a PM should take away:
 
 ## How it differs from "Use my wardrobe"
 
-Same roster builder (`buildVisualComposerRoster`), different framing:
+Same finite-pool authority (`evaluateVisualComposerPiecePool`), different framing:
 
 | Aspect            | Use my wardrobe                    | Selected-piece composer                          |
 | ----------------- | ---------------------------------- | ------------------------------------------------ |
@@ -96,6 +96,13 @@ Engineer notes:
   authority as whole-wardrobe composition. Current-season requests can use live weather from the
   saved home location. Explicit hypothetical seasons stay hypothetical. Response debug records the
   chosen source and ignored conflicts for each field.
+
+- **Shared eligibility authority** (`evaluateVisualComposerPiecePool`): the model sees the bounded
+  eligible photo roster. Local fallback and comfort repair receive a recovery projection from the
+  same findings. Presentation/capacity omissions may remain usable, but a weather, register,
+  activity, footwear, metadata, or other validity exclusion cannot return through fallback. When
+  the selected anchor is itself footwear, the full wardrobe is evaluated through the same authority
+  before choosing a comfort substitute.
 
 - **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
   request booleans *or* a regex on the question ("ideal", "missing", "not in my
@@ -120,5 +127,5 @@ Engineer notes:
   hiking) is active (`ai.js:2225`) — the deliberate no-repair rule only applies
   to the whole-wardrobe advisor flow.
 - **Always non-empty**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
-  still 0 → a hand-built basic backfill using the anchor + top supports
-  (`ai.js:2200`).
+  still 0 → a hand-built basic backfill using the anchor + recovery-safe supports. Neither fallback
+  can reopen a validity-excluded piece.

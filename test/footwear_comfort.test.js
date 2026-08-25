@@ -346,6 +346,12 @@ test('6. Structured activity precedence: activity="walking" triggers constraint,
 })
 
 test('7. Plumbing: activity parameter propagates through the generateOutfitsForPieceInternal pipeline', async () => {
+  db.prepare("UPDATE pieces SET formality = 'everyday'").run()
+  db.prepare("UPDATE pieces SET heel_height = 'high', walk_support = 'low', shoe_type = 'pump' WHERE id = ?").run(seeded.stiletto)
+  db.prepare("UPDATE pieces SET heel_height = 'low', walk_support = 'high', shoe_type = 'pump' WHERE id = ?").run(seeded.blockHeel)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker' WHERE id = ?").run(seeded.sneaker)
+  db.prepare("UPDATE pieces SET heel_height = 'low', walk_support = 'medium', shoe_type = 'pump' WHERE id = ?").run(seeded.kittenHeel)
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'medium', shoe_type = 'boot' WHERE id = ?").run(seeded.ankleBoot)
   const liveWeather = { isHot: false, isCold: false, highF: 72, lowF: 55, weatherSource: 'live' }
   const result = await generateOutfitsForPieceInternal({
     pieceId: seeded.stiletto,
@@ -363,6 +369,41 @@ test('7. Plumbing: activity parameter propagates through the generateOutfitsForP
     const shoe = outfit.pieces.find(p => p.category === 'shoes')
     assert.notEqual(Number(shoe.id), Number(seeded.stiletto), 'Stilettos must be swapped out when activity is walking')
     assert.ok(outfit.watchFor.includes('swapped for all-day walking comfort'))
+  }
+})
+
+test('7b. Selected-piece local fallback cannot reintroduce a roster validity exclusion', async () => {
+  db.prepare(`
+    UPDATE pieces
+    SET formality = 'everyday', walk_support = 'high', heel_height = 'flat', shoe_type = 'sneaker', occasions = '["casual","city","outdoor"]'
+    WHERE category = 'shoes'
+  `).run()
+  db.prepare("UPDATE pieces SET formality = 'lounge' WHERE id = ?").run(seeded.sneaker)
+
+  const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = args => {
+    if (String(args.system || '').includes('SELECTED-ANCHOR CONTRACT')) return '{"outfits": ['
+    return defaultHandler(args)
+  }
+
+  try {
+    const result = await generateOutfitsForPieceInternal({
+      pieceId: seeded.top,
+      occasion: 'outdoor_daytime_social',
+      season: 'current season',
+      activity: 'walking',
+      resolvedWeatherProfile: { isHot: false, isCold: false, highF: 72, lowF: 55, weatherSource: 'live' },
+    })
+
+    assert.ok(result.debug.visualCritic.composerError, 'fixture must exercise the local fallback')
+    assert.equal(
+      result.structuredOutfits.some(outfit => outfit.pieceIds.map(Number).includes(Number(seeded.sneaker))),
+      false,
+      'a shoe rejected by the polished-walking register gate cannot return through fallback',
+    )
+    assert.equal(result.debug.visualCritic.excludedCounts['register: lounge below polished walking target'], 1)
+  } finally {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
   }
 })
 

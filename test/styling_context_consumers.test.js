@@ -44,3 +44,19 @@ test('retired direct context assemblers cannot return', () => {
   assert.doesNotMatch(routeSource, /resolveDirectVisualComposerWeather/)
   assert.doesNotMatch(routeSource, /getCurrentWeatherProfile/)
 })
+
+test('selected and whole visual composers delegate finite-pool eligibility to one authority', () => {
+  const selected = sourceBlock(
+    'async function composeSelectedPieceVisualWardrobeOutfits',
+    "router.post('/evaluate-piece'",
+  )
+  const whole = sourceBlock(
+    'export async function generateWholeWardrobeOutfitsVisualInternal',
+    "router.post('/generate-wardrobe-outfits-visual'",
+  )
+  assert.match(selected, /evaluateVisualComposerPiecePool\(\{/)
+  assert.match(selected, /recoveryEligibleIds/)
+  assert.doesNotMatch(selected, /buildVisualComposerRoster\(/)
+  assert.match(whole, /evaluateVisualComposerPiecePool\(\{/)
+  assert.doesNotMatch(whole, /buildVisualComposerRoster\(/)
+})

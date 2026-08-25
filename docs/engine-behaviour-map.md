@@ -1056,6 +1056,24 @@ Both generators expose resolved values, provenance, and conflicts under response
 `stylingContext`. This is the first consumer migration; freeform and plan-slot context remain later
 Slice 1 work.
 
+**[eligibility-ownership consolidation, 2026-08-24] Primary visual composition and selected-piece
+recovery now consume one finite-pool verdict.** `evaluateVisualComposerPiecePool` classifies every
+roster exclusion as validity, presentation, or capacity. The photo roster remains bounded, while
+the recovery projection may reuse accessories, no-photo pieces, and cap cuts but cannot reintroduce
+a weather, register, activity, footwear, metadata, or other validity exclusion. Selected local
+fallback, absolute fallback, and comfort-footwear repair all use that recovery projection. A
+shoe-anchor repair evaluates the full wardrobe through the same authority before choosing a
+substitute; it does not reopen raw `allPieces`.
+
+**[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
+visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
+pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review
+routing: these notes came from multiple tagger generations, were not normalized or continuously
+corrected, and remain composer guidance rather than executable authority. This follows
+`thread_1787621859177`, where two already-satisfied legacy notes sent an ordinary emerald top,
+beige tailored shorts, and brown leather shoes to a paid critic; unusual photo lighting then caused
+a false mauve-shoe rejection.
+
 **[forecast-failure integration correction, 2026-08-19] Neutral failure is global and disclosure
 must match it.** `resolveSlotWeather` now labels failed named-place plan forecasts as unavailable
 with unknown temperature, including indoor-transit slots. It no longer emits “winter (estimated)”

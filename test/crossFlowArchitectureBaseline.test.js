@@ -19,10 +19,12 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
     path.join(process.cwd(), 'test', 'fixtures', 'cross_flow_architecture_baseline.json'),
     'utf8',
   ))
-  assert.equal(baseline.schemaVersion, 1)
+  assert.equal(baseline.schemaVersion, 2)
   assert.deepEqual(Object.keys(baseline.scenarios), ['casual_neutral', 'hot_hiking', 'capacity_pressure'])
   for (const scenario of Object.values(baseline.scenarios)) {
     assert.ok(scenario.context.intent)
+    assert.ok(scenario.candidates.visualRoster.findingCounts)
+    assert.ok(Array.isArray(scenario.candidates.visualRoster.recoveryEligibleIds))
     assert.deepEqual(Object.keys(scenario.candidates), [
       'trust',
       'wholeWardrobeFilter',

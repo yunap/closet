@@ -88,12 +88,13 @@ Two things worth knowing at this altitude:
 
 ## Stage 3 deep dive — "Filter to a roster"
 
-Two functions run back to back. First a **suppression pass**
+Two authorities run back to back. First a **suppression pass**
 (`filterWholeWardrobePiecesForGeneration`, `styling-engine/rules.js:1939`) drops
 pieces the app doesn't trust for generation at all. Then
-`buildVisualComposerRoster` (`styling-engine/rules.js:1992`) runs a 4-step gate
-pipeline and an image-budget cap to produce the final roster (≤ 90 photos, below
-Claude's 100-image limit).
+`evaluateVisualComposerPiecePool` (`styling-engine/eligibility.js`) owns the finite pool and delegates
+the existing gate mechanics to `buildVisualComposerRoster`. It returns typed validity,
+presentation, and capacity findings plus the final roster (≤ 90 photos, below Claude's 100-image
+limit).
 
 ```mermaid
 flowchart TD
@@ -136,6 +137,9 @@ Engineer notes:
 - **Everything excluded is recorded** in `excluded[]` with a reason and counted
   in `debug.excludedCounts` — this is what powers the diagnostic cards in stage 7
   and the `[Visual Composer Roster]` server log.
+- **Disposition is explicit.** Validity findings bind primary composition and ordinary recovery;
+  presentation and capacity findings describe why a piece was absent from the photo roster without
+  pretending it is physically or contextually invalid.
 - **Per-piece prompt lines carry register hints.** Each roster line sent to the
   model (`ID {id}: {name}`) is appended with `; fabric: {fabric_category}` and
   `; reads_as: {reads_as}` when present (`composerPieceLineSuffix`, `routes/ai.js`,
@@ -179,6 +183,10 @@ Engineer notes:
   violation text the server attached (`buildBrokenModelCard` /
   `buildBrokenDiagnosticCard`, `routes/ai.js`). To a PM this is "what the user
   sees when the model underperforms."
+- **Clash review has an executable trigger.** A second visual critic is called only when
+  `wholeWardrobeOutfitVisualReviewFindings` sees at least two structured pattern signals. Legacy
+  free-text `do_not_pair_rules` remain composer guidance and cannot activate or decide this paid
+  rejection path.
 - **Thread memory is set here** (`setThreadMemory`, `StylistChat.jsx:3173`) so a
   follow-up like "swap the shoes on #2" has the generated outfits as context.
 - **`data.debug`** is stored on the message and drives the roster / selection

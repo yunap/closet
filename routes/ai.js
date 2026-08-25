@@ -70,7 +70,6 @@ import { randomUUID } from 'node:crypto'
 
 import {
   isStyleSelectedQuestion,
-  buildVisualComposerRoster,
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
@@ -134,8 +133,9 @@ import {
   hasGenericWholeWardrobeText,
   sortByStylisticStrength,
   pieceGarmentIntelligence,
-  wholeWardrobeOutfitLooksQuestionable
+  wholeWardrobeOutfitVisualReviewFindings
 } from '../styling-engine/rules.js'
+import { evaluateVisualComposerPiecePool } from '../styling-engine/eligibility.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -974,20 +974,25 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     .filter(p => p && Number(p.id) !== selectedId)
   const candidatePool = [selectedPiece, ...supportCandidates]
   const poolById = new Map(candidatePool.map(p => [Number(p.id), p]))
-  const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(candidatePool, {
-    occasion,
-    weatherProfile,
-    sessionInfluence: null,
-    maxImages: 54,
-    mood,
-    activity,
-    request: question,
-    question,
-    occasionProfile,
-    activityProfile
+  const poolEvaluation = evaluateVisualComposerPiecePool({
+    pieces: candidatePool,
+    context: { occasion, weatherProfile, mood, activity, requestText: question, question, occasionProfile, activityProfile },
+    policy: { selectedPieceId: selectedId, maxImages: 54 },
   })
-  const rosterPieces = [selectedPiece, ...roster.filter(p => Number(p.id) !== selectedId)]
-  const candidatePieces = [...new Map(rosterPieces.map(p => [Number(p.id), p])).values()]
+  const { eligiblePieces: candidatePieces, excludedPieces: excluded, debug: rosterDebug } = poolEvaluation
+  const recoveryEvaluation = evaluateVisualComposerPiecePool({
+    pieces: allPieces,
+    context: { occasion, weatherProfile, mood, activity, requestText: question, question, occasionProfile, activityProfile },
+    policy: {
+      selectedPieceId: selectedId,
+      includeAccessories: true,
+      maxImages: Math.max(1, allPieces.length),
+      recordMetadataTodos: false,
+    },
+  })
+  const recoveryRankedCandidates = rankedCandidates.filter(candidate =>
+    recoveryEvaluation.recoveryEligibleIds.has(Number(candidate?.piece?.id))
+  )
   const composerThumbPx = 768
   const composerImageDetail = visualComposerImageDetailForRoster(candidatePieces.length)
   const candidateIds = new Set(candidatePieces.map(p => Number(p.id)))
@@ -1145,7 +1150,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
 
   if (!outfits.length) {
-    const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates, { occasion })
+    const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, recoveryRankedCandidates, { occasion })
     outfits = localFallback
       .map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePool))
       .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
@@ -1156,7 +1161,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     outfits = outfits.map(o => {
       const repairedFromShown = applyComfortFootwearRepair(o, visibleRepairPool, comfortConstraint, { weatherProfile, occasion, mood, activity })
       return repairedFromShown === o
-        ? applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
+        ? applyComfortFootwearRepair(o, recoveryEvaluation.recoveryEligiblePieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
         : repairedFromShown
     })
   }
@@ -1170,6 +1175,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 
   return {
     outfits,
+    recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
     rejected: parsed.rejected || [],
     skip: parsed.skip || '',
     saveableLearning: parsed.saveableLearning || '',
@@ -1638,16 +1644,21 @@ export async function generateOutfitsForPieceInternal({
     })
   }
 
+  const recoveryPieces = (!idealMode && !idealOnlyMode && Array.isArray(composed.recoveryEligiblePieces))
+    ? composed.recoveryEligiblePieces
+    : allPieces
+  const recoveryIds = new Set(recoveryPieces.map(piece => Number(piece.id)))
+  const recoveryRankedCandidates = rankedCandidates.filter(candidate => recoveryIds.has(Number(candidate?.piece?.id)))
   let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
   if (structuredOutfits.length > 0) {
     console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
   } else if (!idealOnlyMode) {
     console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
-    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, rankedCandidates, { occasion })
+    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, recoveryRankedCandidates, { occasion })
   }
   if (!structuredOutfits.length) {
     console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
-    const candidates = (rankedCandidates || []).map(r => r.piece).filter(Boolean)
+    const candidates = recoveryRankedCandidates.map(r => r.piece).filter(Boolean)
     const selectedGroup = wardrobeCategoryGroup(parsedPiece)
     const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
     structuredOutfits = [normalizeGeneratedOutfitObject({
@@ -1669,7 +1680,7 @@ export async function generateOutfitsForPieceInternal({
   }
 
   if (comfortConstraint) {
-    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
+    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, recoveryPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
   }
   if (!idealMode && !idealOnlyMode && visualCriticDebug) {
     persistGenerationRun({
@@ -1965,25 +1976,16 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Memory context (reuse existing builders, keep it lean)
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
     // Compute weather profile and filter the visual composer roster
-    let { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
-      occasion,
-      weatherProfile,
-      sessionInfluence,
-      maxImages: 90,
-      mood,
-      activity,
-      request: stylingRequest,
-      question,
-      occasionProfile,
-      activityProfile
+    const poolEvaluation = evaluateVisualComposerPiecePool({
+      pieces: allowedPieces,
+      context: { occasion, weatherProfile, mood, activity, requestText: stylingRequest, question, occasionProfile, activityProfile },
+      policy: { selectedPieceId: savedMainPieceId, sessionInfluence, maxImages: 90 },
     })
+    let { eligiblePieces: roster, excludedPieces: excluded, debug: rosterDebug } = poolEvaluation
     if (savedMainPiece) {
       const allowedMain = allowedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       if (!allowedMain) {
         throw new Error(`The selected Main piece is unavailable because it is no longer active. Choose another Main piece.`)
-      }
-      if (!roster.some(piece => Number(piece.id) === savedMainPieceId)) {
-        roster = [allowedMain, ...roster.filter(piece => Number(piece.id) !== savedMainPieceId)].slice(0, 90)
       }
     }
     const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(roster.map(piece => piece.id), 3)
@@ -2199,11 +2201,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // questionable-check would silently see nothing to flag. Rehydrate against allowedPieces by
     // id for the check only; the outfit objects that ship to the client stay trimmed as-is.
     const allowedPieceById = new Map(allowedPieces.map(piece => [Number(piece.id), piece]))
-    const questionableForClashReview = structurallyValidForClashReview.filter(outfit =>
-      wholeWardrobeOutfitLooksQuestionable({
+    const visualReviewCandidates = structurallyValidForClashReview.map(outfit => ({
+      outfit,
+      findings: wholeWardrobeOutfitVisualReviewFindings({
         pieces: (outfit.pieces || []).map(piece => allowedPieceById.get(Number(piece.id)) || piece)
-      })
-    )
+      }),
+    })).filter(candidate => candidate.findings.length)
+    const questionableForClashReview = visualReviewCandidates.map(candidate => candidate.outfit)
+    const visualReviewFindingCounts = visualReviewCandidates
+      .flatMap(candidate => candidate.findings)
+      .reduce((counts, finding) => {
+        counts[finding.code] = (counts[finding.code] || 0) + 1
+        return counts
+      }, {})
     if (questionableForClashReview.length) {
       try {
         const clashReview = await withTimeout(reviewComposedWholeWardrobeOutfitsForClash({
@@ -2219,14 +2229,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         visualClashDebug = {
           reviewedCount: clashReview?.reviewedCount || 0,
           flaggedCount: clashFlaggedByOutfit.size,
-          skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length
+          skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length,
+          findingCounts: visualReviewFindingCounts,
         }
       } catch (err) {
         console.warn('Whole-wardrobe clash critic fallback:', err.message)
         visualClashDebug = { error: err.message }
       }
     } else if (structurallyValidForClashReview.length) {
-      visualClashDebug = { reviewedCount: 0, flaggedCount: 0, skippedNotQuestionable: structurallyValidForClashReview.length }
+      visualClashDebug = {
+        reviewedCount: 0,
+        flaggedCount: 0,
+        skippedNotQuestionable: structurallyValidForClashReview.length,
+        findingCounts: {},
+      }
     }
     const visuallyRejectedModelOutfits = [...clashFlaggedByOutfit.entries()]
       .map(([outfit, reason]) => ({ outfit, reason: `visual critic: ${reason}` }))

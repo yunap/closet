@@ -4482,7 +4482,8 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   
   // Call with hiking
   await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
+    occasion: 'casual',
+    activity: 'hiking',
     season: 'current season',
     mood: 'artistic minimalist',
     limit: 1
@@ -4515,7 +4516,8 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
   const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
+    occasion: 'casual',
+    activity: 'hiking',
     season: 'current season',
     mood: '',
     limit: 1
@@ -4556,7 +4558,8 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   }
   
   const ampleCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
-    occasion: 'hiking',
+    occasion: 'casual',
+    activity: 'hiking',
     season: 'current season',
     mood: '',
     limit: 1
