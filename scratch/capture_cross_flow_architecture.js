@@ -397,7 +397,11 @@ async function captureCandidateStages(definition) {
     currentDate: REFERENCE_DATE,
   }
   const trust = wardrobe.map(item => ({ id: item.id, ...wholeWardrobePieceTrustDecision(item, options) }))
-  const automaticUse = evaluateAutomaticUsePiecePool({ pieces: wardrobe, context: options })
+  const automaticUse = evaluateAutomaticUsePiecePool({
+    pieces: wardrobe,
+    context: options,
+    policy: { hotOuterwearCap: 3 },
+  })
   const filtered = filterWholeWardrobePiecesForGeneration(wardrobe, options)
   const visual = evaluateVisualComposerPiecePool({
     pieces: wardrobe,

@@ -66,3 +66,18 @@ test('freeform search, proposal, and slot swaps consume shared automatic-use eli
   assert.match(toolSource, /evaluateAutomaticUsePiecePool\(\{/)
   assert.doesNotMatch(toolSource, /wholeWardrobePieceTrustDecision\(/)
 })
+
+test('selected ranking and whole generation consume shared automatic-use pool adapters', () => {
+  const selected = sourceBlock(
+    'export async function generateOutfitsForPieceInternal',
+    "router.post('/generate-outfits-for-piece'",
+  )
+  const whole = sourceBlock(
+    'export async function generateWholeWardrobeOutfitsVisualInternal',
+    "router.post('/generate-wardrobe-outfits-visual'",
+  )
+  assert.match(selected, /selectAutomaticUseCandidatesForOutfitGeneration\(\{/)
+  assert.doesNotMatch(selected, /selectCandidatesForOutfitGeneration\(/)
+  assert.match(whole, /evaluateAutomaticUsePiecePool\(\{/)
+  assert.doesNotMatch(whole, /filterWholeWardrobePiecesForGeneration\(/)
+})

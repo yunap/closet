@@ -1512,16 +1512,23 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
   return allowed
     .map(p => {
       const scored = compatibilityScoreForSelectedItem(piece, p, options)
-      const trust = wholeWardrobePieceTrustDecision(p, {
-        occasion: options.occasion || 'casual',
-        season: options.season,
-        activity: options.activity,
-        mood: options.mood,
-        request: options.request,
-        question: options.question,
-        explorationMode: options.explorationMode || 'moderate',
-        weatherProfile: options.weatherProfile
-      })
+      const sharedEligibility = options.eligibilityDecisionsById?.get(Number(p.id))
+      const trust = sharedEligibility
+        ? {
+            allowed: sharedEligibility.underlyingAllowed,
+            supportOnly: sharedEligibility.supportOnly,
+            reasons: sharedEligibility.reasons,
+          }
+        : wholeWardrobePieceTrustDecision(p, {
+            occasion: options.occasion || 'casual',
+            season: options.season,
+            activity: options.activity,
+            mood: options.mood,
+            request: options.request,
+            question: options.question,
+            explorationMode: options.explorationMode || 'moderate',
+            weatherProfile: options.weatherProfile
+          })
       return {
         piece: p,
         ...scored,

@@ -69,7 +69,7 @@ Three things a PM should take away:
 | A     | User picks a piece + options            | `StylistChat.jsx` → `POST /api/ai/generate-outfits-for-piece`     |
 | B–G   | Server resolves context and composes outfits | `generateOutfitsForPieceInternal` — `routes/ai.js`             |
 | X     | Normalize values, choose field authority, build profiles and weather | `resolveStylingContext` — `styling-engine/stylingContext.js` |
-| C     | Candidate ranking                       | `selectCandidatesForOutfitGeneration`                             |
+| C     | Shared automatic-use findings, then anchor-specific candidate ranking | `selectAutomaticUseCandidatesForOutfitGeneration` |
 | E     | Wardrobe-mode visual composer           | `composeSelectedPieceVisualWardrobeOutfits` — `routes/ai.js:1587` |
 | V,E2  | Ideal-mode critic + text composer       | `rankSelectedPieceCandidatesWithVision`, `composeStructuredOutfitsForPiece` |
 
@@ -103,6 +103,12 @@ Engineer notes:
   activity, footwear, metadata, or other validity exclusion cannot return through fallback. When
   the selected anchor is itself footwear, the full wardrobe is evaluated through the same authority
   before choosing a comfort substitute.
+
+- **Shared support eligibility** (`selectAutomaticUseCandidatesForOutfitGeneration`): supporting
+  pieces are evaluated once by `evaluateAutomaticUsePiecePool`; the existing anchor-specific score
+  and category quotas consume those decisions instead of re-running the hard gate. Blocked rows
+  retain the same score/reason representation for parity, while the later visual pool remains the
+  binding finite roster. Piece concept-board planning uses the same adapter with its larger limit.
 
 - **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
   request booleans *or* a regex on the question ("ideal", "missing", "not in my

@@ -35,6 +35,11 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
       'planWorkbench',
       'capsule',
     ])
+    assert.deepEqual(
+      scenario.candidates.automaticUsePool.eligibleIds,
+      scenario.candidates.wholeWardrobeFilter.allowedIds,
+      'shared pool must preserve whole-filter eligibility and hot-outerwear capacity',
+    )
   }
   assert.deepEqual(baseline.validation.map(entry => entry.id), [
     'valid_separates',

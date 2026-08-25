@@ -10,8 +10,13 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closet-eligibility-'))
 process.env.WARDROBE_DB_PATH = path.join(tempRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tempRoot, 'uploads')
 
-const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const {
+  evaluateAutomaticUsePiecePool,
+  evaluateVisualComposerPiecePool,
+  selectAutomaticUseCandidatesForOutfitGeneration,
+} = await import('../styling-engine/eligibility.js')
+const {
+  selectCandidatesForOutfitGeneration,
   wholeWardrobeOutfitLooksQuestionable,
   wholeWardrobeOutfitVisualReviewFindings,
 } = await import('../styling-engine/rules.js')
@@ -65,6 +70,47 @@ test('shared automatic-use findings identify owner authority without consumer-si
   const decision = result.decisionsById.get(excluded.id)
   assert.equal(decision.allowed, false)
   assert.ok(decision.findings.some(finding => finding.authority === 'owner' && finding.code === 'user_excluded_for_city'))
+})
+
+test('hot-weather outerwear capacity and anchor bypass are explicit pool policy', () => {
+  const outerwear = [
+    piece(40, { category: 'outerwear', name: 'Light layer A', fabric_weight: 'light' }),
+    piece(41, { category: 'outerwear', name: 'Light layer B', fabric_weight: 'light' }),
+    piece(42, { category: 'outerwear', name: 'Medium layer', fabric_weight: 'medium' }),
+    piece(43, { category: 'outerwear', name: 'Medium layer B', fabric_weight: 'medium' }),
+    piece(44, { category: 'outerwear', name: 'Medium saved Main', fabric_weight: 'medium' }),
+  ]
+  const result = evaluateAutomaticUsePiecePool({
+    pieces: outerwear,
+    context: { occasion: 'casual', weatherProfile: { isHot: true, isCold: false } },
+    policy: { hotOuterwearCap: 3, anchorPieceIds: [44] },
+  })
+
+  assert.deepEqual([...result.eligibleIds], [40, 41, 42, 44])
+  assert.equal(result.decisionsById.get(43).findings.at(-1).kind, 'capacity')
+  assert.equal(result.decisionsById.get(44).underlyingAllowed, true)
+  assert.equal(result.decisionsById.get(44).bypassed, true)
+  assert.ok(result.underlyingExcludedPieces.some(entry => entry.pieceId === 44), 'bypass keeps the original suppression observable')
+  assert.equal(result.debug.bypassedAnchorCount, 1)
+})
+
+test('selected candidate adapter preserves the existing ranking while reusing one pool verdict', () => {
+  const anchor = piece(50, { category: 'top', name: 'Selected top' })
+  const candidates = [
+    piece(51, { category: 'bottom', name: 'Bottom A' }),
+    piece(52, { category: 'bottom', name: 'Bottom B' }),
+    piece(53, { name: 'Walking shoe' }),
+    piece(54, { name: 'Blocked heel', heel_height: 'high', walk_support: 'low', shoe_type: 'pump' }),
+  ]
+  const context = { occasion: 'city', activity: 'walking', weatherProfile: { isHot: false, isCold: false } }
+  const legacy = selectCandidatesForOutfitGeneration(anchor, candidates, 4, context)
+  const shared = selectAutomaticUseCandidatesForOutfitGeneration({ anchorPiece: anchor, pieces: candidates, limit: 4, context })
+
+  assert.deepEqual(
+    shared.rankedCandidates.map(entry => [entry.piece.id, entry.autoUseBlocked, entry.autoUseBlockReasons]),
+    legacy.map(entry => [entry.piece.id, entry.autoUseBlocked, entry.autoUseBlockReasons]),
+  )
+  assert.equal(shared.eligibility.decisionsById.size, candidates.length)
 })
 
 test('shared pool findings bind recovery to validity while preserving presentation-only pieces', () => {

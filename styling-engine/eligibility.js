@@ -1,4 +1,11 @@
-import { buildVisualComposerRoster, wholeWardrobePieceTrustDecision } from './rules.js'
+import {
+  buildVisualComposerRoster,
+  selectCandidatesForOutfitGeneration,
+  wholeWardrobePieceTrustDecision,
+} from './rules.js'
+import { pieceFabricWeight, wardrobeCategoryGroup } from './attributes.js'
+import { db } from '../db.js'
+import { parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 
 const PRESENTATION_REASONS = new Set([
   'no photo',
@@ -33,11 +40,21 @@ export function evaluateAutomaticUsePiecePool({
   policy = {},
 } = {}) {
   const anchorIds = new Set((policy.anchorPieceIds || []).map(Number))
+  let ownerConstraints = policy.decisionOptions?.ownerConstraints ?? context.ownerConstraints
+  if (!Array.isArray(ownerConstraints)) {
+    try {
+      ownerConstraints = db.prepare("SELECT * FROM owner_constraints WHERE status = 'active' ORDER BY id").all().map(parseOwnerConstraintRow)
+    } catch {
+      ownerConstraints = []
+    }
+  }
+  const decisionContext = {
+    ...context,
+    ...(policy.decisionOptions || {}),
+    ownerConstraints,
+  }
   const decisions = (pieces || []).map(piece => {
-    const verdict = wholeWardrobePieceTrustDecision(piece, {
-      ...context,
-      ...(policy.decisionOptions || {}),
-    })
+    const verdict = wholeWardrobePieceTrustDecision(piece, decisionContext)
     const findings = (verdict.reasons || []).map(reason => ({
       pieceId: Number(piece.id),
       pieceName: piece.name || '',
@@ -59,20 +76,51 @@ export function evaluateAutomaticUsePiecePool({
       reasons: findings.map(finding => finding.reason),
     }
   })
+
+  const hotOuterwearCap = Number(policy.hotOuterwearCap)
+  if (context.weatherProfile?.isHot && Number.isFinite(hotOuterwearCap) && hotOuterwearCap >= 0) {
+    const weightScore = { light: 1, medium: 2, heavy: 3 }
+    const capCandidates = decisions
+      .filter(decision => decision.underlyingAllowed && wardrobeCategoryGroup(decision.piece) === 'outerwear')
+      .sort((a, b) => {
+        const weightDiff = (weightScore[pieceFabricWeight(a.piece)] || 2) - (weightScore[pieceFabricWeight(b.piece)] || 2)
+        return weightDiff || a.pieceId - b.pieceId
+      })
+    for (const decision of capCandidates.slice(hotOuterwearCap)) {
+      const finding = {
+        pieceId: decision.pieceId,
+        pieceName: decision.piece.name || '',
+        code: 'hot_weather_outerwear_cap',
+        reason: 'hot weather: outerwear cap',
+        kind: 'capacity',
+        authority: 'engine',
+        source: 'automatic_use_pool',
+      }
+      decision.findings.push(finding)
+      decision.reasons.push(finding.reason)
+      decision.allowed = anchorIds.has(decision.pieceId)
+      decision.bypassed = decision.allowed
+    }
+  }
   const decisionsById = new Map(decisions.map(decision => [decision.pieceId, decision]))
   const eligiblePieces = decisions.filter(decision => decision.allowed).map(decision => decision.piece)
   const excludedDecisions = decisions.filter(decision => !decision.allowed)
+  const underlyingExcludedDecisions = decisions.filter(decision =>
+    !decision.underlyingAllowed || decision.findings.some(finding => finding.kind === 'capacity')
+  )
+  const excludedProjection = decision => ({
+    id: decision.pieceId,
+    pieceId: decision.pieceId,
+    name: decision.piece.name || '',
+    category: decision.piece.category || '',
+    reasons: decision.reasons,
+    piece: decision.piece,
+  })
 
   return {
     eligiblePieces,
-    excludedPieces: excludedDecisions.map(decision => ({
-      id: decision.pieceId,
-      pieceId: decision.pieceId,
-      name: decision.piece.name || '',
-      category: decision.piece.category || '',
-      reasons: decision.reasons,
-      piece: decision.piece,
-    })),
+    excludedPieces: excludedDecisions.map(excludedProjection),
+    underlyingExcludedPieces: underlyingExcludedDecisions.map(excludedProjection),
     findings: decisions.flatMap(decision => decision.findings),
     decisions,
     decisionsById,
@@ -81,6 +129,7 @@ export function evaluateAutomaticUsePiecePool({
       evaluatedCount: decisions.length,
       eligibleCount: eligiblePieces.length,
       excludedCount: excludedDecisions.length,
+      underlyingExcludedCount: underlyingExcludedDecisions.length,
       bypassedAnchorCount: decisions.filter(decision => decision.bypassed).length,
       findingCounts: decisions.flatMap(decision => decision.findings).reduce((counts, finding) => {
         counts[finding.code] = (counts[finding.code] || 0) + 1
@@ -88,6 +137,24 @@ export function evaluateAutomaticUsePiecePool({
       }, {}),
     },
   }
+}
+
+/**
+ * Selected-piece ranking adapter: one automatic-use evaluation feeds the existing anchor-specific
+ * ranking strategy, so ranking can preserve its category quotas without re-running the hard gate.
+ */
+export function selectAutomaticUseCandidatesForOutfitGeneration({
+  anchorPiece,
+  pieces = [],
+  limit = 30,
+  context = {},
+} = {}) {
+  const eligibility = evaluateAutomaticUsePiecePool({ pieces, context })
+  const rankedCandidates = selectCandidatesForOutfitGeneration(anchorPiece, pieces, limit, {
+    ...context,
+    eligibilityDecisionsById: eligibility.decisionsById,
+  })
+  return { rankedCandidates, eligibility }
 }
 
 /**

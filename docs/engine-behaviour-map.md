@@ -1077,6 +1077,16 @@ and `intent:"explain"` path. `propose_outfit` and `suggest_slot_swaps` keep thei
 dispositions, and an explicit anchor remains usable without erasing the evidence that ordinary
 automatic selection would have blocked it. No scoring, profile rule, or broadening order changed.
 
+**[eligibility-ownership consolidation, third consumer migration, 2026-08-24] Selected support
+ranking and whole-wardrobe suppression now consume the same automatic-use pool.**
+`selectAutomaticUseCandidatesForOutfitGeneration` evaluates supporting pieces once, then injects
+those decisions into the existing compatibility score and category-quota strategy; selected-piece
+generation and concept-board planning no longer independently invoke the hard gate. Whole-wardrobe
+generation also consumes `evaluateAutomaticUsePiecePool` directly. Its former hot-weather
+outerwear behavior is an explicit capacity policy (keep the three lightest, deterministic by ID),
+and a saved Main may bypass that disposition without erasing the hard-gate or capacity finding.
+The legacy whole-filter function remains only for unmigrated plan/capsule/recovery consumers.
+
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
 pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review

@@ -73,14 +73,12 @@ import {
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
-  filterWholeWardrobePiecesForGeneration,
   getRecentWholeWardrobeSessionInfluence,
   buildWholeWardrobeCandidateOutfits,
   wholeWardrobeCandidateFormulaCounts,
   wholeWardrobeFormulaFamily,
   wholeWardrobeArchetypeFor,
   saveWholeWardrobeSession,
-  selectCandidatesForOutfitGeneration,
   getOutfitsForPieceMemory,
   getStylistFeedbackMemory,
   getProvisionalWrongChoiceMemory,
@@ -135,7 +133,11 @@ import {
   pieceGarmentIntelligence,
   wholeWardrobeOutfitVisualReviewFindings
 } from '../styling-engine/rules.js'
-import { evaluateVisualComposerPiecePool } from '../styling-engine/eligibility.js'
+import {
+  evaluateAutomaticUsePiecePool,
+  evaluateVisualComposerPiecePool,
+  selectAutomaticUseCandidatesForOutfitGeneration,
+} from '../styling-engine/eligibility.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -1549,7 +1551,12 @@ export async function generateOutfitsForPieceInternal({
     occasionProfile,
     activityProfile,
   } = stylingContext
-  let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
+  let { rankedCandidates } = selectAutomaticUseCandidatesForOutfitGeneration({
+    anchorPiece: parsedPiece,
+    pieces: allPieces,
+    limit: 32,
+    context: { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question },
+  })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
@@ -1947,15 +1954,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         : 'Formula-similar mode: use only shown wardrobe pieces. Preserve the source outfit formula and its focal/support relationship while substituting owned pieces. Do not simply repeat the exact saved outfit; each result must be a useful alternate realization of the same formula.',
     ].filter(Boolean).join('\n') : ''
 
-    // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
-    let { allowedPieces, suppressedPieces } =
-      filterWholeWardrobePiecesForGeneration(allPieces, { occasion, season, explorationMode, weatherProfile, mood, activity })
+    const automaticUseEvaluation = evaluateAutomaticUsePiecePool({
+      pieces: allPieces,
+      context: { occasion, season, explorationMode, weatherProfile, mood, activity },
+      policy: {
+        anchorPieceIds: savedMainPieceId ? [savedMainPieceId] : [],
+        hotOuterwearCap: 3,
+      },
+    })
+    let allowedPieces = automaticUseEvaluation.eligiblePieces
+    const suppressedPieces = automaticUseEvaluation.underlyingExcludedPieces
+    const savedMainDecision = savedMainPieceId
+      ? automaticUseEvaluation.decisionsById.get(savedMainPieceId)
+      : null
     const savedMainSuppression = savedMainPiece
       ? suppressedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       : null
-    const savedMainBypassedSuppression = Boolean(savedMainSuppression)
-    if (savedMainPiece && savedMainBypassedSuppression && !allowedPieces.some(piece => Number(piece.id) === savedMainPieceId)) {
-      allowedPieces = [savedMainPiece, ...allowedPieces]
+    const savedMainBypassedSuppression = Boolean(savedMainDecision?.bypassed)
+    if (savedMainPiece && savedMainBypassedSuppression) {
+      allowedPieces = [savedMainPiece, ...allowedPieces.filter(piece => Number(piece.id) !== savedMainPieceId)]
     }
     const suppressedReasonCounts = suppressedPieces.reduce((acc, piece) => {
       for (const reason of (piece.reasons || [])) {
@@ -2665,7 +2682,12 @@ router.post('/generate-outfit-boards', async (req, res) => {
 
     const selectedPiece = parsePiece(piece)
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const rankedCandidates = selectCandidatesForOutfitGeneration(selectedPiece, allPieces, 48, { occasion, season })
+    const { rankedCandidates } = selectAutomaticUseCandidatesForOutfitGeneration({
+      anchorPiece: selectedPiece,
+      pieces: allPieces,
+      limit: 48,
+      context: { occasion, season },
+    })
     const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
     const allowedIds = new Set(candidatePieces.map(p => Number(p.id)))
     const pieceById = new Map(candidatePieces.map(p => [Number(p.id), p]))

@@ -88,9 +88,9 @@ Two things worth knowing at this altitude:
 
 ## Stage 3 deep dive — "Filter to a roster"
 
-Two authorities run back to back. First a **suppression pass**
-(`filterWholeWardrobePiecesForGeneration`, `styling-engine/rules.js:1939`) drops
-pieces the app doesn't trust for generation at all. Then
+Two shared projections run back to back. First `evaluateAutomaticUsePiecePool` applies the hard
+gate, the explicit saved-Main bypass, and the hot-weather outerwear capacity policy (three lightest).
+Then
 `evaluateVisualComposerPiecePool` (`styling-engine/eligibility.js`) owns the finite pool and delegates
 the existing gate mechanics to `buildVisualComposerRoster`. It returns typed validity,
 presentation, and capacity findings plus the final roster (≤ 90 photos, below Claude's 100-image
@@ -98,7 +98,7 @@ limit).
 
 ```mermaid
 flowchart TD
-    P["Active pieces<br/>status = 'active'"] --> S["Suppression pass<br/>wholeWardrobePieceTrustDecision<br/>+ hot-weather outerwear cap (keep 3 lightest)"]
+    P["Active pieces<br/>status = 'active'"] --> S["Shared automatic-use pool<br/>hard-gate findings<br/>+ hot-weather outerwear cap (keep 3 lightest)"]
     S --> S1["Step 1 — no photo<br/>drop pieces with no image"]
     S1 --> S2["Step 2 — category gate<br/>drop accessories (unless opted in)"]
     S2 --> S3["Step 3 — weather / register / footwear<br/>register ceiling, footwear comfort,<br/>hot: insulating; cold: shorts, bare, linen"]
@@ -116,6 +116,11 @@ flowchart TD
 ```
 
 Engineer notes:
+
+- **One suppression result.** Whole-wardrobe generation no longer assembles
+  `filterWholeWardrobePiecesForGeneration` locally. It consumes typed hard-gate/capacity findings
+  from `evaluateAutomaticUsePiecePool`; the older filter remains a compatibility adapter for
+  plan/capsule/recovery consumers not yet migrated.
 
 - **Selected-piece bypass.** Every gate checks `isSelected(p)` first — a pinned
   piece skips every exclusion (photo, category, weather, register, cap). This
