@@ -1197,7 +1197,7 @@ test('capsule workbench states validator requirements before the model composes'
   })
   const requirements = workbench.slots[0].submission_requirements.join(' ')
 
-  assert.match(requirements, /exactly one top plus one bottom, OR one dress/)
+  assert.match(requirements, /exactly one top plus one bottom, or exactly one dress/)
   assert.match(requirements, /exactly one pair of shoes/)
   assert.match(requirements, /Outerwear never replaces the required top/)
   assert.match(requirements, /sleeveless top must include a medium\/heavy cardigan/)
@@ -4674,6 +4674,9 @@ test('a rejected capsule look survives as a needs-review card carrying its block
   assert.deepEqual(card.brokenPieces.map(p => p.name), ['burgundy cork wedges'], 'only the blocked garment is flagged, not the whole outfit')
   assert.deepEqual(card.capsuleRepair, { slotId: 'city_museum', blockedPieceIds: [199] }, 'enough state to swap one garment without re-planning')
   assert.equal(card.title, 'Museum Day', "the model's own title survives")
+  assert.equal(card.result.disposition, 'repairable')
+  assert.equal(card.result.provenance.flow, 'plan_outfit_set')
+  assert.equal(card.result.repair.action, 'repair_capsule_look')
 })
 
 // A needs-review card appended after every other slot reads as unrelated to the

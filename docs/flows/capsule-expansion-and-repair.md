@@ -52,7 +52,7 @@ flowchart TD
 | Composition | `capsuleExpansionSystemPrompt` and `askStylistStructuredWithUsage` | One strict-schema response, one outfit, no tool loop, no retry. |
 | Validation | `validateSubmittedPlanOutfits` | Reconstruct a one-slot pending plan and apply normal structure, slot, ownership, repetition, weather, activity, register, and dependency checks. |
 | Disposition | `/expand-capsule` route | Accept one card, or return the first failure visibly. It does not repair or silently broaden the roster. |
-| Response and persistence | `/expand-capsule`; `useCapsuleExpansion` | The response is marked `plan_outfit_set` / `composedBy: model`, carries the original plan context, and is appended to the current capsule in the browser. |
+| Response and persistence | `/expand-capsule`; `useCapsuleExpansion` | The response is marked `plan_outfit_set` / `composedBy: model`, carries the original plan context, and adds the shared accepted `result` with `capsule_expansion` provenance before the browser appends it. |
 
 `capsuleExpansionCoreCapacity` is a route-local fallback calculation. The saved slot capacity is
 preferred. Its relationship to the fuller `capsuleOutfitCoreCapacity` contract is an architecture
@@ -92,7 +92,7 @@ flowchart TD
 | Repair | `/repair-capsule-look` route + shared `validatedComplete` / `validatedSubstitute` | Add one missing category, or swap a blocked/original piece with another allowed piece from the same wardrobe category. Candidate order is deterministic and remains route policy. |
 | Validation | `validateSubmittedPlanOutfits` | Every attempted card is checked against the real one-slot pending plan and its held sibling outfits. |
 | Disposition and fallback | `/repair-capsule-look` route | Return the first accepted repair. If none exists, disclose the local shortfall. There is no billed fallback and no wider-wardrobe search. |
-| Response | `/repair-capsule-look`; capsule repair handler in `StylistChat.jsx` | The card is replaced in place, marked `plan_outfit_set` / `composedBy: engine`, and includes a short engine note naming the addition or swap. |
+| Response | `/repair-capsule-look`; capsule repair handler in `StylistChat.jsx` | The card is replaced in place, marked `plan_outfit_set` / `composedBy: engine`, includes a short engine note naming the addition or swap, and carries an accepted `result` whose provenance records the validated completion or substitution. |
 
 The 2026-08-25 ownership change does not alter the model-call sequence or widen the saved roster.
 The shared primitive calls `validateSubmittedPlanOutfits` immediately after each exact mutation and

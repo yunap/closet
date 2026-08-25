@@ -10,6 +10,7 @@ const rulesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rul
 const validationSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitValidation.js'), 'utf8')
 const candidateSetSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/candidateSet.js'), 'utf8')
 const recoverySource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/recovery.js'), 'utf8')
+const outfitResultSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitResult.js'), 'utf8')
 const footwearSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/footwear-comfort.js'), 'utf8')
 const attributesSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/attributes.js'), 'utf8')
 const coreSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
@@ -175,7 +176,7 @@ test('whole-wardrobe and submitted-plan gates consume typed structure findings d
 })
 
 test('route-level structure filters reuse typed findings and contain no category recount', () => {
-  assert.match(routeSource, /import \{ evaluateOutfitStructure \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateOutfitStructure \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
   assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
   const whole = sourceBlock(
     'export async function generateWholeWardrobeOutfitsVisualInternal',
@@ -188,7 +189,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume typed role findings', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const roleValidation = evaluateOutfitRoles\(resolved\)/)
   assert.match(toolSource, /evaluateOutfitRoles\(resolved\)\.findings/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
@@ -197,6 +198,30 @@ test('freeform proposal and swap validation consume typed role findings', () => 
   assert.doesNotMatch(attributesSource, /pieceReadsAsStandaloneBaseTop/)
   assert.doesNotMatch(toolSource, /export function validateOutfitRoles\(/)
   assert.doesNotMatch(toolSource, /function roleCategoryIssue\(/)
+})
+
+test('model-visible structure rules project from the shared validator owner', () => {
+  assert.match(validationSource, /export function categoryOutfitStructurePromptRule\(/)
+  assert.match(validationSource, /export function roleOutfitStructurePromptRule\(/)
+  assert.match(validationSource, /export function projectOutfitValidationFindings\(/)
+  assert.match(promptSource, /categoryOutfitStructurePromptRule\(/)
+  assert.match(plannerSource, /categoryOutfitStructurePromptRule\(/)
+  assert.match(routeSource, /categoryOutfitStructurePromptRule\(/)
+  assert.match(toolSource, /roleOutfitStructurePromptRule\(/)
+  assert.match(toolSource, /projectOutfitValidationFindings\(/)
+})
+
+test('outfit-producing flows share one normalized result envelope', () => {
+  assert.match(outfitResultSource, /export const OUTFIT_DISPOSITIONS/)
+  assert.match(outfitResultSource, /export function normalizeOutfitResult\(/)
+  assert.match(outfitResultSource, /export function normalizeDeliveredOutfit\(/)
+  assert.match(routeSource, /normalizeDeliveredOutfit\(/)
+  assert.match(routeSource, /flow: 'selected_piece'/)
+  assert.match(routeSource, /flow: 'whole_wardrobe_visual'/)
+  assert.match(routeSource, /flow: 'capsule_expansion'/)
+  assert.match(routeSource, /flow: 'capsule_repair'/)
+  assert.match(toolSource, /flow: 'freeform_propose_outfit'/)
+  assert.match(plannerSource, /flow: 'plan_outfit_set'/)
 })
 
 test('runtime dependent-piece decisions consume one structured needs_base reader', () => {

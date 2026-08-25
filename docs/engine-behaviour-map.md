@@ -1180,6 +1180,16 @@ unknown visual evidence may proceed, retry/provider budgets, and visible disposi
 policy. Exhaustion uses one structured `recovery_shortfall` report while existing human-facing
 wording stays flow-specific.
 
+**[projection and result ownership, 2026-08-25] One finding has one model-visible definition and
+one delivered disposition.** `outfitValidation.js` now projects its category-core, explicit-role,
+and typed-finding contracts into whole-wardrobe, freeform proposal, coordinated-plan, and capsule
+expansion prompts. The flows retain their distinct strategies and output schemas. After validation,
+`outfitResult.js` gives selected, whole, freeform proposal, plan/capsule, expansion, and repair
+cards a versioned `result` containing exactly one of `accepted`, `annotated`, `repairable`, or
+`rejected`, plus findings, annotations, provenance, and an optional repair capability. Existing
+top-level fields remain as UI compatibility aliases, so this is an additive no-op for ranking,
+provider sequence, persistence, and current card actions.
+
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured
 pattern signals. The mere presence of `garment_intelligence.do_not_pair_rules` is a no-op for review

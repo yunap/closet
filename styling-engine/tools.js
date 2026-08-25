@@ -10,8 +10,9 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
-import { evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES } from './outfitValidation.js'
+import { evaluateLayerDirections, evaluateOutfitRoles, evaluateRequiredBaseLayers, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
 import { validatedSubstitute } from './recovery.js'
+import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
@@ -834,7 +835,7 @@ export const STYLIST_TOOLS = [
             type: "object",
             properties: {
               id: { type: "integer", description: "Wardrobe piece ID from search_wardrobe." },
-              role: { type: "string", enum: OUTFIT_ROLES, description: "Structural role. Core = primary_top + primary_bottom, OR a single dress. Use layer_top/layer_bottom for INTENTIONAL layering (e.g. a base layer under a sheer top, shorts under a skirt) — not a second competing top/bottom. outerwear/accessory are add-ons. Exactly one shoes, at most one of each primary slot." },
+              role: { type: "string", enum: OUTFIT_ROLES, description: roleOutfitStructurePromptRule() },
               anchor: { type: "boolean", description: "Set true ONLY when the user explicitly asked to style/wear THIS piece this turn. An anchor is the outfit's premise: it bypasses auto-use trust/weather/register gating (the user's request overrides suitability rules). Supporting pieces stay fully gated. Never mark a piece the user did not ask about." }
             },
             required: ["id", "role"]
@@ -1581,16 +1582,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
         })
 
         // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
-        const issues = [
+        const hardFindings = [
           ...roleValidation.findings,
           ...requiredBaseLayers.findings.filter(finding => finding.severity === 'error'),
           ...layerDirections.findings.filter(finding => finding.severity === 'error'),
-        ].map(finding => finding.message)
+        ]
+        const issues = hardFindings.map(finding => finding.message)
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
           // broken diagnostic card (same "needs review" treatment as the composer's rejected proposals)
           // so the attempt is inspectable in chat, alongside returning the error to the model to retry.
-          const brokenOutfit = {
+          const brokenOutfit = normalizeOutfitResult({
             label: label || 'Outfit',
             broken: true,
             retryPending: true,
@@ -1607,13 +1609,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activity: resolvedActivity,
             debug: outfitDebug,
             previewOnly: true
-          }
+          }, {
+            disposition: 'repairable',
+            findings: hardFindings,
+            repair: { operation: 'complete', action: 'propose_outfit_retry' },
+            provenance: { flow: 'freeform_propose_outfit', source: 'proposed', composedBy: 'model', stage: 'role_validation' },
+          })
           const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
           toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
           return {
             status: "validation_error",
-            message: `The proposed outfit has an unresolved structure: ${issues.join('; ')}. COMPLETE the outfit instead of resending it: every card needs shoes plus a primary_top + primary_bottom (or a dress); a layer_top needs its base garment included too. Keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`,
+            message: `The proposed outfit has an unresolved structure. ${projectOutfitValidationFindings(hardFindings)} ${roleOutfitStructurePromptRule()} COMPLETE the outfit instead of resending it: keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`,
             issues
           }
         }
@@ -1661,7 +1668,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
         })
         if (hardGateIssues.length) {
-          const brokenOutfit = {
+          const brokenOutfit = normalizeOutfitResult({
             label: label || 'Outfit',
             broken: true,
             retryPending: true,
@@ -1678,7 +1685,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activity: resolvedActivity,
             debug: outfitDebug,
             previewOnly: true
-          }
+          }, {
+            disposition: 'repairable',
+            findings: hardGateIssues.map((message, index) => ({ code: `eligibility_${index + 1}`, message, kind: 'eligibility' })),
+            repair: { operation: 'substitute', action: 'propose_outfit_retry' },
+            provenance: { flow: 'freeform_propose_outfit', source: 'proposed', composedBy: 'model', stage: 'eligibility_gate' },
+          })
           const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
           toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
@@ -1735,7 +1747,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
               : ''
           return `Approved after a substitution: ${supersededBroken.rejectionReason}.${swapSummary}`
         })()
-        const proposedOutfit = {
+        const removedForRecovery = supersededBroken
+          ? (supersededBroken.pieces || []).find(piece => !proposedPieceIdSet.has(Number(piece?.id)))
+          : null
+        const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
           occasion: resolvedOccasion,
@@ -1752,10 +1767,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
           debug: outfitDebug,
           previewOnly: true,
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
-        }
-        const removedForRecovery = supersededBroken
-          ? (supersededBroken.pieces || []).find(piece => !proposedPieceIdSet.has(Number(piece?.id)))
-          : null
+        }, {
+          disposition: supersededEngineNote ? 'annotated' : 'accepted',
+          annotations: supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : [],
+          provenance: {
+            flow: 'freeform_propose_outfit',
+            source: 'proposed',
+            composedBy: 'model',
+            stage: 'proposal_validation',
+            ...(supersededBroken ? { recovery: { operation: removedForRecovery ? 'substitute' : 'exception' } } : {}),
+          },
+        })
         const correctionRecovery = removedForRecovery
           ? validatedSubstitute({
               subject: supersededBroken,

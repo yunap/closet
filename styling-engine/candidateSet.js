@@ -50,6 +50,18 @@ export function completeOutfitSupplyRequirement({ anchorPiece = null, id = 'comp
   return { id, alternatives }
 }
 
+export function projectCandidateSetShortfall(report = null, { anchorPiece = null } = {}) {
+  if (report?.complete !== false) return ''
+  const capacityOnly = (report.shortfalls || []).every(shortfall =>
+    shortfall?.code === 'required_structure_exceeds_capacity')
+  const subject = anchorPiece
+    ? `around ${anchorPiece.name || 'the selected item'}`
+    : 'for this request'
+  return capacityOnly
+    ? `I couldn't retain a complete outfit path ${subject} within the candidate limit, so I stopped before composition instead of asking the stylist to work from an incomplete roster.`
+    : `Your currently eligible wardrobe pieces do not contain a complete outfit path ${subject} (a dress or top + bottom, plus shoes, including any required coverage layer). I stopped before composition instead of inventing or forcing a weak outfit.`
+}
+
 // Restrict a structural requirement to the pieces admitted by a caller-specific context gate
 // (for example, one capsule slot). The structure remains shared; only the eligible IDs vary.
 export function restrictSupplyRequirement(requirement, allowedPieceIds = []) {

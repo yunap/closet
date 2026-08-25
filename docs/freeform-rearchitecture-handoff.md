@@ -1,5 +1,12 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Projection/result ownership, 2026-08-25:** `propose_outfit` no longer owns a separately worded
+> definition of explicit-role structure. Its tool description and validation retry project the
+> contract from `outfitValidation.js`. Proposal cards use the shared versioned `outfitResult.js`
+> envelope: successful cards are accepted (or annotated after a validated correction), and visible
+> validation failures are repairable with a retry action. Tool arguments, tool-loop sequencing,
+> cache boundaries, and the current top-level UI fields are unchanged.
+
 > **2026-08-18 bounded-execution expansion:** the philosophy below remains authoritative: the
 > conversational model owns intent and code owns truth/constraints. The next cost phase does not
 > add a keyword pre-route. It promotes the existing one-call visual `generate_outfits` pipeline for

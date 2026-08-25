@@ -3,7 +3,7 @@
 // add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
-import { requiredBaseLayerPromptRule } from './outfitValidation.js'
+import { categoryOutfitStructurePromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
@@ -1246,7 +1246,7 @@ ${c.lane_neutrality}
 ${EXPRESSIVE_HIERARCHY_RULES}
 
 Composition rules:
-- Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
+- ${categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false })}
 - If no suitable shoe (or any required slot) exists among the shown pieces, you must still output a placeholder for that slot: use the string '[missing wardrobe gap: category]' (e.g. '[missing wardrobe gap: shoes]') as the id/name in the 'pieces' array for that slot rather than substituting a piece from another slot or omitting the slot silently.
 - Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.
 - Do not invent a physical activity. An occasion's vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in \`bestFor\`/\`silhouette\`/\`watchFor\` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").

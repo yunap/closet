@@ -7,9 +7,9 @@ perl: warning: Please check that your locale settings:
 perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
-**Status:** Active — Stage 1 and Slices 0, 2, 4, and 5 complete; Slices 1 and 3 in progress as of
+**Status:** Active — Stage 1 and Slices 0, 2, 4, 5, and 6 complete; Slices 1 and 3 in progress as of
 2026-08-25. Proposed ownership decisions marked unresolved still require the named owner ruling
-before implementation. Slice 6 is next.
+before implementation. Slice 7 is next.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -114,8 +114,8 @@ reach; it does not claim every implementation is byte-for-byte duplicate.
 | Outfit validation | 11 | `evaluateOutfitStructure` owns typed category-core findings and `evaluateOutfitRoles` owns typed explicit-role findings | Selected gates, whole advisor/gate, plan submission, concept boards, and route-local checks still compose different dependency, context, slot/set, and disposition rules | Critical: identical outfits can still be accepted, annotated, repaired, or rejected for accidental reasons outside the two shared structural cores | 3 |
 | Candidate-set construction | 10 | Shared rankings and verdicts in places, but no common builder | Selected quotas, visual category ceilings/global cap, search result/image budgets, capsule roster/bench, plan workbench, and local fallbacks each perform selection and truncation | Critical: required categories or dependency supply can disappear before composition | 4 |
 | Recovery and fallback | 8 | `recovery.js` owns validated substitute, complete, fallback, and shortfall mechanics; flow strategies inject their authoritative validator | Candidate ordering, retry/cost budgets, and visible disposition remain flow policy; diagnostic broken cards remain explicitly rejected evidence rather than accepted recovery | Reduced: no migrated mutation can return as recovered before its primary hard validator accepts the exact result | 5 |
-| Prompt fact projection | 10 | Style Constitution exports and some serializers | Composer, selected-anchor, freeform tool, plan, capsule, board, and saved-variant prompts restate overlapping runtime facts | High: a code fix can be absent from the model-visible contract, or prompt wording can invent another rule | 6 |
-| Response normalization | 11 | Several normalization/card assemblers | Source labels, debug reasons, validation failures, needs-review state, plan context, and persistence are assembled per route/tool | Medium: downstream UI and follow-up state see semantically different shapes | 7 |
+| Prompt fact projection | 10 | Style Constitution exports plus structure/finding serializers in `outfitValidation.js` | Flow prompts still own composition strategy and output schema; unrelated context and eligibility facts remain later projection work | Reduced for migrated structure facts: validator wording is emitted by its owner instead of independently restated | 6 |
+| Response normalization | 11 | `outfitResult.js` normalizes delivered outfit disposition, findings, annotations, repair capability, and provenance | Flow labels, display copy, plan context, UI actions, and legacy aliases remain local | Reduced: selected, whole, freeform proposal, plan, capsule expansion, and capsule repair now expose the same semantic envelope | 7 |
 | Provider invocation and usage | 10 provider-crossing pipelines | `askStylist*` abstraction and telemetry context | Nested-call attribution and direct image/Responses calls remain specialized | Medium but well documented; no broad rewrite justified now | 8 |
 
 Context, eligibility, validation, candidate construction, and recovery are the consolidation core.
@@ -355,9 +355,11 @@ remains unresolved.
 | Saved-variant request framing | Preserve formula/Main piece or explore adjacent style neighborhood | `specialization` |
 | Local candidate generators | Deterministic reduced-ambition composition | `legacy` where they restate hard constraints incompletely |
 
-**Proposed owner:** Domain invariants originate in code/data verdicts and have one serializer that
-projects the result into each prompt that needs it. Flow prompts continue to own strategy and output
-shape. Do not merge prompts or disturb cache boundaries merely to share wording.
+**Implemented owner, 2026-08-25:** Domain invariants originate in code/data verdicts and have one
+serializer that projects the result into each prompt that needs it. `outfitValidation.js` now owns
+category-structure, explicit-role, and typed-finding projections consumed by whole visual,
+freeform proposal, plan workbench, and capsule expansion prompts. Flow prompts continue to own
+strategy and output shape; no prompt was merged and no cache boundary moved.
 
 **Ratchet needed after implementation:** For every canonical invariant, fixtures prove each required
 prompt projection still contains its serialized contract and each mechanical validator consumes the
@@ -483,7 +485,7 @@ slice.
 | Ranking | One existing strategy per objective, consuming shared facts/verdicts | Objective-specific weights, diversity, recency, anchor relevance | Hidden gate-like penalties only; do not merge strategies |
 | Candidate-set construction | Shared builder combining an injected ranking strategy, structural coverage, protected IDs, and hard capacity | Anchor relevance, whole breadth, capsule recombination, search retrieval mode | Flow-local quota/cap implementations once their policy is representable |
 | Repair/fallback validity | Shared post-mutation validation adapter and recovery primitives over canonical verdicts | Flow-local allowed mutations and cost/disclosure policy | Unvalidated selected fallback/backfill behavior and duplicated mutation loops |
-| Response normalization | Stable accepted/rejected outfit result with provenance and findings | Flow labels, actions, and display copy | Route/tool-specific semantic result shapes |
+| Response normalization | `outfitResult.js`: stable accepted/annotated/repairable/rejected result with provenance, findings, annotations, and optional repair capability | Flow labels, actions, display copy, plan context, and compatibility aliases | New outfit-producing consumers must use the common result envelope rather than inventing semantic result shapes |
 | Prompt invariant projection | Canonical verdict serializer adjacent to verdict owner | Flow prompt strategy and output schema | Independently worded domain definitions after all consumers migrate |
 | Provider execution | Existing `provider.js` abstraction and flow atlas | Direct image execution when documented | Only untraced calls or telemetry bypasses; no broad provider rewrite |
 | Conversation state | Per-field authority: persistent server, ephemeral evidence, delivered card | Explicit current-request override and versioned card capability | Conflicting field writers only after a separate state slice |
@@ -785,6 +787,16 @@ present at every migrated recovery boundary.
 Generate model-visible invariant text from shared context/eligibility/validation results. Normalize
 accepted, annotated, repairable, and rejected response shapes with provenance. Keep prompts,
 composer strategies, cache boundaries, and UI-specific actions distinct.
+
+**Implemented 2026-08-25:** `outfitValidation.js` now serializes category structure, explicit-role
+structure, and typed findings for the model-visible consumers that previously restated them.
+`candidateSet.js` owns the existing bounded-supply shortfall wording next to the report it
+projects. `outfitResult.js` provides one versioned result envelope with exactly one disposition,
+typed findings/annotations, provenance, and optional repair capability. Selected-piece,
+whole-wardrobe, freeform proposal, coordinated-plan/capsule, capsule expansion, and deterministic
+capsule repair cards now use it. Existing top-level `broken`, `diagnosticOnly`, `systemFlags`,
+`rejectionReason`, `capsuleRepair`, source labels, and plan context remain compatibility/UI fields;
+composition strategies, model-call sequences, cache boundaries, and ranking are unchanged.
 
 ### Slice 7 — final architecture ratchets
 

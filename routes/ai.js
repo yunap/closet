@@ -137,8 +137,10 @@ import {
   evaluateVisualComposerPiecePool,
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
-import { evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { categoryOutfitStructurePromptRule, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
+import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -942,19 +944,6 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
-function structuralCoverageShortfallText(coverageReport = null, { selectedPiece = null } = {}) {
-  if (coverageReport?.complete !== false) return ''
-  const capacityOnly = (coverageReport.shortfalls || []).every(shortfall =>
-    shortfall?.code === 'required_structure_exceeds_capacity'
-  )
-  const subject = selectedPiece
-    ? `around ${selectedPiece.name || 'the selected item'}`
-    : 'for this request'
-  return capacityOnly
-    ? `I couldn't retain a complete outfit path ${subject} within the candidate limit, so I stopped before composition instead of asking the stylist to work from an incomplete roster.`
-    : `Your currently eligible wardrobe pieces do not contain a complete outfit path ${subject} (a dress or top + bottom, plus shoes, including any required coverage layer). I stopped before composition instead of inventing or forcing a weak outfit.`
-}
-
 export const composerPieceLineSuffix = piece => {
   const doNotPairRules = pieceGarmentIntelligence(piece).doNotPairRules
   return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
@@ -1010,7 +999,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   const recoveryRankedCandidates = rankedCandidates.filter(candidate =>
     recoveryEvaluation.recoveryEligibleIds.has(Number(candidate?.piece?.id))
   )
-  const structureShortfall = structuralCoverageShortfallText(rosterDebug.coverageReport, { selectedPiece })
+  const structureShortfall = projectCandidateSetShortfall(rosterDebug.coverageReport, { anchorPiece: selectedPiece })
   if (structureShortfall) {
     return {
       outfits: [],
@@ -1756,6 +1745,14 @@ export async function generateOutfitsForPieceInternal({
   if (comfortConstraint) {
     structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, recoveryPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
   }
+  structuredOutfits = structuredOutfits.map(outfit => normalizeDeliveredOutfit(outfit, {
+    provenance: {
+      flow: 'selected_piece',
+      source: outfit.source || (idealOnlyMode ? 'ideal-only' : idealMode ? 'ideal' : 'model'),
+      composedBy: outfit.composedBy || 'model',
+      stage: 'selected_response',
+    },
+  }))
   if (!idealMode && !idealOnlyMode && visualCriticDebug) {
     persistGenerationRun({
       flow: 'anchor_visual',
@@ -2073,8 +2070,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         throw new Error(`The selected Main piece is unavailable because it is no longer active. Choose another Main piece.`)
       }
     }
-    const structureShortfall = structuralCoverageShortfallText(rosterDebug.coverageReport, {
-      selectedPiece: savedMainPiece,
+    const structureShortfall = projectCandidateSetShortfall(rosterDebug.coverageReport, {
+      anchorPiece: savedMainPiece,
     })
     if (structureShortfall) {
       const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile, activityProfile)
@@ -2675,13 +2672,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
             }
           })()
         : qualifiedMissionForPieces(missionPieces, { occasion, mood, activity })
-      return {
+      return normalizeDeliveredOutfit({
         ...outfit,
         strength: outfit.broken ? 'needs review' : (index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')),
         formulaFamily: outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allowedPieces, occasion),
         missionId: qualifiedMission.missionId,
         missionLabel: qualifiedMission.missionLabel
-      }
+      }, {
+        provenance: {
+          flow: 'whole_wardrobe_visual',
+          source: outfit.source || 'model',
+          composedBy: outfit.composedBy || (outfit.source === 'local-fill' ? 'engine' : 'model'),
+          stage: 'advisor_gate',
+        },
+      })
     })
 
     const deliveredOutfitsForDiversity = structuredOutfits.filter(outfit => !outfit.broken)
@@ -3484,7 +3488,7 @@ function capsuleExpansionSystemPrompt() {
 Return ONLY valid JSON in this exact shape:
 {"title":"short evocative title","piece_ids":[1,2,3],"reason":"one specific visual reason"}
 
-Use only IDs in the supplied allowed roster. The outfit must contain exactly one top plus one bottom, or one dress; exactly one pair of shoes; and at most one optional layer. Choose a new main core not already represented. Do not add accessories. Do not reinterpret the weather, occasion, roster, or capsule brief. If the catalog cannot support another credible outfit, return {"title":"","piece_ids":[],"reason":"no credible unused combination"}.
+Use only IDs in the supplied allowed roster. ${categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false })} Choose a new main core not already represented. Do not reinterpret the weather, occasion, roster, or capsule brief. If the catalog cannot support another credible outfit, return {"title":"","piece_ids":[],"reason":"no credible unused combination"}.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -4102,7 +4106,7 @@ ${catalog}`
       })
     }
     const acceptedOutfit = accepted[0]
-    const structuredOutfit = {
+    const structuredOutfit = normalizeOutfitResult({
       ...acceptedOutfit,
       label: contextSlot.label,
       title: acceptedOutfit.title || contextSlot.label,
@@ -4116,7 +4120,10 @@ ${catalog}`
       source: 'plan_outfit_set',
       composedBy: 'model',
       capsulePlanContext: req.body.planContext
-    }
+    }, {
+      disposition: 'accepted',
+      provenance: { flow: 'capsule_expansion', source: 'plan_outfit_set', composedBy: 'model', stage: 'plan_validation' },
+    })
     return res.json({
       answer: `Added one more ${contextSlot.label} look from the existing capsule roster.`,
       structuredOutfits: [structuredOutfit],
@@ -4279,7 +4286,8 @@ router.post('/repair-capsule-look', async (req, res) => {
     }
 
     const { accepted: acceptedOutfit, replaced, replacement, added } = attempts[0]
-    const structuredOutfit = {
+    const recoveryOperation = added ? 'complete' : 'substitute'
+    const structuredOutfit = normalizeOutfitResult({
       ...acceptedOutfit,
       label: contextSlot.label,
       title: acceptedOutfit.title || contextSlot.label,
@@ -4296,7 +4304,16 @@ router.post('/repair-capsule-look', async (req, res) => {
         ? `Added ${replacement.name} — the look was missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}.`
         : `Swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
       capsulePlanContext: req.body.planContext
-    }
+    }, {
+      disposition: 'accepted',
+      provenance: {
+        flow: 'capsule_repair',
+        source: 'plan_outfit_set',
+        composedBy: 'engine',
+        stage: 'validated_recovery',
+        recovery: { operation: recoveryOperation },
+      },
+    })
     return res.json({
       answer: added
         ? `Fixed that ${contextSlot.label} look — added ${replacement.name}.`

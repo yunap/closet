@@ -25,6 +25,12 @@ decisions.
 > asking why a message behaved differently than you expected.** This document
 > begins one layer down, once the turn is already inside `/ask`.
 
+> **[amended 2026-08-25] Proposal structure and card state have shared owners.** The
+> `propose_outfit` schema and retry message project explicit-role structure from
+> `outfitValidation.js`. Accepted, corrected/annotated, and retryable broken proposal cards carry
+> the versioned `result` envelope with `freeform_propose_outfit` provenance. Tool-loop retries,
+> retrieval/sight gates, and the existing visible card fields are unchanged.
+
 ## Pipeline overview (PM altitude)
 
 ```mermaid

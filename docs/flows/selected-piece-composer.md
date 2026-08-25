@@ -9,6 +9,10 @@ is pinned into every outfit and the candidate pool is pre-narrowed to its best
 supporting pieces. The main path composes **wardrobe** outfits; a secondary
 `idealMode` path re-ranks candidates and may suggest pieces you don't own.
 
+**[2026-08-25] Response contract:** Every delivered direction carries the shared versioned
+`result` envelope with its accepted/annotated/rejected meaning and `selected_piece` provenance.
+The existing card fields and fallback behavior are unchanged.
+
 Same reading convention as the rest of the atlas (see
 [use-my-wardrobe.md](use-my-wardrobe.md)): **rectangles are the app's own code,
 hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**

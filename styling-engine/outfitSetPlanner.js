@@ -40,7 +40,9 @@ import {
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
+import { normalizeOutfitResult } from './outfitResult.js'
 import {
+  categoryOutfitStructurePromptRule,
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
   evaluateLayerDirections,
@@ -3538,7 +3540,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const target = Math.max(0, Number(workbenchSlot.target_outfits) || 0)
     const requirements = [
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
-      'Every outfit must contain exactly one top plus one bottom, OR one dress; exactly one pair of shoes; and at most one optional outerwear layer. Outerwear never replaces the required top.'
+      categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
     ]
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
       requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')
@@ -4241,7 +4243,7 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
     if (!pieces.length) continue
     const slot = slotById.get(failure.slot_id)
     const blockedIds = new Set((failure.blockedPieceIds || []).map(Number))
-    cards.push({
+    cards.push(normalizeOutfitResult({
       ...failure.outfit,
       label: slot?.label || failure.label || 'Needs review',
       title: String(failure.outfit?.title || '').trim() || slot?.label || failure.label || 'Needs review',
@@ -4262,7 +4264,12 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
         slotId: slot?.id || failure.slot_id || '',
         blockedPieceIds: [...blockedIds]
       }
-    })
+    }, {
+      disposition: 'repairable',
+      findings: (failure.reasons || []).map((message, index) => ({ code: `plan_validation_${index + 1}`, message, kind: 'plan_validation' })),
+      repair: { operation: 'complete_or_substitute', action: 'repair_capsule_look' },
+      provenance: { flow: 'plan_outfit_set', source, composedBy: 'model', stage: 'plan_validation' },
+    }))
   }
   return cards
 }
@@ -4323,7 +4330,10 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     isWinterCapsule: Boolean(pendingPlan?.isWinterCapsule),
     statedPalette: Array.isArray(pendingPlan?.statedPalette) ? pendingPlan.statedPalette : [],
     coverageGaps
-  })
+  }).map(outfit => normalizeOutfitResult(outfit, {
+    disposition: 'accepted',
+    provenance: { flow: 'plan_outfit_set', source, composedBy: 'model', stage: 'plan_validation' },
+  }))
 }
 
 export const PLAN_TOTAL_OUTFIT_CAP = 8

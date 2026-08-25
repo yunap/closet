@@ -29,6 +29,13 @@ Once asked, the answers were uncomfortable:
   against a vocabulary that does not exist
 - the wardrobe's colour vocabulary cannot express `coral`, so the coral maxi dress is tagged `pink`
 
+**[2026-08-25] Shared projection/result amendment.** Plan submission requirements and capsule
+expansion now obtain category-core wording from `outfitValidation.js`. Accepted representative
+cards and visible rejected attempts carry the versioned `outfitResult.js` envelope; rejected
+attempts are `repairable` with the existing `repair_capsule_look` action, while accepted plan cards
+record `plan_outfit_set` provenance. Capsule selection, rotation, provider calls, and UI actions did
+not change.
+
 None of this was reachable by reading the code, which is why the research documents exist. The rule
 going forward: **a constant that shapes output needs a source, an owner ruling, or a measurement —
 a comment explaining the reasoning is not one of those.**

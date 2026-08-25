@@ -554,6 +554,8 @@ test('selected-piece generator returns structured outfit cards', async () => {
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
+  assert.equal(json.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(json.structuredOutfits[0].result.provenance.flow, 'selected_piece')
   assert.ok('visualCritic' in json.debug)
   assert.ok(json.debug.visualCritic.shownPieceCount > 0)
   assert.equal(json.debug.visualCritic.thumbPx, 768)
@@ -804,6 +806,7 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(json.pipeline, 'full_wardrobe_visual_composer')
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
+  assert.equal(json.structuredOutfits[0].result.provenance.flow, 'whole_wardrobe_visual')
   assert.ok(json.debug.shownPieceCount > 0)
   assert.ok(json.debug.rosterCount > 0)
   assert.equal(json.debug.thumbPx, 768)
@@ -1134,6 +1137,8 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
   // also leak, raw, through any other ungated field (reason suffix, watchFor, systemFlags) —
   // see docs/stylist-bugfix-spec.md item 1.
   for (const outfit of brokenCards) {
+    assert.equal(outfit.result.disposition, 'rejected')
+    assert.equal(outfit.result.provenance.flow, 'whole_wardrobe_visual')
     assert.ok(outfit.rejectionReason, 'broken card must carry a structured rejectionReason')
     assert.ok(
       !String(outfit.reason || '').includes(outfit.rejectionReason),
@@ -1266,6 +1271,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   assert.ok(flaggedOutfit)
   assert.ok(Array.isArray(flaggedOutfit.systemFlags))
   assert.ok(flaggedOutfit.systemFlags.some(flag => flag.type === 'occasion'))
+  assert.equal(flaggedOutfit.result.disposition, 'annotated')
   assert.equal(json.debug.finalSelection.localFillAdded, 0)
   assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
 
@@ -2790,6 +2796,9 @@ test('capsule look repair swaps the blocked piece from the saved roster with no 
   )
   assert.equal(data.repairedPieceId, seeded.shoe)
   assert.match(data.answer, /swapped/i)
+  assert.equal(data.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(data.structuredOutfits[0].result.provenance.flow, 'capsule_repair')
+  assert.equal(data.structuredOutfits[0].result.provenance.recovery.operation, 'substitute')
 })
 
 // Live failure (thread_1785348988259): a dinner look was submitted with no shoes
@@ -2939,6 +2948,8 @@ test('capsule expansion uses one bounded model call, the saved roster, and the s
   assert.deepEqual(data.structuredOutfits[0].pieceIds, [alternateTop, seeded.bottom, seeded.shoe])
   assert.equal(data.structuredOutfits[0].tripSlot, 'casual_indoors')
   assert.deepEqual(data.structuredOutfits[0].capsulePlanContext, planContext)
+  assert.equal(data.structuredOutfits[0].result.disposition, 'accepted')
+  assert.equal(data.structuredOutfits[0].result.provenance.flow, 'capsule_expansion')
 })
 
 test('capsule expansion stops after one invalid composition instead of silently retrying', async () => {
@@ -3533,6 +3544,8 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   assert.deepEqual(card.missingPieces, ['lightweight rain shell'])
   assert.equal(card.previewOnly, true)
   assert.equal(card.stylingInstructions, 'Leave the top untucked over the wide-leg pants.')
+  assert.equal(card.result.disposition, 'accepted')
+  assert.equal(card.result.provenance.flow, 'freeform_propose_outfit')
 })
 
 test('executeTool propose_outfit defaults stylingInstructions to an empty string when the model omits it', async () => {
@@ -3591,6 +3604,8 @@ test('executeTool propose_outfit rejects an unresolved role collision (two prima
   assert.equal(vContext.generatedOutfits.length, 1)
   assert.equal(vContext.generatedOutfits[0].broken, true)
   assert.match(vContext.generatedOutfits[0].rejectionReason, /unresolved top slot/)
+  assert.equal(vContext.generatedOutfits[0].result.disposition, 'repairable')
+  assert.equal(vContext.generatedOutfits[0].result.repair.operation, 'complete')
 })
 
 test('executeTool propose_outfit treats missing_gaps as disclosure, not a footwear substitute', async () => {

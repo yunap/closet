@@ -18,6 +18,40 @@ export function requiredBaseLayerPromptRule() {
   return `- Base-layer compatibility: a piece labeled \`needs_base: yes\` requires a base underneath whose \`fit_on_body\` is \`skims\`, \`clings_stretchy\`, or \`clings_drapey\` — close enough to the body to sit cleanly under an open or sheer dependent garment without its own excess fabric bunching or showing through unevenly. A candidate base tagged \`drapes\`, \`hangs_straight\`, \`structured\`, or \`none\` does not satisfy this even if it is otherwise the right color or a good match. Missing fit or opacity is unknown rather than proof either way: inspect both garments before using that pairing. This rule is only for a garment that needs required coverage beneath it; it is not a close-fit rule for ordinary layering. When two pieces share a near-identical name, check each candidate's own fields by ID — never assume they are interchangeable.`
 }
 
+// Model-visible projection of the canonical category structure. Options describe deliberate flow
+// strategy (for example a visual composer that declines multi-top looks); they do not re-define
+// what the validator considers a structurally wearable outfit.
+export function categoryOutfitStructurePromptRule({
+  strictSingleTop = false,
+  maxOuterwear = null,
+  allowAccessories = true,
+} = {}) {
+  if (strictSingleTop && maxOuterwear === 1 && !allowAccessories) {
+    // Preserve the ratcheted visual-composer contract byte-for-byte while moving its ownership
+    // here. Capsule expansion deliberately selects the same strict, accessory-free policy.
+    return 'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
+  }
+  const topRule = strictSingleTop
+    ? 'exactly one top plus one bottom, or exactly one dress'
+    : 'at least one top plus one bottom, or one dress (an additional top with a dress is allowed only as an intentional layer)'
+  const outerwearRule = Number.isInteger(maxOuterwear)
+    ? `; at most ${maxOuterwear} optional outerwear layer${maxOuterwear === 1 ? '' : 's'}`
+    : ''
+  const accessoryRule = allowAccessories ? '' : '; do not add accessories'
+  return `Outfit structure invariant: ${topRule}; exactly one pair of shoes; never more than one bottom, dress, or shoe slot${outerwearRule}${accessoryRule}. Outerwear never replaces the required top.`
+}
+
+export function roleOutfitStructurePromptRule() {
+  return 'Outfit role invariant: use primary_top + primary_bottom, or one dress, plus exactly one shoes role. Use layer_top/layer_bottom only for intentional layering; a layer needs its primary garment, and roles must match garment categories. At most one primary_top, primary_bottom, dress, and shoes role.'
+}
+
+export function projectOutfitValidationFindings(findings = [], { prefix = 'Validation findings' } = {}) {
+  const lines = (Array.isArray(findings) ? findings : [])
+    .filter(Boolean)
+    .map(finding => `- [${finding.code || 'validation'}] ${finding.message || finding.reason || ''}`)
+  return lines.length ? `${prefix}:\n${lines.join('\n')}` : ''
+}
+
 function baseLayerFinding(code, message, severity, evidence = {}) {
   return {
     code,

@@ -4,6 +4,11 @@ How the "Use my wardrobe" outfit generator works, end to end. This is the
 model-facing flow: you give a brief, the app filters your closet, one model call
 composes outfits from photos, and the results are validated before display.
 
+**[2026-08-25] Projection and response contract:** The composer's category-core instruction is
+serialized by the same module that owns mechanical category validation. Returned normal,
+advisor-annotated, and diagnostic cards all carry the shared versioned `result` envelope and
+`whole_wardrobe_visual` provenance; the legacy fields used by the current card UI remain intact.
+
 **How to read the diagrams — shape and color tell you who does the work:**
 
 ```mermaid
