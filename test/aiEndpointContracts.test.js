@@ -3097,6 +3097,126 @@ test('capsule expansion stops for free when the saved slot has no unused core', 
   assert.match(data.error, /Full available rotation shown/)
 })
 
+test('legacy capsule expansion derives missing capacity from the canonical dependent-base contract', async () => {
+  const dependentTop = insertPiece({
+    name: 'open crochet dependent top',
+    category: 'top',
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+  })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentTop)
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    expansionCalls += 1
+    return { title: 'Should never run', piece_ids: [], reason: '' }
+  }
+
+  const response = await fetch(`${baseUrl}/api/ai/expand-capsule`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planContext: {
+        version: 1,
+        piece_budget: 10,
+        roster_ids: [dependentTop, seeded.bottom, seeded.shoe],
+        slots: [{
+          id: 'casual_indoors',
+          label: 'Casual Indoors',
+          occasion: 'casual',
+          activity: 'none',
+          environment: 'indoor',
+          // A legacy card can omit core_capacity. The expansion route must
+          // derive the same zero capacity as the capsule planner: a dependent
+          // top is not a wearable core without a standalone base in this slot.
+          allowed_piece_ids: [dependentTop, seeded.bottom, seeded.shoe],
+        }],
+      },
+      slotId: 'casual_indoors',
+      existingOutfits: [],
+    }),
+  })
+  const data = await response.json()
+
+  assert.equal(response.status, 409)
+  assert.equal(expansionCalls, 0, 'canonical zero capacity must stop before the paid provider boundary')
+  assert.equal(data.debug.providerCalls, 0)
+  assert.equal(data.debug.coreCapacity, 0)
+})
+
+test('legacy capsule expansion counts a dress as one canonical core when saved capacity is absent', async () => {
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    expansionCalls += 1
+    return { title: 'Should never run', piece_ids: [], reason: '' }
+  }
+
+  const response = await fetch(`${baseUrl}/api/ai/expand-capsule`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planContext: {
+        version: 1,
+        piece_budget: 10,
+        roster_ids: [seeded.dress, seeded.shoe],
+        slots: [{
+          id: 'city_evening',
+          label: 'City Evening',
+          occasion: 'city',
+          activity: 'none',
+          allowed_piece_ids: [seeded.dress, seeded.shoe],
+        }],
+      },
+      slotId: 'city_evening',
+      existingOutfits: [{
+        title: 'Existing dress core',
+        tripSlot: 'city_evening',
+        pieceIds: [seeded.dress, seeded.shoe],
+      }],
+    }),
+  })
+  const data = await response.json()
+
+  assert.equal(response.status, 409)
+  assert.equal(expansionCalls, 0)
+  assert.equal(data.debug.coreCapacity, 1)
+  assert.equal(data.debug.usedCores, 1)
+})
+
+test('capsule expansion preserves a saved zero capacity from cross-slot allocation', async () => {
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    expansionCalls += 1
+    return { title: 'Should never run', piece_ids: [], reason: '' }
+  }
+
+  const response = await fetch(`${baseUrl}/api/ai/expand-capsule`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planContext: {
+        version: 1,
+        piece_budget: 10,
+        roster_ids: [seeded.top, seeded.bottom, seeded.shoe],
+        slots: [{
+          id: 'shared_slot_retired',
+          label: 'Shared Slot Retired',
+          occasion: 'casual',
+          activity: 'none',
+          core_capacity: 0,
+          allowed_piece_ids: [seeded.top, seeded.bottom, seeded.shoe],
+        }],
+      },
+      slotId: 'shared_slot_retired',
+      existingOutfits: [],
+    }),
+  })
+  const data = await response.json()
+
+  assert.equal(response.status, 409)
+  assert.equal(expansionCalls, 0, 'saved allocation exhaustion must not be replaced by recomputed raw capacity')
+  assert.equal(data.debug.coreCapacity, 0)
+})
+
 test('capsule expansion uses provider-enforced structured output rather than prose JSON prompting', () => {
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   const providerSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/provider.js'), 'utf8')
@@ -3107,6 +3227,13 @@ test('capsule expansion uses provider-enforced structured output rather than pro
   assert.match(providerSrc, /response_format:\s*\{\s*type: 'json_schema'/)
   assert.match(providerSrc, /tool_choice: \{ type: 'tool', name \}/)
   assert.match(providerSrc, /block\?\.type === 'tool_use' && block\?\.name === name/)
+})
+
+test('capsule expansion has no route-local capacity verdict', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+
+  assert.match(routeSrc, /capsuleOutfitCoreCapacity\(allowedPieces/)
+  assert.doesNotMatch(routeSrc, /function capsuleExpansionCoreCapacity/)
 })
 
 // Spec §3 stage 2. Two things must hold before this can ever be switched on:

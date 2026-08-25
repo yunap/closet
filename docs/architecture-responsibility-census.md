@@ -442,11 +442,12 @@ in [capsule-expansion-and-repair.md](flows/capsule-expansion-and-repair.md).
 already used, and require every nested call to attribute usage to its parent user turn. Direct image
 calls remain separate until a correctness or telemetry defect justifies migration.
 
-**Finding:** `capsuleExpansionCoreCapacity` is parallel to the fuller capsule capacity owner. It is
-classified `duplicate/unresolved`: the route prefers saved canonical capacity, but legacy/fallback
-state can activate the simpler local calculation. This is roadmap R6: compare legacy-card capacity
-against `capsuleOutfitCoreCapacity`, then delete or adapt the route-local calculation after live
-validation.
+**Resolved 2026-08-25 (roadmap R6):** `capsuleExpansionCoreCapacity` was parallel to the fuller
+capsule capacity owner. The route still prefers saved planner capacity, including a deliberate
+zero after cross-slot competition, but a legacy version-1 card with no saved capacity now adapts
+its active allowed roster into `capsuleOutfitCoreCapacity`. Comparison fixtures cover an
+unsupported dependent top, a dress core, ordinary separate cores, and repeated cross-slot
+compatibility; the route-local calculation is deleted and a source ratchet prevents its return.
 
 ### 4.10 Conversation state authority per field
 
