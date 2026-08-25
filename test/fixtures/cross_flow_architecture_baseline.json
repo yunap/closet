@@ -45,6 +45,7 @@
           "resolvedActivity": "none",
           "activitySource": "none",
           "season": "current season",
+          "calendarSeason": "summer",
           "weather": {
             "weatherSource": "fixture",
             "isHot": false,
@@ -63,6 +64,11 @@
             "season": {
               "source": "explicit_request",
               "raw": "current season"
+            },
+            "calendarSeason": {
+              "source": "derived_from_resolved_season",
+              "raw": "current season",
+              "referenceDate": "2026-08-24T19:00:00.000Z"
             },
             "mission": {
               "source": "explicit_request",
@@ -388,6 +394,7 @@
           "resolvedActivity": "hiking",
           "activitySource": "dropdown",
           "season": "summer",
+          "calendarSeason": "summer",
           "weather": {
             "weatherSource": "fixture",
             "isHot": true,
@@ -406,6 +413,11 @@
             "season": {
               "source": "explicit_request",
               "raw": "summer"
+            },
+            "calendarSeason": {
+              "source": "derived_from_resolved_season",
+              "raw": "summer",
+              "referenceDate": "2026-08-24T19:00:00.000Z"
             },
             "mission": {
               "source": "explicit_request",
@@ -711,6 +723,7 @@
           "resolvedActivity": "none",
           "activitySource": "none",
           "season": "spring",
+          "calendarSeason": "spring",
           "weather": {
             "weatherSource": "fixture",
             "isHot": false,
@@ -729,6 +742,11 @@
             "season": {
               "source": "explicit_request",
               "raw": "spring"
+            },
+            "calendarSeason": {
+              "source": "derived_from_resolved_season",
+              "raw": "spring",
+              "referenceDate": "2026-08-24T19:00:00.000Z"
             },
             "mission": {
               "source": "explicit_request",

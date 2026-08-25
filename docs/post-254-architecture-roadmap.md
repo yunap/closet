@@ -58,6 +58,15 @@ code, while the real flow policies would still exist.
 | R9 | Result-envelope compatibility aliases remain flow-local | `broken`, `diagnosticOnly`, `systemFlags`, `rejectionReason`, source labels, plan context, and UI actions coexist with the canonical `outfitResult.js` disposition/findings/provenance envelope | **Intentional compatibility adapters**, not duplicate semantic state while the UI still reads them | A new producer may write aliases without the canonical envelope, or consumers may start treating an alias as the authority | `outfitResult.js` is the semantic result interface; aliases are projections derived from it and removable only after their last consumer migrates | Selected, whole, freeform, plan/capsule producers and card UIs | Source ratchet requires every new outfit-producing consumer to normalize through `outfitResult.js`; removal tests follow actual UI-consumer deletion, not a speculative cleanup | **Concrete-consumer only.** Remove an alias when its final reader is migrated |
 | R10 | Recovery naming and strategy locality remain uneven | `repairWholeWardrobeOutfit` performs prose normalization plus a narrow footwear substitution; selected fallback, plan completion, and capsule repair have different strategy names and scopes | **Intentional strategy differences; shallow naming friction**, not a missing common recovery implementation | Maintainers may assume “repair” means structural completion and call the wrong strategy; behavior remains protected because mutations use shared recovery primitives and validation | `recovery.js` owns validated mutation mechanics; each flow keeps a narrowly named strategy describing the mutation it permits | Whole fallback/footwear repair, selected fallback, plan completion, capsule repair, freeform correction | Existing recovery tests require validation injection at every mutation. Add a rename/source ratchet only when one of these strategies is next modified | **Concrete-defect or adjacent-change only.** Do not perform a naming-only sweep now |
 
+**R5 live-validation update, 2026-08-25:** `thread_1787651275782` supplied the concrete defect R5
+required: accepted summer guidance was omitted because a prompt-memory reader compared `current
+season` literally while the hard-constraint path resolved it independently. The bounded correction
+belongs to Slice 1's shared meaning contract: `resolveStylingContext` now exposes `calendarSeason`
+and every executable season matcher shares `resolveCalendarSeason`. Prompt strategy remains local;
+the meaning of season applicability does not. Cross-flow, reader, direct-guidance and freeform
+prompt tests are the ratchet. R5 remains open only for a different observed canonical-fact
+projection contradiction; this specific seasonal omission is resolved inside PR 254.
+
 ## Candidate-set reconciliation in plain terms
 
 The remaining selectors do not justify a universal candidate module:

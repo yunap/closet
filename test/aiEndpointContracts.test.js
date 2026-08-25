@@ -248,6 +248,30 @@ async function postJson(pathname, body) {
   return json
 }
 
+function insertAcceptedSeasonLesson(pieceId, proposedText) {
+  const batchId = Number(db.prepare(`
+    INSERT INTO feedback_synthesis_batches (status, feedback_ids, compact_input, input_hash, provider, model)
+    VALUES ('completed', '[]', '', ?, 'test', 'test')
+  `).run(`season-lesson-${Date.now()}-${pieceId}`).lastInsertRowid)
+  db.prepare(`
+    INSERT INTO feedback_synthesis_drafts
+      (batch_id, disposition, title, proposed_text, boundary, source_feedback_ids, status, payload)
+    VALUES (?, 'personal_contextual_lesson', 'Summer shoe', ?, 'Summer only.', '[]', 'accepted', ?)
+  `).run(
+    batchId,
+    proposedText,
+    JSON.stringify({ applicability: {
+      version: 1,
+      scope: 'piece_context',
+      piece_ids: [pieceId],
+      occasions: [],
+      activities: [],
+      seasons: ['summer'],
+      weather_terms: [],
+    } }),
+  )
+}
+
 function mockAiHandler({ system, messages, maxTokens }) {
   aiCalls.push({ system, messages, maxTokens })
   const text = String(system || '')
@@ -851,6 +875,29 @@ test('whole-wardrobe generator reports a structural shortfall without composer o
   assert.deepEqual(json.debug.structureCoverageGaps, ['required_structure_unavailable'])
   assert.equal(aiCalls.some(call => call.system.includes('personal stylist. You are looking at photos')), false)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
+})
+
+test('whole-wardrobe current-season composition receives applicable summer lessons', async () => {
+  insertAcceptedSeasonLesson(
+    seeded.shoe,
+    'The cream slip-ons stand in for the live olive suede lesson and are not preferred for summer outfits.',
+  )
+
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    currentDate: '2026-07-15T12:00:00-07:00',
+    limit: 1,
+  })
+
+  const composerCall = aiCalls.find(call => call.system.includes('personal stylist. You are looking at photos'))
+  assert.ok(composerCall)
+  const promptText = composerCall.messages
+    .flatMap(message => Array.isArray(message.content) ? message.content : [])
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.match(promptText, /not preferred for summer outfits/)
 })
 
 test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hints', async () => {
@@ -5995,6 +6042,34 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
   assert.equal(keeps.messages[0].role, 'user')
   assert.equal(keeps.messages[1].role, 'assistant')
+})
+
+test('freeform current-season prompts receive applicable calendar-season lessons', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  insertAcceptedSeasonLesson(
+    seeded.shoe,
+    'The olive suede slip-ons read autumnal and are not preferred for summer outfits.',
+  )
+
+  const summer = await buildStylistConversationPayload({
+    question: 'Style this shoe.',
+    conversationMode: 'new_request',
+    sessionId: 'current-season-summer',
+    activeContext: { type: 'piece', id: seeded.shoe },
+    season: 'current season',
+    currentDate: '2026-07-15T12:00:00-07:00',
+  })
+  assert.match(String(summer.system), /olive suede slip-ons read autumnal/)
+
+  const winter = await buildStylistConversationPayload({
+    question: 'Style this shoe.',
+    conversationMode: 'new_request',
+    sessionId: 'current-season-winter',
+    activeContext: { type: 'piece', id: seeded.shoe },
+    season: 'current season',
+    currentDate: '2026-01-15T12:00:00-08:00',
+  })
+  assert.doesNotMatch(String(winter.system), /olive suede slip-ons read autumnal/)
 })
 
 test('bounded multi-look routing is unconditional in the freeform controller prompt', async () => {

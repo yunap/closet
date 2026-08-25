@@ -260,12 +260,17 @@ linked prose owner rule so the same instruction is not also prompt authority. Th
 trust gate reads active rows before roster assembly, slot replacement, complementary ranking and
 each capsule-plan slot; missing context is a no-op. A matched row hard-blocks the garment and emits
 its constraint ID/dimension in suppression reasons. Retiring the row is the undo. Season matching
-normalizes through `resolveSeasonTerm` (`lib/ownerConstraints.js`), so the request selector values
+normalizes through `resolveCalendarSeason` (`lib/seasonContext.js`), so the request selector values
 `warm`, `autumn` and the unresolved default `current season` are resolved to a real season before
-comparison — `current season` against `requestContext.currentDate` rather than always "now". The
-same helper resolves the season recorded on synthesis evidence, so a reaction stored with the
-literal placeholder no longer surfaces `current season` as if it were a season. Item 12's review
-surface is deferred, but its bounded storage, routing and undo contract is executable.
+comparison — `current season` against `requestContext.currentDate` rather than always "now".
+`resolveCalendarSeason` (`lib/seasonContext.js`) is the one projection used by hard constraints,
+direct owner guidance, accepted synthesis lessons and historical exact-outfit reactions. The
+public resolved request may remain `current season` for weather/UI policy; prompt-memory matching
+uses the accompanying canonical `calendarSeason`. Historical evidence that stored the literal
+placeholder resolves it against that row's creation date. This was extended on 2026-08-25 after
+live thread `thread_1787651275782` showed an accepted summer lesson omitted from a current-season
+prompt. Item 12's review surface is deferred, but its bounded storage, routing and undo contract is
+executable.
 
 ### 7 · Thread-scoped conversation state
 

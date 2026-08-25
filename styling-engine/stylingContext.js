@@ -3,6 +3,7 @@ import { resolveOccasionProfile } from './occasions.js'
 import { weatherProfileFromContext } from './rules.js'
 import { normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { getCurrentWeatherProfile } from './weather.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 const SOURCE_ORDER = [
   ['explicit_request', 'explicitRequest'],
@@ -267,6 +268,7 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       allowLiveWeather: policy.allowLiveWeather !== false,
       weatherResolver,
     })
+    const calendarSeason = resolveCalendarSeason(seasonChoice.value, dateChoice.value)
 
     const provenanceByField = {
       occasion: occasionChoice.provenance,
@@ -275,6 +277,11 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
         ...(resolvedActivity !== activity ? { resolvedFromRequest: true } : {}),
       },
       season: seasonChoice.provenance,
+      calendarSeason: {
+        source: 'derived_from_resolved_season',
+        raw: seasonChoice.value,
+        referenceDate: dateChoice.value || null,
+      },
       mission: missionChoice.provenance,
       mood: moodChoice.provenance,
       requestText: requestChoice.provenance,
@@ -298,6 +305,7 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       resolvedActivity,
       activitySource,
       season: seasonChoice.value,
+      calendarSeason,
       mission: missionChoice.value,
       mood,
       requestText,
@@ -316,6 +324,7 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
           declaredActivity: activity,
           activitySource,
           season: seasonChoice.value,
+          calendarSeason,
           mission: missionChoice.value,
           weather: weatherSummary(weather.profile),
         },

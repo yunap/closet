@@ -368,6 +368,7 @@ async function normalizedContext(definition) {
       resolvedActivity: shared.resolvedActivity,
       activitySource: shared.activitySource,
       season: shared.season,
+      calendarSeason: shared.calendarSeason,
       weather: shared.debug.resolved.weather,
       provenanceByField: JSON.parse(JSON.stringify(shared.provenanceByField)),
       conflicts: shared.conflicts,

@@ -26,9 +26,12 @@ test('styling context resolves intent by field and records lower-authority confl
   assert.equal(context.occasion, 'evening')
   assert.equal(context.activity, 'walking', 'declared activity remains distinct from inference')
   assert.equal(context.resolvedActivity, 'hiking', 'request evidence may escalate walking to hiking')
+  assert.equal(context.season, 'current season', 'request wording remains available to weather and UI policy')
+  assert.equal(context.calendarSeason, 'summer', 'executable applicability receives a calendar season')
   assert.equal(context.provenanceByField.occasion.source, 'explicit_request')
   assert.equal(context.provenanceByField.activity.source, 'explicit_request')
   assert.equal(context.provenanceByField.activity.resolvedFromRequest, true)
+  assert.equal(context.provenanceByField.calendarSeason.source, 'derived_from_resolved_season')
   assert.deepEqual(context.conflicts.map(conflict => conflict.field).sort(), ['activity', 'occasion', 'season'])
 })
 
@@ -44,6 +47,7 @@ test('artifact intent wins when the current request does not override that field
   assert.equal(context.occasion, 'gallery / art event')
   assert.equal(context.activity, 'walking')
   assert.equal(context.season, 'spring')
+  assert.equal(context.calendarSeason, 'spring')
   assert.equal(context.provenanceByField.occasion.source, 'action_artifact')
 })
 

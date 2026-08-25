@@ -759,7 +759,7 @@ errors for the anchor. Verification (retrieval + layer photos) still applies.
    crossed with one context dimension (occasion, activity, season or weather). Missing context is a
    no-op — the gate never fires on an unspecified dimension. A match hard-blocks the garment and
    emits the constraint ID and dimension in the suppression reason; retiring the row is the undo.
-   Season comparison runs through `resolveSeasonTerm`, so `warm` → summer, `autumn` → fall, and the
+   Season comparison runs through `resolveCalendarSeason` (`lib/seasonContext.js`), so `warm` → summer, `autumn` → fall, and the
    composer's unresolved default `current season` resolves against `requestContext.currentDate`
    rather than always "now". **[unverified]** no exclusion counts have been measured for this layer;
    the counts elsewhere in this section predate it.
@@ -1113,6 +1113,15 @@ weather branch. `buildPlanSlotWorkbench` resolves each slot through the shared o
 selection and preserves the result/provenance on the workbench and pending slot. Explicit supplied
 weather profiles, including indoor-transit profiles, are authoritative evidence. Saved artifacts
 and persistent thread state remain separate sources rather than overwriting one another.
+
+**[calendar-season projection correction, 2026-08-25] A resolved request season and its executable
+season are distinct fields.** `resolveStylingContext` preserves `season: "current season"` for live
+weather and display behavior while deriving `calendarSeason` from the authoritative request date.
+`resolveCalendarSeason` is also the shared defensive projection for direct/freeform/plan prompt
+memory, hard owner constraints and historical exact-outfit reactions. This closes the live
+`thread_1787651275782` gap where accepted summer guidance was omitted before the model call because
+one reader compared the placeholder literally. It does not add a suede taste rule, alter ranking,
+or turn a prompt preference into a hard eligibility gate.
 
 **[eligibility-ownership consolidation, 2026-08-24] Primary visual composition and selected-piece
 recovery now consume one finite-pool verdict.** `evaluateVisualComposerPiecePool` classifies every

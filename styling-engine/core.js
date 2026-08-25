@@ -86,6 +86,7 @@ import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './
 import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
 import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -4190,6 +4191,7 @@ export async function buildStylistConversationPayload(body) {
     : ''
 
   const now = currentDate ? new Date(currentDate) : new Date()
+  const effectiveCalendarSeason = resolveCalendarSeason(effectiveSeason, now)
   const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -4460,7 +4462,8 @@ export async function buildStylistConversationPayload(body) {
     requestContext: {
       occasion: effectiveOccasion,
       activity: effectiveActivity,
-      season: effectiveSeason,
+      season: effectiveCalendarSeason,
+      currentDate: now,
       weather: extractedWeather,
       weatherText: String(extractedWeather || ''),
       requestText: [question, effectiveOccasion, effectiveActivity].filter(Boolean).join(' '),
@@ -4498,7 +4501,8 @@ export async function buildStylistConversationPayload(body) {
     pieceIds: acceptedLessonPieceIds,
     occasion: effectiveOccasion,
     activity: effectiveActivity,
-    season: effectiveSeason,
+    season: effectiveCalendarSeason,
+    currentDate: now,
     weather: extractedWeather,
   })
   if (acceptedSynthesisText) {

@@ -459,7 +459,7 @@ handoffs, not interchangeable stores.
 |---|---|---|---|
 | Occasion | Request body, tool declarations/plans; persisted when established | Explicit current body wins; persistent server value restores only on a non-new request | Router context, prompts, search, composers, validators |
 | Activity | Same as occasion | Explicit current body wins; then established server state | Weather/activity gates, footwear, plan slots, prompts |
-| Season | Request body and resolved conversation context; persistent | Explicit current body wins; persistent fallback on continuation | Weather resolution, eligibility, prompts, roster |
+| Season | Request body and resolved conversation context; persistent | Explicit current body wins; persistent fallback on continuation. The request value may remain `current season`; the resolver derives `calendarSeason` from the authoritative date for executable applicability | Weather resolution, eligibility, prompts, roster |
 | Weather profile | Resolved from explicit/current context and saved as normalized state | Current resolved weather wins; stored profile is continuation fallback, not a new forecast | Visual composer, trust/roster gates, plans |
 | Current outfit set | Successful bounded/tool composition; persistent normalized summary plus response cards | Server state is follow-up context; actual response cards are the display/product authority for the current turn | Follow-up resolution, accepted-card guards, UI |
 | Active outfit / selected subjects | Request body and thread/body context | Explicit current card/piece reference wins; recovered state assists ambiguous follow-up | Compact profiles, full prompt, tool context |
@@ -485,7 +485,7 @@ context-authority ambiguity.
 |---|---|---|---|
 | Piece text fallback | `attributes.js` readers and `attributePieceTextBlob` | Prompt/tool serializers may choose fields and formatting | `pieceTextBlob` comparison/deletion remains roadmap R1 |
 | Automatic-use eligibility | `wholeWardrobePieceTrustDecision` composed through `evaluateAutomaticUsePiecePool` | Anchor override, visual-photo policy, supply-aware disclosed relaxation, finite provider caps | Runtime migration complete; guard adapter drift under roadmap R2 |
-| Normalized styling context | `resolveStylingContext` | Flow declares required fields and whether live lookup is permitted | Runtime migration complete; separate storage lifetimes remain roadmap R8 |
+| Normalized styling context | `resolveStylingContext`, with `resolveCalendarSeason` as its calendar projection | Flow declares required fields and whether live lookup is permitted; display/request season may remain distinct from calendar applicability | Runtime migration complete; 2026-08-25 live projection defect corrected; separate storage lifetimes remain roadmap R8 |
 | Layer/base facts and pair mechanics | Tri-state verdict family in `attributes.js` / `outfitValidation.js`, composed by `evaluateWearableOutfit` | Flow policy for `unknown`; model visual judgment; sight availability disposition | Runtime migration complete; unavailable-sight disposition remains roadmap R4 |
 | Outfit core structure | `evaluateOutfitStructure` / `evaluateOutfitRoles`, composed by `evaluateWearableOutfit` | Role, slot, set, advisor/gate disposition | Runtime migration complete; concept-board light validation remains intentional |
 | Bounded structural roster coverage | `candidateSet.js` | Selected relevance, visual photo budget, capsule recombination, plan slot limits | Main outfit-producing caps migrated; local fallback parity remains roadmap R3 |
@@ -593,6 +593,17 @@ freeform stated/live weather resolver and occasion-switch activity reset were re
 now a field-specific resolver policy. Saved artifacts and persistent thread state remain separate
 evidence sources. An explicitly supplied weather profile, including indoor/transit profiles, is
 preserved without being reinterpreted by a caller.
+
+**Live-validation correction, implemented 2026-08-25:** Slice 1 had centralized source precedence
+but had not made the semantic projection of `current season` part of its returned contract.
+Consequently, accepted summer guidance could be absent from a current-season prompt even though a
+hard owner constraint used a different local season resolver. `resolveStylingContext` now returns
+both the preserved request `season` and canonical `calendarSeason`; all executable seasonal
+applicability shares `resolveCalendarSeason`. Direct selected/whole, freeform and plan/capsule
+prompt-memory consumers pass the canonical value, while eligibility receives the authoritative
+date for the same projection. Tests cover summer/winter dates, accepted lessons, direct guidance,
+historical reactions and the cross-flow architecture fixture. This is a completion correction to
+the Slice 1 meaning contract, not a reopening of candidate construction or a new style rule.
 
 ### Slice 2 — executable eligibility pipeline
 
@@ -938,8 +949,8 @@ case:
 
 - With a fixed August date, `current season` is hot under the heuristic while the same fixture also
   supplies a neutral profile. `resolveStylingContext` records the supplied profile as authoritative
-  with provenance, so this is now an explicit evidence difference rather than caller-owned source
-  precedence.
+  with provenance and separately records `calendarSeason: summer`, so physical weather and
+  seasonal applicability cannot be collapsed into one caller-owned string.
 - The hot-hiking scenario proves the per-piece hard gate and `evaluateAutomaticUsePiecePool`
   return the same underlying eligible IDs and findings, including the owner constraint.
 - An otherwise valid shoe with missing comfort metadata is allowed by the shared trust aggregate,

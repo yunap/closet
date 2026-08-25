@@ -1350,6 +1350,7 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
   const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
     occasion: slot.stylingContext?.occasion || slot.occasion,
     season,
+    currentDate: slot.stylingContext?.date || slot.date || null,
     explorationMode: 'moderate',
     weatherProfile: slotWeatherProfile,
     mood: slotRequestText,
@@ -3341,7 +3342,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       requestContexts: slots.map(slot => ({
         occasion: slot?.occasion || '',
         activity: slot?.activity || '',
-        season: slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+        season: slot?.stylingContext?.calendarSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+        currentDate: slot?.stylingContext?.date || slot?.date || null,
         weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
         weatherText: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
         requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor, question].filter(Boolean).join(' '),
@@ -3354,7 +3356,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     contexts: slots.map(slot => ({
       occasion: slot?.occasion || '',
       activity: slot?.activity || '',
-      season: slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      season: slot?.stylingContext?.calendarSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      currentDate: slot?.stylingContext?.date || slot?.date || null,
       weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
     })),
   })
@@ -3385,6 +3388,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const gateResult = evaluatePlannerAutomaticUsePool(composePool, {
       occasion: slot.stylingContext.occasion,
       season: slot.stylingContext.season,
+      currentDate: slot.stylingContext.date,
       ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,

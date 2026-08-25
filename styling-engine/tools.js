@@ -392,6 +392,7 @@ export async function resolveToolStylingContext({
   toolContext.occasion = context.occasion
   toolContext.activity = context.activity
   toolContext.season = context.season
+  toolContext.calendarSeason = context.calendarSeason
   toolContext.mission = context.mission
   toolContext.mood = context.mood
   toolContext.weatherProfile = context.weatherProfile

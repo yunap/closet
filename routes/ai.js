@@ -1645,13 +1645,13 @@ export async function generateOutfitsForPieceInternal({
     anchorPiece: parsedPiece,
     pieces: allPieces,
     limit: 32,
-    context: { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question },
+    context: { occasion, mission, mood, season, currentDate: stylingContext.date, weatherProfile, comfortConstraint, activity, request: question, question },
   })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
   const ownerGuidanceContext = {
-    requestContext: { occasion, activity, season, weather: weatherProfile, weatherText: [mood, question].filter(Boolean).join(' '), requestText: [occasion, activity, mood, question].filter(Boolean).join(' ') },
+    requestContext: { occasion, activity, season: stylingContext.calendarSeason, currentDate: stylingContext.date, weather: weatherProfile, weatherText: [mood, question].filter(Boolean).join(' '), requestText: [occasion, activity, mood, question].filter(Boolean).join(' ') },
     pieces: [parsedPiece, ...rankedCandidates.map(candidate => candidate?.piece).filter(Boolean)],
   }
   const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16, { ownerGuidanceContext })
@@ -1659,7 +1659,8 @@ export async function generateOutfitsForPieceInternal({
   const exactOutfitReactionText = getExactOutfitReactionMemory(selectedPieceRosterIds, {
     occasion,
     activity,
-    season,
+    season: stylingContext.calendarSeason,
+    currentDate: stylingContext.date,
     limit: 3,
   })
   const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(
@@ -1670,7 +1671,8 @@ export async function generateOutfitsForPieceInternal({
     pieceIds: selectedPieceRosterIds,
     occasion,
     activity,
-    season,
+    season: stylingContext.calendarSeason,
+    currentDate: stylingContext.date,
     weather: [mood, question].filter(Boolean).join(' '),
   })
   const calibrationMemoryText = getCalibrationMemoryForStylist(32)
@@ -2066,7 +2068,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     const automaticUseEvaluation = evaluateAutomaticUsePiecePool({
       pieces: allPieces,
-      context: { occasion, season, explorationMode, weatherProfile, mood, activity },
+      context: { occasion, season, currentDate: stylingContext.date, explorationMode, weatherProfile, mood, activity },
       policy: {
         anchorPieceIds: savedMainPieceId ? [savedMainPieceId] : [],
         hotOuterwearCap: 3,
@@ -2198,14 +2200,16 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const exactOutfitReactionText = getExactOutfitReactionMemory(roster.map(piece => piece.id), {
       occasion,
       activity,
-      season,
+      season: stylingContext.calendarSeason,
+      currentDate: stylingContext.date,
       limit: 3,
     })
     const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
       pieceIds: roster.map(piece => piece.id),
       occasion,
       activity,
-      season,
+      season: stylingContext.calendarSeason,
+      currentDate: stylingContext.date,
       weather: [mood, stylingRequest].filter(Boolean).join(' '),
     })
 
@@ -3926,7 +3930,8 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     contexts: slots.map(slot => ({
       occasion: slot?.occasion || '',
       activity: slot?.activity || '',
-      season: slot?.season || capsuleSeason,
+      season: slot?.stylingContext?.calendarSeason || slot?.season || capsuleSeason,
+      currentDate: slot?.stylingContext?.date || slot?.date || null,
       weather: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })

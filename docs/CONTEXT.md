@@ -116,6 +116,11 @@ A curated, piece-level tag (`warm | cool | year-round`).
 **Requested Season**:
 The season named or implied by the current request/intent context.
 
+**Calendar Season**:
+The canonical `spring | summer | fall | winter` projection used to match executable seasonal
+applicability. A Requested Season of `current season` remains intact for weather/UI policy but is
+projected against the request date before owner constraints or accepted lessons are matched.
+
 **Climate Season**:
 The season implied by live or heuristic weather, which can diverge from Requested Season (see
 `seasonIsCalendarOnly`).

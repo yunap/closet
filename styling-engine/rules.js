@@ -22,6 +22,7 @@ import {
   ownerGuidanceApplicabilityFromSynthesis,
   ownerGuidanceApplies,
 } from '../lib/ownerGuidance.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 import {
   fabricWeight,
@@ -795,7 +796,7 @@ function feedbackContextMatches(storedValue, requestedValue) {
 }
 
 export function getExactOutfitReactionMemory(pieceIds = [], {
-  occasion = '', activity = '', season = '', limit = 3,
+  occasion = '', activity = '', season = '', currentDate = null, limit = 3,
 } = {}) {
   const availableIds = new Set((Array.isArray(pieceIds) ? pieceIds : [pieceIds])
     .map(Number).filter(id => Number.isInteger(id) && id > 0))
@@ -803,7 +804,14 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
   const normalizedContext = {
     occasion: String(occasion || '').trim().toLowerCase(),
     activity: String(activity || '').trim().toLowerCase(),
-    season: String(season || '').trim().toLowerCase(),
+    season: resolveCalendarSeason(season, currentDate),
+  }
+  const rowSeason = (value, row) => {
+    const rawDate = row?.created_at
+    const referenceDate = rawDate
+      ? new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(rawDate) ? rawDate : `${String(rawDate).replace(' ', 'T')}Z`)
+      : undefined
+    return resolveCalendarSeason(value, referenceDate)
   }
   try {
     const rows = db.prepare(`
@@ -828,7 +836,7 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
       const storedContext = {
         occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
         activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
-        season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+        season: rowSeason(evidenceContext.season || payload.outfit?.season || '', row),
       }
       const contextMismatch = Object.keys(storedContext).some(key =>
         !feedbackContextMatches(storedContext[key], normalizedContext[key]))
@@ -870,7 +878,7 @@ export function getExactOutfitReactionMemory(pieceIds = [], {
         const storedContext = {
           occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
           activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
-          season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+          season: rowSeason(evidenceContext.season || payload.outfit?.season || '', row),
         }
         const contextMismatch = Object.keys(storedContext).some(key =>
           !feedbackContextMatches(storedContext[key], normalizedContext[key]))
