@@ -5,7 +5,8 @@
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { wardrobeCategoryGroup } from './attributes.js'
@@ -1131,25 +1132,29 @@ async function executeToolInternal(name, args, toolContext = {}) {
         let gateSupplyFallbackNote = ''
         if (occasion) {
           const beforeOccasionFilter = filtered
+          const searchEligibility = evaluateAutomaticUsePiecePool({
+            pieces: filtered,
+            context: {
+              occasion,
+              season: args?.season || toolContext.season || '',
+              activity: activity !== undefined && activity !== null && activity !== '' ? normalizeActivity(activity) : (toolContext.activity || ''),
+              weatherProfile: weatherProfileFromContext({ weather: weatherText || toolContext.weather || '', season: args?.season || toolContext.season || '' })
+            }
+          })
           const occasionFiltered = filtered.filter(p => {
             if (!pieceOccasionCompatible(p, occasion)) return false
             // docs/activity-and-roster-spec.md §5.4. This passed `occasion` alone, so an
             // owner_constraints row scoped to an activity, season or weather could never apply to
             // the roster the model composes from — only to the proposal afterwards. Both stored
             // constraints in the development wardrobe are activity- or season-scoped.
-            const trust = wholeWardrobePieceTrustDecision(p, {
-              occasion,
-              season: args?.season || toolContext.season || '',
-              activity: activity !== undefined && activity !== null && activity !== '' ? normalizeActivity(activity) : (toolContext.activity || ''),
-              weatherProfile: weatherProfileFromContext({ weather: weatherText || toolContext.weather || '', season: args?.season || toolContext.season || '' })
-            })
-            if (trust.allowed) return true
+            const decision = searchEligibility.decisionsById.get(Number(p.id))
+            if (decision?.underlyingAllowed) return true
             // Reject HERE only for the owner's own standing decisions. Passing activity/season above
             // also makes this call evaluate the full profile gate, and letting that reject at this
             // stage would move profile exclusions ahead of the ruleFit pass that counts them, annotates
             // them, and hands them back under intent:'explain' — the piece would vanish with no
             // number, no label and no way to ask why. Profile fit is judged once, below.
-            return !trust.reasons.some(reason => /^(owner constraint |user-excluded for )/.test(String(reason)))
+            return !decision?.findings.some(finding => finding.authority === 'owner')
           })
           if (occasionFiltered.length) {
             filtered = occasionFiltered
@@ -1660,6 +1665,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
               mood: toolContext.mood || '',
               fallbackSeason: toolContext.weather || resolvedSeason || ''
             }))
+        const proposalEligibility = evaluateAutomaticUsePiecePool({
+          pieces: resolved,
+          context: {
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            mood: toolContext.mood || occasion_context || '',
+            activity: resolvedActivity,
+            request: toolContext.request || toolContext.question || occasion_context || '',
+            question: toolContext.question || '',
+            weatherProfile: resolvedWeather
+          },
+          policy: { anchorPieceIds: resolved.filter(piece => piece.anchor).map(piece => Number(piece.id)) }
+        })
         const hardGateIssues = resolved.flatMap(piece => {
           // A user-requested anchor is the outfit's premise (same rule as the
           // composers' selected-piece bypass): the user asking to wear it
@@ -1672,15 +1690,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion_context
           ].filter(Boolean).join(' '))
           if (requestIssues.length) return [`${piece.name}: ${requestIssues.join(', ')}`]
-          const decision = wholeWardrobePieceTrustDecision(piece, {
-            occasion: resolvedOccasion,
-            season: resolvedSeason,
-            mood: toolContext.mood || occasion_context || '',
-            activity: resolvedActivity,
-            request: toolContext.request || toolContext.question || occasion_context || '',
-            question: toolContext.question || '',
-            weatherProfile: resolvedWeather
-          })
+          const decision = proposalEligibility.decisionsById.get(Number(piece.id))
           return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
         })
         if (hardGateIssues.length) {
@@ -1928,17 +1938,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
           activityProfile
         })
         const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
+        const swapEligibility = evaluateAutomaticUsePiecePool({
+          pieces: candidates,
+          context: {
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            mood: toolContext.mood || '',
+            activity: resolvedActivity,
+            request: requestText,
+            question: toolContext.question || '',
+            weatherProfile: resolvedWeather
+          }
+        })
         const scoredCandidates = candidates
           .map(piece => {
-            const trust = wholeWardrobePieceTrustDecision(piece, {
-              occasion: resolvedOccasion,
-              season: resolvedSeason,
-              mood: toolContext.mood || '',
-              activity: resolvedActivity,
-              request: requestText,
-              question: toolContext.question || '',
-              weatherProfile: resolvedWeather
-            })
+            const trust = swapEligibility.decisionsById.get(Number(piece.id))
             const ruleFit = (occasionProfile || activityProfile)
               ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
               : { tier: 'neutral', label: '' }
@@ -1970,19 +1984,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
           resolved.push({ ...replacement, role: slotRole })
           resolved.sort((a, b) => OUTFIT_ROLES.indexOf(a.role) - OUTFIT_ROLES.indexOf(b.role))
           const roleIssues = validateOutfitRoles(resolved, [])
-          const hardGateIssues = resolved.flatMap(piece => {
-            if (Number(piece.id) !== Number(replacement.id)) return []
-            const decision = wholeWardrobePieceTrustDecision(piece, {
-              occasion: resolvedOccasion,
-              season: resolvedSeason,
-              mood: toolContext.mood || '',
-              activity: resolvedActivity,
-              request: requestText,
-              question: toolContext.question || '',
-              weatherProfile: resolvedWeather
-            })
-            return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
-          })
+          const hardGateIssues = candidate.trust.allowed
+            ? []
+            : [`${replacement.name}: ${candidate.trust.reasons.join(', ')}`]
           if (roleIssues.length || hardGateIssues.length) {
             failures.push({ id: replacement.id, name: replacement.name, issues: [...roleIssues, ...hardGateIssues] })
             continue

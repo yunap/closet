@@ -35,7 +35,7 @@ const {
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
-const { evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
+const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -397,6 +397,7 @@ async function captureCandidateStages(definition) {
     currentDate: REFERENCE_DATE,
   }
   const trust = wardrobe.map(item => ({ id: item.id, ...wholeWardrobePieceTrustDecision(item, options) }))
+  const automaticUse = evaluateAutomaticUsePiecePool({ pieces: wardrobe, context: options })
   const filtered = filterWholeWardrobePiecesForGeneration(wardrobe, options)
   const visual = evaluateVisualComposerPiecePool({
     pieces: wardrobe,
@@ -452,6 +453,11 @@ async function captureCandidateStages(definition) {
     trust: {
       allowedIds: trust.filter(entry => entry.allowed).map(entry => entry.id),
       suppressed: Object.fromEntries(trust.filter(entry => !entry.allowed).map(entry => [String(entry.id), entry.reasons])),
+    },
+    automaticUsePool: {
+      eligibleIds: ids(automaticUse.eligiblePieces),
+      excluded: Object.fromEntries(automaticUse.excludedPieces.map(entry => [String(entry.pieceId), entry.reasons])),
+      findingCounts: sortedObject(automaticUse.debug.findingCounts),
     },
     wholeWardrobeFilter: {
       allowedIds: ids(filtered.allowedPieces),
@@ -654,7 +660,7 @@ export async function captureCrossFlowArchitecture() {
     }
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     auditBaseline: 'c1693a8e8f76881d5cb3d87c173ea21fed6ccb53',
     fixturePieceIds: wardrobe.map(item => item.id),
     scenarios,

@@ -10,7 +10,7 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closet-eligibility-'))
 process.env.WARDROBE_DB_PATH = path.join(tempRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tempRoot, 'uploads')
 
-const { evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
+const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const {
   wholeWardrobeOutfitLooksQuestionable,
   wholeWardrobeOutfitVisualReviewFindings,
@@ -31,6 +31,41 @@ function piece(id, overrides = {}) {
     ...overrides,
   }
 }
+
+test('shared automatic-use pool preserves hard-gate findings while anchor policy changes only disposition', () => {
+  const blockedShoe = piece(30, {
+    name: 'Low-support heel',
+    heel_height: 'high',
+    walk_support: 'low',
+    shoe_type: 'pump',
+  })
+  const ordinaryShoe = piece(31)
+  const result = evaluateAutomaticUsePiecePool({
+    pieces: [blockedShoe, ordinaryShoe],
+    context: { occasion: 'city', activity: 'walking', weatherProfile: { isHot: false, isCold: false } },
+    policy: { anchorPieceIds: [blockedShoe.id] },
+  })
+
+  const blockedDecision = result.decisionsById.get(blockedShoe.id)
+  assert.equal(blockedDecision.underlyingAllowed, false)
+  assert.equal(blockedDecision.allowed, true, 'explicit anchor policy changes disposition')
+  assert.equal(blockedDecision.bypassed, true)
+  assert.ok(blockedDecision.findings.some(finding => finding.source === 'hard_gate' && finding.kind === 'validity'))
+  assert.equal(result.eligibleIds.has(blockedShoe.id), true)
+  assert.equal(result.debug.bypassedAnchorCount, 1)
+})
+
+test('shared automatic-use findings identify owner authority without consumer-side reason parsing', () => {
+  const excluded = piece(32, { occasion_exclusions: ['city'] })
+  const result = evaluateAutomaticUsePiecePool({
+    pieces: [excluded],
+    context: { occasion: 'city', weatherProfile: { isHot: false, isCold: false } },
+  })
+
+  const decision = result.decisionsById.get(excluded.id)
+  assert.equal(decision.allowed, false)
+  assert.ok(decision.findings.some(finding => finding.authority === 'owner' && finding.code === 'user_excluded_for_city'))
+})
 
 test('shared pool findings bind recovery to validity while preserving presentation-only pieces', () => {
   const anchor = piece(1, { category: 'top', name: 'Anchor top', formality: 'elevated' })

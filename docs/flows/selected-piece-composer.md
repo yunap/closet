@@ -129,3 +129,11 @@ Engineer notes:
 - **Always non-empty**: 0 model outfits → `buildLocalFallbackOutfitDirections`;
   still 0 → a hand-built basic backfill using the anchor + recovery-safe supports. Neither fallback
   can reopen a validity-excluded piece.
+
+### Recorded follow-up — malformed/truncated composer JSON
+
+`thread_1787624360787` reached the model's 2,000-output-token ceiling, returned malformed JSON, and
+then correctly used the local fallback. The eligibility consolidation worked—the fallback did not
+reintroduce the excluded lounge/athletic shoes—but the paid composer call produced no usable model
+outfits. Treat response sizing, truncation detection, and bounded local JSON recovery as a separate
+reliability investigation; do not weaken eligibility or mix that repair into an architecture slice.

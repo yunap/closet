@@ -19,14 +19,16 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
     path.join(process.cwd(), 'test', 'fixtures', 'cross_flow_architecture_baseline.json'),
     'utf8',
   ))
-  assert.equal(baseline.schemaVersion, 2)
+  assert.equal(baseline.schemaVersion, 3)
   assert.deepEqual(Object.keys(baseline.scenarios), ['casual_neutral', 'hot_hiking', 'capacity_pressure'])
   for (const scenario of Object.values(baseline.scenarios)) {
     assert.ok(scenario.context.intent)
+    assert.ok(scenario.candidates.automaticUsePool.findingCounts)
     assert.ok(scenario.candidates.visualRoster.findingCounts)
     assert.ok(Array.isArray(scenario.candidates.visualRoster.recoveryEligibleIds))
     assert.deepEqual(Object.keys(scenario.candidates), [
       'trust',
+      'automaticUsePool',
       'wholeWardrobeFilter',
       'visualRoster',
       'selectedPieceCandidates',
@@ -45,6 +47,7 @@ test('cross-flow architecture corpus covers every consolidation stage without pr
   assert.equal(baseline.recovery.planCompletion.completions.length, 1)
 
   const hot = baseline.scenarios.hot_hiking.candidates
+  assert.deepEqual(hot.automaticUsePool.eligibleIds, hot.trust.allowedIds, 'shared pool must preserve the hard-gate verdict')
   assert.ok(hot.trust.allowedIds.includes(504), 'fixture must preserve the current trust-path unknown-metadata behavior')
   assert.match(hot.visualRoster.excluded['504'], /metadata missing: footwear comfort/)
   assert.ok(hot.planWorkbench.gateAllowedIds.includes(504), 'fixture must expose the current plan/visual unknown-metadata divergence')

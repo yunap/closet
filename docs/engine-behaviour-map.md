@@ -721,14 +721,17 @@ model call.
 
 ### One function, three composition paths
 
-`wholeWardrobePieceTrustDecision` (`rules.js`) is the hard gate. It is called by the freeform
-`propose_outfit` tool (`tools.js`), by `filterWholeWardrobePiecesForGeneration`, and by
-`scoreWholeWardrobeCandidate` (there as a `-18` support-only *penalty*, not a block). It returns
+`wholeWardrobePieceTrustDecision` in `rules.js` is the hard gate. Pool consumers should call
+`evaluateAutomaticUsePiecePool` in `eligibility.js`, which executes that verdict for every piece and
+returns typed findings plus eligible/excluded projections. Compatibility consumers still call the
+hard gate through `filterWholeWardrobePiecesForGeneration`; `scoreWholeWardrobeCandidate` uses it as
+a `-18` support-only *penalty*, not a block. The hard gate itself returns
 `{allowed, supportOnly, reasons}`; `allowed` is simply `reasons.length === 0`.
 
-**[by design]** A user-requested **anchor bypasses it entirely** — `if (piece.anchor) return []` in
-the freeform gate. Asking to wear a garment overrides auto-use suitability. Verification
-(retrieval + layer photos) still applies.
+**[by design]** A user-requested **anchor changes disposition, not evidence**. The shared pool still
+records the hard-gate findings and marks the underlying verdict, while anchor policy keeps the
+explicit user premise eligible. Freeform proposal validation does not surface those findings as
+errors for the anchor. Verification (retrieval + layer photos) still applies.
 
 ### The layers, in the order they run
 
@@ -1064,6 +1067,15 @@ a weather, register, activity, footwear, metadata, or other validity exclusion. 
 fallback, absolute fallback, and comfort-footwear repair all use that recovery projection. A
 shoe-anchor repair evaluates the full wardrobe through the same authority before choosing a
 substitute; it does not reopen raw `allPieces`.
+
+**[eligibility-ownership consolidation, second consumer migration, 2026-08-24] Freeform search,
+proposal validation, and slot swaps now consume one hard-gate pool result.**
+`evaluateAutomaticUsePiecePool` preserves the hard gate's underlying findings and labels owner
+authority explicitly. `search_wardrobe` continues its deliberate retrieval disposition: owner
+vetoes remain fixed while non-owner profile findings proceed to the existing rule-fit annotation
+and `intent:"explain"` path. `propose_outfit` and `suggest_slot_swaps` keep their stricter
+dispositions, and an explicit anchor remains usable without erasing the evidence that ordinary
+automatic selection would have blocked it. No scoring, profile rule, or broadening order changed.
 
 **[visual-review authority correction, 2026-08-24] Unversioned tagger prose cannot buy or decide a
 visual clash review.** `wholeWardrobeOutfitVisualReviewFindings` now requires two concrete structured

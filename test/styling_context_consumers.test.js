@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const routeSource = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+const toolSource = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
 
 function sourceBlock(startNeedle, endNeedle) {
   const start = routeSource.indexOf(startNeedle)
@@ -59,4 +60,9 @@ test('selected and whole visual composers delegate finite-pool eligibility to on
   assert.doesNotMatch(selected, /buildVisualComposerRoster\(/)
   assert.match(whole, /evaluateVisualComposerPiecePool\(\{/)
   assert.doesNotMatch(whole, /buildVisualComposerRoster\(/)
+})
+
+test('freeform search, proposal, and slot swaps consume shared automatic-use eligibility', () => {
+  assert.match(toolSource, /evaluateAutomaticUsePiecePool\(\{/)
+  assert.doesNotMatch(toolSource, /wholeWardrobePieceTrustDecision\(/)
 })

@@ -154,6 +154,14 @@ even when broadening then finds other pieces.
 
 See [freeform-batched-discovery-spec.md](../freeform-batched-discovery-spec.md).
 
+**[2026-08-24] One hard-gate result, three deliberate dispositions.** `search_wardrobe`,
+`propose_outfit`, and `suggest_slot_swaps` now obtain automatic-use findings from
+`evaluateAutomaticUsePiecePool`. Search still removes owner vetoes before broadening but leaves
+other profile findings for its existing annotated/explain behavior; proposal and slot-swap paths
+reject those findings. An explicit user-requested anchor changes proposal disposition while the
+shared result retains its underlying findings. The tools no longer parse hard-gate reason strings
+or call the piece verdict independently.
+
 **[2026-08-19] An accepted card has authority over the prose that comments on it.** Once a card is
 accepted this turn, the card is the product and the closing reply is commentary. Live turns showed
 the commentary drifting from what it commented on: a follow-up called the loafers the grounding
