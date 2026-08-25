@@ -48,7 +48,7 @@
     "feedback_synthesis_drafts": {
       "disposition": "category",
       "category": 6,
-      "note": "reviewable model proposals; no prompt authority until owner acceptance; accepted applicability uses canonical calendar-season projection"
+      "note": "reviewable model proposals; no prompt authority until owner acceptance; accepted applicability uses canonical calendar-season and structured-weather projection"
     },
     "product_quality_findings": {
       "disposition": "category",

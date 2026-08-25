@@ -391,6 +391,9 @@ test('only accepted personal synthesis drafts become styling prompt memory', () 
   insert.run(batchId, 'personal_contextual_lesson', 'Summer shoes', 'Do not use the fall shoes in summer.', 'Summer only.', 'accepted', JSON.stringify({ applicability: {
     version: 1, scope: 'piece_context', piece_ids: [195], occasions: [], activities: [], seasons: ['summer'], weather_terms: [],
   } }))
+  insert.run(batchId, 'personal_contextual_lesson', 'Rain shoes', 'Use the rain-ready shoes when the forecast is rainy.', 'Rain only.', 'accepted', JSON.stringify({ applicability: {
+    version: 1, scope: 'piece_context', piece_ids: [196], occasions: [], activities: [], seasons: [], weather_terms: ['rainy'],
+  } }))
   insert.run(batchId, 'personal_contextual_lesson', 'Active top', 'Preserve this top’s elevated register.', 'Only when styling piece 260.', 'accepted', JSON.stringify({ applicability: {
     version: 1, scope: 'piece', piece_ids: [260], occasions: [], activities: [], seasons: [], weather_terms: [],
   } }))
@@ -408,6 +411,8 @@ test('only accepted personal synthesis drafts become styling prompt memory', () 
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { season: 'winter' }), /fall shoes in summer/)
   assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [195], season: 'winter' }), /fall shoes in summer/)
   assert.match(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [195], season: 'summer' }), /fall shoes in summer/)
+  assert.match(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [196], weather: { isRainy: true } }), /rain-ready shoes/)
+  assert.doesNotMatch(getAcceptedFeedbackSynthesisMemory(8, { pieceIds: [196], weather: { isRainy: false } }), /rain-ready shoes/)
   assert.match(getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: [195],
     season: 'current season',

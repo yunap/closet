@@ -50,7 +50,9 @@
             "weatherSource": "fixture",
             "isHot": false,
             "isCold": false,
-            "isExtremeHeat": false
+            "isExtremeHeat": false,
+            "isRainy": false,
+            "isWetExposure": false
           },
           "provenanceByField": {
             "occasion": {
@@ -294,7 +296,6 @@
             201,
             301,
             504,
-            503,
             502,
             501,
             401
@@ -309,7 +310,6 @@
             401,
             501,
             502,
-            503,
             504
           ],
           "suppressed": {
@@ -321,6 +321,9 @@
             ],
             "302": [
               "register: dressy exceeds everyday ceiling"
+            ],
+            "503": [
+              "owner constraint 1: prohibited for season summer"
             ]
           },
           "weatherUsed": "mild weather"
@@ -399,7 +402,9 @@
             "weatherSource": "fixture",
             "isHot": true,
             "isCold": false,
-            "isExtremeHeat": false
+            "isExtremeHeat": false,
+            "isRainy": false,
+            "isWetExposure": false
           },
           "provenanceByField": {
             "occasion": {
@@ -659,7 +664,7 @@
               "activity profile: low support unsuitable"
             ],
             "503": [
-              "activity profile: low heel unsuitable"
+              "owner constraint 1: prohibited for season summer"
             ]
           },
           "weatherUsed": "hot weather"
@@ -728,7 +733,9 @@
             "weatherSource": "fixture",
             "isHot": false,
             "isCold": false,
-            "isExtremeHeat": false
+            "isExtremeHeat": false,
+            "isRainy": false,
+            "isWetExposure": false
           },
           "provenanceByField": {
             "occasion": {

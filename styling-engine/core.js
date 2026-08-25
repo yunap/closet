@@ -87,6 +87,7 @@ import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.
 import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
+import { projectStylingApplicabilityContext } from './stylingContext.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -4192,6 +4193,18 @@ export async function buildStylistConversationPayload(body) {
 
   const now = currentDate ? new Date(currentDate) : new Date()
   const effectiveCalendarSeason = resolveCalendarSeason(effectiveSeason, now)
+  const feedbackApplicabilityContext = projectStylingApplicabilityContext({
+    occasion: effectiveOccasion,
+    activity: effectiveActivity,
+    season: effectiveSeason,
+    calendarSeason: effectiveCalendarSeason,
+    date: now,
+    weatherProfile: effectiveWeatherProfile || {},
+    statedWeather: extractedWeather,
+    requestText: [question, effectiveOccasion, effectiveActivity].filter(Boolean).join(' '),
+  }, {
+    weatherText: String(extractedWeather || ''),
+  })
   const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -4459,15 +4472,7 @@ export async function buildStylistConversationPayload(body) {
     ? db.prepare(`SELECT * FROM pieces WHERE id IN (${ownerGuidancePieceIds.map(() => '?').join(',')})`).all(...ownerGuidancePieceIds).map(parsePiece)
     : []
   const ownerGuidanceContext = {
-    requestContext: {
-      occasion: effectiveOccasion,
-      activity: effectiveActivity,
-      season: effectiveCalendarSeason,
-      currentDate: now,
-      weather: extractedWeather,
-      weatherText: String(extractedWeather || ''),
-      requestText: [question, effectiveOccasion, effectiveActivity].filter(Boolean).join(' '),
-    },
+    requestContext: feedbackApplicabilityContext,
     pieces: ownerGuidancePieces,
   }
   if (activeOutfit && activeOutfit.id) {
@@ -4499,11 +4504,7 @@ export async function buildStylistConversationPayload(body) {
   ].filter(Boolean))]
   const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: acceptedLessonPieceIds,
-    occasion: effectiveOccasion,
-    activity: effectiveActivity,
-    season: effectiveCalendarSeason,
-    currentDate: now,
-    weather: extractedWeather,
+    ...feedbackApplicabilityContext,
   })
   if (acceptedSynthesisText) {
     feedbackMemoryParts.push(`Owner-accepted personal or contextual lessons:\n${acceptedSynthesisText}`)

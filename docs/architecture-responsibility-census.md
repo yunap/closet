@@ -595,15 +595,19 @@ evidence sources. An explicitly supplied weather profile, including indoor/trans
 preserved without being reinterpreted by a caller.
 
 **Live-validation correction, implemented 2026-08-25:** Slice 1 had centralized source precedence
-but had not made the semantic projection of `current season` part of its returned contract.
+but had not made the semantic projection of executable applicability part of its returned contract.
 Consequently, accepted summer guidance could be absent from a current-season prompt even though a
 hard owner constraint used a different local season resolver. `resolveStylingContext` now returns
-both the preserved request `season` and canonical `calendarSeason`; all executable seasonal
-applicability shares `resolveCalendarSeason`. Direct selected/whole, freeform and plan/capsule
-prompt-memory consumers pass the canonical value, while eligibility receives the authoritative
-date for the same projection. Tests cover summer/winter dates, accepted lessons, direct guidance,
-historical reactions and the cross-flow architecture fixture. This is a completion correction to
-the Slice 1 meaning contract, not a reopening of candidate construction or a new style rule.
+both the preserved request `season`, canonical `calendarSeason`, and an `applicabilityContext`;
+all executable applicability shares `projectStylingApplicabilityContext`. That projection uses
+`resolveCalendarSeason`, the authoritative request date, and normalized hot/cold/rain/wet-exposure
+facts from the resolved Weather Profile. Direct selected/whole, freeform and plan/capsule feedback
+consumers pass this shape, while eligibility receives its Calendar Season and date. Plan slots now
+keep Requested Season separate from `statedWeather`, and freeform search/propose/swap no longer
+drop the request date. Tests cover summer/winter dates, indoor summer slots, structured rainy
+weather, accepted lessons, direct guidance, historical reactions, and freeform eligibility. This
+is a completion correction to the Slice 1 meaning contract, not a reopening of candidate
+construction or a new style rule.
 
 ### Slice 2 — executable eligibility pipeline
 

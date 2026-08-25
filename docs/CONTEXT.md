@@ -121,13 +121,20 @@ The canonical `spring | summer | fall | winter` projection used to match executa
 applicability. A Requested Season of `current season` remains intact for weather/UI policy but is
 projected against the request date before owner constraints or accepted lessons are matched.
 
+**Applicability Context**:
+The canonical executable projection used to decide whether a stored owner constraint, owner
+guidance line, or accepted lesson applies now. It combines Occasion, Activity, Calendar Season,
+request date, and normalized weather flags. It is not display copy and is distinct from the raw
+Requested Season or weather wording.
+
 **Climate Season**:
 The season implied by live or heuristic weather, which can diverge from Requested Season (see
 `seasonIsCalendarOnly`).
 
 **Weather Profile**:
-The `{isHot, isCold, isExtremeHeat, weatherSource}` object describing current conditions for a
-request.
+The structured object describing physical conditions for a request, including hot, cold, extreme
+heat, rain, wet exposure, and source provenance. It is distinct from Calendar Season: `indoor` is
+an environment/weather condition, not a season, and summer does not itself prove heat or rain.
 
 **Visual Weight**:
 Two related but distinct mechanisms sharing one name: a stored field on shoes/accessories

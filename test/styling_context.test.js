@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createStylingContextResolver } from '../styling-engine/stylingContext.js'
+import { createStylingContextResolver, projectStylingApplicabilityContext } from '../styling-engine/stylingContext.js'
+import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 const fixedNow = new Date('2026-08-24T12:00:00-07:00')
 
@@ -32,7 +33,23 @@ test('styling context resolves intent by field and records lower-authority confl
   assert.equal(context.provenanceByField.activity.source, 'explicit_request')
   assert.equal(context.provenanceByField.activity.resolvedFromRequest, true)
   assert.equal(context.provenanceByField.calendarSeason.source, 'derived_from_resolved_season')
+  assert.equal(context.applicabilityContext.season, 'summer')
   assert.deepEqual(context.conflicts.map(conflict => conflict.field).sort(), ['activity', 'occasion', 'season'])
+})
+
+test('applicability projection treats structured weather and equivalent prose-season shapes identically', () => {
+  const currentDate = new Date('2026-07-15T12:00:00-07:00')
+  assert.equal(resolveCalendarSeason('current season; mild weather; forecast high 72°F', currentDate), 'summer')
+  assert.equal(resolveCalendarSeason('summer; hot weather', currentDate), 'summer')
+  const context = projectStylingApplicabilityContext({
+    occasion: 'city',
+    activity: 'walking',
+    season: 'current season; mild weather; forecast high 72°F',
+    date: currentDate,
+    weatherProfile: { isRainy: true, isWetExposure: true, isHot: false },
+  })
+  assert.equal(context.season, 'summer')
+  assert.deepEqual(context.weather, { hot: false, cold: false, rainy: true, wet_exposure: true })
 })
 
 test('artifact intent wins when the current request does not override that field', async () => {

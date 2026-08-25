@@ -641,6 +641,7 @@ test('an indoor slot in extreme heat keeps transit heat and permits only light A
 
   assert.equal(slots[0].statedWeather, 'indoor')
   assert.equal(slots[0].transitSeason, 'hot, highs 100-105F, sunny')
+  assert.equal(slots[0].requestedSeason, 'current season', 'indoor weather must not become the executable season')
 
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'museum visit during a 100F trip' })
   const allowed = new Set(workbench.slots[0].allowed_piece_ids)
@@ -652,6 +653,19 @@ test('an indoor slot in extreme heat keeps transit heat and permits only light A
   assert.equal(allowed.has(heavyMain), false, 'a heavy main is still rejected for hot transit')
   assert.match(workbench.slots[0].submission_requirements.join(' '), /breathable hot-weather base for transit/)
   assert.match(workbench.slots[0].submission_requirements.join(' '), /optional light layer/)
+})
+
+test('an indoor summer plan preserves summer applicability separately from indoor weather', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Summer Museum', occasion: 'city', activity: 'none', environment: 'indoor', season: 'summer', date: '2026-07-15', count: 1,
+  }])
+  assert.equal(slots[0].season, 'indoor')
+  assert.equal(slots[0].requestedSeason, 'summer')
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'summer museum visit' })
+  assert.equal(workbench.slots[0].styling_context.season, 'summer')
+  assert.equal(workbench.slots[0].styling_context.calendarSeason, 'summer')
+  assert.equal(workbench.slots[0].styling_context.weatherProfile.isIndoor, true)
 })
 
 test('extreme heat and active movement reach the model as independent pre-composition assessments', async () => {

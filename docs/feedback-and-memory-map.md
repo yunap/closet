@@ -8,7 +8,8 @@ is written, and which consumer — if any — reads it back.**
 **Ratified 2026-08-09** as the baseline description of the current system, after five review
 rounds; **amended 2026-08-12** for the owner-guidance work (footwear constraint selectors, shared
 season resolution, the `reported` synthesis status and its delete route, exclusion `changedAt`, and
-guidance becoming read-only). Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
+guidance becoming read-only); **amended 2026-08-25** for the canonical season/weather applicability
+projection. Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
 [`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather than
 restate it. Ideas for hardening the verification tooling are out of scope here and live in
 [`feedback-audit-backlog.md`](feedback-audit-backlog.md).
@@ -269,8 +270,12 @@ public resolved request may remain `current season` for weather/UI policy; promp
 uses the accompanying canonical `calendarSeason`. Historical evidence that stored the literal
 placeholder resolves it against that row's creation date. This was extended on 2026-08-25 after
 live thread `thread_1787651275782` showed an accepted summer lesson omitted from a current-season
-prompt. Item 12's review surface is deferred, but its bounded storage, routing and undo contract is
-executable.
+prompt. The same live-validation pass added `projectStylingApplicabilityContext`: feedback readers
+now receive one canonical Occasion, Activity, Calendar Season, request-date and structured-weather
+shape across selected, whole, freeform, plan and capsule flows. Structured Weather Profile keys
+(`isHot`, `isCold`, `isRainy`, `isWetExposure`) and their canonical applicability keys are
+equivalent at the owner-guidance boundary; prose remains a fallback, not a competing authority.
+Item 12's review surface is deferred, but its bounded storage, routing and undo contract is executable.
 
 ### 7 · Thread-scoped conversation state
 

@@ -2667,7 +2667,7 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     piece,
   }, {
     occasion: ownerExclusionOccasion,
-    season: options.season,
+    season: options.calendarSeason || options.season,
     activity: options.activity,
     currentDate: options.currentDate,
     weather: {

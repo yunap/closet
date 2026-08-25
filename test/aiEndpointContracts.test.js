@@ -66,6 +66,7 @@ function resetTables() {
     'freeform_generation_runs',
     'calibration_images',
     'stylist_conversation_state',
+    'owner_constraints',
   ]) {
     db.prepare(`DELETE FROM ${table}`).run()
   }
@@ -3529,6 +3530,29 @@ test('executeTool search_wardrobe uses toolContext weather when model omits weat
   const denim = bottoms.find(p => p.id === seeded.jeans)
   assert.equal(linen.weatherFit, 'lightweight - good for heat')
   assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
+})
+
+test('freeform eligibility evaluates current season against the resolved request date', async () => {
+  db.prepare(`INSERT INTO owner_constraints
+    (status, selector_type, selector_values, context_dimension, context_values, reason)
+    VALUES ('active', 'piece_ids', ?, 'season', '["winter"]', 'Do not use these boots in winter.')
+  `).run(JSON.stringify([seeded.boot]))
+
+  const winter = await executeTool('search_wardrobe', {
+    category: 'shoes', occasion: 'casual',
+  }, {
+    season: 'current season',
+    currentDate: new Date('2026-01-15T12:00:00-08:00'),
+  })
+  assert.equal(winter.some(piece => piece.id === seeded.boot), false)
+
+  const summer = await executeTool('search_wardrobe', {
+    category: 'shoes', occasion: 'casual',
+  }, {
+    season: 'current season',
+    currentDate: new Date('2026-07-15T12:00:00-07:00'),
+  })
+  assert.equal(summer.some(piece => piece.id === seeded.boot), true)
 })
 
 test('executeTool search_wardrobe visual mode attaches capped low-detail thumbnails', async () => {

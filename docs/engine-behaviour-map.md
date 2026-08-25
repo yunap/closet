@@ -1,7 +1,7 @@
 # Engine behaviour map
 
 **Status:** twelfth pass, 2026-07-26; **amended 2026-08-25** for the shared eligibility API retirement
-audit; **amended 2026-08-12** to add the owner-constraint gate (which
+audit and canonical applicability projection; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
 two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
@@ -1122,6 +1122,17 @@ memory, hard owner constraints and historical exact-outfit reactions. This close
 `thread_1787651275782` gap where accepted summer guidance was omitted before the model call because
 one reader compared the placeholder literally. It does not add a suede taste rule, alter ranking,
 or turn a prompt preference into a hard eligibility gate.
+
+**[applicability projection completed, 2026-08-25] Calendar Season and physical weather now cross
+flow boundaries as one canonical executable shape.** `projectStylingApplicabilityContext` in
+`stylingContext.js` derives Calendar Season against the authoritative request date and normalizes
+hot, cold, rainy, and wet-exposure flags from the resolved Weather Profile. Direct selected/whole,
+freeform search/propose/swap/generation, plan workbenches, and capsule feedback readers consume
+that projection. Plan slots preserve Requested Season separately from `statedWeather`, so an
+indoor summer slot remains summer for seasonal applicability without treating `indoor` as a
+calendar season. Composite bounded labels such as `current season; mild weather` are parsed only
+at the resolver boundary; they are not a new semantic source. The hard gate receives the same
+Calendar Season and request date, so it cannot independently reinterpret the turn.
 
 **[eligibility-ownership consolidation, 2026-08-24] Primary visual composition and selected-piece
 recovery now consume one finite-pool verdict.** `evaluateVisualComposerPiecePool` classifies every

@@ -177,6 +177,19 @@ test('season-scoped guidance treats current season as its calendar season', () =
   }), false)
 })
 
+test('weather-scoped guidance accepts the canonical structured weather profile shape', () => {
+  const applicability = extractOwnerGuidanceApplicability('Canvas sneakers are not suitable for rainy weather.')
+  const pieces = [{ id: 1, category: 'shoes', name: 'canvas sneakers', fabric_category: 'canvas', fiber_content: [] }]
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { weather: { isRainy: true, weatherSource: 'live' }, weatherText: '' },
+    pieces,
+  }), true)
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext: { weather: { isRainy: false, weatherSource: 'live' }, weatherText: '' },
+    pieces,
+  }), false)
+})
+
 test('a repeated correction can gain a validated proposal without duplicating the memory', () => {
   storeUserCorrection('No dresses for travel.', 'general', null)
   const result = storeUserCorrection('No dresses for travel.', 'general', null, {

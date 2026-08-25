@@ -62,7 +62,7 @@ import {
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
-import { resolveStylingContext } from '../styling-engine/stylingContext.js'
+import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -1650,8 +1650,12 @@ export async function generateOutfitsForPieceInternal({
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
+  const feedbackApplicabilityContext = projectStylingApplicabilityContext(stylingContext, {
+    weatherText: [mood, question].filter(Boolean).join(' '),
+    requestText: [occasion, activity, mood, question].filter(Boolean).join(' '),
+  })
   const ownerGuidanceContext = {
-    requestContext: { occasion, activity, season: stylingContext.calendarSeason, currentDate: stylingContext.date, weather: weatherProfile, weatherText: [mood, question].filter(Boolean).join(' '), requestText: [occasion, activity, mood, question].filter(Boolean).join(' ') },
+    requestContext: feedbackApplicabilityContext,
     pieces: [parsedPiece, ...rankedCandidates.map(candidate => candidate?.piece).filter(Boolean)],
   }
   const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16, { ownerGuidanceContext })
@@ -1659,8 +1663,8 @@ export async function generateOutfitsForPieceInternal({
   const exactOutfitReactionText = getExactOutfitReactionMemory(selectedPieceRosterIds, {
     occasion,
     activity,
-    season: stylingContext.calendarSeason,
-    currentDate: stylingContext.date,
+    season: feedbackApplicabilityContext.season,
+    currentDate: feedbackApplicabilityContext.currentDate,
     limit: 3,
   })
   const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(
@@ -1671,9 +1675,7 @@ export async function generateOutfitsForPieceInternal({
     pieceIds: selectedPieceRosterIds,
     occasion,
     activity,
-    season: stylingContext.calendarSeason,
-    currentDate: stylingContext.date,
-    weather: [mood, question].filter(Boolean).join(' '),
+    ...feedbackApplicabilityContext,
   })
   const calibrationMemoryText = getCalibrationMemoryForStylist(32)
 
@@ -2068,7 +2070,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     const automaticUseEvaluation = evaluateAutomaticUsePiecePool({
       pieces: allPieces,
-      context: { occasion, season, currentDate: stylingContext.date, explorationMode, weatherProfile, mood, activity },
+      context: { occasion, season, calendarSeason: stylingContext.calendarSeason, currentDate: stylingContext.date, explorationMode, weatherProfile, mood, activity },
       policy: {
         anchorPieceIds: savedMainPieceId ? [savedMainPieceId] : [],
         hotOuterwearCap: 3,
@@ -2197,20 +2199,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }
     }
     const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(roster.map(piece => piece.id), 3)
+    const feedbackApplicabilityContext = projectStylingApplicabilityContext(stylingContext, {
+      weatherText: [mood, stylingRequest].filter(Boolean).join(' '),
+      requestText: [occasion, activity, mood, stylingRequest].filter(Boolean).join(' '),
+    })
     const exactOutfitReactionText = getExactOutfitReactionMemory(roster.map(piece => piece.id), {
       occasion,
       activity,
-      season: stylingContext.calendarSeason,
-      currentDate: stylingContext.date,
+      season: feedbackApplicabilityContext.season,
+      currentDate: feedbackApplicabilityContext.currentDate,
       limit: 3,
     })
     const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
       pieceIds: roster.map(piece => piece.id),
-      occasion,
-      activity,
-      season: stylingContext.calendarSeason,
-      currentDate: stylingContext.date,
-      weather: [mood, stylingRequest].filter(Boolean).join(' '),
+      ...feedbackApplicabilityContext,
     })
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
@@ -3927,12 +3929,13 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
   const capsuleSeason = isSummer ? 'summer' : (isWinter ? 'winter' : '')
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
-    contexts: slots.map(slot => ({
+    contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
       occasion: slot?.occasion || '',
       activity: slot?.activity || '',
-      season: slot?.stylingContext?.calendarSeason || slot?.season || capsuleSeason,
+      season: slot?.requestedSeason || slot?.transitSeason || slot?.season || capsuleSeason,
       currentDate: slot?.stylingContext?.date || slot?.date || null,
-      weather: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      weatherText: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
   const content = capsuleRosterSelectionContent({

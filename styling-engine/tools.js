@@ -14,8 +14,9 @@ import { evaluateWearableOutfit, OUTFIT_ROLES, projectOutfitValidationFindings, 
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
-import { createStylingContextResolver, resolveStylingContext } from './stylingContext.js'
+import { createStylingContextResolver, projectStylingApplicabilityContext, resolveStylingContext } from './stylingContext.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
+import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
@@ -393,6 +394,7 @@ export async function resolveToolStylingContext({
   toolContext.activity = context.activity
   toolContext.season = context.season
   toolContext.calendarSeason = context.calendarSeason
+  toolContext.applicabilityContext = context.applicabilityContext
   toolContext.mission = context.mission
   toolContext.mood = context.mood
   toolContext.weatherProfile = context.weatherProfile
@@ -402,6 +404,22 @@ export async function resolveToolStylingContext({
   }
   setFreeformWeatherSource(toolContext, context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
   return context
+}
+
+function automaticUseContextFromStylingContext(stylingContext = {}, extras = {}) {
+  const applicability = projectStylingApplicabilityContext(stylingContext, {
+    weatherText: extras.weatherText,
+    requestText: extras.request || extras.question || stylingContext.requestText || '',
+  })
+  return {
+    ...extras,
+    occasion: stylingContext.occasion,
+    activity: stylingContext.activity,
+    season: stylingContext.season,
+    calendarSeason: applicability.calendarSeason,
+    currentDate: applicability.currentDate,
+    weatherProfile: stylingContext.weatherProfile,
+  }
 }
 
 // Slice 1 (2026-08-25): resolveStatedOrLiveWeather was retired after freeform consumers moved to
@@ -1075,7 +1093,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           explicitRequest: {
             occasion,
             activity,
-            season: args?.season,
+            season: extractSeasonRequest(args?.season),
             statedWeather: weatherText,
             location,
             requestText,
@@ -1132,12 +1150,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const beforeOccasionFilter = filtered
           const searchEligibility = evaluateAutomaticUsePiecePool({
             pieces: filtered,
-            context: {
-              occasion: resolvedOccasion,
-              season: stylingContext.season,
-              activity: resolvedActivity,
-              weatherProfile: resolvedWeather,
-            }
+            context: automaticUseContextFromStylingContext(stylingContext),
           })
           const occasionFiltered = filtered.filter(p => {
             if (!pieceOccasionCompatible(p, occasion)) return false
@@ -1580,8 +1593,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           explicitRequest: {
             occasion,
             activity,
-            season,
-            statedWeather: season,
+            season: extractSeasonRequest(season),
+            statedWeather: extractSeasonRequest(season) ? '' : season,
             requestText: requestTextForProposal,
           },
           toolContext,
@@ -1642,15 +1655,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const resolvedWeather = stylingContext.weatherProfile
         const proposalEligibility = evaluateAutomaticUsePiecePool({
           pieces: resolved,
-          context: {
-            occasion: resolvedOccasion,
-            season: resolvedSeason,
+          context: automaticUseContextFromStylingContext(stylingContext, {
             mood: toolContext.mood || occasion_context || '',
-            activity: resolvedActivity,
             request: toolContext.request || toolContext.question || occasion_context || '',
             question: toolContext.question || '',
-            weatherProfile: resolvedWeather
-          },
+          }),
           policy: { anchorPieceIds: resolved.filter(piece => piece.anchor).map(piece => Number(piece.id)) }
         })
         const hardGateIssues = resolved.flatMap(piece => {
@@ -1913,8 +1922,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           explicitRequest: {
             occasion: args?.occasion,
             activity: args?.activity,
-            season: args?.season,
-            statedWeather: args?.season,
+            season: extractSeasonRequest(args?.season),
+            statedWeather: extractSeasonRequest(args?.season) ? '' : args?.season,
             requestText,
           },
           actionArtifact: {
@@ -1961,15 +1970,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
         const swapEligibility = evaluateAutomaticUsePiecePool({
           pieces: candidates,
-          context: {
-            occasion: resolvedOccasion,
-            season: resolvedSeason,
+          context: automaticUseContextFromStylingContext(stylingContext, {
             mood: toolContext.mood || '',
-            activity: resolvedActivity,
             request: requestText,
             question: toolContext.question || '',
-            weatherProfile: resolvedWeather
-          }
+          })
         })
         const scoredCandidates = candidates
           .map(piece => {
@@ -2794,10 +2799,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           explicitRequest: {
             occasion,
             activity,
-            season,
+            season: extractSeasonRequest(season),
             mission,
             mood,
-            statedWeather: toolContext.weather || '',
+            statedWeather: toolContext.weather || (extractSeasonRequest(season) ? '' : season),
             location,
             date: date || toolContext.currentDate || new Date(),
             requestText: toolContext.question || '',
@@ -2855,7 +2860,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             includeMissingPieces: false,
             idealOnly: false,
             question: toolContext.question || '',
-            activity: resolvedActivity
+            activity: resolvedActivity,
+            currentDate: stylingContext.date,
           })
         } else {
           toolContext.source = 'whole_wardrobe'
@@ -2869,6 +2875,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             question: toolContext.question || '',
             activity: resolvedActivity,
             resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
+            currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook
           })
         }

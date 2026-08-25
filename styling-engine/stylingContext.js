@@ -68,12 +68,40 @@ function weatherSummary(profile = {}) {
     isHot: Boolean(profile.isHot ?? profile.is_hot),
     isCold: Boolean(profile.isCold ?? profile.is_cold),
     isExtremeHeat: Boolean(profile.isExtremeHeat ?? profile.is_extreme_heat),
+    isRainy: Boolean(profile.isRainy ?? profile.is_rainy),
+    isWetExposure: Boolean(profile.isWetExposure ?? profile.is_wet_exposure),
     ...(high !== null && high !== '' && Number.isFinite(Number(high))
       ? { highF: Number(high) }
       : {}),
     ...(low !== null && low !== '' && Number.isFinite(Number(low))
       ? { lowF: Number(low) }
       : {}),
+  }
+}
+
+export function projectStylingApplicabilityContext(context = {}, overrides = {}) {
+  const weatherProfile = overrides.weatherProfile || context.weatherProfile || {}
+  const currentDate = overrides.currentDate ?? context.date ?? null
+  const calendarSeason = overrides.calendarSeason || (
+    overrides.season !== undefined
+      ? resolveCalendarSeason(overrides.season, currentDate)
+      : (context.calendarSeason || resolveCalendarSeason(context.season, currentDate))
+  )
+  return {
+    occasion: overrides.occasion ?? context.occasion ?? '',
+    activity: overrides.activity ?? context.activity ?? '',
+    season: calendarSeason,
+    calendarSeason,
+    currentDate,
+    weather: {
+      hot: Boolean(weatherProfile.isHot ?? weatherProfile.is_hot ?? weatherProfile.hot),
+      cold: Boolean(weatherProfile.isCold ?? weatherProfile.is_cold ?? weatherProfile.cold),
+      rainy: Boolean(weatherProfile.isRainy ?? weatherProfile.is_rainy ?? weatherProfile.rainy),
+      wet_exposure: Boolean(weatherProfile.isWetExposure ?? weatherProfile.is_wet_exposure ?? weatherProfile.wet_exposure),
+    },
+    weatherProfile,
+    weatherText: String(overrides.weatherText ?? context.statedWeather ?? ''),
+    requestText: String(overrides.requestText ?? context.requestText ?? ''),
   }
 }
 
@@ -269,6 +297,16 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       weatherResolver,
     })
     const calendarSeason = resolveCalendarSeason(seasonChoice.value, dateChoice.value)
+    const applicabilityContext = projectStylingApplicabilityContext({
+      occasion,
+      activity,
+      season: seasonChoice.value,
+      calendarSeason,
+      date: dateChoice.value,
+      weatherProfile: weather.profile,
+      statedWeather: statedWeatherCandidate(evidence)?.value || '',
+      requestText,
+    })
 
     const provenanceByField = {
       occasion: occasionChoice.provenance,
@@ -306,6 +344,7 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       activitySource,
       season: seasonChoice.value,
       calendarSeason,
+      applicabilityContext,
       mission: missionChoice.value,
       mood,
       requestText,

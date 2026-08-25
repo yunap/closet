@@ -41,7 +41,7 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
-import { resolveStylingContext } from './stylingContext.js'
+import { projectStylingApplicabilityContext, resolveStylingContext } from './stylingContext.js'
 import {
   categoryOutfitStructurePromptRule,
   describeOutfitStructureGap,
@@ -74,6 +74,7 @@ import {
   colorTaxonomyEntry,
   colorsArePaletteNeutral,
 } from '../lib/colorTaxonomy.js'
+import { extractSeasonRequest } from '../lib/seasonContext.js'
 
 export function normalizeTripPieceName(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -1326,6 +1327,14 @@ function evaluatePlannerAutomaticUsePool(pieces = [], context = {}) {
   })
 }
 
+function requestedSeasonForApplicability(...values) {
+  for (const value of values) {
+    const season = extractSeasonRequest(value)
+    if (season) return season
+  }
+  return 'current season'
+}
+
 // A capsule slot is finite inventory, so every selected garment must have at
 // least one real job in the requested lifestyle. Apply the same deterministic
 // trust/register/weather/activity gates used by the downstream workbench
@@ -1350,6 +1359,7 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
   const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
     occasion: slot.stylingContext?.occasion || slot.occasion,
     season,
+    calendarSeason: slot.stylingContext?.calendarSeason,
     currentDate: slot.stylingContext?.date || slot.date || null,
     explorationMode: 'moderate',
     weatherProfile: slotWeatherProfile,
@@ -3296,7 +3306,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       explicitRequest: {
         occasion: slot.occasion,
         activity: slot.activity,
-        season: slot.statedWeather || slot.season,
+        season: slot.requestedSeason || requestedSeasonForApplicability(slot.transitSeason, slot.season),
         mood,
         requestText: slotRequestText,
         location: slot.location || location,
@@ -3339,12 +3349,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const applicableOwnerRules = [...new Set([
     ...(Array.isArray(ownerRules) ? ownerRules : []),
     ...getOwnerRuleNotes(8, {
-      requestContexts: slots.map(slot => ({
+      requestContexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
         occasion: slot?.occasion || '',
         activity: slot?.activity || '',
-        season: slot?.stylingContext?.calendarSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+        season: slot?.requestedSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
         currentDate: slot?.stylingContext?.date || slot?.date || null,
-        weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
         weatherText: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
         requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor, question].filter(Boolean).join(' '),
       })),
@@ -3353,12 +3362,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   ])].slice(0, 8)
   const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: composePool.map(piece => piece.id),
-    contexts: slots.map(slot => ({
+    contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
       occasion: slot?.occasion || '',
       activity: slot?.activity || '',
-      season: slot?.stylingContext?.calendarSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      season: slot?.requestedSeason || slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
       currentDate: slot?.stylingContext?.date || slot?.date || null,
-      weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
+      weatherText: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
+      requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor, question].filter(Boolean).join(' '),
     })),
   })
   const piecesById = pieceMapForPieces(composePool)
@@ -3388,6 +3398,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const gateResult = evaluatePlannerAutomaticUsePool(composePool, {
       occasion: slot.stylingContext.occasion,
       season: slot.stylingContext.season,
+      calendarSeason: slot.stylingContext.calendarSeason,
       currentDate: slot.stylingContext.date,
       ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
@@ -4521,6 +4532,7 @@ export function normalizePlanSlots(rawSlots = [], {
         eligibilityOccasion,
         activity,
         season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
+        requestedSeason: requestedSeasonForApplicability(slot?.season, fallbackWeather),
         statedWeather,
         transitSeason: environment === 'indoor'
           ? String(slot?.season || fallbackWeather || '').trim()
