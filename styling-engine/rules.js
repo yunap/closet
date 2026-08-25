@@ -5084,7 +5084,7 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
   return { outfits: selected, rejected }
 }
 // docs/card-consistency-spec.md Part 1. A top worn with a dress is a legitimate styling decision
-// (owner ruling 2026-08-16) and is deliberately NOT gated — isOutfitStructurallyValid still permits
+// (owner ruling 2026-08-16) and is deliberately NOT gated — evaluateOutfitStructure still permits
 // it. But it is an unusual enough choice that the card has to account for it: a live response
 // paired a blouse and a floral tank with a lace midi dress and explained neither.
 //
@@ -5130,10 +5130,6 @@ const GENERIC_GARMENT_WORDS = new Set([
 
 export const LAYERED_TOP_UNEXPLAINED_FLAG =
   'This look layers a top with the dress and the stylist did not say why — treat the top as optional.'
-
-export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
-  return evaluateOutfitStructure(pieces, { requireShoes }).valid
-}
 
 export function normalizeWholeWardrobeStrengths(outfits = []) {
   return outfits.map((outfit, index) => ({

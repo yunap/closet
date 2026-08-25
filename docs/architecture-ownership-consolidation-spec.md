@@ -440,7 +440,7 @@ Inspect:
 
 - `locallyGateOutfitDirections()`;
 - `sanitizeSelectedPieceOutfitDirections()`;
-- `isOutfitStructurallyValid()`;
+- category-core validation (now `evaluateOutfitStructure()`);
 - `locallyGateWholeWardrobeOutfits()` in both `gate` and `advisor` modes;
 - `validateOutfitRoles()`;
 - `validateCapsuleRoster()`;
@@ -540,7 +540,7 @@ These findings seed the census and prevent rediscovery. They do not authorize a 
    predicate; capsule coverage uses structured `needs_base` and opacity; the visual-composer prompt
    additionally requires close `fit_on_body` values for pair mechanics. These answer related but
    non-identical questions and currently have no shared pair verdict.
-4. **Structural validation is not one layer.** `isOutfitStructurallyValid()` is shared by several
+4. **Structural validation is not one layer.** Category-core validation is shared by several
    selected/whole/plan paths, while freeform cards use explicit roles through
    `validateOutfitRoles()`, capsule submission adds slot/set rules, and
    `locallyGateOutfitDirections()` checks only anchor presence, minimum count, and duplication.

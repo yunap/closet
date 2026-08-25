@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isOutfitStructurallyValid, locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
+import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
 import { describeOutfitStructureGap, evaluateOutfitStructure } from '../styling-engine/outfitValidation.js'
+
+const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
 
 test('typed structure findings preserve the boolean and diagnosis contracts', () => {
   const top = { category: 'top', name: 'Top' }
@@ -16,39 +18,39 @@ test('typed structure findings preserve the boolean and diagnosis contracts', ()
   assert.deepEqual(incomplete.findings.map(finding => finding.code), ['missing_shoes', 'missing_bottom'])
   assert.equal(incomplete.primaryFinding.message, 'missing shoes')
   assert.equal(describeOutfitStructureGap([top]), 'missing shoes')
-  assert.equal(isOutfitStructurallyValid([top]), false)
+  assert.equal(structureValid([top]), false)
 })
 
-test('isOutfitStructurallyValid - basic validation cases', () => {
+test('evaluateOutfitStructure - basic validation cases', () => {
   // 1. Valid separates: 1 top, 1 bottom, 1 shoe
-  assert.ok(isOutfitStructurallyValid([
+  assert.ok(structureValid([
     { category: 'top', name: 'Cotton Tee' },
     { category: 'bottom', name: 'Jeans' },
     { category: 'shoes', name: 'Sneakers' }
   ]))
 
   // 2. Valid dress: 1 dress, 1 shoe
-  assert.ok(isOutfitStructurallyValid([
+  assert.ok(structureValid([
     { category: 'dress', name: 'Sun Dress' },
     { category: 'shoes', name: 'Sandals' }
   ]))
 
   // 3. Dress + layering top is allowed
-  assert.ok(isOutfitStructurallyValid([
+  assert.ok(structureValid([
     { category: 'dress', name: 'Sun Dress' },
     { category: 'top', name: 'Cardigan' },
     { category: 'shoes', name: 'Sandals' }
   ]))
 
   // 4. Dress + bottom is invalid
-  assert.ok(!isOutfitStructurallyValid([
+  assert.ok(!structureValid([
     { category: 'dress', name: 'Sun Dress' },
     { category: 'bottom', name: 'Jeans' },
     { category: 'shoes', name: 'Sandals' }
   ]))
 
   // 5. Two bottoms is invalid
-  assert.ok(!isOutfitStructurallyValid([
+  assert.ok(!structureValid([
     { category: 'top', name: 'Cotton Tee' },
     { category: 'bottom', name: 'Jeans' },
     { category: 'bottom', name: 'Shorts' },
@@ -56,7 +58,7 @@ test('isOutfitStructurallyValid - basic validation cases', () => {
   ]))
 
   // 6. Two pairs of shoes is invalid
-  assert.ok(!isOutfitStructurallyValid([
+  assert.ok(!structureValid([
     { category: 'top', name: 'Cotton Tee' },
     { category: 'bottom', name: 'Jeans' },
     { category: 'shoes', name: 'Sneakers' },
@@ -64,19 +66,19 @@ test('isOutfitStructurallyValid - basic validation cases', () => {
   ]))
 
   // 7. No top is invalid for separates
-  assert.ok(!isOutfitStructurallyValid([
+  assert.ok(!structureValid([
     { category: 'bottom', name: 'Jeans' },
     { category: 'shoes', name: 'Sneakers' }
   ]))
 
   // 8. No shoes is invalid when requireShoes is true (default)
-  assert.ok(!isOutfitStructurallyValid([
+  assert.ok(!structureValid([
     { category: 'top', name: 'Cotton Tee' },
     { category: 'bottom', name: 'Jeans' }
   ]))
 
   // 9. No shoes is valid when requireShoes is false
-  assert.ok(isOutfitStructurallyValid([
+  assert.ok(structureValid([
     { category: 'top', name: 'Cotton Tee' },
     { category: 'bottom', name: 'Jeans' }
   ], { requireShoes: false }))
@@ -251,7 +253,7 @@ test('whole wardrobe mission qualification abstains from unearned labels', () =>
 // card accounts for it. Live case: thread_1786659896815 paired a blouse and a floral tank with a
 // lace midi dress and explained neither, under a label implying no top was present.
 test('a top with a dress is detected, permitted, and required to be explained', async () => {
-  const { outfitLayersTopWithDress, unexplainedLayeredTops, isOutfitStructurallyValid } =
+  const { outfitLayersTopWithDress, unexplainedLayeredTops } =
     await import('../styling-engine/rules.js')
 
   const pieces = [
@@ -262,7 +264,7 @@ test('a top with a dress is detected, permitted, and required to be explained', 
   ]
 
   // Never gated: this is a styling decision, not a structural error.
-  assert.ok(isOutfitStructurallyValid(pieces, { requireShoes: true }))
+  assert.ok(structureValid(pieces, { requireShoes: true }))
   assert.ok(outfitLayersTopWithDress(pieces))
   assert.ok(!outfitLayersTopWithDress(pieces.filter(p => p.category !== 'top')))
 

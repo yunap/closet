@@ -4375,7 +4375,9 @@ test('getCalibrationReferenceImagesForGeneration priority-starred random rotatio
 })
 
 test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit Missions', async () => {
-  const { buildWholeWardrobeCandidateOutfits, isOutfitStructurallyValid, weatherProfileFromContext } = await import('../styling-engine/rules.js')
+  const { buildWholeWardrobeCandidateOutfits, weatherProfileFromContext } = await import('../styling-engine/rules.js')
+  const { evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
+  const structureValid = pieces => evaluateOutfitStructure(pieces, { requireShoes: true }).valid
 
   const allPieces = [
     { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
@@ -4424,7 +4426,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredDressCandidates.length > 0, 'dress Main should produce local candidates')
   assert.ok(requiredDressCandidates.every(candidate => candidate.pieceIds.includes(7)), 'dress Main candidates must include the required dress')
-  assert.ok(requiredDressCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'dress Main candidates must be complete outfits')
+  assert.ok(requiredDressCandidates.every(candidate => structureValid(candidate.pieces)), 'dress Main candidates must be complete outfits')
   assert.ok(requiredDressCandidates.every(candidate => !candidate.pieces.some(piece => piece.category === 'bottom')), 'dress Main candidates must not include bottoms')
   const requiredJacketCandidates = buildWholeWardrobeCandidateOutfits([
     ...allPieces,
@@ -4436,7 +4438,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredJacketCandidates.length > 0, 'jacket Main should produce local candidates')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieceIds.includes(8)), 'jacket Main candidates must include the required jacket')
-  assert.ok(requiredJacketCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'jacket Main candidates must be complete outfits')
+  assert.ok(requiredJacketCandidates.every(candidate => structureValid(candidate.pieces)), 'jacket Main candidates must be complete outfits')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'top')), 'jacket Main candidates still need a real top')
   assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'bottom')), 'jacket Main candidates still need a real bottom')
   const requiredJacketStructuralFallback = buildWholeWardrobeCandidateOutfits([
@@ -4451,7 +4453,7 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   })
   assert.ok(requiredJacketStructuralFallback.length > 0, 'jacket Main should fall back to structural candidates when missions do not match')
   assert.ok(requiredJacketStructuralFallback.every(candidate => candidate.pieceIds.includes(12)), 'structural fallback must still include jacket Main')
-  assert.ok(requiredJacketStructuralFallback.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'structural fallback candidates must be complete outfits')
+  assert.ok(requiredJacketStructuralFallback.every(candidate => structureValid(candidate.pieces)), 'structural fallback candidates must be complete outfits')
   assert.equal(weatherProfileFromContext({ season: 'warm' }).isHot, true)
   const layeredTopMainCandidates = buildWholeWardrobeCandidateOutfits([
     { id: 13, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit base tank', colors: ['black'], styling_rules_learned: [], occasions: ['city'] },

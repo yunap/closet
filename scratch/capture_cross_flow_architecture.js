@@ -29,12 +29,12 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tempRoot, 'uploads')
 const { db } = await import('../db.js')
 const {
   filterWholeWardrobePiecesForGeneration,
-  isOutfitStructurallyValid,
   locallyGateWholeWardrobeOutfits,
   selectCandidatesForOutfitGeneration,
   wholeWardrobePieceTrustDecision,
   weatherProfileFromContext,
 } = await import('../styling-engine/rules.js')
+const { evaluateOutfitStructure } = await import('../styling-engine/outfitValidation.js')
 const { evaluateAutomaticUsePiecePool, evaluateVisualComposerPiecePool } = await import('../styling-engine/eligibility.js')
 const { normalizeStylingIntent } = await import('../styling-engine/stylingIntent.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
@@ -606,7 +606,7 @@ function captureValidationStages() {
     return {
       id: entry.id,
       core: {
-        valid: isOutfitStructurallyValid(pieces),
+        valid: evaluateOutfitStructure(pieces).valid,
         gap: describeOutfitStructureGap(pieces),
       },
       freeformRoles: { issues: validateOutfitRoles(rolePieces, []) },

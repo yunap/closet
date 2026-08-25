@@ -99,11 +99,8 @@ test('whole-wardrobe footwear recovery consumes the shared automatic-use pool co
   assert.doesNotMatch(repair, /filterWholeWardrobePiecesForGeneration\(/)
 })
 
-test('category structure boolean and diagnosis delegate to one typed validator', () => {
-  const start = rulesSource.indexOf('export function isOutfitStructurallyValid')
-  const end = rulesSource.indexOf('export function normalizeWholeWardrobeStrengths', start)
-  assert.ok(start >= 0 && end > start, 'missing isOutfitStructurallyValid source block')
-  assert.match(rulesSource.slice(start, end), /evaluateOutfitStructure\(/)
+test('retired category-structure boolean adapter cannot return', () => {
+  assert.doesNotMatch(rulesSource, /export function isOutfitStructurallyValid/)
   assert.match(plannerSource, /import \{ describeOutfitStructureGap, evaluateOutfitStructure \} from '\.\/outfitValidation\.js'/)
   assert.doesNotMatch(plannerSource, /function describeOutfitStructureGap\(/)
   assert.match(validationSource, /export function evaluateOutfitStructure\(/)

@@ -363,7 +363,6 @@ same verdict. Prompt presence alone is not enforcement.
 | Decision surface | Verdict | Classification | Disposition |
 |---|---|---|---|
 | `evaluateOutfitStructure` | Typed category-level core: top+bottom or dress, shoe count, conflicting categories | `canonical` narrow structural verdict | Boolean, diagnosis, and future composed validators |
-| `isOutfitStructurallyValid` | Boolean projection of `evaluateOutfitStructure` | `legacy` compatibility adapter | Historical contract tests only; no production consumer |
 | `describeOutfitStructureGap` | Primary-finding message projection of `evaluateOutfitStructure` | `projection` | Capsule repair diagnosis and plan failures |
 | `locallyGateOutfitDirections` | Anchor present, minimum piece count, no duplicate IDs | `specialization`, not a full validator | Reject selected text directions |
 | `sanitizeSelectedPieceOutfitDirections` | Selected layer coherence and cleanup | `specialization` | Remove or normalize selected results |
@@ -374,9 +373,8 @@ same verdict. Prompt presence alone is not enforcement.
 | `validateSubmittedPlanOutfits` | Composes typed category structure with ownership, dependency, slot, repetition, core uniqueness, and set rules | `canonical` plan validator / orchestration | Accept or return structured failures |
 | Route-local board filters | Allowed IDs, anchor, dedupe, minimum piece count | `specialization`; incomplete by design for concept boards | Skip unusable boards |
 
-**Proposed owner:** Evolve the narrow structural owner to return a structured verdict with reason
-codes; keep `isOutfitStructurallyValid` as a thin boolean adapter and make
-`describeOutfitStructureGap` a projection of the same verdict. Role, slot, and set validators remain
+**Current owner:** `evaluateOutfitStructure` returns the structured verdict with reason codes;
+`describeOutfitStructureGap` projects its primary message. Role, slot, and set validators remain
 specializations that compose shared structure, eligibility, and layer/base verdicts.
 
 **Owner rulings required:** Confirm that concept boards are permitted to remain a looser
@@ -472,7 +470,7 @@ slice.
 | Automatic-use eligibility | `wholeWardrobePieceTrustDecision` composed from narrow verdict owners | Anchor override, visual-photo policy, supply-aware disclosed relaxation, finite provider caps | Parallel gate branches in visual roster and plan/freeform validators that restate the same verdict |
 | Normalized styling context | New shared builder composed from the existing normalizers, profile resolvers, weather resolver, and explicit provenance | Flow declares required fields and whether live lookup is permitted | Route/tool-local precedence and default assembly after consumers migrate |
 | Layer/base facts and pair mechanics | Tri-state verdict family built on `attributes.js`, consumed inside shared eligibility/validation | Flow policy for `unknown`; model visual judgment; sight availability disposition | Capsule-local base predicates, freeform standalone wrapper, prompt-only fit rule, fallback heuristics |
-| Outfit core structure | Structured verdict returned by the current `isOutfitStructurallyValid` semantic owner | Role, slot, set, advisor/gate disposition | `describeOutfitStructureGap` mirrored logic; route-local restatements where equivalent |
+| Outfit core structure | `evaluateOutfitStructure` typed findings | Role, slot, set, advisor/gate disposition | No parallel category-core implementation remains; richer validators still need composition work |
 | Bounded structural roster coverage | New dependency-neutral verdict/selection contract built on the shared eligibility and validation interfaces | Selected relevance, visual photo budget, capsule recombination, plan slot limits | Category-only protection and silent final trims where complete structure is required |
 | Ranking | One existing strategy per objective, consuming shared facts/verdicts | Objective-specific weights, diversity, recency, anchor relevance | Hidden gate-like penalties only; do not merge strategies |
 | Candidate-set construction | Shared builder combining an injected ranking strategy, structural coverage, protected IDs, and hard capacity | Anchor relevance, whole breadth, capsule recombination, search retrieval mode | Flow-local quota/cap implementations once their policy is representable |
@@ -637,15 +635,15 @@ validation remain deliberately separate later slices.
 Replace parallel booleans and prose diagnoses with one typed finding pipeline. Compose core
 structure, ownership, eligibility, dependency, and optional slot/set validators. Preserve selected,
 advisor, freeform, and capsule behavior by mapping the shared findings through distinct disposition
-policies. Make `isOutfitStructurallyValid` a compatibility adapter temporarily, then remove it when
-all callers consume the structured result.
+policies. Keep a temporary boolean compatibility adapter only while callers migrate, then remove it
+when every caller consumes the structured result.
 
 **Required proof:** identical outfits produce identical findings across flows; only the reviewed
 disposition may differ.
 
 **First foundation migration, 2026-08-24:** `evaluateOutfitStructure` now emits ordered typed
-category-core findings with stable codes, messages, and count evidence. `isOutfitStructurallyValid`
-is a boolean adapter and `describeOutfitStructureGap` is the primary-message projection; their two
+category-core findings with stable codes, messages, and count evidence. A temporary boolean adapter
+and `describeOutfitStructureGap` projected its results while callers migrated; the two prior
 independent category-count implementations are gone. Existing callers, message wording, top-over-
 dress allowance, shoe requirement option, and disposition remain unchanged. Role cardinality,
 layer/base mechanics, ownership/context findings, slot rules, set rules, and concept-board policy
@@ -667,8 +665,13 @@ for diagnostic rejection logging, visual-critic eligibility, saved-variant layer
 and final model-output filtering. The former route-local category recount is replaced by a stable
 finding-code → existing diagnostic-message projection, preserving strings such as
 `structural: missing shoes` and `structural: dress plus bottom`. No critic, fallback, saved-Main, or
-response disposition changed. `isOutfitStructurallyValid` now remains only as a historical test
-compatibility export; freeform role validation remains intentionally richer.
+response disposition changed. Freeform role validation remains intentionally richer.
+
+**Compatibility retirement, 2026-08-24:** after the third migration left no production consumers,
+the temporary boolean adapter was deleted. Contract tests and the tracked cross-flow diagnostic now
+assert `evaluateOutfitStructure(...).valid` directly, and an architecture ratchet prevents the
+export from returning. `describeOutfitStructureGap` remains because it is a deliberate human-
+message projection with active plan/capsule consumers.
 
 ### Slice 4 — reusable candidate-set construction
 
