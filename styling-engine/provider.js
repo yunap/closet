@@ -1205,12 +1205,24 @@ export function supersedeNarrationOnRetry(narration = []) {
   return narration
 }
 
-export function joinAssistantNarration(narration = [], finalText = '') {
+export function joinAssistantNarration(narration = [], finalText = '', { cardCount = 0 } = {}) {
   const closing = String(finalText || '').trim()
   const kept = (Array.isArray(narration) ? narration : [])
     .map(part => String(part || '').trim())
     // Drop anything the model repeated verbatim in its closing message rather than printing twice.
     .filter(part => part && !closing.includes(part))
+  // The model can narrate an intention beside a mid-turn tool call ("let me verify that") and then
+  // end its turn without ever writing the promised follow-up — the terminal, post-tool-result
+  // response comes back empty even though a card was accepted this turn (thread_1787728618995).
+  // Left alone, the visible answer is just that leftover intention sentence with no description of
+  // what was delivered. Same mechanical shape, and the same fallback text, as
+  // applyAcceptedCardAuthority's "nothing survived" case: say what was delivered rather than ship a
+  // dangling half-sentence beside cards the user can already see.
+  if (!closing && kept.length && cardCount > 0) {
+    kept.push(cardCount === 1
+      ? 'Here is the look, with its pieces and styling notes on the card.'
+      : `Here are ${cardCount} looks, with their pieces and styling notes on each card.`)
+  }
   return [...kept, closing]
     .filter(Boolean)
     .join('\n\n')
@@ -1316,7 +1328,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // carries, because the looks themselves had been written beside the propose_outfit calls.
   const narration = []
   const collectText = collectAssistantText
-  const joinAnswer = finalText => joinAssistantNarration(narration, finalText)
+  const joinAnswer = finalText => joinAssistantNarration(narration, finalText, {
+    cardCount: Array.isArray(toolContext?.generatedOutfits)
+      ? toolContext.generatedOutfits.filter(card => !card?.broken).length
+      : 0
+  })
 
   // 10 iterations: the disciplined flow (declare, search, view supports, view
   // layers, propose xN) legitimately needs 6-8; the old cap of 7 left no margin
