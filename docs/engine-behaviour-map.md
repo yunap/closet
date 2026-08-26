@@ -5,7 +5,10 @@ audit and canonical applicability projection; **amended 2026-08-12** to add the 
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
 two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
-term) alongside the already-documented hot-weather clause, finding one live gap and one latent one.
+term) alongside the already-documented hot-weather clause, finding one live gap and one latent one;
+**amended 2026-08-25** also to remove two undocumented provider-side prompt-cache writes
+(whole-wardrobe generation, critique/feedback `full` and `followup`) that were never read back —
+see `docs/deferred-conversational-cache-spec.md`.
 Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
@@ -558,6 +561,18 @@ should not rely on upload-filename entropy for tenant scoping.
 
 **[by design]** The prompt cache is invalidated on write, so a constitution edit takes effect on the
 next request, not the next restart.
+
+**Two more provider-side prompt caches, found and removed 2026-08-25.** Like the capsule roster
+cache below, these are `cache_control` on a system string rather than a `Map`, so they never showed
+up in the `new Map()` sweep that produced the table above. `generateWholeWardrobeOutfitsVisualInternal`
+and `evaluateOutfitThroughSharedPipeline` (both `full` and `followup`) were requesting the same 1h
+ephemeral `cache_control` the freeform stylist prompt uses (`PROMPT_CACHE_BREAKPOINT`,
+`freeform-prompt-cache-levers.md`), but neither write was ever read back: a one-shot generation
+thread that never gets a follow-up has no second turn to amortize it against, and critique's `full`
+and `followup` variants are different system text, so they never shared a prefix with each other
+either. Both writes were removed rather than documented as a cache, since there was no reuse to
+describe — see `docs/deferred-conversational-cache-spec.md` for the full trace and the follow-up
+routing (`message-lifecycle.md` dispatch branches 10–12) that made the writes provably wasted.
 
 ### Which garments get a photo — fixed 2026-08-12
 

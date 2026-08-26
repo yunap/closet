@@ -1160,7 +1160,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(askStylistWithUsage({
-      system: `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`,
+      system: selectedItemVisualComposerSystemPrompt(),
       maxTokens: composerMaxTokens,
       messages: [{ role: 'user', content }]
     }), 90000, 'Selected-piece visual composer')
@@ -1915,6 +1915,22 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
   }
 })
 
+// One-shot entry (docs/deferred-conversational-cache-spec.md): no PROMPT_CACHE_BREAKPOINT. A
+// thread that never follows up should not pay for a 1h ephemeral cache write on this image-heavy
+// roster manifest. A follow-up on the generated outfits routes through /ai/ask
+// (message-lifecycle.md Stage 1, dispatch branches 11-12), which decides its own conversational
+// cache disposition against a different stable prefix, so there is nothing here to preserve.
+export function wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance = '') {
+  return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}${savedVariantGuidance ? `\n\n${savedVariantGuidance}` : ''}`
+}
+
+// Same one-shot disposition as wholeWardrobeVisualComposerSystemPrompt above — this call site
+// never carried PROMPT_CACHE_BREAKPOINT; named here so that stays a verifiable fact rather than an
+// inline string nobody checks.
+export function selectedItemVisualComposerSystemPrompt() {
+  return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`
+}
+
 export async function generateWholeWardrobeOutfitsVisualInternal({
   occasion = 'casual',
   season = 'current season',
@@ -2333,7 +2349,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerUsage = null
     const composerStartedAt = Date.now()
     const composerMaxTokens = visualComposerMaxTokensForOutfitCount(requestedLimit)
-    const systemPrompt = `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}[[PROMPT_CACHE_BREAKPOINT]]${savedVariantGuidance ? `\n\n${savedVariantGuidance}` : ''}`
+    const systemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
         system: systemPrompt,

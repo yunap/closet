@@ -18,8 +18,9 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
-const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache } = await import('../styling-engine/core.js')
+const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache, outfitEvaluationSystemPrompt, buildStylistConversationPayload } = await import('../styling-engine/core.js')
 const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
+const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, compactFreeformAnswerSystem } = await import('../routes/ai.js')
 
 let server
 let baseUrl
@@ -1777,6 +1778,82 @@ test('critique followups expose only wardrobe retrieval tools', () => {
     tools.map(tool => tool.name),
     ['search_wardrobe', 'view_pieces', 'get_garment_details'],
   )
+})
+
+// Deferred conversational cache activation (docs/deferred-conversational-cache-spec.md): freeform
+// text-first threads stay conversational from turn 1, but the three one-shot entries (whole-wardrobe
+// generation, selected-item generation, critique/feedback) must not pay for a 1h ephemeral cache
+// write on a stable prefix that a thread which never follows up will never read back.
+
+test('freeform ask stays conversational from turn 1', async () => {
+  const payload = await buildStylistConversationPayload({
+    question: 'What should I wear to a rainy commute?',
+    sessionId: 'cache-disposition-freeform',
+    conversationMode: 'new_request',
+  })
+  assert.ok(payload.system.includes(PROMPT_CACHE_BREAKPOINT), 'freeform text-first entry establishes the conversational cache immediately')
+})
+
+test('whole-wardrobe generation is a one-shot entry and writes no conversational cache', () => {
+  const system = wholeWardrobeVisualComposerSystemPrompt('some saved-variant guidance')
+  assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)
+})
+
+test('selected-item generation is a one-shot entry and writes no conversational cache', () => {
+  const system = selectedItemVisualComposerSystemPrompt()
+  assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)
+})
+
+test('critique/feedback is a one-shot entry and writes no conversational cache on full or followup', () => {
+  assert.equal(outfitEvaluationSystemPrompt('full').includes(PROMPT_CACHE_BREAKPOINT), false)
+  assert.equal(outfitEvaluationSystemPrompt('followup').includes(PROMPT_CACHE_BREAKPOINT), false)
+})
+
+test('a compact freeform follow-up never forces the full conversational cache', () => {
+  for (const profile of ['existing_card_explanation', 'garment_fact', 'general_advice']) {
+    assert.equal(compactFreeformAnswerSystem(profile).includes(PROMPT_CACHE_BREAKPOINT), false)
+  }
+})
+
+test('a one-shot entry followed by a genuine full-stylist follow-up activates the conversational cache on that turn', async () => {
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    mood: 'artistic minimalist',
+    limit: 3,
+  })
+  const oneShotCalls = aiCalls.filter(c => c.system.includes('personal stylist. You are looking at photos'))
+  assert.equal(oneShotCalls.length, 1, 'the one-shot entry itself made exactly one uncached composer call')
+
+  // A follow-up the compact router cannot resolve escalates to full_stylist through the existing
+  // /ai/ask execution router (message-lifecycle.md Stage 1, dispatch branches 11-12) regardless of
+  // how the thread began — that router is the one place the conversational cache gets established.
+  await postJson('/api/ai/ask', {
+    question: 'Which of my pieces suit a rainy commute instead?',
+    sessionId: 'one-shot-then-full-stylist',
+    occasion: 'city',
+  })
+  const fullStylistCall = aiCalls.find(call => String(call.system).includes('CURRENT WARDROBE TRUTH:'))
+  assert.ok(fullStylistCall, 'the follow-up reached full_stylist, the one path that owns the cache decision')
+})
+
+test('consecutive full-stylist turns keep a byte-identical stable prefix so the second turn can read the first turn\'s cache', async () => {
+  const question = 'What should I wear to a gallery opening?'
+  const answer = 'A quiet column with one graphic decision.'
+  const turnOne = await buildStylistConversationPayload({
+    question, sessionId: 'cache-reuse-check', conversationMode: 'new_request', currentDate: '2026-06-01', history: [],
+  })
+  const turnTwo = await buildStylistConversationPayload({
+    question: 'And the shoes?',
+    sessionId: 'cache-reuse-check',
+    conversationMode: 'followup',
+    currentDate: '2026-06-01',
+    history: [{ role: 'user', content: question }, { role: 'assistant', content: answer }],
+  })
+  assert.ok(turnOne.system.includes(PROMPT_CACHE_BREAKPOINT))
+  assert.ok(turnTwo.system.includes(PROMPT_CACHE_BREAKPOINT))
+  const stablePrefix = payload => payload.system.split(PROMPT_CACHE_BREAKPOINT)[0]
+  assert.equal(stablePrefix(turnOne), stablePrefix(turnTwo), 'the cached prefix must not change between full-stylist turns')
 })
 
 test('exact duplicate outfit critiques reuse the short-lived result cache', async () => {
