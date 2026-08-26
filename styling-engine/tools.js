@@ -257,6 +257,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
       capsuleRosterFailureCodes: '',
+      capsuleCompositionFailureCode: '',
       toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
@@ -367,6 +368,15 @@ export function setFreeformCapsuleRosterFailureCodes(toolContext, codes = []) {
   if (!list.length) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.capsuleRosterFailureCodes = list.join(',')
+}
+
+// One stage later than the roster pick above: distinguishes a genuine model
+// refusal from a token-cap truncation on the atomic composition call, so a
+// "please retry" message is never shown for a failure retrying won't fix.
+export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '') {
+  if (!toolContext || !code) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  toolContext.freeformDiagnostics.capsuleCompositionFailureCode = code
 }
 
 // Stated weather (this tool call's own weather/season text) wins outright over a
@@ -2493,21 +2503,41 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // set-level rules must not drop an otherwise valid card here.
             boundedComposition: true
           }
-          const submittedOutfits = await toolContext.composeCapsulePlanOnce({
-            status: workbench.status,
-            instructions: workbench.instructions,
-            piece_catalog: workbench.piece_catalog,
-            slots: workbench.slots,
-            constraints: workbench.constraints
-          })
+          let submittedOutfits = []
+          let compositionError = null
+          try {
+            submittedOutfits = await toolContext.composeCapsulePlanOnce({
+              status: workbench.status,
+              instructions: workbench.instructions,
+              piece_catalog: workbench.piece_catalog,
+              slots: workbench.slots,
+              constraints: workbench.constraints
+            })
+          } catch (err) {
+            compositionError = err
+          }
           bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
-          if (!Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
+          if (compositionError || !Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
             toolContext.generatedOutfits = []
             toolContext.source = 'plan_outfit_set'
             toolContext.sourceLocked = true
             toolContext.pendingPlan = null
             toolContext.capsuleAtomicCompleted = true
+            // A token-cap truncation is a deterministic failure — the exact same
+            // request will hit the same ceiling again, so telling the user to
+            // just retry is misleading (thread_1787717774384: a 24-piece/10-look
+            // capsule silently returned zero outfits at the old, too-tight ceiling).
+            // Distinguish it in diagnostics from a genuine model refusal.
+            if (compositionError?.isTruncation) {
+              setFreeformCapsuleCompositionFailureCode(toolContext, 'truncated_max_tokens')
+              return {
+                status: 'error',
+                bounded_composition: true,
+                message: 'The bounded capsule composer ran out of output budget composing this many looks and returned an incomplete result. Do not build the capsule manually or call other styling tools in this turn; explain that this specific capsule size hit a system limit during composition, and suggest asking for fewer looks or a smaller capsule instead of an identical retry.'
+              }
+            }
+            setFreeformCapsuleCompositionFailureCode(toolContext, compositionError ? 'provider_error' : 'empty_result')
             return {
               status: 'error',
               bounded_composition: true,

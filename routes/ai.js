@@ -180,7 +180,7 @@ import {
   buildStylistConversationPayload,
   normalizeCalibrationRow,
   withTimeout,
-  visualComposerMaxTokensForOutfitCount,
+  structuredOutfitMaxTokens,
   getCalibrationMemoryForStylist,
   getCalibrationReferenceImagesForGeneration,
   runGPT4oImageGeneration,
@@ -607,8 +607,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -638,6 +638,7 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       // Codes only, never the messages: the messages name garments, and this
       // table is a diagnostic, not a second copy of the wardrobe.
       String(diagnostics.capsuleRosterFailureCodes || ''),
+      String(diagnostics.capsuleCompositionFailureCode || ''),
       turnFailed ? 1 : 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
@@ -1156,7 +1157,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let composerError = null
   let composerErrorIsTruncation = false
   let composerUsage = null
-  const composerMaxTokens = visualComposerMaxTokensForOutfitCount(4)
+  const composerMaxTokens = structuredOutfitMaxTokens(4)
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(askStylistWithUsage({
@@ -2350,7 +2351,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerErrorIsTruncation = false
     let composerUsage = null
     const composerStartedAt = Date.now()
-    const composerMaxTokens = visualComposerMaxTokensForOutfitCount(requestedLimit)
+    const composerMaxTokens = structuredOutfitMaxTokens(requestedLimit)
     const systemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
@@ -4074,11 +4075,13 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
     schema: capsulePlanCompositionSchema(targetOutfitCount),
     name: 'capsule_plan_composition',
     description: 'Compose the complete representative capsule rotation from the fixed roster and slots.',
-    // A 12-look rotation with IDs, titles, and reasons can legitimately exceed
-    // the old 1,600-token ceiling. This is a ceiling, not prepaid usage: concise
-    // responses cost only what they emit, while truncation no longer pressures
-    // the model toward an empty array.
-    maxTokens: Math.max(1600, Math.min(3200, 600 + (targetOutfitCount * 180)))
+    // A 12-look rotation with IDs, titles, reasons, and styling_instructions is
+    // heavier per outfit than the visual composers' shape, against a fixed
+    // roster catalog. The old flat 3200 ceiling silently truncated a real
+    // 10-look/24-piece capsule (thread_1787717774384) to zero outfits — this is
+    // a ceiling, not prepaid usage, so a generous one costs nothing when the
+    // model is concise.
+    maxTokens: structuredOutfitMaxTokens(targetOutfitCount, { tokensPerOutfit: 550, floor: 2200, ceiling: 7500 })
   })
   // This nested composition call is part of the same paid user turn and must
   // appear in the existing usage/cost diagnostics alongside outer tool-loop

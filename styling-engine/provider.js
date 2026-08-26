@@ -1107,18 +1107,21 @@ export async function askStylistStructuredWithUsage({
     tool_choice: { type: 'tool', name }
   })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
-  if (!toolUse?.input || typeof toolUse.input !== 'object') {
-    const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
+  const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
+  // A tool_use block that hit max_tokens mid-generation can still have a complete-looking,
+  // valid `input` object — just missing whatever fields the model hadn't reached yet (e.g. an
+  // empty `outfits` array instead of the requested count). The !toolUse?.input check alone
+  // missed that shape and let a genuine token-cap truncation read as "the model returned
+  // nothing" (thread_1787717774384's capsule composition). Trust the provider's own stop_reason
+  // here exactly as parseModelJson already does for the plain-JSON path (see core.js).
+  if (!toolUse?.input || typeof toolUse.input !== 'object' || usage?.stopReason === 'max_tokens') {
     const capNote = usage?.stopReason === 'max_tokens' ? ` (hit the token cap, maxTokens: ${maxTokens})` : ''
     const err = new Error(`Model did not return the required ${name} structured response${capNote}.`)
     if (usage?.stopReason === 'max_tokens') err.isTruncation = true
     err.usage = usage
     throw err
   }
-  return {
-    value: toolUse.input,
-    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
-  }
+  return { value: toolUse.input, usage }
 }
 
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {

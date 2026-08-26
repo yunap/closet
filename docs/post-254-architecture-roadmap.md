@@ -103,6 +103,36 @@ broader shortfall (direct image/Responses-API adapters and nested-call attributi
 specialized outside `provider.js`) is unchanged and intentionally untouched; R7 stays
 **Concrete-defect only** as a standing gate for the next one, the same as before this fix.
 
+**R7 follow-up, 2026-08-26 — the sibling formula this fix didn't reach.** `thread_1787717774384`
+showed the same class of defect one call site over: `composeCapsulePlanOnce` (routes/ai.js), the
+atomic capsule composition call, never joined the shared budget above. It carried its own
+independent, under-tuned formula (`600 + count*180`, ceiling 3200) despite a heavier per-outfit
+schema (`slot_id`, `piece_ids[]`, `title`, `reason`, `styling_instructions`) than the visual
+composers it was modeled after. A 24-piece/10-look seasonal capsule hit that ceiling exactly
+(`output_tokens: 2400`) and came back with zero outfits, surfaced to the user as a generic "engine
+hiccup, please retry" — retrying would have failed identically every time. Two gaps, not one:
+(a) `askStylistStructuredWithUsage`'s truncation guard only checked for a wholly-absent tool-use
+`input`, not `stopReason: 'max_tokens'` on an input that parsed but was incomplete — the exact
+shape a mid-generation cutoff produces on this schema-forced path, unlike the plain-JSON path
+`parseModelJson` already covers; (b) three independently-hardcoded token formulas answering "how
+many tokens does an N-outfit structured response need" instead of one.
+
+Fixed by generalizing `visualComposerMaxTokensForOutfitCount` into `structuredOutfitMaxTokens(count,
+{tokensPerOutfit, floor, ceiling})` (core.js) — the visual composers keep their existing numbers as
+defaults; the capsule composer now passes its own honest, heavier rate and a ceiling wide enough
+for its 12-look cap. `askStylistStructuredWithUsage`'s guard now also throws (with `isTruncation`
+set) on `stopReason === 'max_tokens'` even when `toolUse.input` is present, mirroring
+`parseModelJson`. The capsule roster-selection step (`selectCapsuleRosterViaModel`,
+`outfitSetPlanner.js`) had no try/catch around its own provider calls at all — a newly-more-likely
+throw there would have skipped its existing two-attempt-then-deterministic-fallback design
+entirely, so both attempts are now wrapped to feed a thrown error into the same repair/fallback
+path as an ordinary contract failure. `plan_outfit_set`'s composition-failure branch
+(`styling-engine/tools.js`) now distinguishes a truncation from a genuine empty result, in a new
+`capsule_composition_failure_code` diagnostic column (same shape as the pre-existing
+`capsule_roster_failure_codes`), and no longer tells the user to retry an identical request that
+would fail the same way again. Covered by `test/structuredOutfitMaxTokens.test.js` (renamed from
+`test/visualComposerMaxTokens.test.js`).
+
 ## Candidate-set reconciliation in plain terms
 
 The remaining selectors do not justify a universal candidate module:

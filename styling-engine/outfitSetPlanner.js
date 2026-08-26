@@ -3192,10 +3192,25 @@ export async function selectCapsuleRosterViaModel({
     return entries
   }
 
+  // A thrown provider call (a truncated tool-use response, most commonly — see
+  // provider.js's askStylistStructuredWithUsage) must feed the same repair-then-
+  // deterministic-fallback path as an ordinary contract failure, not escape this
+  // function uncaught. Nothing above or below here has a try/catch, so an
+  // unguarded throw here would skip straight past the repair attempt and the
+  // safe deterministic fallback both.
+  const attemptChoose = async attemptArgs => {
+    try {
+      return resolve(await chooseRoster(attemptArgs))
+    } catch (err) {
+      const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
+      return { roster: [], contractFailures: [{ code, message: err?.message || 'Roster selection call failed.' }], requestedIds: [], duplicateIds: [], palette: '', jobs: [] }
+    }
+  }
+
   bump('capsuleRosterModelCalls')
   // Pass the category starting shape through rather than re-deriving it in the
   // route. It is planning guidance for the model, not a validator formula.
-  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules }))
+  const first = await attemptChoose({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules })
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
     return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: paletteSupplyGaps, failureCodes: seenCodes }
@@ -3204,10 +3219,10 @@ export async function selectCapsuleRosterViaModel({
   // One repair, given the exact structural reasons. Not a fresh start: the
   // model is asked to fix what failed, keeping the rest.
   bump('capsuleRosterModelRepairs')
-  const second = resolve(await chooseRoster({
+  const second = await attemptChoose({
     bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas,
     attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id)), ownerRules
-  }))
+  })
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
     return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: paletteSupplyGaps, failureCodes: seenCodes }
