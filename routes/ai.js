@@ -180,7 +180,7 @@ import {
   buildStylistConversationPayload,
   normalizeCalibrationRow,
   withTimeout,
-  safeJsonFromModel,
+  visualComposerMaxTokensForOutfitCount,
   getCalibrationMemoryForStylist,
   getCalibrationReferenceImagesForGeneration,
   runGPT4oImageGeneration,
@@ -1154,20 +1154,23 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   const timings = { thumbPrepMs: Date.now() - routeStartedAt }
   let parsed = {}
   let composerError = null
+  let composerErrorIsTruncation = false
   let composerUsage = null
+  const composerMaxTokens = visualComposerMaxTokensForOutfitCount(4)
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(askStylistWithUsage({
       system: `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`,
-      maxTokens: 2000,
+      maxTokens: composerMaxTokens,
       messages: [{ role: 'user', content }]
     }), 90000, 'Selected-piece visual composer')
     timings.composerMs = Date.now() - composerStartedAt
     composerUsage = composerResult.usage || null
-    parsed = safeJsonFromModel(composerResult.text)
+    parsed = parseModelJson(composerResult.text, { context: 'selected-piece visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })
   } catch (err) {
     timings.composerMs = Date.now() - routeStartedAt - timings.thumbPrepMs
     composerError = err.message
+    composerErrorIsTruncation = Boolean(err.isTruncation)
   }
 
   const unresolvedReferences = []
@@ -1286,6 +1289,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       thumbPx: composerThumbPx,
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
       composerError,
+      composerErrorIsTruncation,
+      composerMaxTokens,
       composerUsage: composerUsage ? {
         ...composerUsage,
         estimatedCost: estimateAiUsageCost(composerUsage)
@@ -2324,20 +2329,23 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Single model call — no tools
     let parsed = {}
     let composerError = null
+    let composerErrorIsTruncation = false
     let composerUsage = null
     const composerStartedAt = Date.now()
+    const composerMaxTokens = visualComposerMaxTokensForOutfitCount(requestedLimit)
     const systemPrompt = `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}[[PROMPT_CACHE_BREAKPOINT]]${savedVariantGuidance ? `\n\n${savedVariantGuidance}` : ''}`
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
         system: systemPrompt,
-        maxTokens: 2200,
+        maxTokens: composerMaxTokens,
         messages: [{ role: 'user', content }]
       }), 90000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
       composerUsage = composerResult.usage
-      parsed = safeJsonFromModel(composerResult.text)
+      parsed = parseModelJson(composerResult.text, { context: 'whole-wardrobe visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })
     } catch (err) {
       composerError = err.message
+      composerErrorIsTruncation = Boolean(err.isTruncation)
       timings.composerMs = timings.composerMs || null
     }
 
@@ -2858,6 +2866,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
           rotationWarningShown: Boolean(rotationWarningsText)
         },
         composerError,
+        composerErrorIsTruncation,
+        composerMaxTokens,
         timings,
         rosterCount: roster.length,
         excludedCounts: rosterDebug.excludedCounts,
@@ -2960,7 +2970,7 @@ router.post('/generate-outfit-boards', async (req, res) => {
         maxTokens: 1000,
         messages: [{ role: 'user', content }]
       })
-      const parsed = safeJsonFromModel(rawPlan)
+      const parsed = parseModelJson(rawPlan, { context: 'outfit board planner', maxTokens: 1000 })
       boardPlans = parsed.boards || []
     }
 
@@ -3395,7 +3405,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
       ]
     })
 
-    let parsed = safeJsonFromModel(raw)
+    let parsed = parseModelJson(raw, { context: 'editorial new pieces', maxTokens: 1200 })
     let directions = Array.isArray(parsed?.directions) ? parsed.directions : []
     if (!directions.length) {
       directions = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => ({

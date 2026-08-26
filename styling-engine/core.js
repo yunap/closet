@@ -81,6 +81,7 @@ import {
   PROMPT_CACHE_BREAKPOINT,
   estimateAiUsageCost,
   mockAiEnabled,
+  parseModelJson,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
@@ -122,23 +123,24 @@ function withSavedBoardRendererMemory(prompt, pieces = []) {
 }
 
 // ── Basic helper/utility functions ───────────────────────────────────────────
-export function safeJsonFromModel(raw) {
-  const text = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
-  try { return JSON.parse(text) } catch {}
-  const match = text.match(/\{[\s\S]*\}/)
-  if (!match) {
-    console.error(`safeJsonFromModel: no JSON object found in model response. Response length ${text.length}, tail: …${text.slice(-220)}`)
-    throw new Error('Model did not return JSON')
-  }
-  try {
-    return JSON.parse(match[0])
-  } catch (err) {
-    // Surface whether the response was truncated (hit maxTokens) or malformed
-    // (e.g. unescaped quote in a string value) — the parse position alone
-    // doesn't distinguish them.
-    console.error(`safeJsonFromModel: unparseable model JSON (${err.message}). Response length ${text.length}, tail: …${text.slice(-220)}`)
-    throw err
-  }
+// Parsing model JSON now goes through provider.js's parseModelJson, which already carries
+// truncation detection (isTruncation, trusting the provider's own stop_reason when supplied)
+// and chatty-narration recovery (salvageFirstJson) — capabilities this module's own
+// safeJsonFromModel duplicated without the truncation awareness. Callers migrated 2026-08-25
+// after thread_1787687552307 showed a real token-cap hit reported as generic "did not return
+// JSON" instead of the identifiable truncation it was. See
+// docs/post-254-architecture-roadmap.md R7.
+
+// One shared token budget for the photo-grounded visual-composer JSON schema (label, strength,
+// dominantDirection, silhouette, bestFor, pieces[], reason, styling_instructions, watchFor per
+// outfit). Both the selected-piece and whole-wardrobe visual composers return this same shape;
+// previously each hardcoded its own flat ceiling (2000 / 2200) regardless of how many outfits
+// were actually requested, so a normal request could be truncated well before the model
+// finished writing valid JSON. Scales with requested outfit count the same way the (differently
+// shaped, separately tuned) atomic capsule composition schema already does.
+export function visualComposerMaxTokensForOutfitCount(outfitCount = 4) {
+  const count = Math.max(1, Number(outfitCount) || 1)
+  return Math.max(2200, Math.min(4200, 900 + count * 500))
 }
 
 export function withTimeout(promise, ms, label = 'operation') {
@@ -1050,7 +1052,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     ]
   })
 
-  let composerParsed = safeJsonFromModel(rawComposer)
+  let composerParsed = parseModelJson(rawComposer, { context: 'outfit composer', maxTokens: 1800 })
   console.log(`[0]    - Raw AI Composer response:\n${rawComposer}\n`)
   console.log(`[0]    - Parsed AI Composer JSON:`, JSON.stringify(composerParsed, null, 2))
   let normalized = (composerParsed.outfits || []).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
@@ -1070,7 +1072,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
         `Composer JSON to audit:\n${JSON.stringify({ outfits: normalized, skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }, null, 2)}`
       ].filter(Boolean).join('\n\n') }] }]
     })
-    const gateParsed = safeJsonFromModel(rawGate)
+    const gateParsed = parseModelJson(rawGate, { context: 'outfit evaluator gate', maxTokens: 1400 })
     console.log(`[0]    - Raw Evaluator Gate response:\n${rawGate}\n`)
     console.log(`[0]    - Parsed Evaluator Gate JSON:`, JSON.stringify(gateParsed, null, 2))
     const gateOutfits = (gateParsed.outfits || []).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
@@ -1361,7 +1363,7 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
       ]
     }]
   })
-  const parsed = safeJsonFromModel(raw)
+  const parsed = parseModelJson(raw, { context: 'visual support critic', maxTokens: 900 })
   const rejectMap = new Map((parsed.rejectedPieceIds || []).map(item => {
     if (typeof item === 'object' && item !== null) return [Number(item.pieceId), item.reason || 'visual critic rejected']
     return [Number(item), 'visual critic rejected']
@@ -1438,7 +1440,7 @@ export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], c
       ]
     }]
   })
-  const parsed = safeJsonFromModel(raw)
+  const parsed = parseModelJson(raw, { context: 'visual wardrobe critic', maxTokens: 900 })
   const rankedIds = Array.isArray(parsed.rankedCandidateIds) ? parsed.rankedCandidateIds.filter(id => sheet.shownCandidateIds.includes(id)) : []
   if (!rankedIds.length) return null
   const byId = new Map(candidates.map(candidate => [candidate.candidateId, candidate]))
@@ -1513,7 +1515,7 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
       ]
     }]
   })
-  const parsed = safeJsonFromModel(raw)
+  const parsed = parseModelJson(raw, { context: 'whole wardrobe outfit clash critic', maxTokens: 700 })
   const flagged = Array.isArray(parsed.flagged) ? parsed.flagged : []
   const flaggedByOutfit = new Map()
   for (const item of flagged) {
@@ -3247,8 +3249,8 @@ export async function evaluateOutfitThroughSharedPipeline({
         maxTokens,
         messages,
       }), 90000, 'Whole-wardrobe outfit evaluator')
-      parsed = safeJsonFromModel(evaluationResult.text)
       usage = evaluationResult.usage
+      parsed = parseModelJson(evaluationResult.text, { context: 'whole-wardrobe outfit evaluator', maxTokens, stopReason: usage?.stopReason })
     }
     const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
     const result = {

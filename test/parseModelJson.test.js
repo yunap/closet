@@ -55,3 +55,41 @@ test('salvageFirstJson pulls the JSON object out of leading model chatter', () =
 test('salvageFirstJson returns null when there is no valid JSON to recover', () => {
   assert.equal(salvageFirstJson('I need more information to tag this garment.'), null)
 })
+
+// thread_1787687552307: the visual composer's askClaudeWithUsage discarded the provider's own
+// stop_reason, so a real max_tokens hit could only be inferred from whether the text happened to
+// end in `}`/`]` — a heuristic that a caller who never wired usage through (or a provider quirk)
+// could miss. normalizeAiUsage/parseModelJson now accept the provider's authoritative signal and
+// trust it over the heuristic.
+test('parseModelJson trusts an explicit stopReason of max_tokens over the string-ending heuristic', () => {
+  // Deliberately NOT ending mid-string/mid-token — the heuristic alone would call this ambiguous
+  // or even clean, but the provider's own signal says it was cut off.
+  const ambiguous = '{"a": 1}extra-garbage-appended-by-a-truncated-continuation'
+  assert.throws(
+    () => parseModelJson(ambiguous, { context: 'composer', maxTokens: 2000, stopReason: 'max_tokens' }),
+    err => {
+      assert.equal(err.isTruncation, true)
+      assert.match(err.message, /hit the token cap/)
+      return true
+    }
+  )
+})
+
+test('parseModelJson does not fabricate truncation when stopReason is absent and the response ends cleanly', () => {
+  const malformed = '{"name": "cream knit top",}'
+  assert.throws(
+    () => parseModelJson(malformed, { context: 'composer', maxTokens: 2000, stopReason: 'end_turn' }),
+    err => {
+      assert.equal(err.isTruncation, undefined)
+      return true
+    }
+  )
+})
+
+// Deepening: parseModelJson now absorbs salvageFirstJson's chatty-narration recovery itself, so
+// every caller gets it for free instead of having to remember to compose the two functions —
+// the two composer call sites migrated off safeJsonFromModel relied on exactly this.
+test('parseModelJson recovers JSON wrapped in narration without a separate salvageFirstJson call', () => {
+  const chatty = 'Let me think about this outfit for a moment.\n\n{"outfits":[{"label":"test"}]}'
+  assert.deepEqual(parseModelJson(chatty), { outfits: [{ label: 'test' }] })
+})
