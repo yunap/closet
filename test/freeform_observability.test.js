@@ -640,6 +640,19 @@ test('compact garment facts attach bounded saved hanger and worn evidence', asyn
   assert.match(compactFreeformAnswerSystem('garment_fact'), /do not guess cotton, wool, viscose, modal or a blend/)
 })
 
+// thread_1787728618995: asked whether a lace-sleeve blouse could layer over a turtleneck, the
+// compact garment_fact answer confidently said the pairing worked ("solves both problems at
+// once") despite both pieces carrying sleeve_length: "long" in the supplied structured facts —
+// answerable from text alone, no image needed. The contract had guidance for single-garment tuck
+// mechanics but nothing telling the model to cross-check sleeve compatibility when one garment
+// layers over another.
+test('garment_fact instructs checking sleeve compatibility before confirming a layering pairing works', () => {
+  const system = compactFreeformAnswerSystem('garment_fact')
+  assert.match(system, /layering one garment over or under another/)
+  assert.match(system, /sleeve_type, sleeve_length, and fabric_weight/)
+  assert.match(system, /two long-sleeve garments worn one over the other is a common, checkable construction conflict/)
+})
+
 test('full-stylist history bounding keeps recent complete exchanges within both budgets', async () => {
   const { boundFreeformConversationHistory } = await import('../styling-engine/core.js')
   const history = Array.from({ length: 12 }, (_, index) => ({
@@ -2671,6 +2684,35 @@ test('narration written beside tool calls is joined ahead of the closing message
   assert.equal(joinAssistantNarration(['Here are three looks.'], 'Here are three looks. Enjoy.'), 'Here are three looks. Enjoy.')
   assert.equal(joinAssistantNarration([], ''), '')
   assert.equal(joinAssistantNarration(['', null], 'only this'), 'only this')
+})
+
+// thread_1787728618995: the model narrated an intention beside a mid-turn tool call ("You're right
+// — let me verify both before saying anything about them"), then ended its turn without ever
+// writing the promised follow-up. The terminal, post-tool-result text came back empty, so the
+// visible answer was just that leftover sentence — no description of the card the user could
+// already see. Nothing in applyAcceptedCardAuthority catches this: it only strips bad paragraphs,
+// and this one paragraph was never bad, just alone.
+test('an empty terminal answer beside an accepted card falls back to the same safe closing line applyAcceptedCardAuthority uses', async () => {
+  const { joinAssistantNarration } = await import('../styling-engine/provider.js')
+
+  const danglingNarration = "You're right — let me verify both before saying anything about them."
+  const joined = joinAssistantNarration([danglingNarration], '', { cardCount: 1 })
+  assert.match(joined, /You're right/, 'the narration itself is not discarded')
+  assert.match(joined, /Here is the look, with its pieces and styling notes on the card\./)
+
+  const joinedTwo = joinAssistantNarration([danglingNarration], '', { cardCount: 2 })
+  assert.match(joinedTwo, /Here are 2 looks, with their pieces and styling notes on each card\./)
+
+  // No card accepted this turn: an empty terminal answer is left as-is, not papered over with a
+  // card-shaped fallback line that would misdescribe a non-card turn.
+  assert.equal(joinAssistantNarration([danglingNarration], '', { cardCount: 0 }), danglingNarration)
+  assert.equal(joinAssistantNarration([danglingNarration], ''), danglingNarration, 'cardCount defaults to 0')
+
+  // Real closing text always wins — the fallback only fires when the terminal text is genuinely empty.
+  assert.equal(
+    joinAssistantNarration([danglingNarration], 'Here it is, styled with the boots.', { cardCount: 1 }),
+    `${danglingNarration}\n\nHere it is, styled with the boots.`
+  )
 })
 
 // Capsule's ending, adopted for the turn contract (owner, 2026-08-17). Each clause gets one retry;

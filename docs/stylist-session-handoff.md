@@ -1835,3 +1835,30 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   freeform `generate_outfits` call to test it live: 0 reads against 47,161 and 39,559 written
   tokens. Combined with 0/7 historical calls, removed the cache_control — never once paid for
   itself in any sample checked. Full writeup in `docs/deferred-conversational-cache-spec.md` Part 2.
+
+## 2026-08-26 — two quality gaps found live-testing the capsule truncation fixes (#261, #262)
+
+Neither is a token-budget/truncation bug (see `docs/post-254-architecture-roadmap.md` R7 for those);
+both surfaced by reading a real delivered answer against what the tool result actually contained.
+
+- **`garment_fact` had no layering-compatibility check.** `thread_1787728618995`: asked whether a
+  lace-sleeve blouse could layer over a turtleneck, the compact `garment_fact` answer confidently
+  said the pairing worked ("solves both problems at once") — wrong; both pieces are visibly
+  long-sleeve and the layering doesn't work. Not a data gap: both pieces already carry
+  `sleeve_length: "long"` in `compactFreeformPieceFacts`, answerable from text alone, no image
+  needed. The `garment_fact` contract (`compactFreeformAnswerSystem`, routes/ai.js) had detailed
+  guidance for single-garment tuck mechanics and nothing at all for cross-checking sleeve
+  compatibility when one garment layers over another — a genuinely different question class the
+  contract was never extended to cover. Fixed by adding an explicit instruction to compare
+  `sleeve_type`/`sleeve_length`/`fabric_weight` before confirming a layering pairing works.
+- **A model can narrate an intention and never follow through, and nothing catches it.** Same
+  thread: after a failed then successful `propose_outfit`, the model called `view_pieces` again,
+  narrating it inline as "You're right — let me verify both before saying anything about them" —
+  then ended its turn with no further text. The visible answer was just that leftover sentence,
+  no description of the delivered card. `closingProseWithheld`/`cardProseInconsistentBlocks` both
+  read 0: `applyAcceptedCardAuthority` only strips *bad* paragraphs (exposed deliberation, stray
+  piece IDs); nothing polices *insufficient* content. Fixed at the source of the asymmetry:
+  `joinAssistantNarration` (styling-engine/provider.js) now falls back to the same safe closing
+  line `applyAcceptedCardAuthority`'s "nothing survived" case already uses ("Here is the look...")
+  when the model's genuine terminal text comes back empty but a card was accepted this turn —
+  narration is preserved, just no longer left dangling alone.
