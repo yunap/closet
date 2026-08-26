@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
+import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
 import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
@@ -116,6 +116,32 @@ test('wardrobeSupportsLayeringPair recognizes an outerwear layer_top candidate, 
   assert.equal(wardrobeSupportsLayeringPair([soleDress, bottom, shoes]), false)
   // Nothing top/dress/outerwear-shaped at all.
   assert.equal(wardrobeSupportsLayeringPair([bottom, shoes]), false)
+})
+
+// PR review: layerDirectionPromptRule() must name every evidence branch evaluateLayerDirections
+// actually reads, including the needs_base-dependency branch it initially omitted (a layer_top that
+// itself needs a base layer sits over its primary_top — evidence.source
+// 'dependent_layer_requires_base' — with no overlay text required). This ties the projection's
+// prose directly to the same behavioral fixture propose_outfit.test.js pins for the executable
+// verdict, so a future edit that silently drops the branch from the prose fails here even if the
+// code itself is untouched. Also guards against the earlier "two pieces appearing together is not
+// evidence of a relationship" line, which conflated relationship (established by role/category) with
+// direction (established by construction/dependency evidence) — role-aware layer_top + primary_top
+// pieces already have a relationship; what can be unknown is only the supported direction.
+test('layerDirectionPromptRule names the needs_base dependency branch and does not conflate relationship with direction', () => {
+  const rule = layerDirectionPromptRule()
+  assert.match(rule, /needs a base layer/)
+  assert.match(rule, /sits over the other piece serving as its base/)
+  assert.doesNotMatch(rule, /is not itself evidence of a layering relationship/)
+
+  // The same dependency-only case pinned in propose_outfit.test.js, checked here beside the prose
+  // that describes it.
+  const result = evaluateLayerDirections([
+    { id: 1, role: 'primary_top', category: 'top' },
+    { id: 2, role: 'layer_top', category: 'top', needs_base: 'yes' },
+  ], { roleAware: true })
+  assert.equal(result.pairs[0].direction, 'layer_top_over_primary_top')
+  assert.equal(result.pairs[0].evidence.source, 'dependent_layer_requires_base')
 })
 
 test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {

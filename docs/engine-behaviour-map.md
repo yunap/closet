@@ -1397,6 +1397,18 @@ the same `wardrobeSupportsLayeringPair()` supply check) and deleting the private
 is unchanged: `evaluateLayerDirections`'s `unknown`/sight-required behavior was not touched, only its
 pre-composition visibility.
 
+**[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
+branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
+role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as
+direction evidence on its own, resolving `layer_top_over_primary_top` with no overlay text required
+(`evidence.source: 'dependent_layer_requires_base'`). It also claimed "two pieces merely appearing
+together is not evidence of a layering relationship," which is wrong for a role-aware pairing — role
+assignment already establishes the relationship; only the supported direction can be unknown. Fixed
+to state both: role/category assignment can establish a pairing; construction/intent/dependency
+evidence (including `needs_base` on either the added piece or the dress) decides direction.
+`outfit_structure.test.js` pins the prose against the same `needs_base`-only fixture
+`propose_outfit.test.js` uses for the executable verdict.
+
 **[verified duplication, 2026-08-26] `OUTFIT_EVALUATOR_GATE_SYSTEM` really could diverge from the
 canonical register/footwear verdicts — traced, not assumed.** Call chain:
 `composeStructuredOutfitsForPiece` (`core.js`) is reached only from the selected-piece ideal/missing-

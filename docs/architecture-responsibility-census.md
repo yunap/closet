@@ -399,6 +399,19 @@ paragraph independently worded from the actual evidence sources (`pieceHasExplic
 supply check); the private paragraph is deleted. No disposition change: `evaluateLayerDirections`'
 `unknown`/sight-required behavior is untouched, only its pre-composition visibility changed.
 
+**Projection-accuracy correction, same day.** The first `layerDirectionPromptRule()` omitted
+`pieceRequiresBaseLayer` as a direction signal — the role-aware `layer_top + primary_top` branch
+treats a dependent `layer_top` (`needs_base: yes`) as evidence it sits *over* its primary top, with
+no overlay text required (`evidence.source: 'dependent_layer_requires_base'`). It also conflated
+relationship with direction: "two pieces merely appearing together is not evidence of a layering
+relationship" is false for a role-aware `layer_top + primary_top` pair, where role assignment already
+establishes the relationship — only the direction can be unknown. The projection now says role/
+category assignment may establish that a pairing is intended to layer, while construction/intent/
+dependency evidence (including `needs_base` on either the added piece or the dress) decides the
+direction. `outfit_structure.test.js` ties the prose directly to the same `needs_base`-only fixture
+`propose_outfit.test.js` pins for the executable verdict, so a future prose edit that silently drops
+the branch fails even if `evaluateLayerDirections` itself is untouched.
+
 **Evaluator register/footwear verification, 2026-08-26.** The same census flagged
 `OUTFIT_EVALUATOR_GATE_SYSTEM` (the selected-piece text/ideal composer's post-composition audit,
 `styling-engine/core.js`'s `composeStructuredOutfitsForPiece`) for independently re-deriving
