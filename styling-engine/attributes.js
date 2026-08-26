@@ -855,6 +855,29 @@ export function pieceRequiresBaseLayer(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase().trim() === 'yes'
 }
 
+const CUFFED_SLEEVE_LENGTHS = new Set(['elbow', '3/4', 'long', 'extra_long'])
+const VOLUMINOUS_SLEEVE_SHAPES = new Set(['puff', 'bishop', 'bell'])
+const BULKY_FABRIC_WEIGHTS = new Set(['medium', 'heavy'])
+
+// Atomic construction evidence for a garment's own sleeve, independent of any other garment it
+// might layer with. `outfitValidation.js` composes two of these into a pair verdict; this reader
+// only normalizes and classifies one garment's own tagged fields. `null` on a classifier means the
+// underlying field is unpopulated or unrecognized, not that the classifier resolved to false —
+// callers must treat that as unresolved evidence, not as a negative fact.
+export function pieceSleeveLayerEvidence(piece = {}) {
+  const length = String(piece?.sleeve_length || '').toLowerCase().trim() || null
+  const shape = String(piece?.sleeve_shape || '').toLowerCase().trim() || null
+  const fabricWeight = String(piece?.fabric_weight || '').toLowerCase().trim() || null
+  return {
+    length,
+    shape,
+    fabricWeight,
+    isCuffed: length ? CUFFED_SLEEVE_LENGTHS.has(length) : null,
+    isVoluminous: (shape && shape !== 'unknown') ? VOLUMINOUS_SLEEVE_SHAPES.has(shape) : null,
+    isBulkyFabric: (fabricWeight && fabricWeight !== 'unknown') ? BULKY_FABRIC_WEIGHTS.has(fabricWeight) : null,
+  }
+}
+
 function pieceLayerIntentText(piece = {}) {
   const styleProfile = piece.style_profile_json && typeof piece.style_profile_json === 'object'
     ? JSON.stringify(piece.style_profile_json)

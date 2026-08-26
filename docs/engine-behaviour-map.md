@@ -10,7 +10,8 @@ term) alongside the already-documented hot-weather clause, finding one live gap 
 (whole-wardrobe generation, critique/feedback `full` and `followup`) that were never read back;
 **amended 2026-08-26** to remove an eighth, message-level image-manifest cache on the whole-wardrobe
 composer (measured 0 reads against 30-49k written tokens on every sampled call) — see
-`docs/deferred-conversational-cache-spec.md`.
+`docs/deferred-conversational-cache-spec.md`; **amended 2026-08-26** again to add the new
+`evaluateLayerPairConstruction` sleeve layer-pair verdict and its `evaluateWearableOutfit` stage.
 Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
@@ -1324,6 +1325,61 @@ Hard-invalid paid selected/whole model attempts remain visible as Needs review c
 finding, alongside valid sibling cards. A selected dependent anchor with no compatible base is
 preserved as an incomplete Needs review premise. Concept boards intentionally retain their lighter
 allowlist/anchor validation.
+
+**[validation-ownership consolidation, sleeve layer-pair construction, 2026-08-26] Sleeve-bulk
+compatibility between two layered garments now has one owner, closing a gap the 2026-08-25 composed
+owner above did not yet cover.** `thread_1787728618995`: asked whether a lace-sleeve blouse could
+layer over a turtleneck, the compact `garment_fact` answer confidently said the pairing worked even
+though both garments were long-sleeve — a private prose rule was added directly to that one prompt
+(citing the retired `sleeve_type` field, which `garment_fact` is never even supplied). A follow-up
+census confirmed the same gap existed in `evaluateWearableOutfit` itself: `propose_outfit`, plan
+submission, and capsule composition could already accept a genuine sleeve-bulk conflict, because
+neither `evaluateRequiredBaseLayers` (scoped to `needs_base` dependents only) nor
+`evaluateLayerDirections` (over/under direction only) reads `sleeve_length`, `sleeve_shape`, or
+`fabric_weight`. `evaluateLayerPairConstruction` in `outfitValidation.js` is the new canonical
+verdict, composed into `evaluateWearableOutfit` behind the same `includeLayerDirections` flag every
+existing consumer already passes — no call-site changes were needed. Two cuffed sleeves (elbow-length
+or longer) worn one over the other is deliberately **not** incompatible by itself: the verdict is
+`incompatible` only with actual bulk evidence (a voluminous `sleeve_shape` — puff, bishop, bell — on
+either garment, or both tagged a medium/heavy `fabric_weight`), `compatible` when both are known
+fitted and lightweight, and `unknown` when the deciding fields are unrecorded. Unlike the required-base
+contract, an `unknown` construction verdict does **not** force sight verification before composing —
+most ordinary layered pairs in this wardrobe simply lack `sleeve_shape`/`fabric_weight` tags, and
+escalating every one of those to a mandatory-photo gate would have blocked routine composition for a
+data-completeness issue rather than a suspected conflict (verified against the live test suite: the
+broader escalation broke an existing layered-outfit fixture with no real conflict). Only a *proven*
+conflict is a hard `evaluateWearableOutfit` finding; an unresolved one remains a visible advisory
+finding. `garment_fact` now computes the same verdict server-side and cites it as a "Layering evidence
+(computed)" block instead of restating sleeve/fabric thresholds in prompt prose.
+
+**[prompt-projection follow-up, 2026-08-26] The composed owner above closed validation; composition
+itself was still blind until this pass.** The first landing gave every composer post-composition
+enforcement through `evaluateWearableOutfit`, but no active composer told the model the rule *before*
+it composed — each would otherwise have had to restate the same thresholds independently to give
+advance guidance, exactly the private-prompt-rule pattern this fix exists to close. A new
+`layerConstructionPromptRule()` projection (mirroring `requiredBaseLayerPromptRule()`'s existing
+pattern) is now cited, not restated, by every active layering-capable composer: `WHOLE_WARDROBE_
+VISUAL_COMPOSER_SYSTEM` (covers both the whole-wardrobe and selected-anchor visual composer, which
+share one template), the static `propose_outfit` tool description, and the shared plan/capsule slot
+workbench (`buildPlanSlotWorkbench` in `outfitSetPlanner.js`) — one wiring point for both, since
+`composeCapsulePlanOnce` forwards that same workbench's `instructions` and per-slot `submission_
+requirements` straight into the atomic capsule composer's prompt payload. The workbench projection is
+gated to slots whose own roster can actually form a layering pair; most slots cannot, and an
+unconditional projection would be cost, not signal. A contract test
+(`styling_context_consumers.test.js`) proves the visual composer and `propose_outfit` cite the rule
+text verbatim at the source/runtime level; a live-fixture test (`plan_outfit_set.test.js`) proves the
+workbench projects it only for a slot that can layer and withholds it for one that cannot.
+
+**[gate correction, 2026-08-26 same day] The first version of that gate reinvented "can these pieces
+layer" as its own local definition and got it wrong.** It counted only `top`/`dress`-category pieces,
+so a slot whose only layering candidate was a jacket over a top (`layer_top` assigned to an
+`outerwear`-category piece — a legitimate assignment per `evaluateOutfitRoles`' own role/category
+map) silently never received the projection. Fixed by exporting `ROLE_CATEGORY_EXPECTATIONS` (the map
+`evaluateOutfitRoles`' `role_category_mismatch` check already used internally) and a new
+`wardrobeSupportsLayeringPair()` built from that same map, so the workbench gate and the role
+validator can no longer independently define who is eligible to layer. `outfit_structure.test.js`
+covers the helper directly (outerwear+top, top+dress, two tops, and the negative single-piece cases);
+`plan_outfit_set.test.js` adds the live outerwear-layer_top fixture the original gate missed.
 
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit

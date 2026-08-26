@@ -138,7 +138,7 @@ import {
   evaluateVisualComposerPiecePool,
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
-import { categoryOutfitStructurePromptRule, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
@@ -702,7 +702,7 @@ export function compactFreeformAnswerSystem(profile = 'general_advice') {
   const profileContract = profile === 'existing_card_explanation'
     ? 'Explain or compare only the supplied verified outfit cards. Do not change pieces, invent alternatives, or claim to see photographs.'
     : profile === 'garment_fact'
-      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another, compare both garments\' sleeve_type, sleeve_length, and fabric_weight fields before answering that the pairing works: two long-sleeve garments worn one over the other is a common, checkable construction conflict (sleeve bulk, cuff crowding, fabric bunching at the arm) — name it when the fields show it, rather than defaulting to reassurance that a layering pairing "solves" a problem without having checked the sleeves against each other. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
+      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another and a "Layering evidence (computed)" block is supplied, that verdict is authoritative for sleeve/construction compatibility — do not re-derive it from the raw fields yourself, and do not contradict it; translate it into ordinary styling language and explain the reason it gives. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
       : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
   return `You are a concise personal stylist answering one bounded text question. ${profileContract}
 
@@ -727,6 +727,7 @@ export function compactFreeformPieceFacts(piece = {}) {
     tuck_behavior: piece.tuck_behavior,
     hem_finish: piece.hem_finish,
     sleeve_length: piece.sleeve_length,
+    sleeve_shape: piece.sleeve_shape,
     length_hits_at: piece.length_hits_at,
     silhouette: piece.silhouette,
     waistband_type: piece.waistband_type,
@@ -892,13 +893,37 @@ export function formatWardrobeInventoryAnswer(counts = {}) {
   ].join('\n')
 }
 
+// Canonical layer-pair-mechanics verdict for every top/dress pair among the supplied garment_fact
+// subjects, computed server-side so the compact answer model consumes one shared verdict instead of
+// re-deriving sleeve/fabric compatibility from raw fields itself (routes/ai.js:evaluateLayerPairConstruction
+// is the single owner propose_outfit/plan/capsule validation also consumes). Most garment_fact
+// questions are single-garment and produce no pair here; that is expected, not a gap.
+export function compactGarmentFactLayeringEvidence(pieces = []) {
+  const candidates = (Array.isArray(pieces) ? pieces : [])
+    .filter(piece => ['top', 'dress'].includes(wardrobeCategoryGroup(piece)))
+  if (candidates.length < 2) return []
+  const lines = []
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const pair = evaluateLayerPairConstructionFor(candidates[i], candidates[j])
+      if (pair.verdict === 'compatible') continue
+      const addedLabel = pair.addedPiece?.name || `piece ${pair.addedPiece?.id}`
+      const baseLabel = pair.basePiece?.name || `piece ${pair.basePiece?.id}`
+      lines.push(`${addedLabel} + ${baseLabel}: ${pair.verdict}${pair.findings[0] ? ` — ${pair.findings[0].message}` : ''}`)
+    }
+  }
+  return lines
+}
+
 export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {}, history = [] } = {}) {
   const recentHistory = (profile === 'existing_card_explanation' || profile === 'garment_fact') ? compactRecentHistory(history) : ''
+  const layeringEvidence = profile === 'garment_fact' ? compactGarmentFactLayeringEvidence(pieces) : []
   return [
     `Question: ${question}`,
     recentHistory ? `Recent conversation (most recent last):\n${recentHistory}` : '',
     profile === 'existing_card_explanation' && context.outfits?.length ? `Verified current cards:\n${JSON.stringify(context.outfits)}` : '',
     profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
+    layeringEvidence.length ? `Layering evidence (computed):\n${layeringEvidence.join('\n')}` : '',
     profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
   ].filter(Boolean).join('\n\n')
 }

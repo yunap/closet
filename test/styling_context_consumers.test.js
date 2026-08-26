@@ -209,7 +209,7 @@ test('whole-wardrobe and submitted-plan gates consume the composed wearable verd
 })
 
 test('route-level structure filters reuse typed findings and contain no category recount', () => {
-  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
   assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
   const whole = sourceBlock(
     'export async function generateWholeWardrobeOutfitsVisualInternal',
@@ -222,7 +222,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume the composed wearable verdict', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateWearableOutfit, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateWearableOutfit, layerConstructionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
   assert.match(validationSource, /includeLayerDirections/)
@@ -240,6 +240,56 @@ test('model-visible structure rules project from the shared validator owner', ()
   assert.match(routeSource, /categoryOutfitStructurePromptRule\(/)
   assert.match(toolSource, /roleOutfitStructurePromptRule\(/)
   assert.match(toolSource, /projectOutfitValidationFindings\(/)
+})
+
+// A prompt-responsibility census on #263 found evaluateLayerPairConstruction had a canonical
+// outfitValidation.js owner and post-composition validation via evaluateWearableOutfit, but no
+// active composer projected the same rule to the model BEFORE composition — each would have had
+// to reinvent it locally in prose to give the model advance guidance. This proves the shared
+// layerConstructionPromptRule() projection, not a local restatement, reaches every active
+// layering-capable composer: the runtime prompt text itself (not just source presence) for the
+// visual composer and propose_outfit, and source wiring for the plan/capsule workbench (its live
+// projection and negative-control gating are proven directly in plan_outfit_set.test.js, since
+// building it needs DB fixtures this file does not set up).
+test('every active layering-capable composer projects the canonical layer-construction rule, not a local restatement', async () => {
+  const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const ruleText = layerConstructionPromptRule()
+  assert.ok(ruleText.length > 0)
+
+  // Selected/whole visual composer: WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM backs both
+  // generateWholeWardrobeOutfitsVisualInternal and the selected-anchor visual composer
+  // (routes/ai.js appends its anchor contract to the same base template).
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const built = buildPrompts({})
+  assert.ok(
+    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(ruleText),
+    'the visual composer must cite the canonical rule verbatim'
+  )
+
+  // Freeform propose_outfit: the tool description is static (cache-stable), so the projection is
+  // wired at schema-definition time rather than per-turn. tools.js reaches db.js on import (see
+  // hermeticity_guard.test.js), and this file intentionally never sets up DB isolation — it only
+  // ever inspects tools.js as source text, so the description is verified by string-slicing that
+  // source, not by importing STYLIST_TOOLS at runtime.
+  const proposeOutfitStart = toolSource.indexOf('name: "propose_outfit"')
+  const proposeOutfitEnd = toolSource.indexOf('input_schema:', proposeOutfitStart)
+  assert.ok(proposeOutfitStart >= 0 && proposeOutfitEnd > proposeOutfitStart, 'propose_outfit tool description block not found')
+  const proposeOutfitDescription = toolSource.slice(proposeOutfitStart, proposeOutfitEnd)
+  assert.ok(
+    proposeOutfitDescription.includes('${layerConstructionPromptRule()}'),
+    'propose_outfit must cite the canonical rule by reference, not restate it'
+  )
+
+  // Plan and seasonal capsule composition share one workbench builder (buildPlanSlotWorkbench);
+  // composeCapsulePlanOnce (routes/ai.js) passes its per-slot submission_requirements straight
+  // into the atomic capsule composer's prompt payload, so one wiring point covers both.
+  assert.match(plannerSource, /requirements\.push\(layerConstructionPromptRule\(\)\)/)
+  assert.match(routeSource, /instructions: workbench\.instructions/, 'capsule composer must forward the workbench instructions carrying the projection')
+  assert.match(routeSource, /slots: workbench\.slots/, 'capsule composer must forward the per-slot submission_requirements carrying the projection')
+
+  // Guard against the thing this fix specifically warned against: no separate prompt should
+  // restate the sleeve/fabric thresholds in its own words instead of citing the shared rule.
+  assert.doesNotMatch(routeSource, /sleeve_type/, 'no prompt may cite the retired sleeve_type field')
 })
 
 test('outfit-producing flows share one normalized result envelope', () => {

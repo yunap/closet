@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateOutfitStructure, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { describeOutfitStructureGap, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
 import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
@@ -34,6 +34,88 @@ test('composed wearable verdict keeps hard invalidity separate from unresolved v
   })
   assert.equal(missingBase.hardValid, false)
   assert.ok(missingBase.hardFindings.some(finding => finding.code === 'required_base_layer_missing_or_incompatible'))
+})
+
+// thread_1787728618995's actual failure mode: propose_outfit/plan/capsule composition could
+// already accept a sleeve-bulk conflict with no mechanical check at all (the census correction that
+// followed the #263 census). evaluateLayerPairConstruction is the canonical owner; these fixtures
+// cover the four verdict shapes and the specific "two long sleeves alone is not proof" ruling.
+test('evaluateLayerPairConstruction distinguishes known conflict, known compatible, and unknown', () => {
+  // No cuff overlap possible: a sleeveless base under any top is trivially compatible.
+  const sleeveless = { id: 1, name: 'sleeveless shell', category: 'top', role: 'primary_top', sleeve_length: 'sleeveless' }
+  const anyLayer = { id: 2, name: 'any layer', category: 'top', role: 'layer_top', sleeve_length: 'long' }
+  const trivial = evaluateLayerPairConstruction([anyLayer, sleeveless], { roleAware: true })
+  assert.equal(trivial.verdict, 'compatible')
+  assert.deepEqual(trivial.findings, [])
+
+  // Known conflict: voluminous shape trapped under/over a fitted cuffed sleeve.
+  const puffLayer = { id: 3, name: 'puff-sleeve blouse', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
+  const fittedBase = { id: 4, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const conflict = evaluateLayerPairConstruction([puffLayer, fittedBase], { roleAware: true })
+  assert.equal(conflict.verdict, 'incompatible')
+  assert.equal(conflict.findings[0].code, 'layer_construction_sleeve_conflict')
+  assert.equal(conflict.sightRequired, 'none', 'a known incompatibility does not need a photo to resolve')
+
+  // Known conflict: both cuffed and both bulky fabric, neither shape voluminous.
+  const heavyLayer = { id: 5, name: 'heavy cardigan', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'heavy' }
+  const heavyBase = { id: 6, name: 'heavy sweater', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium' }
+  const fabricConflict = evaluateLayerPairConstruction([heavyLayer, heavyBase], { roleAware: true })
+  assert.equal(fabricConflict.verdict, 'incompatible')
+
+  // Known compatible: two fitted, lightweight, cuffed-sleeve garments — must NOT be rejected just
+  // for both being long-sleeve (the crudeness explicitly ruled out during the #263 correction).
+  const fittedLayer = { id: 7, name: 'fitted long-sleeve tee', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const fittedPrimary = { id: 8, name: 'fitted base', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'ultralight' }
+  const compatible = evaluateLayerPairConstruction([fittedLayer, fittedPrimary], { roleAware: true })
+  assert.equal(compatible.verdict, 'compatible')
+  assert.deepEqual(compatible.findings, [])
+
+  // Unknown: both cuffed, but sleeve_shape/fabric_weight unrecorded — conservative, not a guess.
+  const bareLayer = { id: 9, name: 'unspecified layer', category: 'top', role: 'layer_top', sleeve_length: 'long' }
+  const barePrimary = { id: 10, name: 'unspecified base', category: 'top', role: 'primary_top', sleeve_length: 'long' }
+  const unknown = evaluateLayerPairConstruction([bareLayer, barePrimary], { roleAware: true })
+  assert.equal(unknown.verdict, 'unknown')
+  assert.equal(unknown.sightRequired, 'both')
+})
+
+test('evaluateWearableOutfit inherits the sleeve-conflict finding as a hard error when includeLayerDirections is set', () => {
+  const puffLayer = { id: 11, name: 'puff-sleeve blouse', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
+  const fittedBase = { id: 12, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const bottom = { id: 13, name: 'trousers', category: 'bottom', role: 'primary_bottom' }
+  const shoes = { id: 14, name: 'loafers', category: 'shoes', role: 'shoes' }
+  const result = evaluateWearableOutfit([puffLayer, fittedBase, bottom, shoes], { roleAware: true, includeLayerDirections: true })
+  assert.equal(result.hardValid, false)
+  assert.ok(result.hardFindings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
+  assert.ok(result.evidence.includedStages.includes('layer_construction'))
+})
+
+// PR review: a caller gating a pre-role-assignment prompt projection (does this candidate set
+// even have a layering pair worth mentioning?) must not reimplement this with a local top/dress
+// category count, because layer_top may be assigned to an outerwear-category piece too — see
+// ROLE_CATEGORY_EXPECTATIONS.layer_top in outfitValidation.js, the same map evaluateOutfitRoles
+// uses for its role/category mismatch check.
+test('wardrobeSupportsLayeringPair recognizes an outerwear layer_top candidate, not only top/dress', () => {
+  const soleTop = { id: 1, name: 'lone top', category: 'top' }
+  const soleOuterwear = { id: 2, name: 'lone jacket', category: 'outerwear' }
+  const soleDress = { id: 3, name: 'lone dress', category: 'dress' }
+  const bottom = { id: 4, name: 'bottom', category: 'bottom' }
+  const shoes = { id: 5, name: 'shoes', category: 'shoes' }
+
+  // A single top plus a single outerwear piece IS a real layer_top(outerwear) + primary_top pair.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, soleOuterwear, bottom, shoes]), true)
+  // A single top plus a single dress IS a real top-over/under-dress pair.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, soleDress, bottom, shoes]), true)
+  // Two tops can still form layer_top + primary_top with no outerwear involved.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, { id: 6, name: 'second top', category: 'top' }, bottom, shoes]), true)
+
+  // A lone top with nothing else top/dress/outerwear cannot layer with itself.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, bottom, shoes]), false)
+  // A lone outerwear piece with no top/dress base cannot layer with itself.
+  assert.equal(wardrobeSupportsLayeringPair([soleOuterwear, bottom, shoes]), false)
+  // A lone dress alone (dress cannot be its own added/layer piece) cannot layer.
+  assert.equal(wardrobeSupportsLayeringPair([soleDress, bottom, shoes]), false)
+  // Nothing top/dress/outerwear-shaped at all.
+  assert.equal(wardrobeSupportsLayeringPair([bottom, shoes]), false)
 })
 
 test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {

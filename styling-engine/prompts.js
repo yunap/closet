@@ -3,7 +3,7 @@
 // add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
-import { categoryOutfitStructurePromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
+import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
@@ -1256,6 +1256,7 @@ Composition rules:
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
 - Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print's ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.
 ${requiredBaseLayerPromptRule()}
+${layerConstructionPromptRule()}
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.

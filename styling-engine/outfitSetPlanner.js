@@ -47,6 +47,8 @@ import {
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
   evaluateWearableOutfit,
+  layerConstructionPromptRule,
+  wardrobeSupportsLayeringPair,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
@@ -3605,6 +3607,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
     ]
+    // Only project the sleeve-construction rule when the slot's own roster can actually form a
+    // layering pair — most slots cannot, and the projection is cost, not signal, when there is
+    // nothing to layer. wardrobeSupportsLayeringPair is the canonical eligibility check (shared
+    // with evaluateOutfitRoles' role/category map); do not reimplement it with a local top/dress
+    // count here, since that would silently exclude outerwear-as-layer_top candidates.
+    if (wardrobeSupportsLayeringPair(allowed)) {
+      requirements.push(layerConstructionPromptRule())
+    }
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
       requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')
     }

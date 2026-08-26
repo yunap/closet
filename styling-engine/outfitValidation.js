@@ -3,10 +3,25 @@ import {
   pieceHasExplicitBaseLayerEvidence,
   pieceHasExplicitTopLayerEvidence,
   pieceRequiresBaseLayer,
+  pieceSleeveLayerEvidence,
   wardrobeCategoryGroup,
 } from './attributes.js'
 
 export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
+
+// Single source of truth for which categories a role may be assigned to. evaluateOutfitRoles'
+// role/category mismatch check and any pre-role-assignment eligibility question (does this supply
+// contain a piece that COULD become a given role) both read this — neither may keep its own copy.
+export const ROLE_CATEGORY_EXPECTATIONS = {
+  primary_top: ['top'],
+  layer_top: ['top', 'outerwear'],
+  primary_bottom: ['bottom'],
+  layer_bottom: ['bottom'],
+  dress: ['dress'],
+  shoes: ['shoes'],
+  outerwear: ['outerwear'],
+  accessory: ['accessory'],
+}
 
 const BASE_LAYER_CLOSE_FITS = new Set(['clings_stretchy', 'clings_drapey', 'skims'])
 const BASE_LAYER_INCOMPATIBLE_FITS = new Set(['hangs_straight', 'drapes', 'structured', 'none'])
@@ -252,67 +267,87 @@ function layerDirectionPair(addedPiece, basePiece, { relationship, direction = n
   }
 }
 
+// Shared enumeration of which piece pairs are in a layering relationship at all — the added
+// (outer/candidate) piece and the base (under) piece it may sit over. Direction and construction
+// are separate questions asked about the SAME pairs; both consume this so neither can drift into
+// deciding "who layers with whom" differently from the other.
+function layeringCandidatePairs(pieces = [], { roleAware = false } = {}) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const pairs = []
+  if (!roleAware) {
+    const dresses = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
+    const tops = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'top')
+    for (const dress of dresses) {
+      for (const top of tops) pairs.push({ added: top, base: dress, relationship: 'top_dress' })
+    }
+    return pairs
+  }
+  const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top')
+  const dresses = normalizedPieces.filter(piece => piece.role === 'dress')
+  const primaryTops = normalizedPieces.filter(piece => piece.role === 'primary_top')
+  for (const layerTop of layerTops) {
+    if (dresses.length) {
+      for (const dress of dresses) pairs.push({ added: layerTop, base: dress, relationship: 'layer_top_dress' })
+      continue
+    }
+    for (const primaryTop of primaryTops) {
+      pairs.push({ added: layerTop, base: primaryTop, relationship: 'layer_top_primary_top' })
+    }
+  }
+  return pairs
+}
+
+const LAYER_BASE_CATEGORY_GROUPS = new Set([...ROLE_CATEGORY_EXPECTATIONS.primary_top, ...ROLE_CATEGORY_EXPECTATIONS.dress])
+const LAYER_ADDED_CATEGORY_GROUPS = new Set(ROLE_CATEGORY_EXPECTATIONS.layer_top)
+
+// Supply-level eligibility question, answerable before any role has been assigned: does this
+// candidate set contain enough category-eligible pieces to POSSIBLY form a layering pair once
+// composed? A caller deciding whether to show model-facing layering guidance ahead of composition
+// (a workbench, a roster preview) needs this, not `layeringCandidatePairs`, which assumes roles
+// already exist. Reuses `ROLE_CATEGORY_EXPECTATIONS` — the same map `evaluateOutfitRoles` assigns
+// roles from — instead of maintaining a second definition of "can these pieces layer": critically,
+// `layer_top` may be assigned to an outerwear-category piece, not only a top, so a caller that
+// checks only top/dress supply undercounts real layering candidates.
+export function wardrobeSupportsLayeringPair(pieces = []) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const bases = normalizedPieces.filter(piece => LAYER_BASE_CATEGORY_GROUPS.has(wardrobeCategoryGroup(piece)))
+  const added = normalizedPieces.filter(piece => LAYER_ADDED_CATEGORY_GROUPS.has(wardrobeCategoryGroup(piece)))
+  return added.some(addedPiece => bases.some(basePiece => basePiece !== addedPiece))
+}
+
 // Canonical direction verdict for ordinary layering. Recorded construction/intent establishes a
 // known over/under relationship; absent legacy metadata is unknown, never proof of incompatibility.
 // `unknown` may be resolved only by a caller that has shown both photos to the stylist model. That
 // allowance is deliberately tagged as provisional and never writes a reusable garment fact.
 export function evaluateLayerDirections(pieces = [], { roleAware = false } = {}) {
   const normalizedPieces = Array.isArray(pieces) ? pieces : []
-  const pairs = []
-
-  if (!roleAware) {
-    const dresses = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
-    const tops = normalizedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'top')
-    for (const dress of dresses) {
-      for (const top of tops) {
-        const overlay = pieceHasExplicitTopLayerEvidence(top)
-        const underlay = pieceHasExplicitBaseLayerEvidence(top) ||
-          pieceDressSupportsUnderlayer(dress) || pieceRequiresBaseLayer(dress)
-        pairs.push(layerDirectionPair(top, dress, {
-          relationship: 'top_dress',
-          direction: underlay ? 'top_under_dress' : (overlay ? 'top_over_dress' : null),
-          source: underlay ? 'underlayer_evidence' : (overlay ? 'top_overlay_evidence' : null),
-          sightRequired: 'both',
-        }))
-      }
+  const pairs = layeringCandidatePairs(normalizedPieces, { roleAware }).map(({ added, base, relationship }) => {
+    if (relationship === 'top_dress' || relationship === 'layer_top_dress') {
+      const overlay = pieceHasExplicitTopLayerEvidence(added)
+      const underlay = pieceHasExplicitBaseLayerEvidence(added) ||
+        pieceDressSupportsUnderlayer(base) || pieceRequiresBaseLayer(base)
+      return layerDirectionPair(added, base, {
+        relationship,
+        direction: underlay ? 'top_under_dress' : (overlay ? 'top_over_dress' : null),
+        source: underlay ? 'underlayer_evidence' : (overlay ? 'top_overlay_evidence' : null),
+        sightRequired: 'both',
+      })
     }
-  } else {
-    const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top')
-    const dresses = normalizedPieces.filter(piece => piece.role === 'dress')
-    const primaryTops = normalizedPieces.filter(piece => piece.role === 'primary_top')
-    for (const layerTop of layerTops) {
-      if (dresses.length) {
-        for (const dress of dresses) {
-          const overlay = pieceHasExplicitTopLayerEvidence(layerTop)
-          const underlay = pieceHasExplicitBaseLayerEvidence(layerTop) ||
-            pieceDressSupportsUnderlayer(dress) || pieceRequiresBaseLayer(dress)
-          pairs.push(layerDirectionPair(layerTop, dress, {
-            relationship: 'layer_top_dress',
-            direction: underlay ? 'top_under_dress' : (overlay ? 'top_over_dress' : null),
-            source: underlay ? 'underlayer_evidence' : (overlay ? 'top_overlay_evidence' : null),
-            sightRequired: 'both',
-          }))
-        }
-        continue
-      }
-      for (const primaryTop of primaryTops) {
-        const categoryGroup = wardrobeCategoryGroup(layerTop)
-        const overlay = categoryGroup === 'outerwear' || pieceRequiresBaseLayer(layerTop) ||
-          pieceHasExplicitTopLayerEvidence(layerTop)
-        const underlay = pieceHasExplicitBaseLayerEvidence(layerTop)
-        pairs.push(layerDirectionPair(layerTop, primaryTop, {
-          relationship: 'layer_top_primary_top',
-          direction: overlay ? 'layer_top_over_primary_top' : (underlay ? 'layer_top_under_primary_top' : null),
-          source: categoryGroup === 'outerwear'
-            ? 'outerwear_category'
-            : (pieceRequiresBaseLayer(layerTop)
-                ? 'dependent_layer_requires_base'
-                : (overlay ? 'top_overlay_evidence' : (underlay ? 'underlayer_evidence' : null))),
-          sightRequired: overlay || underlay ? 'one' : 'both',
-        }))
-      }
-    }
-  }
+    const categoryGroup = wardrobeCategoryGroup(added)
+    const overlay = categoryGroup === 'outerwear' || pieceRequiresBaseLayer(added) ||
+      pieceHasExplicitTopLayerEvidence(added)
+    const underlay = pieceHasExplicitBaseLayerEvidence(added)
+    return layerDirectionPair(added, base, {
+      relationship,
+      direction: overlay ? 'layer_top_over_primary_top' : (underlay ? 'layer_top_under_primary_top' : null),
+      source: categoryGroup === 'outerwear'
+        ? 'outerwear_category'
+        : (pieceRequiresBaseLayer(added)
+            ? 'dependent_layer_requires_base'
+            : (overlay ? 'top_overlay_evidence' : (underlay ? 'underlayer_evidence' : null))),
+      sightRequired: overlay || underlay ? 'one' : 'both',
+    })
+  })
 
   const findings = pairs.flatMap(pair => pair.findings)
   const verdict = pairs.some(pair => pair.verdict === 'incompatible')
@@ -342,6 +377,133 @@ export function evaluateLayerDirections(pieces = [], { roleAware = false } = {})
   }
 }
 
+function layerConstructionFinding(code, message, severity, evidence = {}) {
+  return {
+    code,
+    message,
+    kind: 'layer_construction',
+    severity,
+    evidence,
+  }
+}
+
+// Pair-mechanics verdict for one layering candidate pair: does the ADDED piece's sleeve physically
+// fit over/under the BASE piece's sleeve, independent of which piece is on top (evaluateLayerDirections
+// owns that separate question). Two long sleeves are not incompatible by themselves — a voluminous
+// shape or substantial fabric doubling at the arm is the actual physical conflict; conservative
+// unless the tagged fields prove one side. thread_1787728618995: a lace-sleeve blouse and a
+// turtleneck, both long-sleeve, were confidently called compatible from text alone with neither
+// sleeve_shape nor fabric_weight checked — this is the shared owner that question needed and never
+// had, previously answered ad hoc inside compactFreeformAnswerSystem('garment_fact').
+function layerConstructionPair(added, base) {
+  const addedEvidence = pieceSleeveLayerEvidence(added)
+  const baseEvidence = pieceSleeveLayerEvidence(base)
+  const addedId = Number(added?.id) || null
+  const baseId = Number(base?.id) || null
+  const addedLabel = added?.name || (addedId ? `piece ${addedId}` : 'the added garment')
+  const baseLabel = base?.name || (baseId ? `piece ${baseId}` : 'the base garment')
+  const evidence = { addedId, baseId, added: addedEvidence, base: baseEvidence }
+
+  if (addedEvidence.isCuffed === null || baseEvidence.isCuffed === null) {
+    return {
+      verdict: 'unknown',
+      addedPiece: added,
+      basePiece: base,
+      findings: [layerConstructionFinding(
+        'layer_construction_sleeve_length_unknown',
+        `${addedLabel} + ${baseLabel} sleeve compatibility is unknown — sleeve length is not recorded for one or both garments`,
+        'warning',
+        evidence,
+      )],
+      evidence,
+      sightRequired: 'both',
+    }
+  }
+  if (!(addedEvidence.isCuffed && baseEvidence.isCuffed)) {
+    // No physical sleeve-in-sleeve overlap is possible from length alone (e.g. a sleeveless or
+    // short-sleeve base under any top) — compatible without needing shape/fabric evidence.
+    return { verdict: 'compatible', addedPiece: added, basePiece: base, findings: [], evidence, sightRequired: 'none' }
+  }
+
+  const voluminous = addedEvidence.isVoluminous === true || baseEvidence.isVoluminous === true
+  const bothBulkyFabric = addedEvidence.isBulkyFabric === true && baseEvidence.isBulkyFabric === true
+  if (voluminous || bothBulkyFabric) {
+    const reason = voluminous
+      ? 'a voluminous sleeve shape would be trapped or bunched under/over the other garment\'s cuffed sleeve'
+      : 'both garments have substantial fabric weight, so doubling the sleeve creates cuff crowding and fabric bunching at the arm'
+    return {
+      verdict: 'incompatible',
+      addedPiece: added,
+      basePiece: base,
+      findings: [layerConstructionFinding(
+        'layer_construction_sleeve_conflict',
+        `${addedLabel} + ${baseLabel} is a checkable sleeve construction conflict: ${reason}`,
+        'error',
+        evidence,
+      )],
+      evidence,
+      sightRequired: 'none',
+    }
+  }
+
+  const bothKnownSlim = addedEvidence.isVoluminous === false && baseEvidence.isVoluminous === false &&
+    addedEvidence.isBulkyFabric === false && baseEvidence.isBulkyFabric === false
+  if (bothKnownSlim) {
+    return { verdict: 'compatible', addedPiece: added, basePiece: base, findings: [], evidence, sightRequired: 'none' }
+  }
+
+  return {
+    verdict: 'unknown',
+    addedPiece: added,
+    basePiece: base,
+    findings: [layerConstructionFinding(
+      'layer_construction_bulk_unknown',
+      `${addedLabel} + ${baseLabel} are both cuffed-sleeve garments; sleeve shape or fabric weight is not recorded for one or both, so cuff/bulk compatibility is unknown`,
+      'warning',
+      evidence,
+    )],
+    evidence,
+    sightRequired: 'both',
+  }
+}
+
+// Direct two-garment entry point, for a caller that already knows it wants exactly this pair
+// compared (e.g. garment_fact naming two garments explicitly) rather than one that must first
+// enumerate which pieces in a wearable outfit are even in a layering relationship. The verdict
+// logic is symmetric — which piece is "added" vs "base" does not change the sleeve/fabric answer.
+export function evaluateLayerPairConstructionFor(pieceA, pieceB) {
+  return layerConstructionPair(pieceA, pieceB)
+}
+
+// Canonical relational verdict for "can this pair's sleeves physically layer together" — the same
+// layering candidate pairs evaluateLayerDirections identifies, asked a different question. Composed
+// into evaluateWearableOutfit so propose_outfit, plan submission, and capsule composition share one
+// owner instead of leaving it to prompt prose per consumer.
+export function evaluateLayerPairConstruction(pieces = [], { roleAware = false } = {}) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const pairs = layeringCandidatePairs(normalizedPieces, { roleAware })
+    .map(({ added, base }) => layerConstructionPair(added, base))
+  const findings = pairs.flatMap(pair => pair.findings)
+  const verdict = pairs.some(pair => pair.verdict === 'incompatible')
+    ? 'incompatible'
+    : (pairs.some(pair => pair.verdict === 'unknown') ? 'unknown' : 'compatible')
+  return {
+    verdict,
+    findings,
+    primaryFinding: findings[0] || null,
+    pairs,
+    evidence: { roleAware: Boolean(roleAware) },
+    sightRequired: pairs.some(pair => pair.sightRequired === 'both') ? 'both' : 'none',
+  }
+}
+
+// Prompt projection of the executable contract, matching requiredBaseLayerPromptRule's pattern.
+// Composers that want to explain the rule to a model cite this; they do not restate sleeve/fabric
+// thresholds in their own prose.
+export function layerConstructionPromptRule() {
+  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other is only a problem when there is actual bulk evidence — a voluminous sleeve_shape (puff, bishop, bell) on either garment, or both garments tagged a medium/heavy fabric_weight. Two fitted, lightweight, cuffed-sleeve garments layer fine. Missing sleeve_shape or fabric_weight on a cuffed pairing is unknown, not proof either way — inspect both garments before ruling on it.`
+}
+
 function structureFinding(code, message, evidence = {}) {
   return {
     code,
@@ -366,16 +528,7 @@ function roleCategoryFinding(piece = {}) {
   const role = String(piece.role || '').trim()
   const category = String(piece.category || '').toLowerCase().trim()
   if (!role || !category) return null
-  const expected = {
-    primary_top: ['top'],
-    layer_top: ['top', 'outerwear'],
-    primary_bottom: ['bottom'],
-    layer_bottom: ['bottom'],
-    dress: ['dress'],
-    shoes: ['shoes'],
-    outerwear: ['outerwear'],
-    accessory: ['accessory'],
-  }[role]
+  const expected = ROLE_CATEGORY_EXPECTATIONS[role]
   if (!expected || expected.includes(category)) return null
   return roleStructureFinding(
     'role_category_mismatch',
@@ -532,6 +685,13 @@ export function evaluateWearableOutfit(pieces = [], {
     : null
   if (directions) stages.push({ stage: 'layer_direction', result: directions })
 
+  // Same opt-in as layer_direction: both ask a question about the same layering candidate pairs,
+  // so any caller that already wants direction findings wants construction findings too.
+  const construction = includeLayerDirections
+    ? evaluateLayerPairConstruction(normalizedPieces, { roleAware })
+    : null
+  if (construction) stages.push({ stage: 'layer_construction', result: construction })
+
   const findings = stages.flatMap(({ result }) => result?.findings || [])
   const hardFindings = findings.filter(finding => finding.severity === 'error')
   const advisoryFindings = findings.filter(finding => finding.severity !== 'error')
@@ -548,6 +708,14 @@ export function evaluateWearableOutfit(pieces = [], {
         kind: 'layer_direction',
         pieceIds: [Number(pair.addedPiece?.id), Number(pair.basePiece?.id)].filter(Boolean),
       })),
+    // Deliberately NOT included: an unknown construction verdict (missing sleeve_shape/
+    // fabric_weight) is common across ordinary, unremarkable layering pairs in this wardrobe corpus
+    // and is not evidence of a likely problem the way an unresolved required-base or direction pair
+    // is — those exist only when a real dependency or an explicit overlay/underlayer signal was
+    // already found. Forcing a photo re-verification on every sleeve-metadata gap would block
+    // ordinary composition for a data-completeness issue, not a suspected conflict. A KNOWN
+    // conflict (voluminous shape / doubled bulky fabric) is still a hard error via hardFindings
+    // below; an unknown one stays a visible advisory finding only.
   ]
   const unresolvedSightPairs = unresolvedPairs.filter(pair =>
     pair.pieceIds.some(pieceId => !seenIds.has(pieceId)))
