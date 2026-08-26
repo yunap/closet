@@ -47,6 +47,7 @@ import {
   describeOutfitStructureGap,
   evaluateBaseLayerCandidate,
   evaluateWearableOutfit,
+  layerConstructionPromptRule,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
@@ -3605,6 +3606,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
     ]
+    // Only project the sleeve-construction rule when the slot's own roster can actually form a
+    // layering pair (two-plus top/dress-group pieces) — most slots cannot, and the projection is
+    // cost, not signal, when there is nothing to layer.
+    if (allowed.filter(piece => ['top', 'dress'].includes(wardrobeCategoryGroup(piece))).length >= 2) {
+      requirements.push(layerConstructionPromptRule())
+    }
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
       requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')
     }

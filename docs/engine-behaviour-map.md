@@ -1352,6 +1352,24 @@ conflict is a hard `evaluateWearableOutfit` finding; an unresolved one remains a
 finding. `garment_fact` now computes the same verdict server-side and cites it as a "Layering evidence
 (computed)" block instead of restating sleeve/fabric thresholds in prompt prose.
 
+**[prompt-projection follow-up, 2026-08-26] The composed owner above closed validation; composition
+itself was still blind until this pass.** The first landing gave every composer post-composition
+enforcement through `evaluateWearableOutfit`, but no active composer told the model the rule *before*
+it composed — each would otherwise have had to restate the same thresholds independently to give
+advance guidance, exactly the private-prompt-rule pattern this fix exists to close. A new
+`layerConstructionPromptRule()` projection (mirroring `requiredBaseLayerPromptRule()`'s existing
+pattern) is now cited, not restated, by every active layering-capable composer: `WHOLE_WARDROBE_
+VISUAL_COMPOSER_SYSTEM` (covers both the whole-wardrobe and selected-anchor visual composer, which
+share one template), the static `propose_outfit` tool description, and the shared plan/capsule slot
+workbench (`buildPlanSlotWorkbench` in `outfitSetPlanner.js`) — one wiring point for both, since
+`composeCapsulePlanOnce` forwards that same workbench's `instructions` and per-slot `submission_
+requirements` straight into the atomic capsule composer's prompt payload. The workbench projection is
+gated to slots whose own roster can actually form a layering pair (two or more top/dress-group
+pieces); most slots cannot, and an unconditional projection would be cost, not signal. A contract
+test (`styling_context_consumers.test.js`) proves the visual composer and `propose_outfit` cite the
+rule text verbatim at the source/runtime level; a live-fixture test (`plan_outfit_set.test.js`) proves
+the workbench projects it only for a slot that can layer and withholds it for one that cannot.
+
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit
 `styling_instructions` renderer contract, and prose integrity apply wherever

@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
-import { requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
+import { layerConstructionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
 
 const snapshot = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'test/fixtures/prompts_yuna_snapshot.json'), 'utf8'))
 
@@ -84,6 +84,17 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         '- Respect the rotation warnings and any rejected-pairing memory provided.',
         `${requiredBaseLayerPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
+      )
+    }
+    // 2026-08-26: a prompt-responsibility census on #263 found the sleeve-construction verdict
+    // (evaluateLayerPairConstruction) had a canonical outfitValidation.js owner but no active
+    // composer actually projected it before composition — only evaluateWearableOutfit's
+    // post-composition validation consumed it. Same treatment as requiredBaseLayerPromptRule above:
+    // the composition rules cite the executable contract instead of restating its thresholds.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        `${requiredBaseLayerPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`,
+        `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
       )
     }
     // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a

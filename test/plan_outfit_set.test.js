@@ -28,6 +28,7 @@ const { resolveOccasionProfile } = await import('../styling-engine/occasions.js'
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
+const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -535,6 +536,50 @@ test('a home-specific plan slot enforces the garment owner exclusion before mode
   assert.equal(workbench.slots[0].eligibility_context, 'home')
   assert.ok(!workbench.slots[0].allowed_piece_ids.includes(excludedBottom))
   assert.ok(workbench.slots[0].allowed_piece_ids.includes(allowedBottom))
+})
+
+// A prompt-responsibility census on #263 found evaluateLayerPairConstruction had a canonical
+// outfitValidation.js owner but no active composer actually projected it before composition —
+// propose_outfit/plan/capsule only received it as post-composition validation. This proves the
+// shared workbench (consumed by both the freeform plan_outfit_set tool loop and the atomic
+// seasonal-capsule composer via composeCapsulePlanOnce) now projects the canonical rule text
+// verbatim, gated to only the slots that can actually form a layering pair.
+test('plan/capsule slot requirements project the canonical layer-construction rule only where the roster can actually layer', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'layering top one', occasions: ['casual'], formality: 'everyday' })
+  const secondTopId = insertPiece({ category: 'top', name: 'layering top two', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'layering bottom', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'layering shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Layerable slot', occasion: 'casual', activity: 'none', count: 1,
+    best_for: 'a slot whose roster can layer'
+  }])
+
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a casual plan' })
+  const allowed = new Set(workbench.slots[0].allowed_piece_ids)
+  assert.ok(allowed.has(topId) && allowed.has(secondTopId), 'fixture must supply two eligible tops for the gate to fire')
+  assert.ok(
+    workbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
+    'the canonical rule text must appear verbatim, not restated'
+  )
+
+  // Control: only one top eligible in this slot — no layering pair is possible, so the projection
+  // must not fire. Proves this is a targeted projection, not blanket inclusion.
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'lone top', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'lone bottom', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'lone shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const lonePieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const loneSlots = normalizePlanSlots([{
+    label: 'Non-layerable slot', occasion: 'casual', activity: 'none', count: 1,
+    best_for: 'a slot whose roster cannot layer'
+  }])
+  const loneWorkbench = await buildPlanSlotWorkbench(loneSlots, { allPieces: lonePieces, question: 'a casual plan' })
+  assert.ok(
+    !loneWorkbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
+    'a slot with no layering-capable pair must not carry the projection'
+  )
 })
 
 // --- Mode default flip (spec 19 Part 4) ----------------------------------------
