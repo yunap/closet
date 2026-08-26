@@ -2296,13 +2296,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }
     }
 
-    // Attach cache_control to the last candidate thumbnail so the entire candidate manifest is cached
-    if (content.length > 1) {
-      content[content.length - 1] = {
-        ...content[content.length - 1],
-        cache_control: { type: 'ephemeral' }
-      }
-    }
+    // No cache_control on the candidate manifest (removed 2026-08-26 — docs/deferred-conversational-
+    // cache-spec.md). This call makes exactly one provider request with no in-call retry, so the
+    // write could only ever be read back by a LATER, separate call within 5 minutes reproducing an
+    // identical roster/image set — from this same standalone route, /generate-saved-outfit-variants,
+    // or freeform's generate_outfits tool (all three share this function). Measured with per-call
+    // cache attribution added for this trace: 0 reads against ~40-49k written tokens across every
+    // sample checked — 7 standalone calls over the prior 4 days, plus one fresh standalone call and
+    // one fresh freeform generate_outfits call run specifically to test this. The write cost
+    // (~$0.12-0.18 of each ~$0.15-0.21 call) was never once recovered.
 
     // VOLATILE TAIL SECOND: occasion, season, mood, saved outfit photo, feedback memory
     const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold

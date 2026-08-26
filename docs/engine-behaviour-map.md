@@ -7,8 +7,10 @@ seventh cache and the only one covering images; **amended 2026-08-14** to trace 
 two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
 term) alongside the already-documented hot-weather clause, finding one live gap and one latent one;
 **amended 2026-08-25** also to remove two undocumented provider-side prompt-cache writes
-(whole-wardrobe generation, critique/feedback `full` and `followup`) that were never read back —
-see `docs/deferred-conversational-cache-spec.md`.
+(whole-wardrobe generation, critique/feedback `full` and `followup`) that were never read back;
+**amended 2026-08-26** to remove an eighth, message-level image-manifest cache on the whole-wardrobe
+composer (measured 0 reads against 30-49k written tokens on every sampled call) — see
+`docs/deferred-conversational-cache-spec.md`.
 Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
@@ -573,6 +575,19 @@ and `followup` variants are different system text, so they never shared a prefix
 either. Both writes were removed rather than documented as a cache, since there was no reuse to
 describe — see `docs/deferred-conversational-cache-spec.md` for the full trace and the follow-up
 routing (`message-lifecycle.md` dispatch branches 10–12) that made the writes provably wasted.
+
+**A third, message-level cache found and removed 2026-08-26, while measuring the two above.**
+`generateWholeWardrobeOutfitsVisualInternal` also put a plain 5-minute `cache_control` directly on
+the last candidate thumbnail in the *message* content (not the system string, so `grep
+PROMPT_CACHE_BREAKPOINT` also misses this one — same blind spot as the capsule roster cache, a
+different mechanism than the two paragraphs above). Shared by three callers: standalone
+whole-wardrobe generation, `/generate-saved-outfit-variants`, and freeform's `generate_outfits` tool.
+Traced: the function makes exactly one provider call with no in-call retry, so unlike the capsule
+roster cache's genuine attempt-1/attempt-2 relationship, this one could only ever be read by a
+*separate, later* call landing within 5 minutes with an identical roster — and measured attribution
+(new `providerImageManifestCache*` fields, `normalizeAiUsage`'s TTL-based creation split) found zero
+such reads across every real call sampled, historical or freshly run. Removed for the same reason as
+the two above — see `docs/deferred-conversational-cache-spec.md` Part 2.
 
 ### Which garments get a photo — fixed 2026-08-12
 
