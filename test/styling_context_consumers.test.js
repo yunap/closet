@@ -209,7 +209,7 @@ test('whole-wardrobe and submitted-plan gates consume the composed wearable verd
 })
 
 test('route-level structure filters reuse typed findings and contain no category recount', () => {
-  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
   assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
   const whole = sourceBlock(
     'export async function generateWholeWardrobeOutfitsVisualInternal',

@@ -643,14 +643,46 @@ test('compact garment facts attach bounded saved hanger and worn evidence', asyn
 // thread_1787728618995: asked whether a lace-sleeve blouse could layer over a turtleneck, the
 // compact garment_fact answer confidently said the pairing worked ("solves both problems at
 // once") despite both pieces carrying sleeve_length: "long" in the supplied structured facts —
-// answerable from text alone, no image needed. The contract had guidance for single-garment tuck
-// mechanics but nothing telling the model to cross-check sleeve compatibility when one garment
-// layers over another.
-test('garment_fact instructs checking sleeve compatibility before confirming a layering pairing works', () => {
+// answerable from text alone, no image needed. The original fix (a private prose rule naming a
+// retired `sleeve_type` field the compact model was never even supplied) was replaced with a
+// canonical outfitValidation.js verdict shared by propose_outfit/plan/capsule validation — see
+// evaluateLayerPairConstruction in styling-engine/outfitValidation.js and its census correction.
+// garment_fact now defers to that verdict instead of restating sleeve/fabric thresholds itself.
+test('garment_fact defers to the computed layering-evidence block instead of restating sleeve rules itself', () => {
   const system = compactFreeformAnswerSystem('garment_fact')
   assert.match(system, /layering one garment over or under another/)
-  assert.match(system, /sleeve_type, sleeve_length, and fabric_weight/)
-  assert.match(system, /two long-sleeve garments worn one over the other is a common, checkable construction conflict/)
+  assert.match(system, /"Layering evidence \(computed\)" block/)
+  assert.match(system, /that verdict is authoritative/)
+  assert.doesNotMatch(system, /sleeve_type/, 'must not cite the retired sleeve_type field')
+})
+
+test('compactGarmentFactLayeringEvidence computes the canonical verdict for the original incident, now conservative under missing evidence', async () => {
+  const { compactGarmentFactLayeringEvidence } = await import('../routes/ai.js')
+  // Original incident evidence: both long-sleeve, neither sleeve_shape nor fabric_weight supplied.
+  // The old prose rule would have had the model guess; the shared verdict now reports "unknown"
+  // instead of a confident wrong "works" OR a crude wrong "never works" — matches the owner
+  // correction that two long sleeves alone is not proof of conflict.
+  const blouse = { id: 201, name: 'lace-sleeve blouse', category: 'top', sleeve_length: 'long' }
+  const turtleneck = { id: 202, name: 'turtleneck', category: 'top', sleeve_length: 'long' }
+  const unknownLines = compactGarmentFactLayeringEvidence([blouse, turtleneck])
+  assert.equal(unknownLines.length, 1)
+  assert.match(unknownLines[0], /unknown/)
+
+  // Known conflict: voluminous shape trapped under a fitted cuffed sleeve.
+  const puffBlouse = { id: 203, name: 'puff-sleeve blouse', category: 'top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
+  const fittedTurtleneck = { id: 204, name: 'fitted turtleneck', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const conflictLines = compactGarmentFactLayeringEvidence([puffBlouse, fittedTurtleneck])
+  assert.equal(conflictLines.length, 1)
+  assert.match(conflictLines[0], /incompatible/)
+
+  // Known compatible: two fitted, lightweight, cuffed-sleeve garments — the case the owner
+  // explicitly said must not be crudely rejected just for both being long-sleeve.
+  const fittedTee = { id: 205, name: 'fitted long-sleeve tee', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const fittedBase = { id: 206, name: 'fitted base layer', category: 'top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'ultralight' }
+  assert.deepEqual(compactGarmentFactLayeringEvidence([fittedTee, fittedBase]), [])
+
+  // A single subject produces no pair at all.
+  assert.deepEqual(compactGarmentFactLayeringEvidence([blouse]), [])
 })
 
 test('full-stylist history bounding keeps recent complete exchanges within both budgets', async () => {

@@ -8,7 +8,9 @@ perl: warning: Falling back to the standard locale ("C").
 # Closet architecture responsibility census
 
 **Status:** Active — Stage 1 and Slices 0–7 complete as of 2026-08-25. The product-policy
-questions that had blocked the final Slice 1 and Slice 3 consumers are ratified in §7.
+questions that had blocked the final Slice 1 and Slice 3 consumers are ratified in §7. **Amended
+2026-08-26** to add the sleeve layer-pair construction verdict, a seventh layering/base-layer
+contract found missing by a live-incident census (§4.5) and closed the same day.
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -315,7 +317,7 @@ fallback selection is the remaining bounded parity candidate. See roadmap R3.
 
 ### 4.5 Layering and base-layer semantics
 
-There is intentionally no single “layering” owner. The overloaded concept is split into six narrow
+There is intentionally no single “layering” owner. The overloaded concept is split into seven narrow
 questions with separate fact/verdict owners and one composed wearable verdict.
 
 | Contract | Current surfaces | Current missing-data behavior | Classification / owner |
@@ -324,8 +326,37 @@ questions with separate fact/verdict owners and one composed wearable verdict.
 | Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate` | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
 | Pair mechanics: can base A physically sit beneath dependent piece B? | `evaluateRequiredBaseLayers`, consumed by plan submission and freeform proposal/swap validation; visual composer prompt projects the same close-fit values | Missing opacity or fit returns `unknown` with `sightRequired: both` | `canonical` typed pair/outfit verdict consuming the structured coverage verdict |
 | Layer direction: which piece may sit over/under which? | `evaluateLayerDirections`, consuming `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, dependency, role and category facts | Missing direction is `unknown`; both photos are required, after which the model may make a provisional one-turn judgment | `canonical` typed verdict in `outfitValidation.js`; plan submission, freeform proposal, and participating slot swaps consume it |
-| Sight requirement: must photos be inspected? | `evaluateRequiredBaseLayers`, `evaluateLayerDirections`, and `evaluateWearableOutfit`; tool/plan adapters enact it | Shared results name required IDs/pairs; disposition still varies when photos are unavailable | Canonical evidence requirement in `outfitValidation.js`; unavailable-evidence disposition is roadmap R4 |
+| Sleeve construction: does this pair's own sleeve bulk physically conflict when layered, independent of direction? | `evaluateLayerPairConstruction` / `evaluateLayerPairConstructionFor`, consuming `pieceSleeveLayerEvidence` (`attributes.js`: `sleeve_length`, `sleeve_shape`, `fabric_weight`) | No cuff overlap possible (short/sleeveless base) is deterministically compatible; both cuffed with unrecorded shape/weight is `unknown` and stays an advisory finding, not a sight-forcing gate — see below | `canonical` typed pair verdict in `outfitValidation.js`, added 2026-08-26; `propose_outfit`, plan submission, and capsule composition inherit it through the same `includeLayerDirections` opt-in as layer direction; `garment_fact` projects the identical verdict instead of restating thresholds in prose |
+| Sight requirement: must photos be inspected? | `evaluateRequiredBaseLayers`, `evaluateLayerDirections`, and `evaluateWearableOutfit`; tool/plan adapters enact it | Shared results name required IDs/pairs; disposition still varies when photos are unavailable | Canonical evidence requirement in `outfitValidation.js`; unavailable-evidence disposition is roadmap R4. Sleeve construction is a deliberate exception — see below |
 | Visual success: do neckline, bulk, texture, color, and proportion work? | Visual composer and stylist model | Not deterministically inferable | Model-owned judgment; never converted into keyword taste rules |
+
+**Added 2026-08-26 — sleeve construction was a genuine seventh gap, not a duplicate.** A
+[freeform-prompt-ownership.md](freeform-prompt-ownership.md)-style census of PR 263 found a private
+prose rule added directly to `compactFreeformAnswerSystem('garment_fact')` (citing the retired
+`sleeve_type` field, never even supplied to that prompt) after `thread_1787728618995` confidently
+called a long-sleeve-over-long-sleeve pairing compatible with no construction check at all. A
+follow-up correction proved the same gap existed in `evaluateWearableOutfit` itself: neither
+`evaluateRequiredBaseLayers` (scoped to `needs_base` dependents) nor `evaluateLayerDirections`
+(over/under direction only) reads `sleeve_length`, `sleeve_shape`, or `fabric_weight`, so
+`propose_outfit`, plan submission, and capsule composition could already accept a real sleeve-bulk
+conflict. `evaluateLayerPairConstruction` closes that gap as its own narrow verdict rather than
+folding into `evaluateRequiredBaseLayers` or `evaluateLayerDirections` — it answers a different
+question (construction bulk, not dependency or direction) and stays independently testable. Two
+cuffed sleeves worn one over the other is deliberately **not** treated as inherently incompatible:
+the verdict requires actual bulk evidence (a voluminous `sleeve_shape`, or both garments tagged a
+medium/heavy `fabric_weight`) before returning `incompatible`.
+
+**Deliberate asymmetry with the sight-requirement contract:** an `unknown` required-base or
+layer-direction pair enters `unresolvedSightPairs` and blocks composition until both garments are
+seen, because that unknown only exists where a real dependency or an explicit overlay/underlayer
+signal was already found. An `unknown` sleeve-construction verdict does **not** — missing
+`sleeve_shape`/`fabric_weight` is common on ordinary, unremarkable layering pairs across this
+wardrobe corpus, and escalating every one to a mandatory-photo gate would block routine composition
+for a data-completeness issue rather than a suspected conflict (confirmed against the live
+cross-flow test suite, which failed under the stricter version). Only a *proven* conflict is a hard
+`evaluateWearableOutfit` finding; an unresolved one remains a visible advisory finding only. This is
+a considered exception to the general sight-requirement pattern, not an oversight — record it here so
+a future slice does not "fix" it into parity with the other two pair verdicts.
 
 **Remaining gap:** Pair mechanics, dependency validation, recovery, and capsule capacity now consume
 the shared verdict family. The unresolved edge is disposition when a required visual fact is
@@ -487,7 +518,7 @@ context-authority ambiguity.
 | Piece text fallback | `attributes.js` readers and `attributePieceTextBlob` | Prompt/tool serializers may choose fields and formatting | `pieceTextBlob` comparison/deletion remains roadmap R1 |
 | Automatic-use eligibility | `wholeWardrobePieceTrustDecision` composed through `evaluateAutomaticUsePiecePool` | Anchor override, visual-photo policy, supply-aware disclosed relaxation, finite provider caps | Runtime migration complete; guard adapter drift under roadmap R2 |
 | Normalized styling context | `resolveStylingContext`, with `resolveCalendarSeason` as its calendar projection | Flow declares required fields and whether live lookup is permitted; display/request season may remain distinct from calendar applicability | Runtime migration complete; 2026-08-25 live projection defect corrected; separate storage lifetimes remain roadmap R8 |
-| Layer/base facts and pair mechanics | Tri-state verdict family in `attributes.js` / `outfitValidation.js`, composed by `evaluateWearableOutfit` | Flow policy for `unknown`; model visual judgment; sight availability disposition | Runtime migration complete; unavailable-sight disposition remains roadmap R4 |
+| Layer/base facts and pair mechanics | Tri-state verdict family in `attributes.js` / `outfitValidation.js`, composed by `evaluateWearableOutfit` — added 2026-08-26: sleeve-construction bulk (`evaluateLayerPairConstruction`) alongside dependent-status, coverage, pair-mechanics, and direction | Flow policy for `unknown`; model visual judgment; sight availability disposition (sleeve construction deliberately does not force sight on `unknown` — see §4.5) | Runtime migration complete; unavailable-sight disposition remains roadmap R4 |
 | Outfit core structure | `evaluateOutfitStructure` / `evaluateOutfitRoles`, composed by `evaluateWearableOutfit` | Role, slot, set, advisor/gate disposition | Runtime migration complete; concept-board light validation remains intentional |
 | Bounded structural roster coverage | `candidateSet.js` | Selected relevance, visual photo budget, capsule recombination, plan slot limits | Main outfit-producing caps migrated; local fallback parity remains roadmap R3 |
 | Ranking | One existing strategy per objective, consuming shared facts/verdicts | Objective-specific weights, diversity, recency, anchor relevance | Hidden gate-like penalties only; do not merge strategies |

@@ -10,7 +10,8 @@ term) alongside the already-documented hot-weather clause, finding one live gap 
 (whole-wardrobe generation, critique/feedback `full` and `followup`) that were never read back;
 **amended 2026-08-26** to remove an eighth, message-level image-manifest cache on the whole-wardrobe
 composer (measured 0 reads against 30-49k written tokens on every sampled call) — see
-`docs/deferred-conversational-cache-spec.md`.
+`docs/deferred-conversational-cache-spec.md`; **amended 2026-08-26** again to add the new
+`evaluateLayerPairConstruction` sleeve layer-pair verdict and its `evaluateWearableOutfit` stage.
 Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
@@ -1324,6 +1325,32 @@ Hard-invalid paid selected/whole model attempts remain visible as Needs review c
 finding, alongside valid sibling cards. A selected dependent anchor with no compatible base is
 preserved as an incomplete Needs review premise. Concept boards intentionally retain their lighter
 allowlist/anchor validation.
+
+**[validation-ownership consolidation, sleeve layer-pair construction, 2026-08-26] Sleeve-bulk
+compatibility between two layered garments now has one owner, closing a gap the 2026-08-25 composed
+owner above did not yet cover.** `thread_1787728618995`: asked whether a lace-sleeve blouse could
+layer over a turtleneck, the compact `garment_fact` answer confidently said the pairing worked even
+though both garments were long-sleeve — a private prose rule was added directly to that one prompt
+(citing the retired `sleeve_type` field, which `garment_fact` is never even supplied). A follow-up
+census confirmed the same gap existed in `evaluateWearableOutfit` itself: `propose_outfit`, plan
+submission, and capsule composition could already accept a genuine sleeve-bulk conflict, because
+neither `evaluateRequiredBaseLayers` (scoped to `needs_base` dependents only) nor
+`evaluateLayerDirections` (over/under direction only) reads `sleeve_length`, `sleeve_shape`, or
+`fabric_weight`. `evaluateLayerPairConstruction` in `outfitValidation.js` is the new canonical
+verdict, composed into `evaluateWearableOutfit` behind the same `includeLayerDirections` flag every
+existing consumer already passes — no call-site changes were needed. Two cuffed sleeves (elbow-length
+or longer) worn one over the other is deliberately **not** incompatible by itself: the verdict is
+`incompatible` only with actual bulk evidence (a voluminous `sleeve_shape` — puff, bishop, bell — on
+either garment, or both tagged a medium/heavy `fabric_weight`), `compatible` when both are known
+fitted and lightweight, and `unknown` when the deciding fields are unrecorded. Unlike the required-base
+contract, an `unknown` construction verdict does **not** force sight verification before composing —
+most ordinary layered pairs in this wardrobe simply lack `sleeve_shape`/`fabric_weight` tags, and
+escalating every one of those to a mandatory-photo gate would have blocked routine composition for a
+data-completeness issue rather than a suspected conflict (verified against the live test suite: the
+broader escalation broke an existing layered-outfit fixture with no real conflict). Only a *proven*
+conflict is a hard `evaluateWearableOutfit` finding; an unresolved one remains a visible advisory
+finding. `garment_fact` now computes the same verdict server-side and cites it as a "Layering evidence
+(computed)" block instead of restating sleeve/fabric thresholds in prompt prose.
 
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit
