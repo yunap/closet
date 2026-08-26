@@ -858,6 +858,48 @@ test('execution router can select compact text profiles from presence-only conte
   }
 })
 
+test('execution router receives the immediately preceding exchange, not the whole thread history', async () => {
+  // thread_1787707798034 msg 11 (2026-08-26): the router classified purely from the isolated
+  // current message, so a reply naming garments only because it answered the assistant's own
+  // clarifying question ("which outfit's layer?") read like a standalone garment_fact question.
+  // See docs/deferred-conversational-cache-spec.md's sibling finding and the routing-corpus entry
+  // 'layer-request-after-clarifying-question'.
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'full_stylist', occasion: 'evening', activity: 'none', season: '', mood: '', mission: 'mix', limit: 0, location: '', date: '', subject: '' }
+  }
+  try {
+    await routeFreeformExecutionProfile({
+      question: 'I\'m asking about the layer for Mauve Utility Punch — floral abstract sleeveless tunic',
+      contextSummary: 'no current outfit set; verified garment subjects available: 3',
+      recentExchange: 'user: ok, not bad. Give me some layering options for the evening\nassistant: Before I pull options, quick clarification: are you adding a layer to the current Mauve Utility Punch outfit, or starting fresh?'
+    })
+    assert.match(captured.messages[0].content, /Recent exchange \(immediately preceding turn only\):\nuser: ok, not bad\. Give me some layering options for the evening\nassistant: Before I pull options/)
+    // The recent-exchange block must sit between compact context and the current request, with the
+    // request still last — every existing corpus assertion anchors "Request: ...$" at the end.
+    assert.match(captured.messages[0].content, /Recent exchange[\s\S]*Request: I'm asking about the layer/)
+    assert.match(captured.system, /RECENT EXCHANGE, if supplied, is only the immediately preceding assistant\/user turn/)
+    assert.match(captured.system, /NOT thereby a garment_fact question about that garment/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
+test('execution router omits the recent-exchange block entirely when none is supplied', async () => {
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'bounded_multi', occasion: 'casual', activity: 'none', season: '', mood: '', mission: 'mix', limit: 2, location: '', date: '', subject: '' }
+  }
+  try {
+    await routeFreeformExecutionProfile({ question: 'What should I wear today?' })
+    assert.doesNotMatch(captured.messages[0].content, /Recent exchange/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
 test('offline execution-routing corpus spans every profile and conservative fallback class', async () => {
   const corpus = JSON.parse(fs.readFileSync(
     path.join(process.cwd(), 'test/fixtures/freeform_execution_routing_corpus.json'),
@@ -878,6 +920,11 @@ test('offline execution-routing corpus spans every profile and conservative fall
     assert.match(call.system, /Classify one wardrobe-stylist request/)
     assert.match(call.messages[0].content, new RegExp(`Request: ${activeCase.request.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
     assert.match(call.messages[0].content, new RegExp(`Compact context available: ${activeCase.context.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+    if (activeCase.recentExchange) {
+      assert.match(call.messages[0].content, new RegExp(`Recent exchange \\(immediately preceding turn only\\):\\n${activeCase.recentExchange.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+    } else {
+      assert.doesNotMatch(call.messages[0].content, /Recent exchange/)
+    }
     return {
       profile: activeCase.expectedProfile,
       occasion: 'casual', activity: 'none', season: '', mood: '', mission: 'mix',
@@ -894,7 +941,8 @@ test('offline execution-routing corpus spans every profile and conservative fall
         question: entry.request,
         currentDate: '2026-08-18',
         timezone: 'America/Los_Angeles',
-        contextSummary: entry.context
+        contextSummary: entry.context,
+        recentExchange: entry.recentExchange || ''
       })
       assert.equal(routed.value.profile, entry.expectedProfile, entry.id)
     }
