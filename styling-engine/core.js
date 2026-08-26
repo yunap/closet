@@ -3010,6 +3010,15 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
   }
 }
 
+// One-shot entry (docs/deferred-conversational-cache-spec.md): 'full' and 'followup' use
+// different system text, so a followup here never reads back a full turn's cache and vice versa —
+// a 1h ephemeral write on either would never be reused. No PROMPT_CACHE_BREAKPOINT.
+export function outfitEvaluationSystemPrompt(responseMode) {
+  return responseMode === 'followup'
+    ? prompts.OUTFIT_EVALUATION_FOLLOWUP_SYSTEM
+    : prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM
+}
+
 export async function evaluateOutfitThroughSharedPipeline({
   outfit = {},
   pieceIds = [],
@@ -3145,11 +3154,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   ].filter(Boolean).join('\n') })
 
   const isFollowup = responseMode === 'followup'
-  const system = `${
-    isFollowup
-      ? prompts.OUTFIT_EVALUATION_FOLLOWUP_SYSTEM
-      : prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM
-  }\n${PROMPT_CACHE_BREAKPOINT}`
+  const system = outfitEvaluationSystemPrompt(responseMode)
   const maxTokens = isFollowup ? 500 : 3000
   const messages = [
     ...(history || []).map(h => ({ role: h.role, content: h.content })),

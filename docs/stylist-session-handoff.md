@@ -1,6 +1,6 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-08-19. Active work is on `codex/freeform-rearchitect-followup`.
+**Last updated:** 2026-08-25. Active work is on `codex/freeform-rearchitect-followup`.
 
 > **Historical design specs live outside this repo.** 35 of them in `~/Downloads/spec_*.md`
 > ([index](spec-archive-index.md)). They predate several redesigns, so treat them as provenance
@@ -1773,3 +1773,20 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   outstanding.
 - The Wardrobe filter, Add/Edit, Batch Add, and Lookbook “Link pieces” modal form one future UI
   review/implementation workstream documented in `docs/wardrobe-color-controls-spec.md`.
+
+## 2026-08-25 — deferred conversational cache activation
+
+- **PR 188's critique cache write (noted above, 2026-07-29) is reversed.** Full critiques no longer
+  append `PROMPT_CACHE_BREAKPOINT` to the evaluator system prompt. Traced this session: `full` and
+  `followup` are different system text, so a 1h ephemeral cache write on either was never read back
+  by the other — the note above described the write correctly at the time, but nothing was ever
+  amortizing it. Same fix applied to `generateWholeWardrobeOutfitsVisualInternal`'s composer system
+  prompt (whole-wardrobe generation), which had the same unconditional, never-reused write.
+- Selected-item generation and freeform `/ask` needed no change — the trace confirmed both already
+  had the correct disposition (no marker for the one-shot selected-item call; marker from turn 1 for
+  freeform). Follow-ups on whole-wardrobe/selected-item generations already route through `/ai/ask`'s
+  own compact-first, full-stylist-fallback router (`message-lifecycle.md` dispatch branches 11–12),
+  which was already doing the right thing independent of how the thread began.
+- Full spec, trace, and tests in `docs/deferred-conversational-cache-spec.md`. Also updated
+  `docs/engine-behaviour-map.md` (Caches section) and `docs/app-surface-map.md` (B2 critique cost
+  boundary), both of which had stale claims that these flows carried a cache breakpoint.

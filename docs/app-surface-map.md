@@ -678,8 +678,11 @@ and internal-provenance language for now. Corrections happen through follow-up c
 > **Cost boundary.** A full B2 critique is one provider call. A direct follow-up is also one; a
 > follow-up that actually retrieves wardrobe alternatives may use two calls, or three when
 > visual/detail verification is needed. The restricted path has a three-iteration ceiling and does
-> not run the general freeform answer-retry guards. The stable evaluator system prompt carries an
-> Anthropic cache breakpoint (and remains a normal repeated prefix on OpenAI). Debug telemetry now
+> not run the general freeform answer-retry guards. The evaluator system prompt carries **no**
+> Anthropic cache breakpoint on either `full` or `followup` (removed 2026-08-25 — `full` and
+> `followup` are different system text, so a 1h cache write on either was never read back; see
+> `docs/deferred-conversational-cache-spec.md`) and remains a normal repeated prefix on both
+> providers. Debug telemetry now
 > records provider calls, normalized input/output/cache tokens, estimated cost, and exact-result
 > cache state; the development-only telemetry disclosure shows those values. Identical request
 > payloads reuse a bounded ten-minute result cache, and concurrent duplicates share one in-flight
