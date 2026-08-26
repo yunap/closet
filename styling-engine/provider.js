@@ -544,7 +544,18 @@ function numberOrZero(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0
 }
 
-export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL } = {}) {
+// Normalizes each provider's own finish-reason vocabulary (Anthropic's `stop_reason`,
+// OpenAI's `finish_reason`) into one fact callers can trust without knowing which
+// provider answered: did the response get cut off by the token cap? This is the
+// provider's own authoritative signal — the one place that knows for certain, so
+// callers no longer need to infer truncation by inspecting response text.
+function normalizeStopReason(rawStopReason, provider) {
+  if (!rawStopReason) return null
+  if (provider === 'openai') return rawStopReason === 'length' ? 'max_tokens' : rawStopReason
+  return rawStopReason
+}
+
+export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL, stopReason = null } = {}) {
   if (!rawUsage || typeof rawUsage !== 'object') return null
   if (provider === 'openai') {
     const promptDetails = rawUsage.prompt_tokens_details || {}
@@ -556,6 +567,7 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
       totalTokens: numberOrZero(rawUsage.total_tokens),
       cacheReadInputTokens: numberOrZero(promptDetails.cached_tokens),
       cacheCreationInputTokens: 0,
+      stopReason: normalizeStopReason(stopReason, provider),
       raw: rawUsage
     }
   }
@@ -571,6 +583,7 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
     totalTokens: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
     cacheReadInputTokens,
     cacheCreationInputTokens,
+    stopReason: normalizeStopReason(stopReason, provider),
     raw: rawUsage
   }
 }
@@ -827,12 +840,15 @@ export function salvageFirstJson(raw) {
   return null
 }
 
-export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
+// `stopReason` is the provider's own authoritative finish-reason (from normalizeAiUsage) —
+// when it says 'max_tokens', trust that over the string-ending heuristic below, which exists
+// only for callers that can't supply it (e.g. mocked test responses).
+export function parseModelJson(raw, { context = '', maxTokens = null, stopReason = null } = {}) {
   const cleaned = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
   try {
     return JSON.parse(cleaned)
   } catch (err) {
-    const looksTruncated = cleaned.length > 0 && !/[}\]]$/.test(cleaned)
+    const looksTruncated = stopReason === 'max_tokens' || (cleaned.length > 0 && !/[}\]]$/.test(cleaned))
     if (looksTruncated) {
       const capNote = maxTokens ? ` (maxTokens: ${maxTokens})` : ''
       const truncationError = new Error(`Model response hit the token cap${capNote} and was truncated before valid JSON completed${context ? ` [${context}]` : ''}: ${err.message}`)
@@ -840,6 +856,11 @@ export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
       truncationError.cause = err
       throw truncationError
     }
+    // Not truncated — the model may have written valid JSON preceded/followed by narration
+    // ("I need to look more closely...\n\n{...}"). Recover it before giving up, the way every
+    // caller previously had to remember to do for themselves via salvageFirstJson.
+    const salvaged = salvageFirstJson(cleaned)
+    if (salvaged !== null) return salvaged
     throw err
   }
 }
@@ -871,7 +892,7 @@ export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, mess
   })
   return {
     text: response.content?.[0]?.text || '',
-    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
   }
 }
 
@@ -996,7 +1017,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
     })
     return {
       text: response.choices?.[0]?.message?.content || '',
-      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL, stopReason: response.choices?.[0]?.finish_reason })
     }
   }
 
@@ -1048,9 +1069,10 @@ export async function askStylistStructuredWithUsage({
       }
     })
     const text = response.choices?.[0]?.message?.content || ''
-    const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+    const stopReason = response.choices?.[0]?.finish_reason
+    const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL, stopReason })
     try {
-      return { value: parseModelJson(text, { context: name, maxTokens }), usage }
+      return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
       err.usage = usage
       throw err
@@ -1072,13 +1094,16 @@ export async function askStylistStructuredWithUsage({
   })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
   if (!toolUse?.input || typeof toolUse.input !== 'object') {
-    const err = new Error(`Model did not return the required ${name} structured response.`)
-    err.usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
+    const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
+    const capNote = usage?.stopReason === 'max_tokens' ? ` (hit the token cap, maxTokens: ${maxTokens})` : ''
+    const err = new Error(`Model did not return the required ${name} structured response${capNote}.`)
+    if (usage?.stopReason === 'max_tokens') err.isTruncation = true
+    err.usage = usage
     throw err
   }
   return {
     value: toolUse.input,
-    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
   }
 }
 

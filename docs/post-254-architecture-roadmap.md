@@ -67,6 +67,42 @@ the meaning of season applicability does not. Cross-flow, reader, direct-guidanc
 prompt tests are the ratchet. R5 remains open only for a different observed canonical-fact
 projection contradiction; this specific seasonal omission is resolved inside PR 254.
 
+**R7 live-validation update, 2026-08-25:** `thread_1787687552307` supplied the concrete defect R7's
+gate requires. The selected-piece visual composer (`routes/ai.js`, selected-anchor call) hit a
+hardcoded `maxTokens: 2000` with 33 shown pieces and was cut off mid-JSON
+(`composerUsage.outputTokens: 2000`, exactly the cap). Two independent gaps compounded it: (1)
+`askClaudeWithUsage` in `provider.js` reads `response.content` and `response.usage` but never
+`response.stop_reason`, so the provider's own explicit `max_tokens` finish reason is discarded
+before any caller sees it; (2) this call site parses with `safeJsonFromModel` (`core.js`), whose
+no-regex-match branch throws a generic `Model did not return JSON` with no truncation flag — unlike
+`parseModelJson` (`provider.js`, built for this exact tagger failure mode per its spec 26 Part 7
+comment), which already detects a body not ending in `}`/`]` and raises a tagged `isTruncation`
+error. The result: a deterministic, cheaply-identifiable truncation was misreported as generic
+model malformation and fell straight to local fallback. The whole-wardrobe "Visual wardrobe
+composer" (`routes/ai.js`, ~line 2333) shared both gaps — a fixed `maxTokens: 2200` independent of
+`requestedLimit`, parsed the same way. The atomic capsule composer (`routes/ai.js`, ~line 4053)
+already demonstrated the fix shape in this codebase: `askStylistStructuredWithUsage` (provider-
+enforced tool schema, no free-text JSON parsing) plus `maxTokens` scaled to the requested output
+size, with an explicit comment on why the ceiling must track requested count. This was a
+correctness defect narrowly scoped to (a) `provider.js`'s shared response handling discarding
+`stop_reason`, and (b) two visual-composer call sites' fixed caps and non-truncation-aware
+parsing — not a case for R7's broader provider-consolidation deferral.
+
+**Fixed 2026-08-25.** `normalizeAiUsage` now carries a cross-provider `stopReason` (Anthropic
+`stop_reason` / OpenAI `finish_reason`, normalized), threaded through `askClaudeWithUsage`,
+`askStylistWithUsage`, and `askStylistStructuredWithUsage`. `parseModelJson` trusts an explicit
+`stopReason: 'max_tokens'` over its string-ending heuristic and now also absorbs
+`salvageFirstJson`'s narration recovery internally. `safeJsonFromModel` (`core.js`) — a shallower
+duplicate of `parseModelJson` with no truncation awareness — is deleted; all ten of its former call
+sites (4 in `routes/ai.js`, 6 in `core.js`) now go through `parseModelJson`. Both visual composers
+now size `maxTokens` via one shared `visualComposerMaxTokensForOutfitCount(count)` instead of their
+own hardcoded literals, and surface `composerErrorIsTruncation`/`composerMaxTokens` in their debug
+payload. Covered by `test/parseModelJson.test.js` and `test/visualComposerMaxTokens.test.js`; full
+suite green (1448 tests). **This resolves the concrete defect** — it does not close R7 itself. R7's
+broader shortfall (direct image/Responses-API adapters and nested-call attribution remaining
+specialized outside `provider.js`) is unchanged and intentionally untouched; R7 stays
+**Concrete-defect only** as a standing gate for the next one, the same as before this fix.
+
 ## Candidate-set reconciliation in plain terms
 
 The remaining selectors do not justify a universal candidate module:
