@@ -28,7 +28,7 @@ const { resolveOccasionProfile } = await import('../styling-engine/occasions.js'
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
-const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
+const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -544,7 +544,7 @@ test('a home-specific plan slot enforces the garment owner exclusion before mode
 // shared workbench (consumed by both the freeform plan_outfit_set tool loop and the atomic
 // seasonal-capsule composer via composeCapsulePlanOnce) now projects the canonical rule text
 // verbatim, gated to only the slots that can actually form a layering pair.
-test('plan/capsule slot requirements project the canonical layer-construction rule only where the roster can actually layer', async () => {
+test('plan/capsule slot requirements project the canonical layer-construction and layer-direction rules only where the roster can actually layer', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'layering top one', occasions: ['casual'], formality: 'everyday' })
   const secondTopId = insertPiece({ category: 'top', name: 'layering top two', occasions: ['casual'], formality: 'everyday' })
@@ -561,7 +561,11 @@ test('plan/capsule slot requirements project the canonical layer-construction ru
   assert.ok(allowed.has(topId) && allowed.has(secondTopId), 'fixture must supply two eligible tops for the gate to fire')
   assert.ok(
     workbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
-    'the canonical rule text must appear verbatim, not restated'
+    'the canonical construction rule text must appear verbatim, not restated'
+  )
+  assert.ok(
+    workbench.slots[0].submission_requirements.includes(layerDirectionPromptRule()),
+    'the canonical direction rule text must appear verbatim, not restated'
   )
 
   // Control: only one top eligible in this slot — no layering pair is possible, so the projection
@@ -578,7 +582,11 @@ test('plan/capsule slot requirements project the canonical layer-construction ru
   const loneWorkbench = await buildPlanSlotWorkbench(loneSlots, { allPieces: lonePieces, question: 'a casual plan' })
   assert.ok(
     !loneWorkbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
-    'a slot with no layering-capable pair must not carry the projection'
+    'a slot with no layering-capable pair must not carry the construction projection'
+  )
+  assert.ok(
+    !loneWorkbench.slots[0].submission_requirements.includes(layerDirectionPromptRule()),
+    'a slot with no layering-capable pair must not carry the direction projection'
   )
 })
 
@@ -588,7 +596,7 @@ test('plan/capsule slot requirements project the canonical layer-construction ru
 // is 'outerwear', not 'top'. ROLE_CATEGORY_EXPECTATIONS.layer_top explicitly allows an outerwear
 // category to serve that role (see evaluateOutfitRoles' role/category check), and
 // wardrobeSupportsLayeringPair reuses that same map — this proves the workbench gate now agrees.
-test('plan/capsule slot requirements project the layer-construction rule for an outerwear layer_top + primary_top pair', async () => {
+test('plan/capsule slot requirements project the layer-construction and layer-direction rules for an outerwear layer_top + primary_top pair', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'primary top candidate', occasions: ['casual'], formality: 'everyday' })
   const outerwearId = insertPiece({ category: 'outerwear', name: 'layering jacket', occasions: ['casual'], formality: 'everyday' })
@@ -605,7 +613,11 @@ test('plan/capsule slot requirements project the layer-construction rule for an 
   assert.ok(allowed.has(topId) && allowed.has(outerwearId), 'fixture must supply exactly one top and one outerwear piece for the gate to fire')
   assert.ok(
     workbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
-    'a single top + single outerwear piece is a real layer_top(outerwear) + primary_top pair and must carry the projection'
+    'a single top + single outerwear piece is a real layer_top(outerwear) + primary_top pair and must carry the construction projection'
+  )
+  assert.ok(
+    workbench.slots[0].submission_requirements.includes(layerDirectionPromptRule()),
+    'a single top + single outerwear piece is a real layer_top(outerwear) + primary_top pair and must carry the direction projection'
   )
 })
 
@@ -6305,8 +6317,18 @@ test('the composition brief asks the rotation to demonstrate functions, not just
   assert.match(brief, /a piece that cannot stand alone shown over a base/)
   assert.match(brief, /a specialised shoe in a look that genuinely calls for it/)
   assert.match(brief, /uses almost every ID while never showing a whole function/)
-  assert.match(brief, /A top may be worn over a dress as an overlay, or under a dress as a base layer/)
-  assert.match(brief, /garment truth explicitly supports that direction/)
+})
+
+// Prompt-responsibility census follow-up: this brief used to carry its own private "TOP + DRESS
+// LAYERING" paragraph, independently worded from evaluateLayerDirections (the canonical direction
+// verdict). It is deleted now that layerDirectionPromptRule() reaches this same composer through
+// each layering-capable slot's submission_requirements (see "Follow every submission_requirement
+// literally" above) and the live workbench test in this file that proves the projection fires.
+test('the composition brief no longer restates layer direction locally', () => {
+  const brief = capsulePlanCompositionSystemPrompt()
+  assert.doesNotMatch(brief, /TOP \+ DRESS LAYERING/)
+  assert.doesNotMatch(brief, /A top may be worn over a dress as an overlay/)
+  assert.match(brief, /Follow every submission_requirement literally/)
 })
 
 test('the per-run composition guidance names the functions this roster actually bought', async () => {

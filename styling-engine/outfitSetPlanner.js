@@ -48,6 +48,7 @@ import {
   evaluateBaseLayerCandidate,
   evaluateWearableOutfit,
   layerConstructionPromptRule,
+  layerDirectionPromptRule,
   wardrobeSupportsLayeringPair,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
@@ -3614,6 +3615,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // count here, since that would silently exclude outerwear-as-layer_top candidates.
     if (wardrobeSupportsLayeringPair(allowed)) {
       requirements.push(layerConstructionPromptRule())
+      requirements.push(layerDirectionPromptRule())
     }
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
       requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')

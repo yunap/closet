@@ -10,7 +10,10 @@ perl: warning: Falling back to the standard locale ("C").
 **Status:** Active — Stage 1 and Slices 0–7 complete as of 2026-08-25. The product-policy
 questions that had blocked the final Slice 1 and Slice 3 consumers are ratified in §7. **Amended
 2026-08-26** to add the sleeve layer-pair construction verdict, a seventh layering/base-layer
-contract found missing by a live-incident census (§4.5) and closed the same day.
+contract found missing by a live-incident census (§4.5) and closed the same day. **Amended
+2026-08-26 again** for a broader prompt-responsibility census's two findings: a
+`layerDirectionPromptRule()` projection closing the layer-direction gap the same way (§4.5), and a
+verified — not merely suspected — evaluator duplication fix in `OUTFIT_EVALUATOR_GATE_SYSTEM` (§4.5).
 
 **Audit baseline:** `c1693a8e8f76881d5cb3d87c173ea21fed6ccb53` (2026-08-24, PR 253 main).
 
@@ -325,7 +328,7 @@ questions with separate fact/verdict owners and one composed wearable verdict.
 | Dependent status: does this piece need something beneath it? | Structured `needs_base` through `pieceRequiresBaseLayer`; prompt lines are projections | Only explicit `yes` is dependent; unset and explicit `no` preserve the independent default | `canonical` reader in `attributes.js`; candidate, capsule, fallback, rendering, and swap decisions consume it |
 | Independent coverage: can this top provide usable torso coverage by itself? | `evaluateBaseLayerCandidate` | Capsule may reserve `unknown`; known dependence, sheer/open opacity, or loose fit is incompatible | `canonical` typed verdict in `outfitValidation.js`; flow policy decides whether `unknown` may reserve capacity or requires sight |
 | Pair mechanics: can base A physically sit beneath dependent piece B? | `evaluateRequiredBaseLayers`, consumed by plan submission and freeform proposal/swap validation; visual composer prompt projects the same close-fit values | Missing opacity or fit returns `unknown` with `sightRequired: both` | `canonical` typed pair/outfit verdict consuming the structured coverage verdict |
-| Layer direction: which piece may sit over/under which? | `evaluateLayerDirections`, consuming `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, dependency, role and category facts | Missing direction is `unknown`; both photos are required, after which the model may make a provisional one-turn judgment | `canonical` typed verdict in `outfitValidation.js`; plan submission, freeform proposal, and participating slot swaps consume it |
+| Layer direction: which piece may sit over/under which? | `evaluateLayerDirections`, consuming `pieceHasExplicitTopLayerEvidence`, `pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, dependency, role and category facts; projected pre-composition by `layerDirectionPromptRule()` (added 2026-08-26) | Missing direction is `unknown`; both photos are required, after which the model may make a provisional one-turn judgment | `canonical` typed verdict in `outfitValidation.js`; plan submission, freeform proposal, and participating slot swaps consume *validation*; visual composer, `propose_outfit`, and the shared plan/capsule workbench now also cite the *projection* pre-composition, replacing a private "TOP + DRESS LAYERING" paragraph `capsulePlanCompositionSystemPrompt` had invented independently |
 | Sleeve construction: does this pair's own sleeve bulk physically conflict when layered, independent of direction? | `evaluateLayerPairConstruction` / `evaluateLayerPairConstructionFor`, consuming `pieceSleeveLayerEvidence` (`attributes.js`: `sleeve_length`, `sleeve_shape`, `fabric_weight`); projected pre-composition by `layerConstructionPromptRule()` | No cuff overlap possible (short/sleeveless base) is deterministically compatible; both cuffed with unrecorded shape/weight is `unknown` and stays an advisory finding, not a sight-forcing gate — see below | `canonical` typed pair verdict in `outfitValidation.js`, added 2026-08-26; `propose_outfit`, plan submission, and capsule composition inherit *validation* through the same `includeLayerDirections` opt-in as layer direction, and now also cite the canonical *prompt projection* before composing (visual composer, `propose_outfit` tool description, shared plan/capsule slot workbench); `garment_fact` projects the identical verdict instead of restating thresholds in prose |
 | Sight requirement: must photos be inspected? | `evaluateRequiredBaseLayers`, `evaluateLayerDirections`, and `evaluateWearableOutfit`; tool/plan adapters enact it | Shared results name required IDs/pairs; disposition still varies when photos are unavailable | Canonical evidence requirement in `outfitValidation.js`; unavailable-evidence disposition is roadmap R4. Sleeve construction is a deliberate exception — see below |
 | Visual success: do neckline, bulk, texture, color, and proportion work? | Visual composer and stylist model | Not deterministically inferable | Model-owned judgment; never converted into keyword taste rules |
@@ -384,6 +387,56 @@ assigned to an `outerwear`-category piece (a jacket over a top), since `outerwea
 one owner instead of two independently-maintained lists. `outfit_structure.test.js` unit-tests the
 helper; `plan_outfit_set.test.js` adds the single-top + single-outerwear live fixture the original
 gate silently dropped.
+
+**Layer-direction projection, 2026-08-26.** A broader prompt-responsibility census (post-#264) found
+`evaluateLayerDirections` was the sole exception among the layering verdict family: validated
+post-composition for `propose_outfit`/plan submission, but never projected pre-composition anywhere,
+and `capsulePlanCompositionSystemPrompt` had filled that gap with a private "TOP + DRESS LAYERING"
+paragraph independently worded from the actual evidence sources (`pieceHasExplicitTopLayerEvidence`,
+`pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, `pieceRequiresBaseLayer`).
+`layerDirectionPromptRule()` closes it, wired at the same three points as `layerConstructionPromptRule()`
+(visual composer, `propose_outfit`, plan/capsule workbench, gated by the same `wardrobeSupportsLayeringPair()`
+supply check); the private paragraph is deleted. No disposition change: `evaluateLayerDirections`'
+`unknown`/sight-required behavior is untouched, only its pre-composition visibility changed.
+
+**Projection-accuracy correction, same day.** The first `layerDirectionPromptRule()` omitted
+`pieceRequiresBaseLayer` as a direction signal — the role-aware `layer_top + primary_top` branch
+treats a dependent `layer_top` (`needs_base: yes`) as evidence it sits *over* its primary top, with
+no overlay text required (`evidence.source: 'dependent_layer_requires_base'`). It also conflated
+relationship with direction: "two pieces merely appearing together is not evidence of a layering
+relationship" is false for a role-aware `layer_top + primary_top` pair, where role assignment already
+establishes the relationship — only the direction can be unknown. The projection now says role/
+category assignment may establish that a pairing is intended to layer, while construction/intent/
+dependency evidence (including `needs_base` on either the added piece or the dress) decides the
+direction. `outfit_structure.test.js` ties the prose directly to the same `needs_base`-only fixture
+`propose_outfit.test.js` pins for the executable verdict, so a future prose edit that silently drops
+the branch fails even if `evaluateLayerDirections` itself is untouched.
+
+**Second projection-accuracy correction, same day.** The rewrite above still over-claimed: it said
+role/category assignment never decides direction by itself, but that is false for an
+outerwear-category `layer_top` — `categoryGroup === 'outerwear'` alone resolves
+`layer_top_over_primary_top` (`evidence.source: 'outerwear_category'`), no notes or dependency
+required, unlike a `layer_top` role on an ordinary top (relationship only). The projection now
+distinguishes the two explicitly. Same test pattern: a behavioral fixture in
+`propose_outfit.test.js` and a matching prose-content check in `outfit_structure.test.js`.
+
+**Evaluator register/footwear verification, 2026-08-26.** The same census flagged
+`OUTFIT_EVALUATOR_GATE_SYSTEM` (the selected-piece text/ideal composer's post-composition audit,
+`styling-engine/core.js`'s `composeStructuredOutfitsForPiece`) for independently re-deriving
+register-ceiling and footwear-suitability semantics in free prose. Call-chain tracing confirmed this
+is real, not merely wording overlap: every supporting candidate reaching that evaluator already
+passed `registerCeilingVerdict`/`footwearComfortVerdict` (via `selectAutomaticUseCandidatesForOutfitGeneration`
+→ `evaluateAutomaticUsePiecePool` upstream), but the **selected anchor** bypasses automatic-use
+eligibility by ratified 2026-08-25 design and so never runs those checks — the evaluator's prose was
+the only place they could apply to it, and free-form "clearly exceeds"/keyword judgment ("stilettos,
+delicate sandals, high heels") can reach a different verdict than the canonical functions on the same
+piece. Fixed narrowly: `anchorRegisterFootwearComputedChecks()` (`core.js`) computes the anchor's own
+verdict server-side and supplies it as a labeled computed line; the evaluator's prose now defers to
+that line instead of re-deriving suitability, and is told explicitly not to flag register/footwear
+absent one (since every other candidate is already guaranteed compliant). `EDITORIAL_NEW_PIECES_SYSTEM`'s
+near-identical-sounding doctrine was traced separately and left untouched — it operates on
+conceptual, not-yet-tagged pieces with no fields to compute a verdict from, so no canonical owner is
+possible there; that overlap is legitimate, not duplication.
 
 **Remaining gap:** Pair mechanics, dependency validation, recovery, and capsule capacity now consume
 the shared verdict family. The unresolved edge is disposition when a required visual fact is

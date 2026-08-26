@@ -3,7 +3,7 @@
 // add to it, and `npm test` (scratch/check_style_claims.js) enforces that prompts align with it.
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
-import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
+import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
@@ -518,8 +518,7 @@ Keep only outfits that pass these checks:
 - has one controlled visual tension or graphic decision
 - label strength honestly: signature, strong, usable, experimental
 - adapt checks to the requested occasion, season, and mood (e.g. if the user describes hot weather or summer, do not reject lightweight shorts/sandals/skirts outfits as "too casual" or "lacking structure" if they make styling sense for the heat).
-- reject (or flag in the rejected list) any outfit whose formality clearly exceeds the stated occasion's register (e.g. a cocktail/dressy piece proposed for a gallery, museum, or daytime-casual occasion).
-- reject (or flag) any outfit with stilettos, delicate sandals, or high heels when the request implies a walking-heavy or hiking activity.
+- Every supporting candidate already passed the wardrobe's register and footwear eligibility checks before reaching you — do not re-derive formality-vs-occasion or footwear-vs-activity suitability yourself. If a "Selected garment register check (computed)" or "Selected garment footwear check (computed)" line is supplied, it is the one piece those checks could not run on automatically (the user chose it directly); reject (or flag in the rejected list) any outfit built around that flagged issue for the stated reason. Absent such a line, do not reject or flag an outfit on register or footwear grounds.
 
 STYLE CONSTITUTION:
 ${c.body_contract}
@@ -1257,6 +1256,7 @@ Composition rules:
 - Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print's ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.
 ${requiredBaseLayerPromptRule()}
 ${layerConstructionPromptRule()}
+${layerDirectionPromptRule()}
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
