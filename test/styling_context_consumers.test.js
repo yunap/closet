@@ -222,7 +222,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume the composed wearable verdict', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateWearableOutfit, layerConstructionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
   assert.match(validationSource, /includeLayerDirections/)
@@ -251,10 +251,12 @@ test('model-visible structure rules project from the shared validator owner', ()
 // visual composer and propose_outfit, and source wiring for the plan/capsule workbench (its live
 // projection and negative-control gating are proven directly in plan_outfit_set.test.js, since
 // building it needs DB fixtures this file does not set up).
-test('every active layering-capable composer projects the canonical layer-construction rule, not a local restatement', async () => {
-  const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
-  const ruleText = layerConstructionPromptRule()
-  assert.ok(ruleText.length > 0)
+test('every active layering-capable composer projects the canonical layer-construction and layer-direction rules, not a local restatement', async () => {
+  const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const constructionRuleText = layerConstructionPromptRule()
+  const directionRuleText = layerDirectionPromptRule()
+  assert.ok(constructionRuleText.length > 0)
+  assert.ok(directionRuleText.length > 0)
 
   // Selected/whole visual composer: WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM backs both
   // generateWholeWardrobeOutfitsVisualInternal and the selected-anchor visual composer
@@ -262,8 +264,12 @@ test('every active layering-capable composer projects the canonical layer-constr
   const { buildPrompts } = await import('../styling-engine/prompts.js')
   const built = buildPrompts({})
   assert.ok(
-    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(ruleText),
-    'the visual composer must cite the canonical rule verbatim'
+    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(constructionRuleText),
+    'the visual composer must cite the canonical construction rule verbatim'
+  )
+  assert.ok(
+    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(directionRuleText),
+    'the visual composer must cite the canonical direction rule verbatim'
   )
 
   // Freeform propose_outfit: the tool description is static (cache-stable), so the projection is
@@ -277,19 +283,27 @@ test('every active layering-capable composer projects the canonical layer-constr
   const proposeOutfitDescription = toolSource.slice(proposeOutfitStart, proposeOutfitEnd)
   assert.ok(
     proposeOutfitDescription.includes('${layerConstructionPromptRule()}'),
-    'propose_outfit must cite the canonical rule by reference, not restate it'
+    'propose_outfit must cite the canonical construction rule by reference, not restate it'
+  )
+  assert.ok(
+    proposeOutfitDescription.includes('${layerDirectionPromptRule()}'),
+    'propose_outfit must cite the canonical direction rule by reference, not restate it'
   )
 
   // Plan and seasonal capsule composition share one workbench builder (buildPlanSlotWorkbench);
   // composeCapsulePlanOnce (routes/ai.js) passes its per-slot submission_requirements straight
   // into the atomic capsule composer's prompt payload, so one wiring point covers both.
   assert.match(plannerSource, /requirements\.push\(layerConstructionPromptRule\(\)\)/)
+  assert.match(plannerSource, /requirements\.push\(layerDirectionPromptRule\(\)\)/)
   assert.match(routeSource, /instructions: workbench\.instructions/, 'capsule composer must forward the workbench instructions carrying the projection')
   assert.match(routeSource, /slots: workbench\.slots/, 'capsule composer must forward the per-slot submission_requirements carrying the projection')
 
   // Guard against the thing this fix specifically warned against: no separate prompt should
-  // restate the sleeve/fabric thresholds in its own words instead of citing the shared rule.
+  // restate the sleeve/fabric thresholds, or the top/dress direction rule, in its own words
+  // instead of citing the shared rule.
   assert.doesNotMatch(routeSource, /sleeve_type/, 'no prompt may cite the retired sleeve_type field')
+  assert.doesNotMatch(routeSource, /TOP \+ DRESS LAYERING/, 'the private capsule direction paragraph must stay deleted')
+  assert.doesNotMatch(routeSource, /A top may be worn over a dress as an overlay/, 'no prompt may restate layer direction locally')
 })
 
 test('outfit-producing flows share one normalized result envelope', () => {

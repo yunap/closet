@@ -377,6 +377,16 @@ export function evaluateLayerDirections(pieces = [], { roleAware = false } = {})
   }
 }
 
+// Prompt projection of the executable contract, matching requiredBaseLayerPromptRule's pattern.
+// Describes the evidence `evaluateLayerDirections` actually reads (explicit overlay/underlayer
+// notes, an outerwear piece's outer-layer role, or a dress written as worn over a top) without
+// hard-coding which specific evidence types apply in a category-only vs role-aware caller — both
+// remain true statements either way. Composers cite this instead of writing their own direction
+// rule; the mechanical verdict, not the prompt, decides what counts as evidence.
+export function layerDirectionPromptRule() {
+  return `- Layer direction: whether an added top or outerwear piece sits over or under a dress or another top is decided by recorded construction/intent evidence — explicit garment notes describing a piece as an overlay or a base/underlayer, an outerwear piece's outer-layer role, or a dress explicitly meant to be worn over a top. Two pieces merely appearing together in the same outfit is not itself evidence of a layering relationship; do not invent one. Missing direction evidence is unknown, not proof either way: inspect both garments before deciding how they layer.`
+}
+
 function layerConstructionFinding(code, message, severity, evidence = {}) {
   return {
     code,

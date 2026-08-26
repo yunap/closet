@@ -84,7 +84,7 @@ import {
   parseModelJson,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
-import { pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
+import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
 import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
@@ -113,7 +113,10 @@ import {
   getAcceptedFeedbackSynthesisMemory,
   outfitStylisticStrengthScore,
   sortByStylisticStrength,
-  weatherProfileFromContext
+  weatherProfileFromContext,
+  footwearComfortVerdict,
+  registerCeilingVerdict,
+  resolveRegisterCeiling,
 } from './rules.js'
 
 function withSavedBoardRendererMemory(prompt, pieces = []) {
@@ -1034,7 +1037,35 @@ export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season
   return lines.join('\n').trim()
 }
 
-export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [] }) {
+// Prompt-responsibility census verification (2026-08-26): OUTFIT_EVALUATOR_GATE_SYSTEM audits real
+// tagged pieces, unlike the purely conceptual EDITORIAL_NEW_PIECES_SYSTEM. The selected anchor
+// bypasses automatic-use eligibility (ratified 2026-08-25), so it is the one piece the evaluator
+// sees that never ran registerCeilingVerdict/footwearComfortVerdict — every supporting candidate
+// already did, via selectAutomaticUseCandidatesForOutfitGeneration upstream. Computing the anchor's
+// own verdicts here, as a directly testable pure function, and citing the result closes the one case
+// where the evaluator's free-prose judgment could genuinely diverge from the canonical verdict on
+// the same request. Returns '' when neither check finds an issue — most requests.
+export function anchorRegisterFootwearComputedChecks({ selectedPiece, occasion, activity = '', mood = '', question = '', occasionProfile = null, activityProfile = null }) {
+  const registerCeilingRank = formalityRank(resolveRegisterCeiling({
+    occasion, activity, mood, request: question, occasionProfile, activityProfile,
+  }))
+  const registerVerdict = registerCeilingVerdict(selectedPiece, registerCeilingRank, { occasion })
+  const footwearVerdict = footwearComfortVerdict(
+    selectedPiece,
+    activityProfile?.rules?.excluded_heel_heights || [],
+    activityProfile?.rules?.excluded_walk_support || [],
+  )
+  return [
+    registerVerdict.verdict === 'exclude'
+      ? `Selected garment register check (computed): its formality "${registerVerdict.formality}" exceeds the occasion's register ceiling.`
+      : '',
+    footwearVerdict.verdict === 'exclude'
+      ? `Selected garment footwear check (computed): its ${footwearVerdict.dimension} value "${footwearVerdict.value}" is unsuitable for this activity.`
+      : '',
+  ].filter(Boolean).join('\n')
+}
+
+export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [], activity = '', occasionProfile = null, activityProfile = null }) {
   const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
   const candidateText = buildOutfitGenerationCandidateText(rankedCandidates)
   const userPayload = [
@@ -1071,6 +1102,9 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
 
   let gated = { outfits: normalized, rejected: [], skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }
   try {
+    const anchorComputedChecks = anchorRegisterFootwearComputedChecks({
+      selectedPiece, occasion, activity, mood, question, occasionProfile, activityProfile,
+    })
     const rawGate = await askStylist({
       system: prompts.OUTFIT_EVALUATOR_GATE_SYSTEM,
       maxTokens: 1400,
@@ -1081,6 +1115,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
         `Season: ${season}`,
         mission && mission !== 'mix' ? `Mission: ${mission}` : '',
         mood ? `Mood: ${mood}` : '',
+        anchorComputedChecks,
         `Composer JSON to audit:\n${JSON.stringify({ outfits: normalized, skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }, null, 2)}`
       ].filter(Boolean).join('\n\n') }] }]
     })

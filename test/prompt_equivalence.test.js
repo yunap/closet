@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
-import { layerConstructionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
+import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
 
 const snapshot = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'test/fixtures/prompts_yuna_snapshot.json'), 'utf8'))
 
@@ -95,6 +95,29 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         `${requiredBaseLayerPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`,
         `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
+      )
+    }
+    // 2026-08-26 follow-up: the same census verification pass found the direction verdict
+    // (evaluateLayerDirections) had no prompt projection at all, and one composer
+    // (capsulePlanCompositionSystemPrompt) had invented its own private restatement instead.
+    // layerDirectionPromptRule() is the projection; same citation pattern as the two rules above.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`,
+        `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n${layerDirectionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
+      )
+    }
+    // 2026-08-26 verification pass: traced OUTFIT_EVALUATOR_GATE_SYSTEM's actual call chain
+    // (composeStructuredOutfitsForPiece) and confirmed its register/footwear prose could diverge
+    // from registerCeilingVerdict/footwearComfortVerdict on the selected anchor — the one piece
+    // that bypasses automatic-use eligibility and so never runs those checks upstream. Every
+    // supporting candidate already does. Replaced the free-derivation prose with an instruction to
+    // cite a server-computed finding for the anchor specifically, rather than re-deriving register
+    // or footwear suitability for any piece from scratch.
+    if (key === 'OUTFIT_EVALUATOR_GATE_SYSTEM') {
+      expected = expected.replace(
+        '- reject (or flag in the rejected list) any outfit whose formality clearly exceeds the stated occasion\'s register (e.g. a cocktail/dressy piece proposed for a gallery, museum, or daytime-casual occasion).\n- reject (or flag) any outfit with stilettos, delicate sandals, or high heels when the request implies a walking-heavy or hiking activity.',
+        '- Every supporting candidate already passed the wardrobe\'s register and footwear eligibility checks before reaching you — do not re-derive formality-vs-occasion or footwear-vs-activity suitability yourself. If a "Selected garment register check (computed)" or "Selected garment footwear check (computed)" line is supplied, it is the one piece those checks could not run on automatically (the user chose it directly); reject (or flag in the rejected list) any outfit built around that flagged issue for the stated reason. Absent such a line, do not reject or flag an outfit on register or footwear grounds.'
       )
     }
     // 2026-08-19 owner amendment: a direct tuckability question may reason across evidence when a

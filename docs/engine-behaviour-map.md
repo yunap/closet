@@ -11,7 +11,9 @@ term) alongside the already-documented hot-weather clause, finding one live gap 
 **amended 2026-08-26** to remove an eighth, message-level image-manifest cache on the whole-wardrobe
 composer (measured 0 reads against 30-49k written tokens on every sampled call) — see
 `docs/deferred-conversational-cache-spec.md`; **amended 2026-08-26** again to add the new
-`evaluateLayerPairConstruction` sleeve layer-pair verdict and its `evaluateWearableOutfit` stage.
+`evaluateLayerPairConstruction` sleeve layer-pair verdict and its `evaluateWearableOutfit` stage;
+**amended 2026-08-26** once more for `layerDirectionPromptRule()` and the verified
+`OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
@@ -1380,6 +1382,41 @@ map) silently never received the projection. Fixed by exporting `ROLE_CATEGORY_E
 validator can no longer independently define who is eligible to layer. `outfit_structure.test.js`
 covers the helper directly (outerwear+top, top+dress, two tops, and the negative single-piece cases);
 `plan_outfit_set.test.js` adds the live outerwear-layer_top fixture the original gate missed.
+
+**[prompt-projection follow-up, 2026-08-26] Layer direction was the one layering verdict with no
+prompt projection at all, and one composer had quietly filled the gap itself.**
+`evaluateLayerDirections` was validated post-composition for `propose_outfit` and plan submission,
+but no composer received pre-composition guidance about which piece sits over/under which — until
+`capsulePlanCompositionSystemPrompt` invented a private "TOP + DRESS LAYERING" paragraph,
+independently worded from the actual evidence sources (`pieceHasExplicitTopLayerEvidence`,
+`pieceHasExplicitBaseLayerEvidence`, `pieceDressSupportsUnderlayer`, `pieceRequiresBaseLayer`) and
+covering only the dress case. Fixed with `layerDirectionPromptRule()`, describing the executable
+contract without inventing new thresholds, wired at the same three points as
+`layerConstructionPromptRule()` (visual composer, `propose_outfit`, plan/capsule workbench — gated by
+the same `wardrobeSupportsLayeringPair()` supply check) and deleting the private paragraph. Disposition
+is unchanged: `evaluateLayerDirections`'s `unknown`/sight-required behavior was not touched, only its
+pre-composition visibility.
+
+**[verified duplication, 2026-08-26] `OUTFIT_EVALUATOR_GATE_SYSTEM` really could diverge from the
+canonical register/footwear verdicts — traced, not assumed.** Call chain:
+`composeStructuredOutfitsForPiece` (`core.js`) is reached only from the selected-piece ideal/missing-
+piece branch of `generateOutfitsForPieceInternal`. Its supporting candidates come from
+`selectAutomaticUseCandidatesForOutfitGeneration` → `evaluateAutomaticUsePiecePool`, so they already
+passed `registerCeilingVerdict`/`footwearComfortVerdict` before the composer ever sees them — the
+evaluator's prose could never actually disagree with the canonical verdict for those. The selected
+anchor is different: it bypasses automatic-use eligibility by ratified 2026-08-25 design (the whole
+point of an anchor), so it never runs those checks anywhere upstream, and every audited outfit must
+include it (`evaluateOutfitRoles`'s sibling audit criterion "includes the selected garment"). The
+evaluator's free prose ("clearly exceeds", "stilettos, delicate sandals, high heels") was therefore
+the only place register/footwear suitability was ever decided for the anchor, using vaguer criteria
+than the mechanical functions (no `walk_support` dimension at all, keyword shoe-name matching instead
+of `heel_height`). Fixed by computing the anchor's own verdicts server-side
+(`anchorRegisterFootwearComputedChecks()`, `core.js`) and citing the result; the evaluator no longer
+re-derives either semantic and is told not to flag register/footwear absent a computed line, since
+every other candidate is already guaranteed compliant. `EDITORIAL_NEW_PIECES_SYSTEM`'s near-identical
+doctrine was traced separately and left alone: it reasons about conceptual, not-yet-tagged pieces
+with no fields to compute a verdict from, so there is no canonical owner it could cite — legitimate
+overlap, not duplication.
 
 **[owner-ratified shared-composer scope, 2026-08-19] Wear mechanics and renderer instructions are
 global; comparison pressure is not universal.** Evidence labels, the explicit

@@ -13,6 +13,7 @@ const {
   ownedLooksSimilarToArchetype,
   anchorFidelityInstructions,
   editorialImagePrompt,
+  anchorRegisterFootwearComputedChecks,
 } = await import('../styling-engine/core.js')
 const { buildPieceText } = await import('../styling-engine/rules.js')
 
@@ -102,6 +103,54 @@ test('anchor fidelity falls back to name/notes when no column is tagged', () => 
   assert.match(rules, /short-sleeved/)
   assert.match(rules, /fabric character/)
   assert.match(rules, /relaxed\/boxy/)
+})
+
+// Prompt-responsibility census verification (2026-08-26): OUTFIT_EVALUATOR_GATE_SYSTEM's register/
+// footwear prose could diverge from registerCeilingVerdict/footwearComfortVerdict because the
+// selected anchor bypasses automatic-use eligibility and so never runs those checks upstream. This
+// proves the replacement — computing the anchor's own verdicts server-side — actually produces the
+// finding, using the SAME resolvers (resolveOccasionProfile/resolveActivityProfile) the rest of the
+// app resolves real occasion/activity context from, not a hand-rolled fixture shape.
+test('anchorRegisterFootwearComputedChecks flags a selected garment the canonical verdicts would exclude', async () => {
+  const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+
+  const casualOccasionProfile = resolveOccasionProfile('casual', '')
+  assert.equal(casualOccasionProfile.register_ceiling, 'everyday', 'fixture depends on this ceiling')
+  const hikingActivityProfile = resolveActivityProfile({ activity: 'hiking' })
+  assert.ok(hikingActivityProfile.rules?.excluded_heel_heights?.length, 'fixture depends on hiking excluding some heel heights')
+
+  // A dressy selected piece for a casual occasion — the canonical register ceiling would exclude it.
+  const dressyAnchor = { id: 401, name: 'silk cocktail blouse', category: 'top', formality: 'dressy' }
+  const registerFinding = anchorRegisterFootwearComputedChecks({
+    selectedPiece: dressyAnchor,
+    occasion: 'casual',
+    occasionProfile: casualOccasionProfile,
+  })
+  assert.match(registerFinding, /Selected garment register check \(computed\)/)
+  assert.match(registerFinding, /dressy/)
+
+  // A high-heel selected shoe for a hiking activity — the canonical footwear verdict would exclude it.
+  const heelAnchor = { id: 402, name: 'stiletto pump', category: 'shoes', heel_height: 'high', walk_support: 'low' }
+  const footwearFinding = anchorRegisterFootwearComputedChecks({
+    selectedPiece: heelAnchor,
+    occasion: 'casual',
+    activity: 'hiking',
+    activityProfile: hikingActivityProfile,
+  })
+  assert.match(footwearFinding, /Selected garment footwear check \(computed\)/)
+
+  // A compliant anchor produces no finding at all — most requests hit this path, and the evaluator
+  // must not be told to reject/flag on register or footwear grounds absent a computed line.
+  const compliantAnchor = { id: 403, name: 'cotton tee', category: 'top', formality: 'everyday' }
+  assert.equal(
+    anchorRegisterFootwearComputedChecks({
+      selectedPiece: compliantAnchor,
+      occasion: 'casual',
+      occasionProfile: casualOccasionProfile,
+    }),
+    ''
+  )
 })
 
 test('the editorial anchor description is the shared wardrobe truth text', () => {
