@@ -144,6 +144,23 @@ test('layerDirectionPromptRule names the needs_base dependency branch and does n
   assert.equal(result.pairs[0].evidence.source, 'dependent_layer_requires_base')
 })
 
+// PR review: the prose must distinguish a layer_top role alone (relationship, not direction) from
+// an outerwear-category layer_top (direction evidence on its own — categoryGroup === 'outerwear'
+// resolves layer_top_over_primary_top with no notes or dependency needed). Checked beside the same
+// outerwear-only fixture propose_outfit.test.js pins for the executable verdict.
+test('layerDirectionPromptRule names outerwear category as direction evidence on its own', () => {
+  const rule = layerDirectionPromptRule()
+  assert.match(rule, /outerwear-category piece is itself direction evidence/)
+  assert.match(rule, /a layer_top role establishes that a pairing is intended to layer together, but does not by itself decide/)
+
+  const result = evaluateLayerDirections([
+    { id: 1, role: 'primary_top', category: 'top' },
+    { id: 2, role: 'layer_top', category: 'outerwear' },
+  ], { roleAware: true })
+  assert.equal(result.pairs[0].direction, 'layer_top_over_primary_top')
+  assert.equal(result.pairs[0].evidence.source, 'outerwear_category')
+})
+
 test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {
   assert.equal(pieceRequiresBaseLayer({ needs_base: 'yes' }), true)
   assert.equal(pieceRequiresBaseLayer({ needs_base: ' YES ' }), true)

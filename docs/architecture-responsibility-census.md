@@ -412,6 +412,14 @@ direction. `outfit_structure.test.js` ties the prose directly to the same `needs
 `propose_outfit.test.js` pins for the executable verdict, so a future prose edit that silently drops
 the branch fails even if `evaluateLayerDirections` itself is untouched.
 
+**Second projection-accuracy correction, same day.** The rewrite above still over-claimed: it said
+role/category assignment never decides direction by itself, but that is false for an
+outerwear-category `layer_top` — `categoryGroup === 'outerwear'` alone resolves
+`layer_top_over_primary_top` (`evidence.source: 'outerwear_category'`), no notes or dependency
+required, unlike a `layer_top` role on an ordinary top (relationship only). The projection now
+distinguishes the two explicitly. Same test pattern: a behavioral fixture in
+`propose_outfit.test.js` and a matching prose-content check in `outfit_structure.test.js`.
+
 **Evaluator register/footwear verification, 2026-08-26.** The same census flagged
 `OUTFIT_EVALUATOR_GATE_SYSTEM` (the selected-piece text/ideal composer's post-composition audit,
 `styling-engine/core.js`'s `composeStructuredOutfitsForPiece`) for independently re-deriving

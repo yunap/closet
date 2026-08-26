@@ -1409,6 +1409,14 @@ evidence (including `needs_base` on either the added piece or the dress) decides
 `outfit_structure.test.js` pins the prose against the same `needs_base`-only fixture
 `propose_outfit.test.js` uses for the executable verdict.
 
+**[second projection-accuracy correction, 2026-08-26 same day] The fix above still over-claimed.**
+It said role/category assignment never decides direction by itself — false for an
+outerwear-category `layer_top`: `categoryGroup === 'outerwear'` alone resolves
+`layer_top_over_primary_top` (`evidence.source: 'outerwear_category'`), no notes or dependency
+required, unlike a `layer_top` role on an ordinary top (relationship only, direction still unknown
+without other evidence). The projection now distinguishes the two explicitly, with the same
+behavioral-fixture-plus-prose-check test pattern as the `needs_base` correction above.
+
 **[verified duplication, 2026-08-26] `OUTFIT_EVALUATOR_GATE_SYSTEM` really could diverge from the
 canonical register/footwear verdicts — traced, not assumed.** Call chain:
 `composeStructuredOutfitsForPiece` (`core.js`) is reached only from the selected-piece ideal/missing-

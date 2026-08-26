@@ -183,6 +183,21 @@ test('a needs_base layer_top records a known over direction from dependency alon
   assert.equal(result.pairs[0].evidence.source, 'dependent_layer_requires_base')
 })
 
+// PR review: layerDirectionPromptRule() initially implied role/category assignment never decides
+// direction by itself, which is wrong for this exact case — an outerwear-category layer_top is
+// direction evidence on its own, unlike a layer_top role on an ordinary top (see the prior test).
+// This pins the executable behavior directly so the prompt prose has a real fixture to check itself
+// against.
+test('an outerwear-category layer_top records a known over direction from category alone, with no notes or dependency', () => {
+  const result = evaluateLayerDirections([
+    { id: 1, role: 'primary_top', category: 'top' },
+    { id: 2, role: 'layer_top', category: 'outerwear' },
+  ], { roleAware: true })
+  assert.equal(result.verdict, 'compatible')
+  assert.equal(result.pairs[0].direction, 'layer_top_over_primary_top')
+  assert.equal(result.pairs[0].evidence.source, 'outerwear_category')
+})
+
 test('valid: tank with explicit overlay evidence can be layer_top', () => {
   assert.deepEqual(roleIssues([
     { id: 1, role: 'primary_top', name: 'ivory graphic print crew tee', category: 'top', reads_as: 'graphic crew tee' },

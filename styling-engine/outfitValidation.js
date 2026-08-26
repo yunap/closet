@@ -378,16 +378,17 @@ export function evaluateLayerDirections(pieces = [], { roleAware = false } = {})
 }
 
 // Prompt projection of the executable contract, matching requiredBaseLayerPromptRule's pattern.
-// Must name every evidence branch evaluateLayerDirections actually reads, including the two
-// dependency-driven ones it is easy to drop from a paraphrase: a layer_top that itself needs a base
-// layer sits OVER the primary top serving as its base (source: dependent_layer_requires_base), and
-// symmetrically a dress that needs a base layer is worn OVER the top serving as its base. Role or
-// category assignment (a layer_top role, an outerwear category) establishes that a pairing exists;
-// it is a separate question from which piece the DIRECTION evidence puts on top. Composers cite this
-// instead of writing their own direction rule; the mechanical verdict, not the prompt, decides what
-// counts as evidence.
+// Must name every evidence branch evaluateLayerDirections actually reads. Two are easy to drop from
+// a paraphrase: a layer_top that itself needs a base layer sits OVER the primary top serving as its
+// base (source: dependent_layer_requires_base), and symmetrically a dress that needs a base layer is
+// worn OVER the top serving as its base. A third is easy to OVER-claim: unlike a layer_top role on
+// an ordinary top (which establishes only that a pairing is intended, not its direction), an
+// outerwear-category layer_top piece is itself direction evidence — categoryGroup === 'outerwear'
+// alone resolves layer_top_over_primary_top (source: outerwear_category), no notes or dependency
+// required. Composers cite this instead of writing their own direction rule; the mechanical verdict,
+// not the prompt, decides what counts as evidence.
 export function layerDirectionPromptRule() {
-  return `- Layer direction: role or category assignment — a layer_top role, or an outerwear-category piece — can establish that two pieces are intended to layer together; it does not by itself decide which one sits over or under. The supported over/under direction comes from recorded construction/intent/dependency evidence: explicit garment notes describing a piece as an overlay or a base/underlayer, an outerwear piece's outer-layer role, a piece that itself needs a base layer beneath it (that piece sits over the other piece serving as its base — whether the dependent piece is the added layer or the dress), or a dress explicitly meant to be worn over a top. Missing direction evidence means the direction is unknown, not that the two pieces cannot layer: inspect both garments before deciding how they layer.`
+  return `- Layer direction: a layer_top role establishes that a pairing is intended to layer together, but does not by itself decide which one sits over or under — that comes from the piece's own category or from recorded construction/intent/dependency evidence. An outerwear-category piece is itself direction evidence: it sits over the primary top. Otherwise, direction comes from explicit garment notes describing a piece as an overlay or a base/underlayer, a piece that itself needs a base layer beneath it (that piece sits over the other piece serving as its base — whether the dependent piece is the added layer or the dress), or a dress explicitly meant to be worn over a top. Missing direction evidence means the direction is unknown, not that the two pieces cannot layer: inspect both garments before deciding how they layer.`
 }
 
 function layerConstructionFinding(code, message, severity, evidence = {}) {
