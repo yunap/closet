@@ -1791,14 +1791,42 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   `docs/engine-behaviour-map.md` (Caches section) and `docs/app-surface-map.md` (B2 critique cost
   boundary), both of which had stale claims that these flows carried a cache breakpoint.
 
-## 2026-08-26 — a second cache write found while measuring the first fix
+## 2026-08-26 — execution router gets the immediately preceding turn
+
+- Live thread `thread_1787707798034` (msg 11): asked "give me layering options for the evening",
+  the assistant asked a clarifying question ("adding a layer to the current outfit, or starting
+  fresh?"), and the reply naming the garments in play — "I'm asking about the layer for Mauve
+  Utility Punch — floral abstract sleeveless tunic" — got classified `garment_fact` by the freeform
+  execution router. `garment_fact` is a tools-free compact path (`compactFreeformAnswerSystem`,
+  `askStylistWithUsage` with no `tools` param), so it could not search the wardrobe for a layer and
+  instead invented a generic, non-wardrobe blazer suggestion.
+- Root cause: `routeFreeformExecutionProfile` classified from the isolated current message plus a
+  compact-context summary only — it never saw what was just said. Checked whether
+  `architecture-ownership-consolidation-spec.md`'s recent slices touched this: they didn't — the
+  router prompt hasn't changed since 2026-08-19 (`a518ca9`), five days before that arc started, and
+  none of its commits touch `routeFreeformExecutionProfile`, `compactFreeformContext`, or
+  `garment_fact`. Pre-existing gap, not a regression.
+- Fix (architecture lens: widen the interface, don't patch around it — a regex heuristic for "was
+  the prior turn a clarifying question" would only catch this one phrasing and relocate the same
+  complexity into an ever-growing pile of special cases): `routeFreeformExecutionProfile` gained an
+  optional `recentExchange` param — just the immediately preceding user/assistant turn, built via
+  the existing `compactRecentHistory(history, 2)` helper (already used for the same class of problem
+  in `recentReferentPieceIds`). One new prompt clause tells the router to use it only to resolve
+  whether the current message continues an unresolved need from that turn, not to justify broader
+  classification drift.
+- Added `layer-request-after-clarifying-question` to the offline routing corpus
+  (`test/fixtures/freeform_execution_routing_corpus.json`, now 23 entries) plus two direct unit
+  tests proving the plumbing (recent-exchange block present/positioned correctly when supplied,
+  entirely absent when not). See `docs/freeform-measured-rollout.md`. Merged as #260.
+
+## 2026-08-26 — a second cache write found while measuring the deferred-cache fix
 
 - Pulling real before/after numbers for the 2026-08-25 fix surfaced an unrelated second cache write
   on the same whole-wardrobe composer: a plain 5-minute `cache_control` on the last candidate
-  thumbnail in the *message* content (not `PROMPT_CACHE_BREAKPOINT`, so untouched by yesterday's
-  fix), writing 30-49k tokens per call. Traced the read/write lifecycle before touching anything:
-  the function makes exactly one provider call with no in-call retry, so any reuse could only come
-  from a separate later call within 5 minutes reproducing the same roster.
+  thumbnail in the *message* content (not `PROMPT_CACHE_BREAKPOINT`, so untouched by that fix),
+  writing 30-49k tokens per call. Traced the read/write lifecycle before touching anything: the
+  function makes exactly one provider call with no in-call retry, so any reuse could only come from
+  a separate later call within 5 minutes reproducing the same roster.
 - Added per-provider-call cache attribution (`normalizeAiUsage`'s TTL-based creation split;
   `providerImageManifestCache*` / `providerFullStylistSystemCacheCreationTokens` /
   `providerMovingMessageCacheCreationTokens` / `providerToolLoopCacheReadTokens` in

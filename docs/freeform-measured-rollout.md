@@ -6,9 +6,21 @@
 ## What offline evidence can prove
 
 `test/fixtures/freeform_execution_routing_corpus.json` is the permanent routing-contract corpus. It
-contains 22 requests across composition, current-card explanation, garment fact, general advice,
+contains 23 requests across composition, current-card explanation, garment fact, general advice,
 inventory, discovery, correction/revision, photo/critique, plans and ambiguity. Every execution
 profile appears, and unsafe or underspecified cases expect `full_stylist`.
+
+**The router's interface was widened 2026-08-26** (`docs/deferred-conversational-cache-spec.md`'s
+sibling finding): `routeFreeformExecutionProfile` previously classified every turn from the isolated
+current message plus a compact-context summary — no visibility into what was just said. A live turn
+(`thread_1787707798034` msg 11) answered the assistant's own clarifying question by naming the
+garments in play ("I'm asking about the layer for Mauve Utility Punch — floral abstract sleeveless
+tunic") and was misclassified `garment_fact` — a tools-free compact path that cannot search the
+wardrobe — producing an invented, non-wardrobe blazer suggestion. `recentExchange` (just the
+immediately preceding user/assistant turn, via the existing `compactRecentHistory` helper) is now an
+optional third input, added to the corpus as `layer-request-after-clarifying-question`. This closes a
+*class* of failures — any reply that only makes sense in light of the prior turn — not just this one
+phrasing.
 
 `freeform_observability.test.js` runs every row through `routeFreeformExecutionProfile` with the
 provider replaced by the hermetic structured-response hook. This proves the schema, question,
