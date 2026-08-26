@@ -133,6 +133,38 @@ path as an ordinary contract failure. `plan_outfit_set`'s composition-failure br
 would fail the same way again. Covered by `test/structuredOutfitMaxTokens.test.js` (renamed from
 `test/visualComposerMaxTokens.test.js`).
 
+**R7 follow-up #2, 2026-08-26 — the live re-test surfaced a sibling formula and a second, unrelated
+bug in the same code.** `thread_1787725557304` retested the composition fix above with a real
+24-piece/10-look capsule request: composition itself succeeded on the first try, confirming the
+fix. But the roster-*selection* call (`capsuleRosterSelectionSchema`, routes/ai.js) — a different
+call site the composition fix didn't touch — truncated twice in the same turn, both times at
+exactly `output_tokens: 1860`, its formula's ceiling (`300 + budget*65`, itself a prior bump from
+an even tighter 1,260-token ceiling per its own code comment). The first attempt truncated, the
+built-in repair attempt truncated again, and the turn fell back to the deterministic roster —
+correctly, without crashing, but after two wasted paid calls.
+
+Per codebase-design's "one adapter is a hypothetical seam, two adapters is a real one":
+`structuredOutfitMaxTokens` was generalized once more into `structuredResponseMaxTokens(itemCount,
+{tokensPerItem, base, floor, ceiling})` — adding a `base` parameter, since the roster formula's
+free-text reasoning (`category_shape_reason`, `category_departures[].reason`,
+`repair_changes[].reason`) scales with how many categories depart from the starting shape, not
+with garment count, needing a materially higher base offset than outfit generation's. The roster
+call now passes its own tuned values (`{tokensPerItem: 100, base: 1500, floor: 1500, ceiling:
+5500}`) instead of a fourth independent formula. Renamed again (dropping the outfit-specific name)
+since a garment roster isn't an outfit — `test/structuredOutfitMaxTokens.test.js` is now
+`test/structuredResponseMaxTokens.test.js`.
+
+Separately: because the roster call truncated, the deterministic-fallback disclosure
+(`[capsule fallback: I used a backup capsule selection...]`) should have reached the user — it
+already flows correctly through `pendingPlan.coverageGaps` into the tool result's `plan_lines`
+field, same as any other `plan_outfit_set` path — but the atomic bounded-composition success
+message (`styling-engine/tools.js`) never instructed the model to present `plan_lines` at all,
+unlike its two sibling non-atomic success messages ("Present these cards and the plan_lines
+honestly" / "include the plan_lines"). The model silently dropped it. Not a plumbing gap — a
+message-text omission that had nothing to do with either token-budget fix, found only by reading
+the actual delivered answer against what the tool result contained. Fixed by adding the same
+plan_lines instruction to the atomic message.
+
 ## Candidate-set reconciliation in plain terms
 
 The remaining selectors do not justify a universal candidate module:

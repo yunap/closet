@@ -131,19 +131,28 @@ function withSavedBoardRendererMemory(prompt, pieces = []) {
 // JSON" instead of the identifiable truncation it was. See
 // docs/post-254-architecture-roadmap.md R7.
 
-// One shared token-budget shape for "generate N structured outfits" calls, parameterized per
-// caller instead of each hardcoding its own flat ceiling. The visual composers' defaults below
-// (500/outfit, floor 2200, ceiling 4200) were tuned for their JSON schema (label, strength,
-// dominantDirection, silhouette, bestFor, pieces[], reason, styling_instructions, watchFor per
-// outfit). The atomic capsule composer (routes/ai.js's composeCapsulePlanOnce) used to carry its
-// own separate, untuned formula (600 + count*180, ceiling 3200) instead of this one; a 10-look
-// capsule hit that ceiling exactly and silently came back with zero outfits
-// (docs/deferred-conversational-cache-spec.md's sibling incident, thread_1787717774384). It now
-// calls this with its own honest per-outfit rate and a ceiling wide enough for a 12-look capsule,
-// passed as data rather than re-deriving a third formula.
-export function structuredOutfitMaxTokens(outfitCount = 4, { tokensPerOutfit = 500, floor = 2200, ceiling = 4200 } = {}) {
-  const count = Math.max(1, Number(outfitCount) || 1)
-  return Math.max(floor, Math.min(ceiling, 900 + count * tokensPerOutfit))
+// One shared token-budget shape for any schema-forced call whose output scales with a requested
+// item count, parameterized per caller instead of each hardcoding its own flat ceiling. Originally
+// introduced (as visualComposerMaxTokensForOutfitCount) for the two visual composers' JSON schema
+// (label, strength, dominantDirection, silhouette, bestFor, pieces[], reason,
+// styling_instructions, watchFor per outfit) — those defaults are preserved below. The atomic
+// capsule composer (routes/ai.js's composeCapsulePlanOnce) used to carry its own separate,
+// untuned formula (600 + count*180, ceiling 3200) instead of this one; a 10-look capsule hit that
+// ceiling exactly and silently came back with zero outfits (thread_1787717774384). It was folded
+// in with its own honest per-outfit rate and a ceiling wide enough for a 12-look capsule.
+//
+// Generalized further (base offset added, renamed from *ForOutfitCount) when a second, genuinely
+// different-shaped caller needed the same formula: capsule roster selection (routes/ai.js's
+// capsuleRosterSelectionSchema) scales by garment count, not outfit count, and its schema's free-
+// text reasoning (category_shape_reason, category_departures[].reason, repair_changes[].reason)
+// doesn't grow linearly with garment count the way an outfit's fields grow with outfit count — its
+// own formula (300 + budget*65) hit its ceiling twice in the same live turn
+// (thread_1787725557304), once on the first attempt and again on the repair. Per codebase-design's
+// "two adapters means a real seam": a second real caller with a different base offset is the
+// signal to widen the interface rather than add a fourth private formula beside it.
+export function structuredResponseMaxTokens(itemCount = 4, { tokensPerItem = 500, base = 900, floor = 2200, ceiling = 4200 } = {}) {
+  const count = Math.max(1, Number(itemCount) || 1)
+  return Math.max(floor, Math.min(ceiling, base + count * tokensPerItem))
 }
 
 export function withTimeout(promise, ms, label = 'operation') {
