@@ -1799,6 +1799,24 @@ test('whole-wardrobe generation is a one-shot entry and writes no conversational
   assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)
 })
 
+test('whole-wardrobe generation does not cache_control the candidate image manifest either', async () => {
+  // Measured 2026-08-26 with per-call cache attribution added specifically to check this: 0 reads
+  // against ~40-49k written tokens across every real sample checked (7 historical standalone calls,
+  // plus one fresh standalone call and one fresh freeform generate_outfits call run to test it).
+  // See docs/deferred-conversational-cache-spec.md.
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    mood: 'artistic minimalist',
+    limit: 3,
+  })
+  const composerCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
+  assert.ok(composerCall)
+  const content = composerCall.messages.at(-1).content
+  assert.ok(Array.isArray(content) && content.length > 1)
+  assert.ok(content.every(block => block.cache_control === undefined), 'no block in the candidate manifest should carry cache_control')
+})
+
 test('selected-item generation is a one-shot entry and writes no conversational cache', () => {
   const system = selectedItemVisualComposerSystemPrompt()
   assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)

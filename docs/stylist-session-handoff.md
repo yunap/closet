@@ -1817,4 +1817,21 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
 - Added `layer-request-after-clarifying-question` to the offline routing corpus
   (`test/fixtures/freeform_execution_routing_corpus.json`, now 23 entries) plus two direct unit
   tests proving the plumbing (recent-exchange block present/positioned correctly when supplied,
-  entirely absent when not). See `docs/freeform-measured-rollout.md`.
+  entirely absent when not). See `docs/freeform-measured-rollout.md`. Merged as #260.
+
+## 2026-08-26 — a second cache write found while measuring the deferred-cache fix
+
+- Pulling real before/after numbers for the 2026-08-25 fix surfaced an unrelated second cache write
+  on the same whole-wardrobe composer: a plain 5-minute `cache_control` on the last candidate
+  thumbnail in the *message* content (not `PROMPT_CACHE_BREAKPOINT`, so untouched by that fix),
+  writing 30-49k tokens per call. Traced the read/write lifecycle before touching anything: the
+  function makes exactly one provider call with no in-call retry, so any reuse could only come from
+  a separate later call within 5 minutes reproducing the same roster.
+- Added per-provider-call cache attribution (`normalizeAiUsage`'s TTL-based creation split;
+  `providerImageManifestCache*` / `providerFullStylistSystemCacheCreationTokens` /
+  `providerMovingMessageCacheCreationTokens` / `providerToolLoopCacheReadTokens` in
+  `freeformDiagnostics`) specifically to measure this cleanly, since the existing turn-level totals
+  conflated three different cache mechanisms. Ran a standalone whole-wardrobe generation and a
+  freeform `generate_outfits` call to test it live: 0 reads against 47,161 and 39,559 written
+  tokens. Combined with 0/7 historical calls, removed the cache_control — never once paid for
+  itself in any sample checked. Full writeup in `docs/deferred-conversational-cache-spec.md` Part 2.

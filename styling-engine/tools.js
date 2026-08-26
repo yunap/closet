@@ -263,6 +263,16 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       providerOutputTokens: 0,
       providerCacheReadInputTokens: 0,
       providerCacheCreationInputTokens: 0,
+      // Cache attribution (docs/deferred-conversational-cache-spec.md) — subsets of the two totals
+      // above, broken out by which cache_control breakpoint actually produced them. Exact on the
+      // write side (Anthropic tags cache-creation tokens by TTL bucket); the tool-loop read total
+      // stays combined because Anthropic reports one read number for however much of the whole
+      // prefix matched, with no per-breakpoint split.
+      providerImageManifestCacheReadTokens: 0,
+      providerImageManifestCacheCreationTokens: 0,
+      providerFullStylistSystemCacheCreationTokens: 0,
+      providerMovingMessageCacheCreationTokens: 0,
+      providerToolLoopCacheReadTokens: 0,
       weatherSource: ''
     }
   }
@@ -300,6 +310,18 @@ export function recordNestedFreeformUsage(toolContext, usage = null) {
   bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheReadInputTokens', Number(usage.cacheReadInputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheCreationInputTokens', Number(usage.cacheCreationInputTokens) || 0)
+  // Cache attribution (docs/deferred-conversational-cache-spec.md): only the whole_wardrobe branch
+  // (generateWholeWardrobeOutfitsVisualInternal) carries a cache_control at all — the candidate
+  // image-manifest breakpoint at routes/ai.js's "Attach cache_control to the last candidate
+  // thumbnail" comment. generateOutfitsForPieceInternal (source 'selected_piece') has no breakpoint,
+  // so gating on source here (rather than assuming any nonzero usage means this cache) keeps the
+  // attribution correct if that ever changes. This call is always a fresh, one-off `messages`
+  // array with a system prompt carrying no breakpoint of its own, so 100% of whatever cache
+  // activity shows up is this one breakpoint — no TTL split needed, unlike the tool loop.
+  if (toolContext.source === 'whole_wardrobe') {
+    bumpFreeformDiagnostic(toolContext, 'providerImageManifestCacheReadTokens', Number(usage.cacheReadInputTokens) || 0)
+    bumpFreeformDiagnostic(toolContext, 'providerImageManifestCacheCreationTokens', Number(usage.cacheCreationInputTokens) || 0)
+  }
 }
 
 // Sequential call number within a freeform turn, for ai_call_log.iteration_index — covers every

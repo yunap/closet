@@ -567,6 +567,8 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
       totalTokens: numberOrZero(rawUsage.total_tokens),
       cacheReadInputTokens: numberOrZero(promptDetails.cached_tokens),
       cacheCreationInputTokens: 0,
+      cacheCreation5mInputTokens: 0,
+      cacheCreation1hInputTokens: 0,
       stopReason: normalizeStopReason(stopReason, provider),
       raw: rawUsage
     }
@@ -575,6 +577,16 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
   const outputTokens = numberOrZero(rawUsage.output_tokens)
   const cacheCreationInputTokens = numberOrZero(rawUsage.cache_creation_input_tokens)
   const cacheReadInputTokens = numberOrZero(rawUsage.cache_read_input_tokens)
+  // Anthropic reports cache-creation tokens split by TTL bucket (it does not split cache-READ
+  // tokens this way — a read is one number for however much of the whole tools+system+messages
+  // prefix matched). Exploited for cache attribution: `ephemeral_1h_input_tokens` writes can only
+  // come from the freeform stable-system breakpoint (systemToAnthropicBlocks is the only ttl:'1h'
+  // cache_control in this codebase), so any nonzero value here is unambiguously that cache, never
+  // the moving-message breakpoint or a one-shot composer's image-manifest breakpoint (both default
+  // 5m). See docs/deferred-conversational-cache-spec.md and the cache-attribution instrumentation
+  // in tools.js (recordNestedFreeformUsage) / provider.js (recordToolLoopUsage).
+  const cacheCreation5mInputTokens = numberOrZero(rawUsage.cache_creation?.ephemeral_5m_input_tokens)
+  const cacheCreation1hInputTokens = numberOrZero(rawUsage.cache_creation?.ephemeral_1h_input_tokens)
   return {
     provider,
     model,
@@ -583,6 +595,8 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
     totalTokens: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
     cacheReadInputTokens,
     cacheCreationInputTokens,
+    cacheCreation5mInputTokens,
+    cacheCreation1hInputTokens,
     stopReason: normalizeStopReason(stopReason, provider),
     raw: rawUsage
   }
@@ -1257,7 +1271,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
     if (toolContext.trackMockUsage) {
-      recordToolLoopUsage(toolContext, normalizeAiUsage(testResponse?.usage || null))
+      recordToolLoopUsage(toolContext, normalizeAiUsage(testResponse?.usage || null), { cacheSite: 'tool_loop' })
     }
     // Mirror the real loop's output checks and one-retry-per-guard semantics so
     // contract tests can exercise guard behavior end-to-end (previously this
@@ -1361,7 +1375,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         } : {})
       })
       const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
-      recordToolLoopUsage(toolContext, usage)
+      recordToolLoopUsage(toolContext, usage, { cacheSite: 'tool_loop' })
       if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
         console.log('[OpenAI Tool Loop Usage]', {
           iter,
@@ -1456,7 +1470,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         ...(availableTools.length ? { tools: availableTools } : {})
       })
       const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
-      recordToolLoopUsage(toolContext, usage)
+      recordToolLoopUsage(toolContext, usage, { cacheSite: 'tool_loop' })
       if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
         console.log('[Anthropic Tool Loop Usage]', {
           iter,
@@ -1554,12 +1568,29 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
 }
 
-export function recordToolLoopUsage(toolContext = {}, usage = {}) {
+// cacheSite: 'tool_loop' identifies calls made through askStylistWithTools's own Anthropic branch
+// (systemToAnthropicBlocks + withMovingCacheBreakpoint applied unconditionally there), which is the
+// ONLY caller of this function where a TTL split cleanly separates two named caches: any
+// ephemeral_1h write can only be the freeform stable-system breakpoint (the sole ttl:'1h'
+// cache_control in this codebase), and the loop's only other breakpoint is the 5m moving-message
+// one, so whatever 5m write remains is unambiguously that. Other callers of recordToolLoopUsage
+// (the compact router, capsule roster/composition calls, etc.) either carry no breakpoint or carry
+// a DIFFERENT 5m breakpoint (e.g. the capsule roster prompt cache) that a blind TTL split would
+// wrongly fold into "moving message" — so they must NOT pass cacheSite, and this attribution stays
+// off by default. Read tokens have no TTL split from the provider (one number for however much of
+// the whole prefix matched), so providerToolLoopCacheReadTokens stays a combined system+message
+// total rather than being split further. See docs/deferred-conversational-cache-spec.md.
+export function recordToolLoopUsage(toolContext = {}, usage = {}, { cacheSite = null } = {}) {
   bumpFreeformDiagnostic(toolContext, 'providerIterations')
   bumpFreeformDiagnostic(toolContext, 'providerInputTokens', Number(usage.inputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheReadInputTokens', Number(usage.cacheReadInputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerCacheCreationInputTokens', Number(usage.cacheCreationInputTokens) || 0)
+  if (cacheSite === 'tool_loop') {
+    bumpFreeformDiagnostic(toolContext, 'providerFullStylistSystemCacheCreationTokens', Number(usage.cacheCreation1hInputTokens) || 0)
+    bumpFreeformDiagnostic(toolContext, 'providerMovingMessageCacheCreationTokens', Number(usage.cacheCreation5mInputTokens) || 0)
+    bumpFreeformDiagnostic(toolContext, 'providerToolLoopCacheReadTokens', Number(usage.cacheReadInputTokens) || 0)
+  }
   return toolContext.freeformDiagnostics
 }
 

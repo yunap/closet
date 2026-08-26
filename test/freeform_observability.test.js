@@ -67,6 +67,13 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     providerOutputTokens: 0,
     providerCacheReadInputTokens: 0,
     providerCacheCreationInputTokens: 0,
+    // Cache attribution (docs/deferred-conversational-cache-spec.md): subsets of the two totals
+    // above, broken out by which cache_control breakpoint produced them.
+    providerImageManifestCacheReadTokens: 0,
+    providerImageManifestCacheCreationTokens: 0,
+    providerFullStylistSystemCacheCreationTokens: 0,
+    providerMovingMessageCacheCreationTokens: 0,
+    providerToolLoopCacheReadTokens: 0,
     weatherSource: ''
   })
 })
