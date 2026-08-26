@@ -295,6 +295,7 @@ function initDb(dbPath) {
       capsule_roster_model_repairs INTEGER DEFAULT 0,
       capsule_roster_model_fallbacks INTEGER DEFAULT 0,
       capsule_roster_failure_codes TEXT DEFAULT '',
+      capsule_composition_failure_code TEXT DEFAULT '',
       turn_failed             INTEGER DEFAULT 0,
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
@@ -749,6 +750,12 @@ function initDb(dbPath) {
     // fell back and the reason was discarded, so the next step was one more
     // paid run rather than a lookup.
     'capsule_roster_failure_codes TEXT DEFAULT ""',
+    // Same reasoning as capsule_roster_failure_codes, one stage later: the
+    // composition call (composeCapsulePlanOnce) returning zero outfits used to
+    // be indistinguishable from a genuine model refusal. thread_1787717774384
+    // was actually a token-cap truncation — a deterministic failure that a
+    // bare "please retry" misleadingly implies is transient.
+    'capsule_composition_failure_code TEXT DEFAULT ""',
     // A turn that throws used to record NOTHING. persistFreeformGenerationRun
     // ran only on the success path, so when the composition call failed
     // (thread_1785902365403: provider credit exhausted mid-capsule) the roster

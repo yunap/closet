@@ -131,16 +131,19 @@ function withSavedBoardRendererMemory(prompt, pieces = []) {
 // JSON" instead of the identifiable truncation it was. See
 // docs/post-254-architecture-roadmap.md R7.
 
-// One shared token budget for the photo-grounded visual-composer JSON schema (label, strength,
+// One shared token-budget shape for "generate N structured outfits" calls, parameterized per
+// caller instead of each hardcoding its own flat ceiling. The visual composers' defaults below
+// (500/outfit, floor 2200, ceiling 4200) were tuned for their JSON schema (label, strength,
 // dominantDirection, silhouette, bestFor, pieces[], reason, styling_instructions, watchFor per
-// outfit). Both the selected-piece and whole-wardrobe visual composers return this same shape;
-// previously each hardcoded its own flat ceiling (2000 / 2200) regardless of how many outfits
-// were actually requested, so a normal request could be truncated well before the model
-// finished writing valid JSON. Scales with requested outfit count the same way the (differently
-// shaped, separately tuned) atomic capsule composition schema already does.
-export function visualComposerMaxTokensForOutfitCount(outfitCount = 4) {
+// outfit). The atomic capsule composer (routes/ai.js's composeCapsulePlanOnce) used to carry its
+// own separate, untuned formula (600 + count*180, ceiling 3200) instead of this one; a 10-look
+// capsule hit that ceiling exactly and silently came back with zero outfits
+// (docs/deferred-conversational-cache-spec.md's sibling incident, thread_1787717774384). It now
+// calls this with its own honest per-outfit rate and a ceiling wide enough for a 12-look capsule,
+// passed as data rather than re-deriving a third formula.
+export function structuredOutfitMaxTokens(outfitCount = 4, { tokensPerOutfit = 500, floor = 2200, ceiling = 4200 } = {}) {
   const count = Math.max(1, Number(outfitCount) || 1)
-  return Math.max(2200, Math.min(4200, 900 + count * 500))
+  return Math.max(floor, Math.min(ceiling, 900 + count * tokensPerOutfit))
 }
 
 export function withTimeout(promise, ms, label = 'operation') {

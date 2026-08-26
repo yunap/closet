@@ -60,6 +60,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // String, like weatherSource: a fallback that records only its own count
     // sends the next question to a paid run instead of a query.
     capsuleRosterFailureCodes: '',
+    // One stage later than the roster pick: distinguishes a token-cap truncation on the
+    // composition call from a genuine model refusal (thread_1787717774384).
+    capsuleCompositionFailureCode: '',
     // Which tools ran in which iteration — the shape of a turn, not just its size.
     toolSequence: '',
     providerIterations: 0,
@@ -1575,6 +1578,20 @@ test('a failed turn still records what it spent, marked as failed', () => {
   assert.equal(row.capsule_roster_model_repairs, 1)
   assert.equal(row.capsule_roster_failure_codes, 'category_floor')
   assert.equal(row.provider_cache_creation_input_tokens, 124268)
+})
+
+// thread_1787717774384: composeCapsulePlanOnce's zero-outfit result and a genuine token-cap
+// truncation used to be indistinguishable in this table, same problem as the roster codes above
+// one stage earlier.
+test('a truncated capsule composition records a distinct failure code from a genuine empty result', () => {
+  db.prepare('DELETE FROM freeform_generation_runs').run()
+  persistFreeformGenerationRun({
+    sessionId: 'capsule-composition-truncated',
+    occasion: 'capsule',
+    diagnostics: { submitPlanCalls: 1, submitPlanValidationFails: 1, capsuleCompositionFailureCode: 'truncated_max_tokens' }
+  })
+  const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('capsule-composition-truncated')
+  assert.equal(row.capsule_composition_failure_code, 'truncated_max_tokens')
 })
 
 test('a completed turn is distinguishable from a failed one in the same table', () => {
