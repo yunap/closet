@@ -374,6 +374,17 @@ blanket cost. `styling_context_consumers.test.js` proves the visual composer and
 cite the rule verbatim (source and runtime); `plan_outfit_set.test.js` proves the live workbench
 projects it for a layering-capable slot and withholds it for one that cannot layer.
 
+**Gate correction, same day.** The workbench gate's first version answered "can this slot layer" by
+counting `top`/`dress`-category pieces only — its own local definition of layering eligibility,
+independent of the one `evaluateOutfitRoles` already uses. That missed the canonical `layer_top`
+assigned to an `outerwear`-category piece (a jacket over a top), since `outerwear` is not `top` or
+`dress`. Fixed by exporting `ROLE_CATEGORY_EXPECTATIONS` — the role→category map
+`evaluateOutfitRoles`' `role_category_mismatch` finding already used internally — and building
+`wardrobeSupportsLayeringPair()` from that same map, so category eligibility for "who may layer" has
+one owner instead of two independently-maintained lists. `outfit_structure.test.js` unit-tests the
+helper; `plan_outfit_set.test.js` adds the single-top + single-outerwear live fixture the original
+gate silently dropped.
+
 **Remaining gap:** Pair mechanics, dependency validation, recovery, and capsule capacity now consume
 the shared verdict family. The unresolved edge is disposition when a required visual fact is
 unknown and one or both photographs are unavailable: the verdict can require sight that the flow

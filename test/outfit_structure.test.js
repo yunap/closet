@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { describeOutfitStructureGap, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
 import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
@@ -87,6 +87,35 @@ test('evaluateWearableOutfit inherits the sleeve-conflict finding as a hard erro
   assert.equal(result.hardValid, false)
   assert.ok(result.hardFindings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
   assert.ok(result.evidence.includedStages.includes('layer_construction'))
+})
+
+// PR review: a caller gating a pre-role-assignment prompt projection (does this candidate set
+// even have a layering pair worth mentioning?) must not reimplement this with a local top/dress
+// category count, because layer_top may be assigned to an outerwear-category piece too — see
+// ROLE_CATEGORY_EXPECTATIONS.layer_top in outfitValidation.js, the same map evaluateOutfitRoles
+// uses for its role/category mismatch check.
+test('wardrobeSupportsLayeringPair recognizes an outerwear layer_top candidate, not only top/dress', () => {
+  const soleTop = { id: 1, name: 'lone top', category: 'top' }
+  const soleOuterwear = { id: 2, name: 'lone jacket', category: 'outerwear' }
+  const soleDress = { id: 3, name: 'lone dress', category: 'dress' }
+  const bottom = { id: 4, name: 'bottom', category: 'bottom' }
+  const shoes = { id: 5, name: 'shoes', category: 'shoes' }
+
+  // A single top plus a single outerwear piece IS a real layer_top(outerwear) + primary_top pair.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, soleOuterwear, bottom, shoes]), true)
+  // A single top plus a single dress IS a real top-over/under-dress pair.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, soleDress, bottom, shoes]), true)
+  // Two tops can still form layer_top + primary_top with no outerwear involved.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, { id: 6, name: 'second top', category: 'top' }, bottom, shoes]), true)
+
+  // A lone top with nothing else top/dress/outerwear cannot layer with itself.
+  assert.equal(wardrobeSupportsLayeringPair([soleTop, bottom, shoes]), false)
+  // A lone outerwear piece with no top/dress base cannot layer with itself.
+  assert.equal(wardrobeSupportsLayeringPair([soleOuterwear, bottom, shoes]), false)
+  // A lone dress alone (dress cannot be its own added/layer piece) cannot layer.
+  assert.equal(wardrobeSupportsLayeringPair([soleDress, bottom, shoes]), false)
+  // Nothing top/dress/outerwear-shaped at all.
+  assert.equal(wardrobeSupportsLayeringPair([bottom, shoes]), false)
 })
 
 test('pieceRequiresBaseLayer reads only the explicit structured yes value', () => {

@@ -48,6 +48,7 @@ import {
   evaluateBaseLayerCandidate,
   evaluateWearableOutfit,
   layerConstructionPromptRule,
+  wardrobeSupportsLayeringPair,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
 import {
@@ -3607,9 +3608,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
     ]
     // Only project the sleeve-construction rule when the slot's own roster can actually form a
-    // layering pair (two-plus top/dress-group pieces) — most slots cannot, and the projection is
-    // cost, not signal, when there is nothing to layer.
-    if (allowed.filter(piece => ['top', 'dress'].includes(wardrobeCategoryGroup(piece))).length >= 2) {
+    // layering pair — most slots cannot, and the projection is cost, not signal, when there is
+    // nothing to layer. wardrobeSupportsLayeringPair is the canonical eligibility check (shared
+    // with evaluateOutfitRoles' role/category map); do not reimplement it with a local top/dress
+    // count here, since that would silently exclude outerwear-as-layer_top candidates.
+    if (wardrobeSupportsLayeringPair(allowed)) {
       requirements.push(layerConstructionPromptRule())
     }
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {

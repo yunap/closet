@@ -9,6 +9,20 @@ import {
 
 export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
 
+// Single source of truth for which categories a role may be assigned to. evaluateOutfitRoles'
+// role/category mismatch check and any pre-role-assignment eligibility question (does this supply
+// contain a piece that COULD become a given role) both read this — neither may keep its own copy.
+export const ROLE_CATEGORY_EXPECTATIONS = {
+  primary_top: ['top'],
+  layer_top: ['top', 'outerwear'],
+  primary_bottom: ['bottom'],
+  layer_bottom: ['bottom'],
+  dress: ['dress'],
+  shoes: ['shoes'],
+  outerwear: ['outerwear'],
+  accessory: ['accessory'],
+}
+
 const BASE_LAYER_CLOSE_FITS = new Set(['clings_stretchy', 'clings_drapey', 'skims'])
 const BASE_LAYER_INCOMPATIBLE_FITS = new Set(['hangs_straight', 'drapes', 'structured', 'none'])
 const BASE_LAYER_INCOMPATIBLE_OPACITIES = new Set(['sheer', 'semi_sheer', 'open_weave'])
@@ -283,6 +297,24 @@ function layeringCandidatePairs(pieces = [], { roleAware = false } = {}) {
   return pairs
 }
 
+const LAYER_BASE_CATEGORY_GROUPS = new Set([...ROLE_CATEGORY_EXPECTATIONS.primary_top, ...ROLE_CATEGORY_EXPECTATIONS.dress])
+const LAYER_ADDED_CATEGORY_GROUPS = new Set(ROLE_CATEGORY_EXPECTATIONS.layer_top)
+
+// Supply-level eligibility question, answerable before any role has been assigned: does this
+// candidate set contain enough category-eligible pieces to POSSIBLY form a layering pair once
+// composed? A caller deciding whether to show model-facing layering guidance ahead of composition
+// (a workbench, a roster preview) needs this, not `layeringCandidatePairs`, which assumes roles
+// already exist. Reuses `ROLE_CATEGORY_EXPECTATIONS` — the same map `evaluateOutfitRoles` assigns
+// roles from — instead of maintaining a second definition of "can these pieces layer": critically,
+// `layer_top` may be assigned to an outerwear-category piece, not only a top, so a caller that
+// checks only top/dress supply undercounts real layering candidates.
+export function wardrobeSupportsLayeringPair(pieces = []) {
+  const normalizedPieces = Array.isArray(pieces) ? pieces : []
+  const bases = normalizedPieces.filter(piece => LAYER_BASE_CATEGORY_GROUPS.has(wardrobeCategoryGroup(piece)))
+  const added = normalizedPieces.filter(piece => LAYER_ADDED_CATEGORY_GROUPS.has(wardrobeCategoryGroup(piece)))
+  return added.some(addedPiece => bases.some(basePiece => basePiece !== addedPiece))
+}
+
 // Canonical direction verdict for ordinary layering. Recorded construction/intent establishes a
 // known over/under relationship; absent legacy metadata is unknown, never proof of incompatibility.
 // `unknown` may be resolved only by a caller that has shown both photos to the stylist model. That
@@ -496,16 +528,7 @@ function roleCategoryFinding(piece = {}) {
   const role = String(piece.role || '').trim()
   const category = String(piece.category || '').toLowerCase().trim()
   if (!role || !category) return null
-  const expected = {
-    primary_top: ['top'],
-    layer_top: ['top', 'outerwear'],
-    primary_bottom: ['bottom'],
-    layer_bottom: ['bottom'],
-    dress: ['dress'],
-    shoes: ['shoes'],
-    outerwear: ['outerwear'],
-    accessory: ['accessory'],
-  }[role]
+  const expected = ROLE_CATEGORY_EXPECTATIONS[role]
   if (!expected || expected.includes(category)) return null
   return roleStructureFinding(
     'role_category_mismatch',

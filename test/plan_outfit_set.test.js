@@ -582,6 +582,33 @@ test('plan/capsule slot requirements project the canonical layer-construction ru
   )
 })
 
+// PR review: a slot with exactly one top and one outerwear piece (the canonical layer_top +
+// primary_top pair when the layer is a jacket/cardigan, not another top) was silently missed by an
+// earlier "at least two top/dress-group pieces" gate, because wardrobeCategoryGroup(outerwearPiece)
+// is 'outerwear', not 'top'. ROLE_CATEGORY_EXPECTATIONS.layer_top explicitly allows an outerwear
+// category to serve that role (see evaluateOutfitRoles' role/category check), and
+// wardrobeSupportsLayeringPair reuses that same map — this proves the workbench gate now agrees.
+test('plan/capsule slot requirements project the layer-construction rule for an outerwear layer_top + primary_top pair', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'primary top candidate', occasions: ['casual'], formality: 'everyday' })
+  const outerwearId = insertPiece({ category: 'outerwear', name: 'layering jacket', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'outerwear-slot bottom', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'outerwear-slot shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Outerwear layer slot', occasion: 'casual', activity: 'none', count: 1,
+    best_for: 'a slot whose only layering candidate is a jacket over the top'
+  }])
+
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a casual plan with a jacket' })
+  const allowed = new Set(workbench.slots[0].allowed_piece_ids)
+  assert.ok(allowed.has(topId) && allowed.has(outerwearId), 'fixture must supply exactly one top and one outerwear piece for the gate to fire')
+  assert.ok(
+    workbench.slots[0].submission_requirements.includes(layerConstructionPromptRule()),
+    'a single top + single outerwear piece is a real layer_top(outerwear) + primary_top pair and must carry the projection'
+  )
+})
+
 // --- Mode default flip (spec 19 Part 4) ----------------------------------------
 
 test('plan_outfit_set defaults to model mode with no WARDROBE_PLAN_COMPOSE set', async () => {
