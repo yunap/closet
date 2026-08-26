@@ -2688,7 +2688,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             bounded_composition: true,
-            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
+            // This success message must instruct plan_lines presentation the same way its
+            // sibling non-atomic success messages below do (search "Present these cards and
+            // the plan_lines" / "include the plan_lines"). It didn't: a roster-selection
+            // fallback disclosure (e.g. "[capsule fallback: ...]") reaches plan_lines via
+            // pendingPlan.coverageGaps same as any other plan_outfit_set path, but with no
+            // instruction to relay it the model silently dropped it (thread_1787725557304 —
+            // the user got the deterministic roster with no indication the model's pick failed).
+            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present the accepted rotation and the plan_lines verbatim, then finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
             plan_lines: planLinesForResponse,
             recovery_shortfall: recoveryShortfall,
             outfit_summaries: planOutfits.map(outfit => ({

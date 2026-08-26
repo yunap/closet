@@ -180,7 +180,7 @@ import {
   buildStylistConversationPayload,
   normalizeCalibrationRow,
   withTimeout,
-  structuredOutfitMaxTokens,
+  structuredResponseMaxTokens,
   getCalibrationMemoryForStylist,
   getCalibrationReferenceImagesForGeneration,
   runGPT4oImageGeneration,
@@ -1157,7 +1157,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let composerError = null
   let composerErrorIsTruncation = false
   let composerUsage = null
-  const composerMaxTokens = structuredOutfitMaxTokens(4)
+  const composerMaxTokens = structuredResponseMaxTokens(4)
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(askStylistWithUsage({
@@ -2351,7 +2351,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerErrorIsTruncation = false
     let composerUsage = null
     const composerStartedAt = Date.now()
-    const composerMaxTokens = structuredOutfitMaxTokens(requestedLimit)
+    const composerMaxTokens = structuredResponseMaxTokens(requestedLimit)
     const systemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
@@ -3972,9 +3972,16 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     schema: capsuleRosterSelectionSchema(budget),
     name: 'capsule_roster_selection',
     description: 'Choose the garments for this capsule from the supplied candidates.',
-    // The live 24-piece responses were already consuming the old 1,260-token
-    // ceiling before category rationale and repair accounting were added.
-    maxTokens: Math.max(900, 300 + budget * 65)
+    // This formula (previously a private 300 + budget*65, itself a bump from an
+    // even tighter 1,260-token ceiling) hit its cap exactly on both the initial
+    // attempt and the repair in the same live turn (thread_1787725557304),
+    // falling back to the deterministic roster after two wasted paid calls. The
+    // garment IDs themselves are cheap; the real cost is the schema's free-text
+    // reasoning (category_shape_reason, category_departures[].reason,
+    // repair_changes[].reason), which scales with how many categories depart
+    // from the starting shape, not with budget count — hence a higher base
+    // offset here than structuredResponseMaxTokens' outfit-generation default.
+    maxTokens: structuredResponseMaxTokens(budget, { tokensPerItem: 100, base: 1500, floor: 1500, ceiling: 5500 })
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}
@@ -4081,7 +4088,7 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
     // 10-look/24-piece capsule (thread_1787717774384) to zero outfits — this is
     // a ceiling, not prepaid usage, so a generous one costs nothing when the
     // model is concise.
-    maxTokens: structuredOutfitMaxTokens(targetOutfitCount, { tokensPerOutfit: 550, floor: 2200, ceiling: 7500 })
+    maxTokens: structuredResponseMaxTokens(targetOutfitCount, { tokensPerItem: 550, base: 900, floor: 2200, ceiling: 7500 })
   })
   // This nested composition call is part of the same paid user turn and must
   // appear in the existing usage/cost diagnostics alongside outer tool-loop
