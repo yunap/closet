@@ -4582,7 +4582,13 @@ router.post('/ask', async (req, res) => {
             compactContext.pieceIds.length ? `${exactNamedPieceIds.length ? 'exact active garment name resolved' : 'verified garment subjects available'}: ${compactContext.pieceIds.length}` : 'no verified garment subject',
             compactSavedPhotoCount ? `saved garment photographs available: ${compactSavedPhotoCount} resolved subject(s)` : 'no saved garment photographs for resolved subjects',
             req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : ''
-          ].filter(Boolean).join('; ')
+          ].filter(Boolean).join('; '),
+          // Just the immediately preceding turn (docs/deferred-conversational-cache-spec.md's sibling
+          // finding: the router was classifying purely from an isolated sentence, so a reply that only
+          // makes sense as an answer to the assistant's own prior question — e.g. naming a garment
+          // while answering "which outfit's layer?" — read like a standalone garment_fact question).
+          // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
+          recentExchange: compactRecentHistory(req.body.history, 2)
         })
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')

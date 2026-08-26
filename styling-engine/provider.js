@@ -1141,14 +1141,16 @@ Choose full_stylist for: one/best/pick-one; broad outfit critique; user-attached
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.`
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
 
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '' } = {}) {
+RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
+
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '' } = {}) {
   return askStylistStructuredWithUsage({
     system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
     messages: [{
       role: 'user',
-      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nCompact context available: ${String(contextSummary || 'none').trim()}\nRequest: ${String(question || '').trim()}`
+      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nCompact context available: ${String(contextSummary || 'none').trim()}${String(recentExchange || '').trim() ? `\nRecent exchange (immediately preceding turn only):\n${String(recentExchange).trim()}` : ''}\nRequest: ${String(question || '').trim()}`
     }],
     schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
     name: 'freeform_execution_route',

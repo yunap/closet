@@ -153,5 +153,14 @@
     "request": "On Wednesday I am going on a nature walk in San Anselmo. What should I wear?",
     "context": "no current outfit set; no verified garment subject",
     "expectedProfile": "bounded_multi"
+  },
+  {
+    "id": "layer-request-after-clarifying-question",
+    "class": "discovery",
+    "request": "I'm asking about the layer for Mauve Utility Punch \u2014 floral abstract sleeveless tunic",
+    "context": "no current outfit set; verified garment subjects available: 3",
+    "recentExchange": "user: ok, not bad. Give me some layering options for the evening\nassistant: Before I pull options, quick clarification: are you adding a layer to the current Mauve Utility Punch outfit for an evening outing, or starting fresh evening looks? And is this still casual-edgy, or are you open to a slightly dressier evening register?",
+    "expectedProfile": "full_stylist",
+    "note": "thread_1787707798034 msg 11 (2026-08-26): naming the garments only because it is answering the assistant's own clarifying question about WHICH outfit to layer, not asking a garment_fact question about them. Without recentExchange the router misread this as garment_fact and routed to a tools-free compact path that could not search for a layer, producing an invented (non-wardrobe) blazer suggestion."
   }
 ]
