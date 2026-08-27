@@ -549,10 +549,27 @@ These findings seed the census and prevent rediscovery. They do not authorize a 
    and avoids repair; selected-piece visual generation repairs and filters; capsule bounded
    composition completes omissions before validation; freeform serial composition retries and shows
    rejected attempts as needs-review cards.
-6. **Fallback parity is incomplete by construction.** The selected-piece local fallback has no
+6. **Fallback parity is incomplete by construction.** ~~The selected-piece local fallback has no
    general layering model and the absolute basic backfill selects leading ranked supports without a
-   shared full-outfit validator. These are high-priority census targets, not proof that their current
-   output should be deleted.
+   shared full-outfit validator.~~ **Resolved 2026-08-27** (thread_1787803856242, a real composer
+   timeout that silently substituted an unvalidated local pairing, presented with the same confident
+   labeling as a real composition): rather than closing the parity gap, both the selected-piece
+   `buildLocalFallbackOutfitDirections()` substitution and the "absolute basic backfill" tier were
+   removed from user-facing output entirely. The governing rule is now: local/deterministic logic may
+   prepare, rank, filter, validate, or recover candidate space, but it may not supply a user-facing
+   outfit recommendation unless a styling model actually selected/evaluated that outfit. A composer
+   that returns nothing now surfaces an explicit `compositionSkipped: 'composer_failed'` state instead
+   of a heuristic pick — see `docs/engine-behaviour-map.md`'s dated entry for the full mechanism.
+   `buildLocalFallbackOutfitDirections()` itself is kept (exported, unused by any live caller) in case
+   a future internal recovery/retry mechanism needs it — but its output must never cross into
+   normal recommendation UI without model styling judgment. The now-deleted mergeOutfitDirections(), which used to
+   blend real and heuristic outfits up to a minimum count with no visible distinction, was deleted
+   entirely rather than left dormant. Whole-wardrobe's local backfill was deliberately left
+   out of scope: it already gates its fill-in candidates through `locallyGateWholeWardrobeOutfits()`
+   and marks its diagnostic tier `broken`/`diagnosticOnly`, the same "gate or mark broken, never
+   silently present as real" shape this fix establishes for selected-piece. Capsule roster selection's
+   own deterministic fallback (`paletteSafeDeterministic()`) is explicitly out of scope too — it
+   constructs candidate space (which pieces are eligible), not a final styled recommendation.
 7. **Conversation state has multiple lifetimes.** Persistent server state, ephemeral tool-loop
    state, structured prompt state, current response cards, and browser history all coexist with
    documented precedence but do not form one interchangeable store.

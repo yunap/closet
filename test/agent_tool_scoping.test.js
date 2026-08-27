@@ -75,8 +75,16 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
         dominantDirection: 'mock direction',
         silhouette: 'mock silhouette',
         bestFor: 'casual',
-        pieceIds: [106],
-        pieces: [{ id: 106, name: 'black washed bootcut denim jeans', category: 'bottom' }],
+        // A complete, hard-valid outfit (top + bottom + shoes) — the 2026-08-27 no-silent-fallback
+        // policy means an incomplete single-piece mock outfit is now correctly rejected rather than
+        // silently padded out by a local heuristic, so this fixture must be genuinely wearable to
+        // exercise the tool-wiring happy path this test is actually checking.
+        pieceIds: [106, 700501, 700502],
+        pieces: [
+          { id: 106, name: 'black washed bootcut denim jeans', category: 'bottom' },
+          { id: 700501, name: 'rust cotton crew tee', category: 'top' },
+          { id: 700502, name: 'white leather sneakers', category: 'shoes' },
+        ],
         reason: 'mock reason',
         watchFor: 'mock watch'
       }],
