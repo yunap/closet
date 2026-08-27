@@ -147,9 +147,6 @@ import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engi
 import {
   rankSelectedPieceCandidatesWithVision,
   composeStructuredOutfitsForPiece,
-  buildLocalFallbackOutfitDirections,
-  validateSelectedRecoveryOutfit,
-  normalizeGeneratedOutfitObject,
   formatStructuredOutfitFeedback,
   boardPlanFromStructuredOutfits,
   structuredOutfitsFromGeneratedText,
@@ -1190,7 +1187,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       system: selectedItemVisualComposerSystemPrompt(),
       maxTokens: composerMaxTokens,
       messages: [{ role: 'user', content }]
-    }), 90000, 'Selected-piece visual composer')
+    }), 120000, 'Selected-piece visual composer')
     timings.composerMs = Date.now() - composerStartedAt
     composerUsage = composerResult.usage || null
     parsed = parseModelJson(composerResult.text, { context: 'selected-piece visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })
@@ -1268,12 +1265,15 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     }))
   let outfits = selectedModelOutfits.filter(outfit => selectedValidation.get(outfit).hardValid)
 
-  if (!outfits.length) {
-    const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, recoveryRankedCandidates, { occasion })
-    outfits = localFallback
-      .map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePool))
-      .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
-  }
+  // Local/deterministic logic may prepare and rank candidate space, but it may not supply a
+  // user-facing outfit recommendation the styling model never actually selected or evaluated
+  // (2026-08-27 policy, thread_1787803856242: a composer timeout previously substituted
+  // buildLocalFallbackOutfitDirections()'s category-fill picks here — no photo judgment, no
+  // layering awareness, no validation at all — presented with the same confident labels as a real
+  // composition). needsReviewOutfits are still model-sourced (just hard-invalid), so they remain
+  // legitimate to show; only a true "nothing to show" case (no valid AND no rejected-but-real
+  // outfits) needs to become an explicit failure state rather than a silently-substituted pick.
+  const compositionSkipped = (!outfits.length && !needsReviewOutfits.length) ? 'composer_failed' : null
 
   if (comfortConstraint) {
     const visibleRepairPool = shownPieces.length ? shownPieces : candidatePieces
@@ -1296,8 +1296,13 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     outfits,
     recoveryEligiblePieces: recoveryEvaluation.recoveryEligiblePieces,
     rejected: parsed.rejected || [],
-    skip: parsed.skip || '',
+    skip: compositionSkipped
+      ? (composerError
+          ? `The stylist wasn't able to generate outfit ideas for this piece this time (${composerError}). Try again.`
+          : 'The stylist didn\'t return any outfit ideas for this piece this time. Try again.')
+      : (parsed.skip || ''),
     saveableLearning: parsed.saveableLearning || '',
+    compositionSkipped,
     debug: {
       shownPieceCount,
       rosterCount: candidatePieces.length,
@@ -1311,7 +1316,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       slotCoverage: rosterDebug.slotCoverage,
       coverageReport: rosterDebug.coverageReport,
       structureCoverageGaps: rosterDebug.structureCoverageGaps || [],
-      compositionSkipped: null,
+      compositionSkipped,
       imageDetail: composerImageDetail,
       thumbPx: composerThumbPx,
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
@@ -1783,47 +1788,20 @@ export async function generateOutfitsForPieceInternal({
   const recoveryPieces = (!idealMode && !idealOnlyMode && Array.isArray(composed.recoveryEligiblePieces))
     ? composed.recoveryEligiblePieces
     : allPieces
-  const recoveryIds = new Set(recoveryPieces.map(piece => Number(piece.id)))
-  const recoveryRankedCandidates = rankedCandidates.filter(candidate => recoveryIds.has(Number(candidate?.piece?.id)))
   let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
   if (structuredOutfits.length > 0) {
     console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
-  } else if (!idealOnlyMode && !composed.compositionSkipped) {
-    console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
-    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, recoveryRankedCandidates, { occasion })
-  }
-  if (!structuredOutfits.length && !composed.compositionSkipped) {
-    console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
-    const candidates = recoveryRankedCandidates.map(r => r.piece).filter(Boolean)
-    const selectedGroup = wardrobeCategoryGroup(parsedPiece)
-    const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
-    const absoluteCandidate = normalizeGeneratedOutfitObject({
-      label: 'Best available wardrobe direction',
-      strength: 'usable',
-      dominantDirection: 'simple closet-based pairing using the selected garment',
-      silhouette: selectedGroup === 'bottom' ? 'selected bottom with a controlled top' : selectedGroup === 'top' ? 'selected top with the cleanest available bottom' : 'selected garment with restrained support pieces',
-      bestFor: 'testing from saved wardrobe pieces',
-      pieceIds: [parsedPiece.id, ...supporting.map(p => p.id)].filter(Boolean).slice(0, 5),
-      pieces: [parsedPiece, ...supporting].map(p => ({
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        photo: p.photo || null,
-        worn_photo: p.worn_photo || null
-      })).slice(0, 5),
-      reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
-    }, parsedPiece, [parsedPiece, ...candidates])
-    const absoluteFallback = validatedFallback({
-      candidates: [absoluteCandidate],
-      limit: 1,
-      validate: outfit => validateSelectedRecoveryOutfit(outfit, parsedPiece, candidates),
-      context: { flow: 'selected_piece_absolute', selectedPieceId: Number(parsedPiece.id) },
-    })
-    structuredOutfits = absoluteFallback.values
-    if (!structuredOutfits.length) {
-      composed.recoveryShortfall = absoluteFallback.report
-      if (!composed.skip) composed.skip = absoluteFallback.report.message
-    }
+  } else if (!composed.compositionSkipped) {
+    // Local/deterministic logic may prepare and rank candidate space, but it may not supply a
+    // user-facing outfit recommendation the styling model never actually selected or evaluated
+    // (2026-08-27 policy, thread_1787803856242). This used to fall back to
+    // buildLocalFallbackOutfitDirections(), then an unvalidated single "Best available wardrobe
+    // direction" card built directly from ranked candidates — both engine-only picks presented
+    // with the same confident labeling as a real composition. A composer that returns nothing now
+    // surfaces as an explicit failure state instead.
+    console.log(`    - AI stylist composer returned 0 outfits. Surfacing an explicit generation-failed state.`)
+    composed.compositionSkipped = 'composer_failed'
+    if (!composed.skip) composed.skip = 'The stylist didn\'t return any outfit ideas for this piece this time. Try again.'
   }
 
   if (comfortConstraint) {
@@ -1833,7 +1811,12 @@ export async function generateOutfitsForPieceInternal({
     provenance: {
       flow: 'selected_piece',
       source: outfit.source || (idealOnlyMode ? 'ideal-only' : idealMode ? 'ideal' : 'model'),
-      composedBy: outfit.composedBy || 'model',
+      // idealOnlyMode's outfits come from buildIdealOnlyCompletionsForPiece — a deterministic,
+      // template-based missing-piece/shopping-idea generator, never a model call, by design (a
+      // distinct feature from closet/mixed styling of owned pieces). Every other outfit that
+      // reaches this line now genuinely is model-composed: buildLocalFallbackOutfitDirections and
+      // the old "absolute basic backfill" no longer feed this response (2026-08-27 policy).
+      composedBy: outfit.composedBy || (idealOnlyMode ? 'engine' : 'model'),
       stage: 'selected_response',
     },
   }))
@@ -1868,10 +1851,12 @@ export async function generateOutfitsForPieceInternal({
         : 'selected_piece_visual_composer',
     idealMode,
     idealOnlyMode,
+    compositionSkipped: composed.compositionSkipped || null,
     debug: {
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
       recoveryShortfall: composed.recoveryShortfall || null,
+      compositionSkipped: composed.compositionSkipped || null,
       weatherProfile,
       stylingContext: stylingContext.debug
     }
@@ -2387,7 +2372,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         system: systemPrompt,
         maxTokens: composerMaxTokens,
         messages: [{ role: 'user', content }]
-      }), 90000, 'Visual wardrobe composer')
+      }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
       composerUsage = composerResult.usage
       parsed = parseModelJson(composerResult.text, { context: 'whole-wardrobe visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })

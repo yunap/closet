@@ -1425,6 +1425,71 @@ rewritten to describe the zone/direction mechanics; its three wiring points (vis
 wardrobe data are a separate, deterministic-only DB pass (no AI calls in server-startup migration) —
 see `scripts/sleeve-taxonomy-census.mjs` and `docs/garment-field-reference.md`.
 
+**[no-silent-local-fallback policy, selected-piece flow, 2026-08-27] A composer timeout revealed that
+"local fallback" and "user-facing recommendation" had never actually been kept separate for the
+selected-piece flow — testing the sleeve fix above on real data (thread_1787803856242) surfaced a
+shrug the model never evaluated, paired with a shirt, presented as a "Signature / strongest
+direction" card.** Tracing it: the selected-item visual composer (`composeSelectedPieceVisualWardrobeOutfits`
+in `routes/ai.js`) timed out at 90s (bumped to 120s the same pass, per the historical latency data —
+one outlier in 20+ recorded calls, payload size normal, no evidence of a caused regression) and
+returned zero outfits, and the code silently substituted `buildLocalFallbackOutfitDirections()`'s
+category-fill picks — no photo judgment, no layering awareness, no `evaluateWearableOutfit` validation
+of any kind — labeled identically to a real composition. A companion violation was found in
+`composeStructuredOutfitsForPiece`'s closet-only branch (`styling-engine/core.js`, exported but not
+reachable from the live `/generate-outfits-for-piece` route today, which only ever invokes this
+function in ideal/ideal-only mode — fixed anyway as a dormant landmine, not left as a trap for a
+future direct caller): mergeOutfitDirections() (deleted) blended real model outfits with local-fallback picks
+up to `minCount: 4` with no visible distinction (an internal `isFallback` flag existed but was never
+surfaced), and validated the merged set with `validateSelectedRecoveryOutfit()` — checked and
+confirmed weaker than the canonical `evaluateWearableOutfit`: only `evaluateOutfitStructure` and
+`evaluateRequiredBaseLayers`, no layer-direction or layer-construction check, so it would not have
+caught this pairing either. `composeStructuredOutfitsForPiece`'s `idealMode` branch had the same
+shape (`ensureIdealMissingCompletion(outfits.length ? outfits : localFallback, ...)`) and was fixed
+too. The governing rule, applied uniformly: **local/deterministic logic may prepare, rank, filter,
+validate, or recover candidate space, but it may not supply a user-facing outfit recommendation
+unless a styling model actually selected/evaluated that outfit.** A composer that returns nothing now
+sets `compositionSkipped: 'composer_failed'` (mirroring the existing `'incomplete_candidate_supply'`
+early-return shape `composeSelectedPieceVisualWardrobeOutfits` already used for a different failure
+mode) and a clear retry message, surfaced at both the top level and in `debug`; the outer shared
+post-composer block in `generateOutfitsForPieceInternal` respects the same flag, so neither composer
+path can reintroduce a substitute once one signals failure. The now-unused mergeOutfitDirections()
+helper was deleted outright rather than left dormant, along with the "absolute basic backfill"
+tier (a second, weaker local-fallback layer that fired when even the first fallback returned nothing).
+`buildLocalFallbackOutfitDirections()` itself is kept, exported, currently uncalled — available if a
+genuine internal recovery/retry mechanism needs it later, but its output must never reach
+recommendation UI without model judgment again. Provenance was tightened alongside this:
+`composedBy` used to default to `'model'` unconditionally; it now honestly distinguishes
+`idealOnlyMode`'s outfits (`buildIdealOnlyCompletionsForPiece` — a deterministic, template-based
+missing-piece/shopping-idea generator, a distinct feature from closet/mixed styling, never a model
+call, left out of scope for this fix) as `'engine'`. Deliberately **not** touched: whole-wardrobe's
+local backfill (`buildVisualLocalBackfill`/`buildDiagnosticLocalBackfill` in `routes/ai.js`), which
+already gates fill-in candidates through `locallyGateWholeWardrobeOutfits()` and marks its diagnostic
+tier `broken`/`diagnosticOnly` — the same "gate or mark broken, never silently present as real" shape
+this fix establishes, just already in place there; and capsule roster selection's own deterministic
+fallback (`paletteSafeDeterministic()`), which constructs candidate space (which pieces are eligible
+for the capsule), not a final styled recommendation — explicitly out of scope by the same rule.
+Regression coverage: `test/selected_piece_no_local_fallback.test.js` pins both fixed violations (empty
+composer → explicit failure, not a substitute; partial model result → shown as-is, not padded) and
+two same-file positive cases (a real composed outfit still reaches the user; the fix doesn't suppress
+genuine model output).
+
+**[follow-up, same day] `validateSelectedRecoveryOutfit()`'s weaker parallel contract — flagged above
+but deliberately left untouched in the first pass — was resolved as its own reviewed change.** It
+used to run only `evaluateOutfitStructure` and `evaluateRequiredBaseLayers` directly; now it is a
+thin adapter around the canonical `evaluateWearableOutfit(pieces, { requireShoes: true,
+includeLayerDirections: true })`, returning `{ valid: hardValid, primaryFinding }` — the shape
+`recovery.js`'s `validatedFallback` already expected, so no caller-side changes were needed. This is
+the one remaining place `composeStructuredOutfitsForPiece`'s closet-only branch validates real
+model-composed outfits (`buildLocalFallbackOutfitDirections`'s own internal use of the same function
+is unaffected in behavior terms — it's just now checked against the same canonical bar, though that
+helper remains uncalled by any live path). The individual missing checks were deliberately not copied
+in one at a time — the adapter projects through the canonical gate so a future check added to
+`evaluateWearableOutfit` is inherited automatically rather than needing to be remembered here too.
+`test/selected_piece_no_local_fallback.test.js` gained a fifth case: two model-composed candidates
+sharing a voluminous-sleeve dress, one paired with a structured (zero-capacity) cardigan layer and one
+with a roomy one — proving the sleeve-construction conflict is now rejected in this path exactly as it
+already was in the visual composer path, not merely deprioritized.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

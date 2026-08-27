@@ -85,7 +85,7 @@ import {
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
-import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
+import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext } from './stylingContext.js'
@@ -111,7 +111,6 @@ import {
   getStylistFeedbackMemory,
   getProvisionalWrongChoiceMemory,
   getAcceptedFeedbackSynthesisMemory,
-  outfitStylisticStrengthScore,
   sortByStylisticStrength,
   weatherProfileFromContext,
   footwearComfortVerdict,
@@ -633,6 +632,14 @@ export function locallyGateOutfitDirections(outfits = [], selectedPiece) {
   return sortByStylisticStrength(accepted, selectedPiece).slice(0, 5)
 }
 
+// Thin adapter around the canonical wearable gate — selected-piece recovery/fallback callers need
+// a {valid, primaryFinding} shape (consumed by recovery.js's validatedFallback), not
+// evaluateWearableOutfit's full stage/finding structure, but the underlying hard-validity question
+// must be the same one every other flow answers. This used to run only evaluateOutfitStructure +
+// evaluateRequiredBaseLayers — a real, silently weaker parallel contract missing layer direction and
+// layer construction (the sleeve-construction check), so a model-composed outfit that failed the
+// canonical gate could still pass here. Do not copy individual checks back in if the canonical gate
+// grows another one; project through evaluateWearableOutfit instead.
 export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, candidatePieces = []) {
   const pieceById = new Map([selectedPiece, ...(candidatePieces || [])]
     .filter(Boolean)
@@ -641,54 +648,32 @@ export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, 
   if (!pieces.some(piece => Number(piece.id) === Number(selectedPiece?.id))) {
     return { valid: false, reason: 'selected_anchor_missing' }
   }
-  const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
-  if (!structure.valid) return structure
-  const dependencies = evaluateRequiredBaseLayers(pieces)
-  return dependencies.verdict === 'incompatible'
-    ? { valid: false, primaryFinding: dependencies.primaryFinding }
-    : { valid: true }
+  const verdict = evaluateWearableOutfit(pieces, { requireShoes: true, includeLayerDirections: true })
+  return verdict.hardValid
+    ? { valid: true }
+    : { valid: false, primaryFinding: verdict.primaryFinding }
 }
 
-export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece, { closetOnly = false, minCount = 3 } = {}) {
+// locallyGateOutfitDirections dedupes by pieceIds and folds in the label, so two outfits with
+// different pieces but the same generated label survive intact — thread_1787791754740 saw two
+// "Artisan City Bohemian: standard wear" directions (cat tee vs. emerald top) reach the user, and a
+// follow-up naming the label by itself resolved to the wrong one. Applied once, after every branch
+// has settled on its final outfit list, so it sees exactly what the user will read regardless of
+// which path produced it.
+export function disambiguateOutfitLabels(outfits = [], selectedPiece) {
   const selectedId = Number(selectedPiece?.id)
-  const merged = []
-  const seen = new Set()
-  const add = (outfit, isPrimary) => {
-    if (!outfit) return
-    const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number).filter(Boolean) : []
-    const hasMissing = (Array.isArray(outfit.missingPieces) && outfit.missingPieces.length) ||
-      (Array.isArray(outfit.pieces) && outfit.pieces.some(p => p?.missing || String(p?.id || '').startsWith('missing-')))
-    if (closetOnly && hasMissing) return
-    if (selectedId && !ids.includes(selectedId)) return
-    if (ids.length < 2) return
-    const key = ids.slice().sort((a,b) => a-b).join('|')
-    if (seen.has(key)) return
-    seen.add(key)
-    merged.push({ ...outfit, isFallback: !isPrimary })
-  }
-  primary.forEach(o => add(o, true))
-  fallback.forEach(o => add(o, false))
-
-  const sorted = [...merged].sort((a, b) => {
-    if (a.isFallback !== b.isFallback) {
-      return a.isFallback ? 1 : -1
-    }
-    const strengthOrder = { signature: 8, strong: 5, usable: 2, experimental: 1 }
-    const as = outfitStylisticStrengthScore(a, selectedPiece) + (strengthOrder[a?.strength] || 3)
-    const bs = outfitStylisticStrengthScore(b, selectedPiece) + (strengthOrder[b?.strength] || 3)
-    return bs - as
+  const seenCounts = new Map()
+  return (outfits || []).map(outfit => {
+    const label = String(outfit?.label || '').trim()
+    if (!label) return outfit
+    const key = label.toLowerCase()
+    const count = seenCounts.get(key) || 0
+    seenCounts.set(key, count + 1)
+    if (count === 0) return outfit
+    const distinguishingPiece = (outfit.pieces || []).find(p => p?.name && Number(p.id) !== selectedId)
+    const suffix = distinguishingPiece ? ` (with ${distinguishingPiece.name})` : ` (variant ${count + 1})`
+    return { ...outfit, label: `${label}${suffix}` }
   })
-
-  const resolved = sorted.map((o, index) => {
-    const score = outfitStylisticStrengthScore(o, selectedPiece)
-    const copy = { ...o }
-    if (index === 0 && score >= 8) copy.strength = 'signature'
-    else if (score < -15 && copy.strength === 'signature') copy.strength = 'usable'
-    else if (score < -5 && copy.strength === 'strong') copy.strength = 'usable'
-    return copy
-  })
-
-  return resolved.slice(0, Math.max(minCount, 4))
 }
 
 export function sanitizeSelectedPieceOutfitDirections(outfits = [], selectedPiece, candidatePieces = [], options = {}) {
@@ -1140,15 +1125,22 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
   if (!outfits.length && normalized.length) outfits = locallyGateOutfitDirections(normalized, selectedPiece)
   console.log(`    - After locallyGateOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
 
-  const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates, { occasion })
+  // Local/deterministic logic may prepare and rank candidate space, but it may not supply a
+  // user-facing outfit recommendation the styling model never actually selected or evaluated
+  // (2026-08-27 policy, thread_1787803856242). This used to call buildLocalFallbackOutfitDirections()
+  // as a base whenever the AI composer returned zero (or, in the closet-only branch, fewer than 4)
+  // owned-wardrobe outfits — an engine-only category-fill pick, sometimes then decorated with an
+  // "ideal missing piece" completion, presented with the same confident labeling as a real
+  // composition and with none of the shared hard validation. A composer that returns nothing now
+  // surfaces as an explicit `compositionSkipped` failure state instead.
+  let compositionSkipped = null
 
   if (idealOnlyMode) {
     outfits = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
   } else if (idealMode) {
-    outfits = ensureIdealMissingCompletion(outfits.length ? outfits : localFallback, selectedPiece, true).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
+    outfits = ensureIdealMissingCompletion(outfits, selectedPiece, true).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
+    if (!outfits.length) compositionSkipped = 'composer_failed'
   } else {
-    outfits = mergeOutfitDirections(outfits, localFallback, selectedPiece, { closetOnly: true, minCount: 4 })
-    console.log(`    - After mergeOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     outfits = sanitizeSelectedPieceOutfitDirections(outfits, selectedPiece, candidatePieces, { occasion })
     outfits = validatedFallback({
       candidates: outfits,
@@ -1157,17 +1149,17 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
       context: { flow: 'selected_piece_post_sanitize', selectedPieceId: Number(selectedPiece?.id) || null },
     }).values
     console.log(`    - After sanitizeSelectedPieceOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
-    if (!outfits.length) {
-      console.log(`    - Final outfits list empty, fallback to sanitized localFallback.`)
-      outfits = sanitizeSelectedPieceOutfitDirections(localFallback, selectedPiece, candidatePieces, { occasion })
-    }
+    if (!outfits.length) compositionSkipped = 'composer_failed'
   }
 
   return {
-    outfits,
+    outfits: disambiguateOutfitLabels(outfits, selectedPiece),
     rejected: gated.rejected || [],
-    skip: gated.skip || composerParsed.skip || '',
+    skip: compositionSkipped
+      ? 'The stylist didn\'t return any usable outfit ideas for this piece this time. Try again.'
+      : (gated.skip || composerParsed.skip || ''),
     saveableLearning: gated.saveableLearning || composerParsed.saveableLearning || '',
+    compositionSkipped,
     rawComposer
   }
 }
