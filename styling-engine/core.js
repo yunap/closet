@@ -691,6 +691,28 @@ export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece
   return resolved.slice(0, Math.max(minCount, 4))
 }
 
+// locallyGateOutfitDirections and mergeOutfitDirections both dedupe by pieceIds (locallyGate also
+// folds in the label), so two outfits with different pieces but the same generated label survive
+// both stages intact — thread_1787791754740 saw two "Artisan City Bohemian: standard wear"
+// directions (cat tee vs. emerald top) reach the user, and a follow-up naming the label by itself
+// resolved to the wrong one. Applied once, after every branch has settled on its final outfit list,
+// so it sees exactly what the user will read regardless of which path produced it.
+export function disambiguateOutfitLabels(outfits = [], selectedPiece) {
+  const selectedId = Number(selectedPiece?.id)
+  const seenCounts = new Map()
+  return (outfits || []).map(outfit => {
+    const label = String(outfit?.label || '').trim()
+    if (!label) return outfit
+    const key = label.toLowerCase()
+    const count = seenCounts.get(key) || 0
+    seenCounts.set(key, count + 1)
+    if (count === 0) return outfit
+    const distinguishingPiece = (outfit.pieces || []).find(p => p?.name && Number(p.id) !== selectedId)
+    const suffix = distinguishingPiece ? ` (with ${distinguishingPiece.name})` : ` (variant ${count + 1})`
+    return { ...outfit, label: `${label}${suffix}` }
+  })
+}
+
 export function sanitizeSelectedPieceOutfitDirections(outfits = [], selectedPiece, candidatePieces = [], options = {}) {
   const occasion = String(options.occasion || '').toLowerCase().trim()
   const selectedId = Number(selectedPiece?.id)
@@ -1164,7 +1186,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
   }
 
   return {
-    outfits,
+    outfits: disambiguateOutfitLabels(outfits, selectedPiece),
     rejected: gated.rejected || [],
     skip: gated.skip || composerParsed.skip || '',
     saveableLearning: gated.saveableLearning || composerParsed.saveableLearning || '',
