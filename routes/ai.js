@@ -3491,6 +3491,7 @@ router.post('/editorial-render-one', async (req, res) => {
       label: direction.title || 'Rendered direction',
       missingPieces: direction.missingPieces || [],
       reason: direction.reason || '',
+      stylingInstructions: direction.stylingInstructions || direction.styling_instructions || '',
       watchFor: direction.watchFor || '',
       mode: 'editorial_render_one',
       debug: {
