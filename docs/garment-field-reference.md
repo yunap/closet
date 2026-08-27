@@ -54,7 +54,7 @@ The real risk is two different validation tiers silently disagreeing:
 | `necklace_length` | accessory (`jewelry_type = necklace` only) | `choker \| short \| long` | yes | PieceForm, BatchAdd | `prompts.js` schema. How it sits/falls — the detail that matters for neckline pairing. Other jewelry types (pin lapel/chest/scarf position, etc.) don't have an equivalent field yet — deliberately scoped to necklace only for now. |
 | `neckline` | top, dress | `V \| scoop \| crew \| boat \| mock \| turtleneck \| cowl \| off-shoulder \| square \| wrap \| halter \| strapless \| one-shoulder \| collared \| shawl \| other \| unknown` | yes | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY.showNeckline` gates display. Extended 2026-08-14 — dropped the old `none` value per owner call (existing `none`-tagged pieces keep working, nothing validates this field against a Set — see "How safe is it to extend an enum" note below). `turtleneck` activates `necklineWarmth()` in `attributes.js`, which already had a dead `turtle` regex waiting for a real tagged value. |
 | `sleeve_length` | top, dress, outerwear | `sleeveless \| cap \| short \| elbow \| 3/4 \| long \| extra_long \| unknown` | yes | PieceForm, BatchAdd | Split from `sleeve_type` 2026-08-14 — see split writeup below. Dress got sleeve UI at all for the first time earlier the same day (was tagged, never editable — [PieceForm.jsx:109](../src/components/PieceForm.jsx)). |
-| `sleeve_shape` | top, dress, outerwear (hidden when `sleeve_length = sleeveless`) | `fitted \| straight \| relaxed \| puff \| bishop \| bell \| flutter \| raglan \| dolman \| other \| unknown` | yes | PieceForm, BatchAdd | Split from `sleeve_type` 2026-08-14; `raglan` added same day |
+| `sleeve_shape` | top, dress, outerwear (hidden when `sleeve_length = sleeveless`; stored `NULL`, not `unknown`, for sleeveless pieces) | `fitted \| straight \| puff_shoulder \| gathered_ruched \| voluminous \| flared \| deep_armhole \| other \| unknown` | yes | PieceForm, BatchAdd | Split from `sleeve_type` 2026-08-14; `raglan` added same day, then **replaced 2026-08-26 by the functional sleeve-volume taxonomy** below — see "Sleeve taxonomy: functional volume, not fashion names (2026-08-26)". Canonical value/label list owned by `SLEEVE_SHAPE_VALUES`/`SLEEVE_SHAPE_OPTIONS` in `styling-engine/attributes.js`; the tagger schema, PieceForm, and BatchAdd all derive from it rather than keeping their own copy. |
 | `length_hits_at` | top, bottom, dress, outerwear, shoes | Genuinely per-category vocabulary as of 2026-08-14 — see "Category-conditional length_hits_at" writeup below for the full value lists and the bottom skirt-vs-pants split | yes | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].lengthOptions` for top/dress/outerwear/shoes; `BOTTOM_SKIRT_LENGTH_OPTIONS`/`BOTTOM_PANTS_LENGTH_OPTIONS` (chosen by `bottom_subtype` at render time) for bottom |
 | `silhouette` | top, bottom, dress, outerwear (**not shoes** — see `shoe_type`/`toe_shape`) | **top**: `fitted \| slim \| straight \| relaxed \| boxy \| drop-shoulder \| oversized \| peplum \| wrap` — **bottom, `bottom_subtype = skirt`**: `a_line \| pencil \| full \| slip \| straight \| pleated \| wrap` — **bottom, `bottom_subtype` pants/culottes/overalls/other**: `straight \| wide \| bootcut \| flare \| tapered \| barrel \| relaxed` — **dress**: `fitted \| sheath \| shift \| A-line \| wrap \| slip \| column \| fit-and-flare \| empire \| relaxed` — **outerwear**: `fitted \| straight \| boxy \| relaxed \| oversized \| structured` | yes, category- and `bottom_subtype`-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].silhouetteOptions` for top/dress/outerwear; `BOTTOM_SKIRT_SILHOUETTE_OPTIONS`/`BOTTOM_PANTS_SILHOUETTE_OPTIONS` (chosen by `bottom_subtype` at render time) for bottom. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below — top gained `straight`; bottom's `structured` was dropped (meaningless for either skirts or pants; use `fit_on_body = structured` instead) and the field became `bottom_subtype`-conditional; dress gained `empire`; outerwear dropped `cropped` (opportunistically preserved into that piece's `length_hits_at` by the migration if unset) and `longline` (no unambiguous target — outerwear length concepts now live entirely in `length_hits_at`, see below) and gained `straight`. Shoes lost generic `silhouette` entirely — see `shoe_type`/`toe_shape`. |
 | `shoe_type` | shoes | `mule \| loafer \| boot \| sandal \| pump \| flat \| sneaker \| slip_on \| other \| unknown` | yes | PieceForm, BatchAdd | `SHOE_TYPE_OPTIONS`; gate-critical for shoes (`missingGateFields`). New 2026-08-14, replacing shoes' slice of the old generic `silhouette` enum (`mule\|loafer\|boot\|sandal\|heel\|flat\|sneaker`). Deliberately never uses `heel` — `heel_height` already represents heel height, so a `heel` shoe type would just duplicate that axis without saying what kind of shoe it is. One-time migration mapped recognizable old `silhouette` words (`loafer`, `boot`, etc.) across; this sandbox's real shoe data had generic-fit words instead (`slim`/`fitted`/`relaxed` — leftover from before shoes had their own silhouette vocabulary at all), so those backfilled to null and surface via the normal missing-field review chip rather than being guessed. `slip_on` added same-day follow-up: a closure-free shoe (no laces/buckle/zip) that isn't itself a loafer, mule, or flat shape — e.g. a slip-on sneaker. Also drives the wardrobe browse filter's Shoes dropdown (`SHOE_TYPE_OPTIONS` in `PieceInventory.jsx`, added 2026-08-14 alongside `slip_on`, mirroring the Bottoms single-level split-button pattern) — see "Wardrobe browse filter" below. |
@@ -154,6 +154,60 @@ schema instead of importing from `prompts.js`, and had silently fallen behind on
 the sleeve fields both. Synced as part of this pass, but **any future field change needs to touch
 both schemas** — there is no single source of truth for the tagger enum. Worth unifying at some
 point, not done here.
+
+## Sleeve taxonomy: functional volume, not fashion names (2026-08-26)
+
+`sleeve_shape`'s original enum (`fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown`)
+mixed fashion-history names with no shared semantics, so nothing that consumed it (layering
+mechanics, the tagger, the UI) could reason about *where* a sleeve's volume actually sits. Replaced
+with a **functional sleeve-volume taxonomy** that answers one question: where does this sleeve
+create physical interference when another garment is worn over or under it?
+
+```
+fitted           close/slim, little excess volume
+straight         ordinary sleeve, no meaningful localized excess volume
+puff_shoulder    excess volume concentrated at the shoulder/sleeve head
+gathered_ruched  bulk from gathering/ruching along the arm or lower arm
+voluminous       substantial full-arm or mid-arm volume (bishop, balloon, lantern, ...)
+flared           opens substantially toward the cuff (bell, flutter, flounce)
+deep_armhole     excess underarm/armhole fabric (dolman, batwing, deep kimono construction)
+other            visible sleeve geometry that genuinely fits none of the above
+unknown          a sleeve exists but its shape cannot be determined reliably
+```
+
+`raglan` is deliberately **not** represented: it names armhole *attachment construction* (how the
+sleeve is seamed to the body), not where volume sits, so it cannot be translated mechanically —
+existing `raglan`-tagged pieces need visual reclassification against their actual geometry, same as
+`relaxed`. Sleeveless pieces store `sleeve_shape = NULL`, never `unknown` — the field is not
+applicable, not merely undetermined.
+
+Canonical ownership: `SLEEVE_SHAPE_VALUES` / `SLEEVE_SHAPE_OPTIONS` in `styling-engine/attributes.js`
+is the single source the tagger schema (`prompts.js`, and the `/extract-pieces` duplicate schema in
+`routes/ai.js` above), `PieceForm.jsx`, and `BatchAdd.jsx` all derive from.
+
+**Interference-zone reader.** `pieceSleeveInterference(piece)` (also in `attributes.js`) derives
+`{ shoulder, arm, lowerArm, armhole }`, each `'none' | 'elevated' | null` (shape unpopulated,
+`other`, or `unknown`), from the canonical map `SLEEVE_SHAPE_INTERFERENCE_ZONES`. This replaced the
+old `VOLUMINOUS_SLEEVE_SHAPES = new Set(['puff','bishop','bell'])` boolean membership check, which
+could only say "voluminous or not," not where.
+
+**Directional layer-pair construction.** `evaluateLayerPairConstruction()` /
+`evaluateLayerPairConstructionFor()` in `styling-engine/outfitValidation.js` now consume
+`resolveLayerDirection()` (shared with `evaluateLayerDirections`, PR #264/#265's canonical
+over/under logic) to determine which garment in a pair is outer vs inner, then compare the inner
+garment's interference zones against the outer garment's own zones at the *same* zone. A voluminous
+inner zone is only a conflict when the outer garment is known-`fitted`/`straight` (zero capacity) at
+that same zone — a voluminous OUTER garment over a fitted inner one is not a conflict, since the
+outer garment has room to spare. This fixes the prior symmetric rule (`isVoluminous` on either side
+= conflict, regardless of which piece was on top), which could not distinguish "fitted turtleneck
+under a bishop-style blouse" (fine) from "a bishop-style blouse under a narrow fitted blazer"
+(a real conflict). When the over/under direction cannot be resolved, or when either garment's
+sleeve shape is unrecorded, the verdict is `unknown` (sight required) rather than a guessed
+incompatibility — the only exceptions are: both garments carry fully-known zero-volume geometry
+(compatible regardless of direction) or both are tagged medium/heavy `fabric_weight` (an
+incompatible fabric-bulk conflict, which stays a direction-agnostic dimension independent of sleeve
+geometry). `layerConstructionPromptRule()` was rewritten to describe this same zone/direction
+mechanics instead of enumerating fashion-name shapes in prose.
 
 ## New field: bottom_subtype, and the bottomKind() rewrite (2026-08-14)
 

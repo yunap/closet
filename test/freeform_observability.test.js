@@ -668,10 +668,13 @@ test('compactGarmentFactLayeringEvidence computes the canonical verdict for the 
   assert.equal(unknownLines.length, 1)
   assert.match(unknownLines[0], /unknown/)
 
-  // Known conflict: voluminous shape trapped under a fitted cuffed sleeve.
-  const puffBlouse = { id: 203, name: 'puff-sleeve blouse', category: 'top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
-  const fittedTurtleneck = { id: 204, name: 'fitted turtleneck', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
-  const conflictLines = compactGarmentFactLayeringEvidence([puffBlouse, fittedTurtleneck])
+  // Known conflict: the INNER garment's voluminous sleeve is trapped under a narrow, structured
+  // OUTER sleeve — direction resolved from the outer piece's explicit top-layer evidence ("cardigan"
+  // in its garment text, per pieceHasExplicitTopLayerEvidence), both still category "top" so this
+  // pair still passes compactGarmentFactLayeringEvidence's top/dress-only candidate filter.
+  const voluminousInner = { id: 203, name: 'voluminous-sleeve base top', category: 'top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const structuredOuterLayer = { id: 204, name: 'structured cardigan layer', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const conflictLines = compactGarmentFactLayeringEvidence([voluminousInner, structuredOuterLayer])
   assert.equal(conflictLines.length, 1)
   assert.match(conflictLines[0], /incompatible/)
 

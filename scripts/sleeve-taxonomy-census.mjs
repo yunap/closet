@@ -82,6 +82,10 @@ const normalize = v => {
 };
 
 const currentValues = ['fitted','straight','relaxed','puff','bishop','bell','flutter','raglan','dolman','other','unknown'];
+// 'other' and 'unknown' are already valid values in the new taxonomy (see
+// styling-engine/attributes.js's SLEEVE_SHAPE_VALUES) — they map to themselves, not to a review
+// candidate. Only 'relaxed' and 'raglan' have no deterministic target and need manual visual
+// reclassification (db.js's queueSleeveTaxonomyReviews flags exactly these two on migration).
 const deterministicOldToProposed = {
   fitted: 'fitted',
   straight: 'straight',
@@ -90,8 +94,10 @@ const deterministicOldToProposed = {
   bell: 'flared',
   flutter: 'flared',
   dolman: 'deep_armhole',
+  other: 'other',
+  unknown: 'unknown',
 };
-const reviewOldValues = new Set(['relaxed','raglan','other','unknown','(null/blank)']);
+const reviewOldValues = new Set(['relaxed','raglan']);
 
 const detail = clothing.map(r => {
   const shape = normalize(r.sleeve_shape);
@@ -169,7 +175,7 @@ const report = {
       r => `${r.sleeve_shape} -> ${r.proposed_deterministic_shape}`
     ),
     review_candidate_counts: countBy(reviewRows, r => r.sleeve_shape),
-    note: 'No rows are modified. relaxed/raglan/other/unknown/null are flagged for review rather than guessed.',
+    note: 'No rows are modified. relaxed/raglan are flagged for manual review rather than guessed; other/unknown/null are already valid taxonomy values and are not review candidates.',
   },
   manual_sleeve_shape_overrides: manualShapeRows,
   unexpected_sleeve_shape_rows: unexpectedRows,
