@@ -1519,6 +1519,19 @@ before. `test/editorialIdealAdditions.test.js` pins both: a real multi-piece dir
 supporting-garment fidelity/construction sections with the expected per-category constraints, and a
 genuine ideal-addition direction (no owned pieceIds) produces neither section.
 
+**[follow-up, same day] Garment photos were not the only evidence this renderer was dropping —
+`styling_instructions` (how the pieces relate to each other: layering order, tuck/belt mechanics)
+never reached it either, despite both selected-piece composer prompts already generating it and
+documenting it as "the ONLY field the image renderer treats as authoritative for how pieces relate to
+each other".** It survives `normalizeGeneratedOutfitObject` onto the outfit card — `editorialImagePrompt`
+simply never read `direction.stylingInstructions`. Fixed the same way `wholeWardrobeImagePrompt`
+already treats it: an "Authoritative styling instructions (how these garments relate to each other —
+follow exactly)" line, ordered ahead of the non-authoritative `reason` prose. Also echoed on the
+`/editorial-render-one` response body (alongside the existing `reason`/`watchFor`/`missingPieces`
+fields) for consistency, though the prompt injection is the actual fix. `test/editorialIdealAdditions.test.js`
+gained two more cases: a direction with `stylingInstructions` produces the authoritative line ordered
+before `Stylist logic:`, and one without it produces neither.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

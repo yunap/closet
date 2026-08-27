@@ -3659,6 +3659,15 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
   // separately via createEditorialConceptImage → runGPT4oImageGeneration's supportingGarmentImages.
   const supportingFidelity = supportingPieces.length ? pieceFidelityChecklist(supportingPieces) : ''
   const supportingConstruction = supportingPieces.length ? pieceConstructionChecklist(supportingPieces) : ''
+  // How the garments relate to each other when it isn't obvious from the pieces alone — layering
+  // order, where a belt/tie lands and which layer it cinches, tuck/drape behavior between two named
+  // garments. Both selected-piece composer prompts (outfitComposerTemplate,
+  // wholeWardrobeVisualComposerTemplate) already generate and document this as "the ONLY field the
+  // image renderer treats as authoritative for how pieces relate to each other" — it survives
+  // normalizeGeneratedOutfitObject onto the outfit card, but this renderer never read it, same class
+  // of gap as the missing supporting-garment photos above. wholeWardrobeImagePrompt already treats
+  // it as authoritative for its own callers; this must not be a second, weaker restatement.
+  const stylingInstructions = String(direction.stylingInstructions || direction.styling_instructions || '').trim()
   // Built from the same truth text the whole-wardrobe image path uses. The old
   // hand-picked list carried name/category/colors/notes only — no length,
   // sleeve, silhouette, hem or fabric — and its `fabric` line read
@@ -3702,6 +3711,9 @@ ${EXPRESSIVE_HIERARCHY_RULES}`,
       : '',
     supportingConstruction
       ? `Supporting garment construction (authoritative for fit/length/sleeve/hem — overrides the stylist logic prose below wherever they conflict):\n${supportingConstruction}`
+      : '',
+    stylingInstructions
+      ? `Authoritative styling instructions (how these garments relate to each other — follow exactly): ${stylingInstructions}`
       : '',
     direction.visualPrompt
       ? `PRIMARY RENDERING DIRECTIVE — follow this exactly: ${direction.visualPrompt}`

@@ -212,3 +212,42 @@ test('editorialImagePrompt omits the supporting-garment sections entirely when t
   // The genuine ideal-addition path is untouched: missingPieces still reaches the prompt as prose.
   assert.match(prompt, /grounded olive utility trouser/)
 })
+
+// Both selected-piece composer prompts (outfitComposerTemplate, wholeWardrobeVisualComposerTemplate)
+// already generate `styling_instructions` and document it as "the ONLY field the image renderer
+// treats as authoritative for how pieces relate to each other" — it survives
+// normalizeGeneratedOutfitObject onto the outfit card, but editorialImagePrompt never read it. Real
+// example from thread_1787813410728's own turn: "open shirt over a dark tank is what elevates this
+// piece" is exactly the kind of layering mechanic styling_instructions exists to carry.
+test('editorialImagePrompt treats direction.stylingInstructions as authoritative, the same way wholeWardrobeImagePrompt does', () => {
+  const selectedPiece = { id: 996795, name: 'grey striped button-up shirt', category: 'top' }
+  const prompt = editorialImagePrompt({
+    selectedPiece,
+    direction: {
+      pieceIds: [996795],
+      reason: 'a clean tone-on-tone column',
+      stylingInstructions: 'wear the shirt open, unbuttoned, over a black tank so the collar reads intentional',
+    },
+    occasion: 'city',
+    season: 'summer',
+  })
+
+  assert.match(prompt, /Authoritative styling instructions \(how these garments relate to each other — follow exactly\): wear the shirt open, unbuttoned, over a black tank/)
+  // Ordered ahead of the non-authoritative reason prose, matching wholeWardrobeImagePrompt's own
+  // authoritative-facts-before-prose ordering.
+  const authoritativeIndex = prompt.indexOf('Authoritative styling instructions')
+  const stylistLogicIndex = prompt.indexOf('Stylist logic:')
+  assert.ok(authoritativeIndex >= 0 && stylistLogicIndex > authoritativeIndex)
+})
+
+test('editorialImagePrompt omits the styling-instructions line when the outfit has none to state', () => {
+  const selectedPiece = { id: 263, name: 'black textured long sleeve top', category: 'top' }
+  const prompt = editorialImagePrompt({
+    selectedPiece,
+    direction: { pieceIds: [263], reason: 'simple everyday pairing', stylingInstructions: '' },
+    occasion: 'casual',
+    season: 'summer',
+  })
+
+  assert.doesNotMatch(prompt, /Authoritative styling instructions/)
+})
