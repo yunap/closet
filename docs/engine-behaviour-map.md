@@ -1473,6 +1473,23 @@ composer → explicit failure, not a substitute; partial model result → shown 
 two same-file positive cases (a real composed outfit still reaches the user; the fix doesn't suppress
 genuine model output).
 
+**[follow-up, same day] `validateSelectedRecoveryOutfit()`'s weaker parallel contract — flagged above
+but deliberately left untouched in the first pass — was resolved as its own reviewed change.** It
+used to run only `evaluateOutfitStructure` and `evaluateRequiredBaseLayers` directly; now it is a
+thin adapter around the canonical `evaluateWearableOutfit(pieces, { requireShoes: true,
+includeLayerDirections: true })`, returning `{ valid: hardValid, primaryFinding }` — the shape
+`recovery.js`'s `validatedFallback` already expected, so no caller-side changes were needed. This is
+the one remaining place `composeStructuredOutfitsForPiece`'s closet-only branch validates real
+model-composed outfits (`buildLocalFallbackOutfitDirections`'s own internal use of the same function
+is unaffected in behavior terms — it's just now checked against the same canonical bar, though that
+helper remains uncalled by any live path). The individual missing checks were deliberately not copied
+in one at a time — the adapter projects through the canonical gate so a future check added to
+`evaluateWearableOutfit` is inherited automatically rather than needing to be remembered here too.
+`test/selected_piece_no_local_fallback.test.js` gained a fifth case: two model-composed candidates
+sharing a voluminous-sleeve dress, one paired with a structured (zero-capacity) cardigan layer and one
+with a roomy one — proving the sleeve-construction conflict is now rejected in this path exactly as it
+already was in the visual composer path, not merely deprioritized.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

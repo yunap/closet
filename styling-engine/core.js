@@ -85,7 +85,7 @@ import {
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
-import { evaluateOutfitStructure, evaluateRequiredBaseLayers } from './outfitValidation.js'
+import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext } from './stylingContext.js'
@@ -632,6 +632,14 @@ export function locallyGateOutfitDirections(outfits = [], selectedPiece) {
   return sortByStylisticStrength(accepted, selectedPiece).slice(0, 5)
 }
 
+// Thin adapter around the canonical wearable gate — selected-piece recovery/fallback callers need
+// a {valid, primaryFinding} shape (consumed by recovery.js's validatedFallback), not
+// evaluateWearableOutfit's full stage/finding structure, but the underlying hard-validity question
+// must be the same one every other flow answers. This used to run only evaluateOutfitStructure +
+// evaluateRequiredBaseLayers — a real, silently weaker parallel contract missing layer direction and
+// layer construction (the sleeve-construction check), so a model-composed outfit that failed the
+// canonical gate could still pass here. Do not copy individual checks back in if the canonical gate
+// grows another one; project through evaluateWearableOutfit instead.
 export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, candidatePieces = []) {
   const pieceById = new Map([selectedPiece, ...(candidatePieces || [])]
     .filter(Boolean)
@@ -640,12 +648,10 @@ export function validateSelectedRecoveryOutfit(outfit = {}, selectedPiece = {}, 
   if (!pieces.some(piece => Number(piece.id) === Number(selectedPiece?.id))) {
     return { valid: false, reason: 'selected_anchor_missing' }
   }
-  const structure = evaluateOutfitStructure(pieces, { requireShoes: true })
-  if (!structure.valid) return structure
-  const dependencies = evaluateRequiredBaseLayers(pieces)
-  return dependencies.verdict === 'incompatible'
-    ? { valid: false, primaryFinding: dependencies.primaryFinding }
-    : { valid: true }
+  const verdict = evaluateWearableOutfit(pieces, { requireShoes: true, includeLayerDirections: true })
+  return verdict.hardValid
+    ? { valid: true }
+    : { valid: false, primaryFinding: verdict.primaryFinding }
 }
 
 // locallyGateOutfitDirections dedupes by pieceIds and folds in the label, so two outfits with

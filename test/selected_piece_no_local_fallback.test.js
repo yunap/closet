@@ -43,6 +43,14 @@ const cleanupFixtures = ensureFixturePieces([
   { id: 700502, name: 'white leather sneakers', category: 'shoes', status: 'active', occasions: '["casual"]', heel_height: 'flat', walk_support: 'high', formality: 'everyday', photo: 'fixture-700502.jpg' },
   { id: 700503, name: 'navy linen shirt', category: 'top', status: 'active', occasions: '["casual"]', colors: '["navy"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700503.jpg' },
   { id: 700504, name: 'tan leather loafers', category: 'shoes', status: 'active', occasions: '["casual"]', heel_height: 'flat', walk_support: 'high', formality: 'everyday', photo: 'fixture-700504.jpg' },
+  // Sleeve-construction regression fixtures: a voluminous-sleeve dress plus two cardigan-worded tops
+  // (the "cardigan" wording gives pieceHasExplicitTopLayerEvidence a direction signal, so the
+  // top-over-dress pair resolves deterministically even without role-aware layering). The narrow
+  // cardigan has zero capacity for the dress's voluminous inner sleeve (a real conflict); the roomy
+  // one does not.
+  { id: 700601, name: 'voluminous-sleeve wrap dress', category: 'dress', status: 'active', occasions: '["casual"]', colors: '["black"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700601.jpg', sleeve_length: 'long', sleeve_shape: 'voluminous' },
+  { id: 700602, name: 'structured cardigan layer', category: 'top', status: 'active', occasions: '["casual"]', colors: '["cream"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700602.jpg', sleeve_length: 'long', sleeve_shape: 'fitted' },
+  { id: 700603, name: 'roomy cardigan layer', category: 'top', status: 'active', occasions: '["casual"]', colors: '["oatmeal"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700603.jpg', sleeve_length: 'long', sleeve_shape: 'voluminous' },
 ])
 test.after(() => {
   cleanupFixtures()
@@ -152,6 +160,41 @@ test('composeStructuredOutfitsForPiece (closet-only branch): 2 real model outfit
     assert.equal(result.outfits.length, 2, 'the model returned exactly 2 valid outfits; none may be silently added to reach a minimum count')
     assert.equal(result.compositionSkipped, null)
     assert.ok(result.outfits.every(o => !o.isFallback), 'mergeOutfitDirections\' isFallback tag must not appear — that helper is gone')
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
+// 2026-08-27 follow-up: validateSelectedRecoveryOutfit() used to run only evaluateOutfitStructure +
+// evaluateRequiredBaseLayers — a weaker parallel contract than the canonical evaluateWearableOutfit
+// gate every other flow uses, missing layer direction and layer construction entirely. It's now a
+// thin adapter around evaluateWearableOutfit(). This proves a model-composed outfit with a real
+// sleeve-construction conflict (the same class of defect the sleeve-taxonomy work fixed elsewhere)
+// is rejected in this closet-only selected-piece path too, not just in the visual composer path.
+test('composeStructuredOutfitsForPiece (closet-only branch): a model-composed outfit that fails canonical layer construction is rejected, not just structure/base-layer checks', async () => {
+  const conflictingLook = { label: 'Conflicting layered look', strength: 'signature', pieceIds: [700601, 700602, 700502], pieces: [{ id: 700601, name: 'voluminous-sleeve wrap dress', category: 'dress' }, { id: 700602, name: 'structured cardigan layer', category: 'top' }, { id: 700502, name: 'white leather sneakers', category: 'shoes' }], reason: 'r1' }
+  const compatibleLook = { label: 'Compatible layered look', strength: 'usable', pieceIds: [700601, 700603, 700502], pieces: [{ id: 700601, name: 'voluminous-sleeve wrap dress', category: 'dress' }, { id: 700603, name: 'roomy cardigan layer', category: 'top' }, { id: 700502, name: 'white leather sneakers', category: 'shoes' }], reason: 'r2' }
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({ outfits: [conflictingLook, compatibleLook] })
+  try {
+    const selectedPiece = parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(700601))
+    const rankedCandidates = [700602, 700603, 700502].map(id => ({ piece: parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)), score: 1 }))
+
+    const result = await composeStructuredOutfitsForPiece({
+      selectedPiece,
+      rankedCandidates,
+      occasion: 'casual',
+      season: 'warm',
+      mission: 'mix',
+      mood: '',
+      question: 'Style this piece using my existing wardrobe.',
+      idealMode: false,
+      idealOnlyMode: false,
+      memoryText: '',
+    })
+
+    assert.equal(result.outfits.length, 1, 'only the sleeve-compatible look should survive')
+    assert.equal(result.outfits[0].label, 'Compatible layered look')
+    assert.ok(!result.outfits.some(o => o.label === 'Conflicting layered look'), 'the sleeve-construction conflict must be rejected, not merely deprioritized')
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
   }
