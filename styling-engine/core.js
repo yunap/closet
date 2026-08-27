@@ -2114,12 +2114,13 @@ export async function garmentReferenceImages(piece, options = {}) {
   return refs
 }
 
-export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
-  const pieceLines = pieces.map((piece, index) => {
-    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
-    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
-  }).join('\n')
-  const fidelityChecklist = pieces.map((piece, index) => {
+// Shared with editorialImagePrompt below — a category-level "don't substitute this for a generic
+// version" checklist. Extracted 2026-08-27 (thread_1787813410728): editorialImagePrompt used to
+// describe every non-anchor garment with prose alone (or nothing at all), and the image model
+// routinely invented wrong pants/shoes details as a result. One owner for this checklist so both
+// prompts stay in sync rather than drifting into two different fidelity vocabularies.
+function pieceFidelityChecklist(pieces) {
+  return pieces.map((piece, index) => {
     const group = wardrobeCategoryGroup(piece)
     const blob = pieceTextBlob(piece)
     const constraints = []
@@ -2140,7 +2141,11 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
     return `${index + 1}. ${piece.name}: ${constraints.join('; ')}.`
   }).join('\n')
-  const constructionChecklist = pieces.map((piece, index) => {
+}
+
+// Shared with editorialImagePrompt below — same extraction reasoning as pieceFidelityChecklist.
+function pieceConstructionChecklist(pieces) {
+  return pieces.map((piece, index) => {
     const fields = [
       piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
       piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
@@ -2161,6 +2166,15 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     ].filter(Boolean)
     return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
   }).join('\n')
+}
+
+export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+  const pieceLines = pieces.map((piece, index) => {
+    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
+    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
+  }).join('\n')
+  const fidelityChecklist = pieceFidelityChecklist(pieces)
+  const constructionChecklist = pieceConstructionChecklist(pieces)
   return [
     'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
     'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
@@ -3632,10 +3646,19 @@ export function anchorFidelityInstructions(selectedPiece = {}) {
   return parts.join(' ')
 }
 
-export function editorialImagePrompt({ selectedPiece, direction, occasion, season }) {
+export function editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces = [] }) {
   const missing = Array.isArray(direction.missingPieces)
     ? direction.missingPieces.join(', ')
     : ''
+  // Real saved pieces this direction uses besides the anchor (pants, shoes, etc.) — distinct from
+  // `missing`/direction.missingPieces above, which are genuinely invented "ideal addition"
+  // archetypes with no real garment to preserve. Before this, a direction built from owned pieces
+  // had NOTHING describing its non-anchor garments — no photo, no text — and the model routinely
+  // invented wrong pants/shoes details (thread_1787813410728). Reuses the same checklists
+  // wholeWardrobeImagePrompt already proved for this; the reference photos themselves are supplied
+  // separately via createEditorialConceptImage → runGPT4oImageGeneration's supportingGarmentImages.
+  const supportingFidelity = supportingPieces.length ? pieceFidelityChecklist(supportingPieces) : ''
+  const supportingConstruction = supportingPieces.length ? pieceConstructionChecklist(supportingPieces) : ''
   // Built from the same truth text the whole-wardrobe image path uses. The old
   // hand-picked list carried name/category/colors/notes only — no length,
   // sleeve, silhouette, hem or fabric — and its `fabric` line read
@@ -3674,21 +3697,27 @@ ${EXPRESSIVE_HIERARCHY_RULES}`,
     anchorRules ? `Anchor fidelity: ${anchorRules}` : '',
     'The anchor garment must remain visually recognizable — same category, neckline, sleeve length, print scale, color, fit, and hem length. Do not redesign it or substitute a different garment.',
     '',
+    supportingFidelity
+      ? `SUPPORTING WARDROBE GARMENTS — real saved pieces worn together with the anchor in this outfit, each with its own reference photo(s) below. Preserve each one; do not invent a substitute or a generic version:\n${supportingFidelity}`
+      : '',
+    supportingConstruction
+      ? `Supporting garment construction (authoritative for fit/length/sleeve/hem — overrides the stylist logic prose below wherever they conflict):\n${supportingConstruction}`
+      : '',
     direction.visualPrompt
       ? `PRIMARY RENDERING DIRECTIVE — follow this exactly: ${direction.visualPrompt}`
       : missing
         ? `Complete the outfit with these new-piece archetypes: ${missing}.`
         : '',
     direction.reason ? `Stylist logic: ${direction.reason}` : '',
- 
+
     `Occasion: ${occasion}. Season: ${season}.`,
- 
+
     [
       'GARMENT FIDELITY — preserve the anchor garment exactly as shown in the photo:',
       '- Do not add a belt or waist tie unless the anchor garment photo shows one',
       '- Do not change the neckline, sleeve length, or closure style of the anchor garment',
     ].join('\n'),
- 
+
   ].filter(Boolean).join('\n')
 }
 
@@ -3751,7 +3780,7 @@ export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
   }
 }
 
-export async function runGPT4oImageGeneration({ client, prompt, size = '1024x1536', referenceImages = [], anchorGarmentImage = null }) {
+export async function runGPT4oImageGeneration({ client, prompt, size = '1024x1536', referenceImages = [], anchorGarmentImage = null, supportingGarmentImages = [] }) {
   const contentParts = []
 
   const anchorPhotos = Array.isArray(anchorGarmentImage)
@@ -3790,6 +3819,24 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
     }
   }
 
+  // Real saved pieces this direction uses besides the anchor (pants, shoes, etc.) — without these,
+  // the model had nothing but a stylist-logic paragraph to go on for every non-anchor garment and
+  // routinely invented wrong pants/shoes details (thread_1787813410728). One notch below the
+  // anchor's stricter "do not redesign" language since these are secondary to the anchor, not the
+  // premise, but still real garments that must not be substituted.
+  if (supportingGarmentImages.length > 0) {
+    contentParts.push({
+      type: 'input_text',
+      text: 'SUPPORTING WARDROBE GARMENTS — the following photos show other real saved pieces that must also appear in the generated image, worn together with the anchor garment. Preserve each one\'s category, color, print/pattern, construction, and silhouette as shown. Do not invent a substitute or a generic version of any of these.'
+    })
+    for (const photo of supportingGarmentImages) {
+      contentParts.push({ type: 'input_image', image_url: `data:${photo.mime};base64,${photo.base64}` })
+      if (photo.label) {
+        contentParts.push({ type: 'input_text', text: photo.label })
+      }
+    }
+  }
+
   contentParts.push({ type: 'input_text', text: prompt })
  
   const response = await client.responses.create({
@@ -3808,9 +3855,21 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
 export async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
   const startedAt = Date.now()
   const timings = {}
+  // Real saved pieces this direction uses besides the anchor — resolved fresh from the DB (not the
+  // client-supplied direction.pieces, which may be a lightweight/stale copy) so the reference photos
+  // below and the fidelity text in editorialImagePrompt come from the same authoritative source.
+  // Without this, a direction styled entirely from owned wardrobe pieces (as opposed to a genuine
+  // "ideal missing piece" concept) had nothing describing its non-anchor garments at all, and the
+  // model routinely invented wrong pants/shoes details (thread_1787813410728).
+  const supportingPieceIds = [...new Set((Array.isArray(direction.pieceIds) ? direction.pieceIds : [])
+    .map(Number)
+    .filter(id => Number.isFinite(id) && id !== Number(selectedPiece?.id)))]
+  const supportingPieces = supportingPieceIds.length
+    ? db.prepare(`SELECT * FROM pieces WHERE id IN (${supportingPieceIds.map(() => '?').join(',')})`).all(...supportingPieceIds).map(parsePiece)
+    : []
   const prompt = withSavedBoardRendererMemory(
-    editorialImagePrompt({ selectedPiece, direction, occasion, season }),
-    [selectedPiece]
+    editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces }),
+    [selectedPiece, ...supportingPieces]
   )
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(userUploadsDir(), filename)
@@ -3889,7 +3948,16 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   } catch (err) {
     console.warn('Could not load anchor garment photos:', err.message)
   }
- 
+
+  let supportingGarmentImages = []
+  if (supportingPieces.length) {
+    try {
+      supportingGarmentImages = (await Promise.all(supportingPieces.map(piece => garmentReferenceImages(piece)))).flat()
+    } catch (err) {
+      console.warn('Could not load supporting garment photos:', err.message)
+    }
+  }
+
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
@@ -3899,6 +3967,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
       size: getOpenAIImageSize('generate'),
       referenceImages,
       anchorGarmentImage,
+      supportingGarmentImages,
     })
     await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
     timings.usage = usage

@@ -1490,6 +1490,35 @@ sharing a voluminous-sleeve dress, one paired with a structured (zero-capacity) 
 with a roomy one — proving the sleeve-construction conflict is now rejected in this path exactly as it
 already was in the visual composer path, not merely deprioritized.
 
+**[image-generation grounding gap, 2026-08-27] `/editorial-render-one` (the "Generate image" button
+on a selected-piece outfit card) rendered wrong pants/shoes details, and regenerating did not help —
+thread_1787813410728 caught this on a real "style this piece using my existing wardrobe" direction.**
+Root cause: `createEditorialConceptImage`/`editorialImagePrompt` were built for the genuine "ideal
+missing piece" concept-board feature, where the non-anchor items are invented archetypes with no real
+garment to preserve (`direction.missingPieces`, text only, by design). The same function is also used
+to render a direction composed entirely of real, owned wardrobe pieces (pants, shoes) — for those,
+nothing described the non-anchor garments at all: no reference photo, no structured fidelity text,
+only `direction.reason`'s prose rationale. The model had nothing to ground the pants/shoes on and
+invented them, and a re-render can't fix a prompt that never had the evidence — this is the same
+failure mode the visual-grounding principle already names (composing/rendering from text alone
+produces wrong results), just in the render step rather than composition. `wholeWardrobeImagePrompt`
+(the correctly-built sibling used by `/generate-wardrobe-outfit-image` and the comparison sheet)
+already solved this for its own callers with a per-piece fidelity checklist (category-level "don't
+substitute" constraints) and a construction checklist (structured silhouette/length/sleeve/hem/tuck/
+waistband/opacity facts) — both were factored out into shared `pieceFidelityChecklist(pieces)` /
+`pieceConstructionChecklist(pieces)` helpers rather than reimplemented, so the two prompts can't drift
+into different fidelity vocabularies. `createEditorialConceptImage` now resolves `direction.pieceIds`
+to real DB rows (excluding the anchor) as `supportingPieces`, loads their reference photos via the
+same `garmentReferenceImages()` every other multi-piece render path uses, and passes both the photos
+and the two checklists through — `runGPT4oImageGeneration` gained a `supportingGarmentImages` param,
+injected with "must also appear as shown" framing (one notch below the anchor's stricter "do not
+redesign" language, since these are secondary to the anchor, not the premise). Genuinely invented
+ideal-addition directions are unaffected: `supportingPieces` is empty whenever `direction.pieceIds`
+resolves to nothing but the anchor, and `missingPieces` still reaches the prompt as prose exactly as
+before. `test/editorialIdealAdditions.test.js` pins both: a real multi-piece direction produces the
+supporting-garment fidelity/construction sections with the expected per-category constraints, and a
+genuine ideal-addition direction (no owned pieceIds) produces neither section.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

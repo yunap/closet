@@ -172,3 +172,43 @@ test('the editorial anchor description is the shared wardrobe truth text', () =>
   // The old builder read `selectedPiece.fabric`, a column that does not exist.
   assert.doesNotMatch(prompt, /fabric: undefined/)
 })
+
+// thread_1787813410728: a "style this piece using my existing wardrobe" direction (real owned
+// pants + shoes, not an invented ideal-addition concept) rendered with wrong pants/shoes details —
+// editorialImagePrompt had nothing describing those non-anchor garments at all, no photo and no
+// text, so the model invented them. supportingPieces closes that gap.
+test('editorialImagePrompt describes real non-anchor pieces with the same fidelity/construction checklists wholeWardrobeImagePrompt uses', () => {
+  const selectedPiece = { id: 996795, name: 'grey striped button-up shirt', category: 'top', colors: ['grey', 'cream'] }
+  const supportingPieces = [
+    { id: 128, name: 'light beige linen wide-leg pants', category: 'bottom', silhouette: 'wide_leg', length_hits_at: 'full_length' },
+    { id: 204, name: 'sleek black cutout flats', category: 'shoes' },
+  ]
+  const prompt = editorialImagePrompt({
+    selectedPiece,
+    direction: { pieceIds: [996795, 128, 204], reason: 'tone-on-tone column', missingPieces: [] },
+    occasion: 'city',
+    season: 'summer',
+    supportingPieces,
+  })
+
+  assert.match(prompt, /SUPPORTING WARDROBE GARMENTS/)
+  assert.match(prompt, /light beige linen wide-leg pants: must remain the listed pant\/jean silhouette/)
+  assert.match(prompt, /sleek black cutout flats: preserve shoe type, color, heel\/sole shape, and openness\/coverage/)
+  assert.match(prompt, /Supporting garment construction/)
+  assert.match(prompt, /light beige linen wide-leg pants: preserve its wide leg silhouette; keep its full length length/)
+})
+
+test('editorialImagePrompt omits the supporting-garment sections entirely when there are none (genuine ideal-addition mode)', () => {
+  const selectedPiece = { id: 263, name: 'black textured long sleeve top', category: 'top' }
+  const prompt = editorialImagePrompt({
+    selectedPiece,
+    direction: { missingPieces: ['grounded olive utility trouser'], reason: '', visualPrompt: '' },
+    occasion: 'dinner',
+    season: 'summer',
+  })
+
+  assert.doesNotMatch(prompt, /SUPPORTING WARDROBE GARMENTS/)
+  assert.doesNotMatch(prompt, /Supporting garment construction/)
+  // The genuine ideal-addition path is untouched: missingPieces still reaches the prompt as prose.
+  assert.match(prompt, /grounded olive utility trouser/)
+})
