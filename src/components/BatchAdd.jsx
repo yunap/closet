@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { GATE_CRITICAL_FIELDS } from '../../styling-engine/attributes.js'
+import { GATE_CRITICAL_FIELDS, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -967,7 +967,14 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
             {REVIEW_CONSTRUCTION_CONFIG[form.category]?.showSleeve && (
               <div className="form-group">
                 <FieldLabel field="sleeve_length">Sleeve Length</FieldLabel>
-                <select className="form-select" value={form.sleeve_length || ''} onChange={e => set('sleeve_length', e.target.value || null)}>
+                <select className="form-select" value={form.sleeve_length || ''} onChange={e => {
+                  const v = e.target.value || null
+                  // Sleeveless has no applicable shape; going the other way, don't invent one —
+                  // leave it blank for review rather than carrying over a stale prior value.
+                  const clearShape = v === 'sleeveless' || form.sleeve_length === 'sleeveless'
+                  set('sleeve_length', v)
+                  if (clearShape) set('sleeve_shape', null)
+                }}>
                   <option value="">-- Select Sleeve Length --</option>
                   {['sleeveless','cap','short','elbow','3/4','long','extra_long','unknown'].map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
@@ -982,7 +989,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
                 <FieldLabel field="sleeve_shape">Sleeve Shape</FieldLabel>
                 <select className="form-select" value={form.sleeve_shape || ''} onChange={e => set('sleeve_shape', e.target.value || null)}>
                   <option value="">-- Select Sleeve Shape --</option>
-                  {['fitted','straight','relaxed','puff','bishop','bell','flutter','raglan','dolman','other','unknown'].map(opt => (
+                  {SLEEVE_SHAPE_VALUES.map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>

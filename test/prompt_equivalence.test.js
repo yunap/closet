@@ -184,6 +184,28 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       )
       expected = expected.split('\n').filter(line => !line.includes("* Storing User Corrections:")).join('\n')
     }
+    // 2026-08-26: sleeve taxonomy rewrite — sleeve_shape's fashion-name enum
+    // (fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown) replaced with a
+    // functional sleeve-volume taxonomy canonically owned by SLEEVE_SHAPE_VALUES in attributes.js.
+    // See docs/garment-field-reference.md's "Sleeve taxonomy" writeup.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        '"sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",',
+        '"sleeve_shape": "fitted|straight|puff_shoulder|gathered_ruched|voluminous|flared|deep_armhole|other|unknown|null (omit for sleeveless) — a functional sleeve-VOLUME classification, not a fashion-name label; see the Sleeve Shape guidance below for what each value means.",'
+      )
+      expected = expected.replace(
+        '   - Voluminous (oversized, boxy, bishop sleeve, bell sleeve, full skirt): Stands out as the dominant shape.',
+        '   - Voluminous (oversized, boxy, a sleeve with real shoulder/arm/cuff volume, full skirt): Stands out as the dominant shape.'
+      )
+      expected = expected.replace(
+        '- Sleeve Shape: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to sleeve_length "long" with no shape if these voluminous features are present — sleeve_length and sleeve_shape are separate fields; a voluminous long sleeve is sleeve_length "long" + sleeve_shape "bishop"/"bell". Default to a plain sleeve_shape only for simple, straight, non-voluminous sleeves.',
+        '- Sleeve Shape: a functional classification of WHERE the sleeve carries excess volume, not a fashion-history label — you may use fashion terms as recognition clues, but the output must be one of the canonical values only. "puff_shoulder" = volume concentrated at the shoulder/sleeve head (puff, mutton with shoulder-head fullness). "gathered_ruched" = bulk from gathering/ruching along the arm or lower arm. "voluminous" = substantial full-arm or mid-arm volume (bishop, balloon, lantern sleeves). "flared" = the sleeve opens substantially toward the cuff (bell, flutter, flounce). "deep_armhole" = excess fabric at the underarm/armhole itself (dolman, batwing, deep kimono-style construction) — a raglan SEAM alone (attachment construction, not volume) does not by itself justify any of these; classify raglan-seamed sleeves by their actual sleeve-volume geometry, defaulting to "straight" if there is no meaningful excess volume. "fitted" = close/slim with little excess volume. "straight" = an ordinary sleeve with no localized excess volume — ordinary looseness alone is "straight", not "voluminous"; gathering elsewhere on the garment (not the sleeve) does not imply "gathered_ruched". Do not default to sleeve_length "long" with no shape if genuine volume is present — sleeve_length and sleeve_shape are separate fields. Use "other" only when the sleeve geometry genuinely does not fit any category above. Use "unknown" when a sleeve exists but its shape cannot be reliably determined — never guess. Sleeveless pieces omit this field entirely (null), never "unknown".'
+      )
+      expected = expected.replace(
+        '  pintucked body with volumed (bishop/puff) sleeves and a finished back detail — executed\n  in quality fabric, not jersey.\n  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "bishop",',
+        '  pintucked body with volumed (bishop-style) sleeves and a finished back detail — executed\n  in quality fabric, not jersey.\n  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "voluminous",'
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

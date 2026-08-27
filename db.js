@@ -4,6 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from './styling-engine/constitutionSeed.js'
+import { queueSleeveTaxonomyReviews } from './lib/sleeveTaxonomyReview.js'
 import { DEFAULT_USER_ID, getCurrentUserId } from './lib/requestContext.js'
 import {
   assertDefaultDatabaseAccess,
@@ -451,6 +452,59 @@ function initDb(dbPath) {
     }
   } catch (err) {
     console.warn('Failed to backfill sleeve_length/sleeve_shape from sleeve_type:', err.message)
+  }
+
+  // One-time deterministic sleeve-shape taxonomy migration (2026-08-26): translates the retired
+  // fashion-name sleeve_shape enum into the functional sleeve-volume taxonomy canonically owned by
+  // SLEEVE_SHAPE_VALUES in styling-engine/attributes.js. Runs after the sleeve_type split above so
+  // a legacy 'bishop'/'bell' just split out of sleeve_type is also translated in the same pass.
+  // Deterministic-only — no AI calls here, per this file's separation of DB migration from
+  // model-driven retagging (docs/database-safety.md). Ambiguous old values (relaxed, raglan, other,
+  // unknown) are deliberately left untouched; they need visual reclassification through the
+  // retag-suggestion/review flow, not a guess baked into a migration. This never touches
+  // manual_overrides or style_profile_json._confidence, so a manually-set sleeve_shape keeps its
+  // manual status through the translation — only the stored vocabulary word changes, e.g. a manual
+  // 'dolman' becomes a manual 'deep_armhole'. Idempotent: mapped values (puff_shoulder, voluminous,
+  // flared, deep_armhole) are not themselves keys in the map, so a rerun leaves already-migrated
+  // rows untouched; fitted/straight map to themselves, a no-op UPDATE that's still safe to repeat.
+  try {
+    const DETERMINISTIC_SLEEVE_SHAPE_MIGRATION = {
+      fitted: 'fitted',
+      straight: 'straight',
+      puff: 'puff_shoulder',
+      bishop: 'voluminous',
+      bell: 'flared',
+      flutter: 'flared',
+      dolman: 'deep_armhole',
+    }
+    const rows = db.prepare(`SELECT id, sleeve_shape FROM pieces WHERE sleeve_shape IS NOT NULL AND sleeve_shape != ''`).all()
+    const update = db.prepare('UPDATE pieces SET sleeve_shape = ? WHERE id = ?')
+    for (const piece of rows) {
+      const value = String(piece.sleeve_shape || '').toLowerCase().trim()
+      const mapped = DETERMINISTIC_SLEEVE_SHAPE_MIGRATION[value]
+      if (mapped && mapped !== value) update.run(mapped, piece.id)
+    }
+  } catch (err) {
+    console.warn('Failed to migrate sleeve_shape to the functional taxonomy:', err.message)
+  }
+
+  // One-time cleanup: sleeve_shape is not applicable to a sleeveless piece — store NULL, not a
+  // stale shape value or 'unknown' (which means "a sleeve exists but its shape is undetermined").
+  // Idempotent: only rows that still have a non-null sleeve_shape are touched.
+  try {
+    db.prepare(`UPDATE pieces SET sleeve_shape = NULL WHERE sleeve_length = 'sleeveless' AND sleeve_shape IS NOT NULL`).run()
+  } catch (err) {
+    console.warn('Failed to clear sleeve_shape on sleeveless pieces:', err.message)
+  }
+
+  // Flag the two old sleeve_shape values with no deterministic mapping (relaxed, raglan) for manual
+  // visual review instead of guessing — see queueSleeveTaxonomyReviews. Idempotent (checked against
+  // existing open todos) and re-runs on every startup like the other migrations in this block; safe
+  // to run before the `todos` table itself is guaranteed to exist on a brand-new DB.
+  try {
+    queueSleeveTaxonomyReviews(db)
+  } catch (err) {
+    console.warn('Failed to queue sleeve_shape taxonomy review suggestions:', err.message)
   }
 
   // One-time remap: length_hits_at from one flat shared enum to a per-category

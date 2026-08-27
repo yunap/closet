@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateOutfitStructure, evaluateWearableOutfit, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
-import { pieceRequiresBaseLayer } from '../styling-engine/attributes.js'
+import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateOutfitStructure, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
+import { pieceRequiresBaseLayer, pieceSleeveInterference, SLEEVE_SHAPE_VALUES } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
 
@@ -48,13 +48,24 @@ test('evaluateLayerPairConstruction distinguishes known conflict, known compatib
   assert.equal(trivial.verdict, 'compatible')
   assert.deepEqual(trivial.findings, [])
 
-  // Known conflict: voluminous shape trapped under/over a fitted cuffed sleeve.
-  const puffLayer = { id: 3, name: 'puff-sleeve blouse', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
-  const fittedBase = { id: 4, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
-  const conflict = evaluateLayerPairConstruction([puffLayer, fittedBase], { roleAware: true })
+  // Known conflict: the INNER garment's voluminous sleeve is trapped under a narrow, structured
+  // OUTER sleeve. Direction is established via the outer piece's outerwear category (PR #264/#265's
+  // canonical evidence) so the verdict is deterministic, not merely "either side is voluminous" —
+  // the old symmetric rule this replaces could not distinguish this from the compatible case below.
+  const voluminousBase = { id: 4, name: 'voluminous-sleeve blouse', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const structuredOuterLayer = { id: 3, name: 'structured jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const conflict = evaluateLayerPairConstruction([structuredOuterLayer, voluminousBase], { roleAware: true })
   assert.equal(conflict.verdict, 'incompatible')
   assert.equal(conflict.findings[0].code, 'layer_construction_sleeve_conflict')
   assert.equal(conflict.sightRequired, 'none', 'a known incompatibility does not need a photo to resolve')
+
+  // Direction reversed: the same voluminous shape worn as the OUTER layer over a fitted inner
+  // sleeve has room to spare — not a conflict. This is the "fitted turtleneck under a
+  // voluminous-sleeve blouse" case the taxonomy spec calls out explicitly.
+  const fittedInner = { id: 15, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const voluminousOuterLayer = { id: 16, name: 'voluminous-sleeve outer blouse', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const noConflict = evaluateLayerPairConstruction([voluminousOuterLayer, fittedInner], { roleAware: true })
+  assert.equal(noConflict.verdict, 'compatible', 'a voluminous OUTER sleeve over a fitted inner one is not a conflict')
 
   // Known conflict: both cuffed and both bulky fabric, neither shape voluminous.
   const heavyLayer = { id: 5, name: 'heavy cardigan', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'heavy' }
@@ -78,12 +89,92 @@ test('evaluateLayerPairConstruction distinguishes known conflict, known compatib
   assert.equal(unknown.sightRequired, 'both')
 })
 
+test('SLEEVE_SHAPE_VALUES is exactly the approved functional taxonomy; retired fashion names are gone', () => {
+  assert.deepEqual(SLEEVE_SHAPE_VALUES, [
+    'fitted', 'straight', 'puff_shoulder', 'gathered_ruched', 'voluminous', 'flared', 'deep_armhole', 'other', 'unknown',
+  ])
+  for (const retired of ['relaxed', 'puff', 'bishop', 'bell', 'flutter', 'raglan', 'dolman']) {
+    assert.ok(!SLEEVE_SHAPE_VALUES.includes(retired), `${retired} must not be a current taxonomy value`)
+  }
+})
+
+test('pieceSleeveInterference derives the correct zone for each canonical shape, and null for unresolved shapes', () => {
+  const zonesFor = shape => pieceSleeveInterference({ sleeve_shape: shape })
+  assert.deepEqual(zonesFor('fitted'), { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'none' })
+  assert.deepEqual(zonesFor('straight'), { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'none' })
+  assert.deepEqual(zonesFor('puff_shoulder'), { shoulder: 'elevated', arm: 'none', lowerArm: 'none', armhole: 'none' })
+  assert.deepEqual(zonesFor('gathered_ruched'), { shoulder: 'none', arm: 'elevated', lowerArm: 'elevated', armhole: 'none' })
+  assert.deepEqual(zonesFor('voluminous'), { shoulder: 'none', arm: 'elevated', lowerArm: 'elevated', armhole: 'none' })
+  assert.deepEqual(zonesFor('flared'), { shoulder: 'none', arm: 'none', lowerArm: 'elevated', armhole: 'none' })
+  assert.deepEqual(zonesFor('deep_armhole'), { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'elevated' })
+  // 'other'/'unknown'/unset are unresolved geometry, not "no interference" — every zone stays null.
+  assert.deepEqual(zonesFor('other'), { shoulder: null, arm: null, lowerArm: null, armhole: null })
+  assert.deepEqual(zonesFor('unknown'), { shoulder: null, arm: null, lowerArm: null, armhole: null })
+  assert.deepEqual(zonesFor(undefined), { shoulder: null, arm: null, lowerArm: null, armhole: null })
+})
+
+// Directional regression suite named in the taxonomy spec: the physical conflict depends on which
+// garment is inner vs outer, not merely on whether either side is "voluminous."
+test('directional construction: inner volume against a narrow outer is a concern; the same volume as the outer is not', () => {
+  const fittedInner = { id: 20, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const voluminousOuter = { id: 21, name: 'voluminous-sleeve blouse', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const fineOverFitted = evaluateLayerPairConstruction([voluminousOuter, fittedInner], { roleAware: true })
+  assert.equal(fineOverFitted.verdict, 'compatible', 'a voluminous outer over a fitted inner is not rejected merely because the outer is voluminous')
+
+  const voluminousInner = { id: 22, name: 'voluminous-sleeve top', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const narrowStructuredOuter = { id: 23, name: 'narrow fitted blazer', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const trappedUnderNarrow = evaluateLayerPairConstruction([narrowStructuredOuter, voluminousInner], { roleAware: true })
+  assert.equal(trappedUnderNarrow.verdict, 'incompatible', 'a voluminous inner sleeve trapped under a narrow structured outer is a real construction concern')
+
+  const deepArmholeInner = { id: 24, name: 'dolman-style top', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'deep_armhole', fabric_weight: 'light' }
+  const restrictiveOuter = { id: 25, name: 'set-in fitted jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'light' }
+  const deepArmholeConflict = evaluateLayerPairConstruction([restrictiveOuter, deepArmholeInner], { roleAware: true })
+  assert.equal(deepArmholeConflict.verdict, 'incompatible', 'deep-armhole inner geometry under a restrictive outer is a concern')
+
+  const flaredInner = { id: 26, name: 'flared-sleeve top', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'flared', fabric_weight: 'light' }
+  const narrowOuterSleeve = { id: 27, name: 'narrow-sleeve outer top', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const flaredConflict = evaluateLayerPairConstruction([narrowOuterSleeve, flaredInner], { roleAware: true })
+  assert.equal(flaredConflict.verdict, 'incompatible', 'flared inner sleeve under a narrow outer sleeve is a concern')
+
+  // Unknown outer capacity: the inner garment has real volume, but the outer garment's own sleeve
+  // shape is not recorded — must not fabricate an incompatibility from an unrecorded outer.
+  const unknownCapacityOuter = { id: 28, name: 'unspecified-sleeve outer jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', fabric_weight: 'light' }
+  const unknownCapacity = evaluateLayerPairConstruction([unknownCapacityOuter, voluminousInner], { roleAware: true })
+  assert.equal(unknownCapacity.verdict, 'unknown', 'an unrecorded outer sleeve shape is unknown capacity, not a guessed incompatibility')
+  assert.equal(unknownCapacity.sightRequired, 'both')
+})
+
+test('evaluateLayerPairConstructionFor resolves direction for a direct two-garment lookup the same way as the enumerated pair path', () => {
+  const fittedInner = { id: 30, name: 'fitted base layer', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const voluminousOuterCardigan = { id: 31, name: 'voluminous cardigan', category: 'top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const compatible = evaluateLayerPairConstructionFor(fittedInner, voluminousOuterCardigan)
+  assert.equal(compatible.verdict, 'compatible')
+
+  const voluminousInner = { id: 32, name: 'voluminous top', category: 'top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const narrowOuterCardigan = { id: 33, name: 'narrow fitted cardigan', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const conflict = evaluateLayerPairConstructionFor(voluminousInner, narrowOuterCardigan)
+  assert.equal(conflict.verdict, 'incompatible')
+  // Argument order must not flip the answer — the function resolves direction from evidence,
+  // not from which piece was passed first.
+  const conflictReversed = evaluateLayerPairConstructionFor(narrowOuterCardigan, voluminousInner)
+  assert.equal(conflictReversed.verdict, 'incompatible')
+})
+
+test('layerConstructionPromptRule projects zone/direction mechanics, not fashion-name shape lists', () => {
+  const rule = layerConstructionPromptRule()
+  assert.match(rule, /OUTER layer over a fitted inner sleeve is not a conflict/)
+  assert.match(rule, /INNER layer under a narrow, structured outer sleeve is/)
+  assert.doesNotMatch(rule, /puff, bishop, bell/, 'must not enumerate retired fashion-name shapes')
+})
+
 test('evaluateWearableOutfit inherits the sleeve-conflict finding as a hard error when includeLayerDirections is set', () => {
-  const puffLayer = { id: 11, name: 'puff-sleeve blouse', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'puff', fabric_weight: 'light' }
-  const fittedBase = { id: 12, name: 'fitted turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  // Voluminous INNER sleeve under a structured OUTER (outerwear-category) sleeve — direction is
+  // established so the construction verdict resolves to a real conflict, not merely unknown.
+  const voluminousInner = { id: 11, name: 'voluminous-sleeve blouse', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const structuredOuter = { id: 12, name: 'structured jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
   const bottom = { id: 13, name: 'trousers', category: 'bottom', role: 'primary_bottom' }
   const shoes = { id: 14, name: 'loafers', category: 'shoes', role: 'shoes' }
-  const result = evaluateWearableOutfit([puffLayer, fittedBase, bottom, shoes], { roleAware: true, includeLayerDirections: true })
+  const result = evaluateWearableOutfit([structuredOuter, voluminousInner, bottom, shoes], { roleAware: true, includeLayerDirections: true })
   assert.equal(result.hardValid, false)
   assert.ok(result.hardFindings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
   assert.ok(result.evidence.includedStages.includes('layer_construction'))

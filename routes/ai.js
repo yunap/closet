@@ -53,7 +53,8 @@ import {
   pieceMatchesMaterial,
   pieceMatchesFootwear,
   pieceRequiresBaseLayer,
-  pieceVisualDetailPolicy
+  pieceVisualDetailPolicy,
+  SLEEVE_SHAPE_VALUES
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
@@ -1371,7 +1372,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "hem_finish": "Valid values depend on category — top -> straight_loose|banded_elastic|ribbed|curved|shirttail|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Construction/shape only — does not determine tuckability.",
       "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
       "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
-      "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
+      "sleeve_shape": "${SLEEVE_SHAPE_VALUES.join('|')}|null (omit for sleeveless) — a functional sleeve-VOLUME classification (where the sleeve carries excess volume), not a fashion-name label.",
       "length_hits_at": "Valid values depend on category — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|full_length|floor_length|unknown; dress -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> mini|above_knee|knee|below_knee|midi|maxi|shorts|mid_calf|ankle|full_length|floor_length|unknown; shoes -> open|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (open = fully open/minimal upper, e.g. a sandal or slide). Not applicable to accessory.",
       "silhouette": "Valid values depend on category — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed|a_line|pencil|full|slip|straight|pleated|wrap.",
       "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only). Never 'heel' — heel_height covers that. 'slip_on' is a closure-free shoe (no laces/buckle/zip) that isn't a loafer, mule, or flat shape — e.g. a slip-on sneaker.",

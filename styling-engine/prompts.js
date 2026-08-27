@@ -4,6 +4,7 @@
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from './outfitValidation.js'
+import { SLEEVE_SHAPE_VALUES } from './attributes.js'
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
@@ -834,13 +835,13 @@ Conflict resolution and context-insulation rules:
 Evaluate the garment's visual structure and weight along these two axes:
 1. Silhouette & Volume:
    - Compact (fitted, slim, shell, basic tank): Torso-conforming, zero visual bulk. Allows volume elsewhere.
-   - Voluminous (oversized, boxy, bishop sleeve, bell sleeve, full skirt): Stands out as the dominant shape.
+   - Voluminous (oversized, boxy, a sleeve with real shoulder/arm/cuff volume, full skirt): Stands out as the dominant shape.
 2. Fabric & Drape:
    - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit matches: "structured" or "hangs_straight".
    - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit matches: "skims" or "drapes" (never "structured").
 
 === DESCRIPTIVE CUES & LABELS ===
-- Sleeve Shape: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to sleeve_length "long" with no shape if these voluminous features are present — sleeve_length and sleeve_shape are separate fields; a voluminous long sleeve is sleeve_length "long" + sleeve_shape "bishop"/"bell". Default to a plain sleeve_shape only for simple, straight, non-voluminous sleeves.
+- Sleeve Shape: a functional classification of WHERE the sleeve carries excess volume, not a fashion-history label — you may use fashion terms as recognition clues, but the output must be one of the canonical values only. "puff_shoulder" = volume concentrated at the shoulder/sleeve head (puff, mutton with shoulder-head fullness). "gathered_ruched" = bulk from gathering/ruching along the arm or lower arm. "voluminous" = substantial full-arm or mid-arm volume (bishop, balloon, lantern sleeves). "flared" = the sleeve opens substantially toward the cuff (bell, flutter, flounce). "deep_armhole" = excess fabric at the underarm/armhole itself (dolman, batwing, deep kimono-style construction) — a raglan SEAM alone (attachment construction, not volume) does not by itself justify any of these; classify raglan-seamed sleeves by their actual sleeve-volume geometry, defaulting to "straight" if there is no meaningful excess volume. "fitted" = close/slim with little excess volume. "straight" = an ordinary sleeve with no localized excess volume — ordinary looseness alone is "straight", not "voluminous"; gathering elsewhere on the garment (not the sleeve) does not imply "gathered_ruched". Do not default to sleeve_length "long" with no shape if genuine volume is present — sleeve_length and sleeve_shape are separate fields. Use "other" only when the sleeve geometry genuinely does not fit any category above. Use "unknown" when a sleeve exists but its shape cannot be reliably determined — never guess. Sleeveless pieces omit this field entirely (null), never "unknown".
 - Hem Finish: for a top, select "shirttail" specifically for a curved hem that's longer at the sides/back than the front (classic dress-shirt shape). Select "curved" or "high_low" for other high-low/curved shapes, "asymmetric" for uneven/one-sided hems, "other" for anything else decorative, "straight_loose" for flat, horizontal straight hems. This is a construction/shape judgment only — it does not by itself determine tuckability; see tuck_behavior below, which is judged independently from the garment's cut, fit, and design intent.
 - Neckline: Select V, scoop, crew, boat, mock, turtleneck, cowl, off-shoulder, square, wrap, halter, strapless, one-shoulder, collared, shawl, other, or unknown based on construction.
 - Silhouette: category-conditional — see the silhouette field description in the schema below for the exact per-category list.
@@ -934,9 +935,9 @@ ANCHOR B — Classic stiff cotton button-down (single-lane baseline)
 
 ANCHOR C — Refined textured statement top (high expressive baseline)
   A solid top in a refined fabrication with sculptural construction — e.g. smocked or
-  pintucked body with volumed (bishop/puff) sleeves and a finished back detail — executed
+  pintucked body with volumed (bishop-style) sleeves and a finished back detail — executed
   in quality fabric, not jersey.
-  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "bishop",
+  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "voluminous",
   pattern_complexity: "solid".
   Style lanes: artistic_minimal: 4, romantic_soft: 3, polished_classic: 1,
   modern_bohemian: 1, earthy_structured: 0.
@@ -968,7 +969,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "hem_finish": "Valid values depend on category — top -> straight_loose (standard flat, horizontal straight hem)|banded_elastic|ribbed|curved|shirttail (curved, longer at the sides/back than front)|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. This is a construction/shape judgment only — do not use it to decide tuckability; see tuck_behavior for that, which is judged independently.",
   "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
   "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
-  "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
+  "sleeve_shape": "${SLEEVE_SHAPE_VALUES.join('|')}|null (omit for sleeveless) — a functional sleeve-VOLUME classification, not a fashion-name label; see the Sleeve Shape guidance below for what each value means.",
   "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|full_length|floor_length|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> open|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (open = fully open/minimal upper, e.g. a sandal or slide — not a coverage judgment, that lives in a separate field). Not applicable to accessory.",
   "silhouette": "Valid values depend on category (and, for bottom, bottom_subtype) — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom when bottom_subtype is skirt -> a_line|pencil|full|slip|straight|pleated|wrap; bottom when bottom_subtype is pants/culottes/overalls/other -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed.",
   "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only; null/omit for non-shoes). Never use 'heel' here — heel_height already represents heel height. 'slip_on' is for a shoe with no closure (no laces, buckle, or zip) that is not itself a loafer, mule, or flat shape — e.g. a slip-on sneaker.",

@@ -1397,6 +1397,34 @@ the same `wardrobeSupportsLayeringPair()` supply check) and deleting the private
 is unchanged: `evaluateLayerDirections`'s `unknown`/sight-required behavior was not touched, only its
 pre-composition visibility.
 
+**[sleeve taxonomy + directional construction rewrite, 2026-08-26] `sleeve_shape`'s fashion-name enum
+(`fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown`) and the symmetric
+`layer_construction_sleeve_conflict` verdict above were both replaced in the same pass — the symmetric
+check was the direct consequence of the old enum having no shared semantics to be directional about.**
+The new enum (`fitted|straight|puff_shoulder|gathered_ruched|voluminous|flared|deep_armhole|other|
+unknown`, canonically owned by `SLEEVE_SHAPE_VALUES`/`SLEEVE_SHAPE_OPTIONS` in `attributes.js`) is a
+functional sleeve-VOLUME taxonomy: every value states *where* a sleeve's volume sits, not what it's
+called. `raglan` is deliberately dropped (armhole attachment construction, not a volume profile) — see
+docs/garment-field-reference.md's "Sleeve taxonomy" writeup for the full mapping and the DB migration.
+`pieceSleeveInterference(piece)` derives `{ shoulder, arm, lowerArm, armhole }` zones
+(`'none'|'elevated'|null`) from the new enum, replacing the old `VOLUMINOUS_SLEEVE_SHAPES` boolean set.
+`evaluateLayerPairConstruction()`/`evaluateLayerPairConstructionFor()` now resolve which garment in a
+pair is outer vs inner via a `resolveLayerDirection()` helper shared with `evaluateLayerDirections`
+(same PR #264/#265 evidence — outerwear category, explicit overlay/underlay notes, dependent-needs-
+base), then flag a conflict only when the INNER garment has elevated volume at a zone where the OUTER
+garment is known `fitted`/`straight` (zero capacity) at that same zone — a voluminous outer garment
+over a fitted inner one is no longer flagged, closing the "the old rule couldn't tell top-under from
+top-over" gap the previous entry's writeup already named as future work. Direction unresolved or
+either shape unrecorded still returns `unknown` (sight required), never a guessed incompatibility,
+except: both garments carry fully-known zero-volume geometry (compatible regardless of direction), or
+both are tagged medium/heavy `fabric_weight` (an incompatible fabric-bulk conflict — kept as a
+direction-agnostic dimension independent of sleeve geometry, per the taxonomy spec's explicit
+instruction not to conflate fabric bulk with sleeve volume). `layerConstructionPromptRule()` was
+rewritten to describe the zone/direction mechanics; its three wiring points (visual composer,
+`propose_outfit`, plan/capsule workbench) are unchanged. Migration and visual-backfill of existing
+wardrobe data are a separate, deterministic-only DB pass (no AI calls in server-startup migration) —
+see `scripts/sleeve-taxonomy-census.mjs` and `docs/garment-field-reference.md`.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

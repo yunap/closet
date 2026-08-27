@@ -14,6 +14,30 @@ export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
 export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
+// Canonical sleeve-shape taxonomy: a functional sleeve-VOLUME classification answering "where does
+// this sleeve create physical interference when another garment layers over/under it?" — not a
+// fashion-history vocabulary. Deliberately excludes `raglan`: that word describes armhole
+// attachment construction, not a sleeve-volume profile, so it cannot be mapped into this taxonomy
+// mechanically (see docs/garment-field-reference.md). Sleeveless pieces store `sleeve_shape = NULL`,
+// not `unknown` — `unknown` means a sleeve exists but its shape could not be determined.
+// This is the single canonical owner: the tagger schema/prompt, PieceForm, BatchAdd, the DB
+// migration, and pieceSleeveInterference() below must all derive from this list rather than
+// maintaining their own copy.
+export const SLEEVE_SHAPE_VALUES = [
+  'fitted', 'straight', 'puff_shoulder', 'gathered_ruched', 'voluminous', 'flared', 'deep_armhole', 'other', 'unknown',
+]
+export const SLEEVE_SHAPE_OPTIONS = [
+  { value: 'fitted', label: 'Fitted / slim' },
+  { value: 'straight', label: 'Straight / standard' },
+  { value: 'puff_shoulder', label: 'Puff / shoulder volume' },
+  { value: 'gathered_ruched', label: 'Gathered / ruched' },
+  { value: 'voluminous', label: 'Voluminous / balloon' },
+  { value: 'flared', label: 'Wide / flared' },
+  { value: 'deep_armhole', label: 'Batwing / deep armhole' },
+  { value: 'other', label: 'Other' },
+  { value: 'unknown', label: 'Unknown' },
+]
+
 const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'silhouette',
   'fit_on_body',
@@ -856,8 +880,34 @@ export function pieceRequiresBaseLayer(piece = {}) {
 }
 
 const CUFFED_SLEEVE_LENGTHS = new Set(['elbow', '3/4', 'long', 'extra_long'])
-const VOLUMINOUS_SLEEVE_SHAPES = new Set(['puff', 'bishop', 'bell'])
 const BULKY_FABRIC_WEIGHTS = new Set(['medium', 'heavy'])
+
+// Canonical sleeve-shape -> interference-zone mapping — the one place that translates a functional
+// sleeve-volume category into WHERE that volume physically sits. `fitted`/`straight` intentionally
+// carry no elevated zone. `other`/`unknown` are deliberately absent: their geometry is unresolved,
+// not "no interference" — callers must read a missing shape from this map as unknown evidence, the
+// same as an unpopulated field.
+const SLEEVE_SHAPE_INTERFERENCE_ZONES = {
+  fitted:          { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'none' },
+  straight:        { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'none' },
+  puff_shoulder:   { shoulder: 'elevated', arm: 'none', lowerArm: 'none', armhole: 'none' },
+  gathered_ruched: { shoulder: 'none', arm: 'elevated', lowerArm: 'elevated', armhole: 'none' },
+  voluminous:      { shoulder: 'none', arm: 'elevated', lowerArm: 'elevated', armhole: 'none' },
+  flared:          { shoulder: 'none', arm: 'none', lowerArm: 'elevated', armhole: 'none' },
+  deep_armhole:    { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'elevated' },
+}
+
+// Canonical derived sleeve-interference reader: given a garment, where does its sleeve volume
+// create physical interference for another garment layered over or under it? Each zone is
+// 'none' | 'elevated' | null (unresolved — sleeve_shape is unpopulated, 'other', or 'unknown').
+// This is the single owner layering mechanics reads from; no consumer should re-derive it from
+// SLEEVE_SHAPE_INTERFERENCE_ZONES or from raw fashion-name membership checks itself.
+export function pieceSleeveInterference(piece = {}) {
+  const shape = String(piece?.sleeve_shape || '').toLowerCase().trim() || null
+  const zones = shape ? SLEEVE_SHAPE_INTERFERENCE_ZONES[shape] : null
+  if (!zones) return { shoulder: null, arm: null, lowerArm: null, armhole: null }
+  return { ...zones }
+}
 
 // Atomic construction evidence for a garment's own sleeve, independent of any other garment it
 // might layer with. `outfitValidation.js` composes two of these into a pair verdict; this reader
@@ -873,7 +923,6 @@ export function pieceSleeveLayerEvidence(piece = {}) {
     shape,
     fabricWeight,
     isCuffed: length ? CUFFED_SLEEVE_LENGTHS.has(length) : null,
-    isVoluminous: (shape && shape !== 'unknown') ? VOLUMINOUS_SLEEVE_SHAPES.has(shape) : null,
     isBulkyFabric: (fabricWeight && fabricWeight !== 'unknown') ? BULKY_FABRIC_WEIGHTS.has(fabricWeight) : null,
   }
 }

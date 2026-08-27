@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
-import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
+import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 
@@ -1264,14 +1264,19 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               {constructionConfig.showSleeve && (
                 <div className={`form-group ${suggestedFields.has('sleeve_length') ? 'retag-field-highlight' : ''}`} data-piece-field="sleeve_length">
                   <label className="form-label">Sleeve Length {suggestedFields.has('sleeve_length') && <span className="retag-review-marker">Review suggested</span>}</label>
-                  <ChipRow options={['sleeveless','cap','short','elbow','3/4','long','extra_long','unknown']} value={form.sleeve_length} onChange={v => set('sleeve_length', v)} />
+                  <ChipRow options={['sleeveless','cap','short','elbow','3/4','long','extra_long','unknown']} value={form.sleeve_length} onChange={v => {
+                    set('sleeve_length', v)
+                    // Sleeveless has no applicable shape; going the other way, don't invent one —
+                    // leave it blank for review rather than carrying over a stale prior value.
+                    if (v === 'sleeveless' || form.sleeve_length === 'sleeveless') set('sleeve_shape', null)
+                  }} />
                 </div>
               )}
 
               {constructionConfig.showSleeve && form.sleeve_length !== 'sleeveless' && (
                 <div className={`form-group ${suggestedFields.has('sleeve_shape') ? 'retag-field-highlight' : ''}`} data-piece-field="sleeve_shape">
                   <label className="form-label">Sleeve Shape {suggestedFields.has('sleeve_shape') && <span className="retag-review-marker">Review suggested</span>}</label>
-                  <ChipRow options={['fitted','straight','relaxed','puff','bishop','bell','flutter','raglan','dolman','other','unknown']} value={form.sleeve_shape} onChange={v => set('sleeve_shape', v)} />
+                  <ChipRow options={SLEEVE_SHAPE_VALUES} value={form.sleeve_shape} onChange={v => set('sleeve_shape', v)} />
                 </div>
               )}
 
