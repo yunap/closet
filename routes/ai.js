@@ -384,7 +384,14 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
 // tagger tier — screened cold-start and warm-anchored, no material regression found. Callers that
 // need the full stylist model (currently: routes/importer.js, whose crop/fallback-photo
 // distribution was never screened) must pass `model` explicitly to override this default.
-export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = (AI_PROVIDER === 'openai' ? null : ANTHROPIC_TAGGER_MODEL), excludeAnchorPieceId } = {}) {
+// providerOverride (Gemini evaluation slice, plan: quizzical-foraging-boot): only ever set by the
+// tagger benchmark script (scratch/gemini_tagger_benchmark.js), never a route/session/UI. Absent,
+// resolves exactly as before — no behavior change for any real call site.
+// model's default (the Anthropic tagger tier) is skipped when providerOverride routes elsewhere —
+// harmless either way (askStylistWithUsage ignores `model` for its openai/gemini branches) but
+// confusing to read otherwise.
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = null, excludeAnchorPieceId, providerOverride = null } = {}) {
+  if (model === null && !providerOverride) model = AI_PROVIDER === 'openai' ? null : ANTHROPIC_TAGGER_MODEL
   // Snapshot the request's AsyncLocalStorage telemetry context (flow, tagger_source, etc.) right
   // at entry, then re-apply it in a fresh frame directly around the provider call below. Found
   // live in a Batch Add run (2026-08-24): 3 of 5 sequential tag calls landed with
@@ -464,6 +471,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     // path, but the underlying truncation itself was still live.
     maxTokens: 2500,
     ...(model ? { model } : {}),
+    ...(providerOverride ? { providerOverride } : {}),
     messages: [{
       role: 'user',
       content

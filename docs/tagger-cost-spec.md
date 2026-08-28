@@ -1,10 +1,13 @@
 # Spec: tagger cost and cold-start quality
 
 **Status:** Phase 2 (model-tier screening) executed and decided 2026-08-23 for both cold-start
-(§6b) and warm/anchored (§6c) tagging — adopt `claude-haiku-4-5` for normal tagging. The
-import-crop distribution is the one arm still untested (§6b). Phases 0/1 (caching, content
-reordering, dead-field cleanup, cost-gate fixes) were independently implemented between this
-spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4 remain
+(§6b) and warm/anchored (§6c) tagging — adopt `claude-haiku-4-5` for normal tagging. A follow-up
+screen (§6d, 2026-08-27) evaluated Gemini 3.5/3.1 Flash-Lite as cheaper alternatives to Haiku on the
+same tagger contract — both screened as viable, with 3.1 Flash-Lite the stronger candidate on cost.
+**No routing decision has been made** for Gemini; §6d is a screening result, not an adoption. The
+import-crop distribution is the one arm still untested for any tier (§6b). Phases 0/1 (caching,
+content reordering, dead-field cleanup, cost-gate fixes) were independently implemented between
+this spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4 remain
 undecided. **No production routing has been changed** — this spec records the decision; the
 routing change is separate, unapproved work.
 **Author's note:** every number here is measured against the real 236-piece wardrobe by a read-only
@@ -491,6 +494,186 @@ warm.** Nothing has been changed in production routing — this section, like §
 a routing change should cite. The import-crop distribution (§6b, "What this doesn't answer") is
 still the one untested arm and remains the largest gap before calling this decision complete for
 every tagging path.
+
+---
+
+## 6d. Phase 2 follow-up — Gemini Flash-Lite tiers, executed 2026-08-27
+
+This runs the same question §6b/§6c asked of Haiku against Sonnet — does a cheaper model tag well
+enough? — one tier further down, against two Gemini models: **`gemini-3.5-flash-lite`** and
+**`gemini-3.1-flash-lite`**. Both are Google's cheap/fast tier, the same role Haiku plays for
+Anthropic (`gemini-3.7-flash`, used elsewhere in this session's Gemini evaluation slice, is a
+heavier tier and not a fair Haiku comparison — confirmed by both naming and pricing: Haiku is
+$1/$5 per M tokens; 3.5/3.1 Flash-Lite are $0.30/$2.50 and $0.25/$1.50; 3.7 Flash is $0.75/$3.75).
+
+This work grew out of a separate Gemini-adapter evaluation slice (`styling-engine/provider.js`'s
+`providerOverride` mechanism, plan `quizzical-foraging-boot`) and reused it: `tagPieceWithProvider`
+(`routes/ai.js`) gained an additive `providerOverride` param, threaded through to
+`askStylistWithUsage`, exactly like §6b's own `model` param addition — no existing caller passes
+it, production behavior unchanged. `excludeAnchorPieceId` (§6c's fix) was set on every call.
+
+### What changed from §6b/§6c's design
+
+- **No stored-tag ground truth.** §6b/§6c never used stored DB values as ground truth, for good
+  reason (99.6% of pieces carry some override, spanning several tagger generations — not a clean
+  baseline). An earlier pass of this screen mistakenly diffed Gemini's output against stored tags;
+  caught and discarded before drawing conclusions. All real comparisons here are fresh-Haiku vs.
+  fresh-Gemini, same photo, same call.
+- **Photo-adjudicated quality, not agreement-rate.** "Agreement with Haiku" was tried as a quality
+  metric and rejected: it only measures similarity to Haiku, and several real disagreements found
+  here were Haiku being *wrong* (below) — a metric that rewards matching Haiku's own errors is not
+  evidence of quality. The real quality read is a small, manually adjudicated sample (owner + agent,
+  checked against actual garment photos), matching §6b/§6c's own case-by-case adjudication method.
+- **Hanger-only input was checked and rejected as insufficient**, then corrected. An initial pass
+  sent only the hanger/flat-lay photo (`tagPieceWithProvider`'s single-photo call shape); several of
+  the pieces used also have a `worn_photo` on file that real production tagging normally includes
+  (§3.7b's own caller table: hanger **+ worn**, not hanger alone). Rerun with both photos for the
+  4 of 6 pieces that have one on file (1, 33, 88, 89); agreement-rate moved from 68.6% to 75.7%
+  hanger-only→hanger+worn (kept for context despite the metric being retired — the shift itself is
+  informative: some of the original gap was missing information, not model divergence).
+- **A real methodology bug caught mid-run, same shape as §6c's:** the tagger's `_confidence` map and
+  `garment_intelligence` sub-object were briefly (and wrongly) flagged as a Gemini completeness gap
+  — see "A false alarm" below. Traced fully before being ruled out.
+
+### Manifest
+
+6 pieces, category-diverse (top, dress, bottom, outerwear, accessory, and a second top), drawn from
+the owner's real wardrobe: 1 (Whale stripe tee), 33 (Green maxi dress), 89 (Gray straight
+trousers), 90 (small labradorite pendant necklace), 88 (striped knit cardigan), 63 (white tie-front
+blouse). Not selected for owner-correction density (§6b's own later note: that axis stopped
+discriminating once 99.6% of pieces carried some override) — selected for category spread, and
+piece tags were shown to the owner before the paid run for a sanity check on the stored baseline.
+
+### Results
+
+Two real Anthropic-credit-exhaustion incidents interrupted this run (unrelated to Gemini — the
+operator's Anthropic key ran out of balance mid-session and was topped up) and one 500 "high
+demand" server error from `gemini-3.7-flash` during an unrelated adjacent check (also unrelated to
+the tagger, see the Gemini evaluation slice's own notes) — neither affected the numbers below, both
+were caught and the affected calls re-run cleanly.
+
+**Hanger-only (6 pieces, 1 rep):**
+
+| | Haiku | Gemini 3.5 Flash-Lite | Gemini 3.1 Flash-Lite |
+|---|---|---|---|
+| success | 6/6 | 6/6 | 5/6 (1 truncation — see below) |
+| avg cost/garment | $0.0098 | $0.0049 | ~$0.0037 |
+| avg latency | ~16.6s | ~22.6s (one 102s cache-miss outlier) | ~8.8s |
+
+**Hanger + worn (4 pieces — 1, 33, 88, 89 — the real production input shape):**
+
+| | Haiku | Gemini 3.5 Flash-Lite | Gemini 3.1 Flash-Lite (2 reps, 8 calls) |
+|---|---|---|---|
+| success | 4/4 | 4/4 | **8/8** |
+| avg cost/garment | $0.0124 | $0.0064 (**48% cheaper**) | $0.0043 (**65% cheaper**) |
+| avg latency | ~19.2s, steady | ~25.9s (one 83s outlier) | ~7.3s, no outliers |
+
+Total spend across both benchmark passes and the closeout: on the order of $0.30–0.40 across ~40
+real calls (Haiku + both Gemini tiers combined) — not separately reconciled to the cent, unlike
+§6b/§6c's precise accounting; this screen prioritized coverage over exact spend tracking.
+
+### The truncation false start
+
+One Gemini 3.1 Flash-Lite call (piece 63, hanger-only) hit the tagger's `maxTokens: 2500` cap and
+returned unparseable JSON, truncated mid-`_confidence` block. Initially misdiagnosed as a
+3.1-specific tokenization inefficiency (a chars-per-output-token ratio roughly half of Haiku's and
+3.5's on that one sample). A repeat of the *identical* call (same piece, same model, same cap)
+completed normally, well under the cap — and the 8-call closeout at the real production input shape
+saw **zero truncations**. Conclusion: this was ordinary run-to-run variance, not a systematic
+defect — the same lesson §6b's own noise-floor check (c2's Sonnet self-disagreement) already
+taught, re-learned here the hard way by not repeating a single failing sample before diagnosing it.
+
+### A false alarm: `garment_intelligence` looked missing from Gemini, wasn't
+
+Gemini 3.5 Flash-Lite's output appeared to omit `garment_intelligence` (nested under
+`style_profile_json`, defined at `prompts.js`'s tagger schema example) on 0/10 comparisons — flagged
+as a real completeness regression, since this field is genuinely consumed downstream
+(`attributes.js`'s `getOccasionConfidence`, `rules.js`'s `pieceGarmentIntelligence`, and
+`softScoreFloors.js` — occasion confidence, auto-use trust, outfit scoring; confirmed not safe to
+drop). Traced through the full path before accepting the finding:
+
+1. **Canonical schema** (`prompts.js`'s `tagPiecePromptTemplate`): `garment_intelligence` nested
+   inside `style_profile_json`.
+2. **No structured-output schema is sent to either provider for the tagger** — `tagPieceWithProvider`
+   calls `askStylistWithUsage` (not the schema-enforced `askStylistStructuredWithUsage`), so this is
+   pure prompt-example-driven free text for both Haiku and Gemini. Nothing to "weaken" in a schema
+   conversion step, because there is no schema conversion step.
+3. **Raw response:** Gemini nests it correctly, matching the documented schema, every time checked.
+   **Haiku's raw response puts it at the top level instead — 10/10 times, across every call in both
+   benchmark passes.**
+4. **Normalization** (`tagPieceWithProvider`): preserves whatever nesting the model produced; does
+   not relocate a top-level `garment_intelligence` into the documented nested slot.
+5. **Persistence** (`taggerMerge.js`'s `applyTaggerResult`): builds the incoming profile **only**
+   from `tags.style_profile_json`. A top-level `garment_intelligence` — Haiku's shape, in this
+   sample — is never read and never reaches the stored piece.
+
+**So the finding inverted: Gemini's structured-output compliance on this field was correct
+throughout; the "omission" was a bug in this screen's own top-level-only comparison script, not in
+Gemini.** Checked against the real 260-piece wardrobe (read-only, live `wardrobe.db`) to see whether
+Haiku's top-level placement was a live production problem: **213/260 active pieces (82%) do have
+`garment_intelligence` correctly nested and populated** (90% for the current `v2.0.0` tagger
+version) — this session's 10/10 top-level-only sample did not generalize; most real Haiku tagging
+gets this right. The remaining ~18% gap (47 pieces, concentrated in older/unknown tagger versions)
+is a real, separate, pre-existing finding — not caused by, or resolved by, this Gemini screen — and
+is not chased further here.
+
+### Field-level adjudication (owner + agent, checked against real garment photos)
+
+Comparing fresh Haiku vs. fresh Gemini 3.5 Flash-Lite output field-by-field, then checking every
+real disagreement against the actual photo (hanger and, where available, worn) rather than trusting
+either model's answer or a raw disagreement count:
+
+**Gemini correct, Haiku wrong (7):** piece 33's `silhouette` (photo shows drop-waist construction —
+fitted bodice to hip, then the skirt gathers; Haiku said `fit-and-flare`, then on the worn-photo
+rerun `A-line` — still wrong both times) and `length_hits_at` (the dress is named "Green **maxi**
+dress" and the worn photo shows it hitting at the ankle; Haiku said `knee`, wrong under both hanger
+and worn conditions — confirmed a real, repeatable Haiku miss, not a missing-information artifact).
+Piece 63's `neckline` (photo shows an unambiguous V-opening; Haiku said `wrap`) and `sleeve_length`
+(owner adjudication: `cap` is the closer read of the two). Piece 88's `category` (Gemini said
+`outerwear`, matching this piece's own established stored category; Haiku said `top`) and `colors`
+(Gemini's set included the plainly visible near-black stripe band; Haiku's `sage` doesn't match
+anything in the photo). Piece 90's `colors` (a small square green stone is clearly visible; Haiku's
+set missed it).
+
+**Haiku correct, Gemini wrong (2):** piece 33's and piece 90's `background_color` — this field means
+"the garment's own base color" (`prompts.js`), not the photo backdrop; Gemini answered `white`
+both times, matching neither garment's actual color, while Haiku correctly named the real base
+color (`emerald`, `silver`) both times. A repeatable, specific misread of this one field's
+instructions, not general color-blindness (Gemini's separate `colors` array was accurate on both of
+these same pieces). On the hanger+worn rerun of piece 88, Haiku's `open` neckline also held up
+better than Gemini's shifting, unconfirmed collar-type guesses (`shawl`, then `cowl` on separate
+runs) against a worn photo that shows no distinct collar structure at all.
+
+**Net: 7 clear wins for Gemini, 2 for Haiku, on facts actually checked against photos.** Sample is
+small (6 pieces) — the same caveat §6b itself raised about its own 10-case screen applies here more
+strongly, not less.
+
+### Decision
+
+**Both Gemini Flash-Lite tiers screen as viable Haiku alternatives for the tagger, on cost, latency,
+and the adjudicated accuracy sample. 3.1 Flash-Lite is the stronger candidate of the two** — cheaper
+than 3.5 ($0.0043 vs. $0.0064/garment on the real hanger+worn shape, ~65% below Haiku), a clean
+0/8 failure rate on repeat, and no latency outliers in its closeout run (3.5 had one 83s spike in
+the same conditions). Neither tier is provider-routed in production — this is a screening result
+matching §6b/§6c's own posture ("this section records the result a routing change should cite; the
+routing change itself is separate, deliberate work"), not an adoption decision.
+
+### What this doesn't answer
+
+- **Import-crop distribution untested** — same gap §6b/§6c left open, now open for three tiers
+  instead of two.
+- **6 pieces is a screening sample, not a powered study** — smaller than §6b's own 10-case screen,
+  which itself called that size insufficient to bound a rare-failure rate.
+- **Latency tail behavior is not well characterized.** Both Gemini tiers showed occasional large
+  outliers (83–102s) on cache-miss, image-heavy calls in earlier passes of this session's broader
+  Gemini evaluation, though the 3.1 closeout's 8 calls showed none. Not enough samples to state a
+  real percentile.
+- **`_confidence` and `garment_intelligence` structural placement was traced for correctness, not
+  audited for whether Gemini's confidence calibration itself (`high`/`medium`/`low` values, as
+  opposed to where they're nested) is trustworthy** — out of scope for this pass.
+- **No BYOK, UI, or persisted-provider-selection work has been done** — this remains entirely behind
+  the experimental `providerOverride` mechanism, consistent with the Gemini evaluation slice's own
+  scope boundary.
 
 ---
 

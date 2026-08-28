@@ -4,9 +4,10 @@
 // See AGENTS.md.
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import { GoogleGenAI } from '@google/genai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
-import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
+import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
@@ -499,6 +500,44 @@ export const ACTIVE_STYLIST_MODEL = AI_PROVIDER === 'openai' ? OPENAI_MODEL : AN
 // (crops, fallback-to-full-photo) was never tested and is explicitly the open gap in that spec.
 export const ANTHROPIC_TAGGER_MODEL = process.env.ANTHROPIC_TAGGER_MODEL || 'claude-haiku-4-5'
 
+// Gemini evaluation slice (docs: scratch/gemini_tool_loop_spike_findings.md). Deliberately not
+// wired into AI_PROVIDER/ACTIVE_STYLIST_MODEL — those stay Anthropic/OpenAI-binary exactly as
+// before. GEMINI_MODEL and the key are read directly from env: this is an experimental,
+// debug-only path, not a persisted provider choice (no lib/apiKeys.js entry, no BYOK UI).
+export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flash'
+// Stage C latency finding (2026-08-27): a real tool-loop comparison run left generation_config's
+// thinking_level unset and hit a single call that took 314s wall-clock while billing only 50 output
+// tokens total (thought+text) — confirmed via `lsof` to be a genuine open connection to Google's
+// servers, not a client-side retry loop (the SDK's own retry backoff caps at 30s). Explicitly
+// pinning 'low' here isolates that variable for the comparison; 'medium'/'high' remain worth
+// benchmarking separately once a 'low' baseline exists (plan §8: begin at medium for the stylist,
+// benchmark low for cheap/router tasks — this override deliberately inverts that for Stage C only,
+// to find out whether the unset default itself is the latency driver before trusting any number
+// run against it).
+const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
+
+export function resolveGeminiKey() {
+  return process.env.GEMINI_API_KEY || null
+}
+
+// resolveAiTarget: the ONLY sanctioned way to run a call through Gemini. `override` is passed
+// explicitly by comparison-run scripts (scratch/gemini_comparison_runs.js) and the Stage-0 spike —
+// never sourced from a route, session, or UI. With no override, every existing call site resolves
+// exactly as before (AI_PROVIDER/ACTIVE_STYLIST_MODEL), so this is a no-op addition until a caller
+// opts in on purpose.
+export function resolveAiTarget(override = null) {
+  if (override?.provider === 'gemini') {
+    return { provider: 'gemini', model: override.model || GEMINI_MODEL }
+  }
+  if (override?.provider === 'openai') {
+    return { provider: 'openai', model: override.model || OPENAI_MODEL }
+  }
+  if (override?.provider === 'anthropic') {
+    return { provider: 'anthropic', model: override.model || ANTHROPIC_MODEL }
+  }
+  return { provider: AI_PROVIDER, model: ACTIVE_STYLIST_MODEL }
+}
+
 const ANTHROPIC_PRICING_PER_MILLION = [
   { match: /claude-.*sonnet.*4|claude-sonnet-4/i, input: 3, cacheWrite5m: 3.75, cacheRead: 0.30, output: 15 },
   { match: /claude-.*haiku.*4\.5|claude-haiku-4/i, input: 1, cacheWrite5m: 1.25, cacheRead: 0.10, output: 5 },
@@ -513,6 +552,16 @@ const OPENAI_PRICING_PER_MILLION = [
   { match: /^gpt-5\.4-nano(?:-|$)/i, input: 0.20, cachedInput: 0.02, output: 1.25 },
   { match: /^gpt-4o-mini(?:-|$)/i, input: 0.15, cachedInput: 0.075, output: 0.60 },
   { match: /^gpt-4o(?:-|$)/i, input: 2.50, cachedInput: 1.25, output: 10 },
+]
+
+// Gemini Developer API introductory Standard pricing, current through 2026-12-31 (Stage-1 census,
+// verified against ai.google.dev/gemini-api/docs/pricing on 2026-08-27). cacheRead covers Gemini's
+// implicit-caching reported cached-token count; there is no cacheWrite5m equivalent (implicit
+// caching has no separate write charge the way Anthropic's does).
+const GEMINI_PRICING_PER_MILLION = [
+  { match: /^gemini-3\.7-flash(?:-|$)/i, input: 0.75, cacheRead: 0.075, output: 3.75 },
+  { match: /^gemini-3\.5-flash-lite(?:-|$)/i, input: 0.30, cacheRead: 0.03, output: 2.50 },
+  { match: /^gemini-3\.1-flash-lite(?:-|$)/i, input: 0.25, cacheRead: 0.025, output: 1.50 },
 ]
 
 function envPricingOverride() {
@@ -536,7 +585,11 @@ function envPricingOverride() {
 function pricingForModel(provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL) {
   const override = envPricingOverride()
   if (override) return override
-  const table = provider === 'openai' ? OPENAI_PRICING_PER_MILLION : ANTHROPIC_PRICING_PER_MILLION
+  const table = provider === 'openai'
+    ? OPENAI_PRICING_PER_MILLION
+    : provider === 'gemini'
+      ? GEMINI_PRICING_PER_MILLION
+      : ANTHROPIC_PRICING_PER_MILLION
   return table.find(entry => entry.match.test(model)) || null
 }
 
@@ -552,6 +605,11 @@ function numberOrZero(value) {
 function normalizeStopReason(rawStopReason, provider) {
   if (!rawStopReason) return null
   if (provider === 'openai') return rawStopReason === 'length' ? 'max_tokens' : rawStopReason
+  // Gemini's Interactions API truncation signal was not exercised by the Stage-0 spike (it never
+  // hit the token cap) — 'MAX_TOKENS'/'max_tokens' is the value used by Gemini's other APIs and is
+  // mapped defensively here; confirm against a real truncated response before trusting this in
+  // Stage C, and see the corresponding TODO in the adapter test.
+  if (provider === 'gemini') return /max_tokens/i.test(String(rawStopReason)) ? 'max_tokens' : rawStopReason
   return rawStopReason
 }
 
@@ -566,6 +624,30 @@ export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, mode
       outputTokens: numberOrZero(rawUsage.completion_tokens),
       totalTokens: numberOrZero(rawUsage.total_tokens),
       cacheReadInputTokens: numberOrZero(promptDetails.cached_tokens),
+      cacheCreationInputTokens: 0,
+      cacheCreation5mInputTokens: 0,
+      cacheCreation1hInputTokens: 0,
+      stopReason: normalizeStopReason(stopReason, provider),
+      raw: rawUsage
+    }
+  }
+  if (provider === 'gemini') {
+    // Field names confirmed against a real Interactions API response in the Stage-0 spike
+    // (scratch/gemini_tool_loop_spike_findings.md): total_input_tokens INCLUDES cached tokens
+    // (OpenAI-style convention, not Anthropic's), so cacheReadInputTokens is subtracted in
+    // estimateAiUsageCost rather than added on top. total_thought_tokens is billed as part of
+    // output per Gemini's pricing docs, so it is folded into outputTokens rather than tracked
+    // separately — Closet's usage contract has no dedicated reasoning-token field today.
+    const inputTokens = numberOrZero(rawUsage.total_input_tokens)
+    const outputTokens = numberOrZero(rawUsage.total_output_tokens) + numberOrZero(rawUsage.total_thought_tokens)
+    const cacheReadInputTokens = numberOrZero(rawUsage.total_cached_tokens)
+    return {
+      provider,
+      model,
+      inputTokens,
+      outputTokens,
+      totalTokens: numberOrZero(rawUsage.total_tokens) || inputTokens + outputTokens,
+      cacheReadInputTokens,
       cacheCreationInputTokens: 0,
       cacheCreation5mInputTokens: 0,
       cacheCreation1hInputTokens: 0,
@@ -612,9 +694,10 @@ export function estimateAiUsageCost(usage = null) {
       reason: `No local pricing entry for ${usage.provider}:${usage.model}`
     }
   }
-  // OpenAI prompt_tokens includes cached tokens; Anthropic input_tokens is the
-  // uncached remainder and reports cache reads/creation in separate fields.
-  const billableInputTokens = usage.provider === 'openai'
+  // OpenAI prompt_tokens and Gemini total_input_tokens both include cached tokens (confirmed for
+  // Gemini in the Stage-0 spike: total_input_tokens ~= total_cached_tokens + genuinely-new input);
+  // Anthropic input_tokens is the uncached remainder and reports cache reads/creation separately.
+  const billableInputTokens = usage.provider === 'openai' || usage.provider === 'gemini'
     ? Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
     : numberOrZero(usage.inputTokens)
   const inputUsd = billableInputTokens * pricing.input / 1_000_000
@@ -633,7 +716,7 @@ export function estimateAiUsageCost(usage = null) {
   }
 }
 
-export function assertProviderKey() {
+export function assertProviderKey(target = null) {
   // Test fixtures use takeTestAiResponse before reaching this boundary. If a test accidentally
   // misses its mock, never fall through to a real operator/BYOK credential merely because dotenv
   // loaded one. An explicit opt-in exists for a deliberately commissioned provider integration
@@ -643,12 +726,18 @@ export function assertProviderKey() {
     err.code = 'no_api_key'
     throw err
   }
-  if (AI_PROVIDER === 'openai' && !resolveOpenAiKey()) {
+  const provider = target?.provider || AI_PROVIDER
+  if (provider === 'gemini' && !resolveGeminiKey()) {
+    const err = new Error('No Gemini API key available — set GEMINI_API_KEY (experimental path, no BYOK yet).')
+    err.code = 'no_api_key'
+    throw err
+  }
+  if (provider === 'openai' && !resolveOpenAiKey()) {
     const err = new Error(noKeyErrorMessage('openai'))
     err.code = 'no_api_key'
     throw err
   }
-  if (AI_PROVIDER !== 'openai' && !resolveAnthropicKey()) {
+  if (provider === 'anthropic' && !resolveAnthropicKey()) {
     const err = new Error(noKeyErrorMessage('anthropic'))
     err.code = 'no_api_key'
     throw err
@@ -1007,7 +1096,9 @@ export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, ma
   return text
 }
 
-export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+// providerOverride (plan §4): only ever set by a comparison-run script or the Stage-0 spike,
+// never by a route/session/UI. Absent, resolves to today's AI_PROVIDER exactly as before.
+export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, providerOverride = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
@@ -1017,12 +1108,38 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
     }
   }
 
-  assertProviderKey()
+  const target = resolveAiTarget(providerOverride)
+  assertProviderKey(target)
 
-  if (AI_PROVIDER === 'openai') {
+  if (target.provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
+    const startedAt = Date.now()
+    let interaction
+    try {
+      interaction = await ai.interactions.create({
+        model: target.model,
+        system_instruction: plainSystem,
+        input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
+        generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+      })
+    } catch (err) {
+      await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
+      throw err
+    }
+    const latencyMs = Date.now() - startedAt
+    const text = (interaction.steps || [])
+      .filter(s => s.type === 'model_output')
+      .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
+      .join('\n\n').trim() || String(interaction.output_text || '').trim()
+    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: null })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    return { text, usage }
+  }
+
+  if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const response = await client.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: target.model,
       max_tokens: maxTokens,
       messages: [
         { role: 'system', content: plainSystem },
@@ -1031,7 +1148,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
     })
     return {
       text: response.choices?.[0]?.message?.content || '',
-      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL, stopReason: response.choices?.[0]?.finish_reason })
+      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason: response.choices?.[0]?.finish_reason })
     }
   }
 
@@ -1048,7 +1165,8 @@ export async function askStylistStructuredWithUsage({
   name = 'structured_response',
   description = 'Return the requested structured response.',
   maxTokens = 1200,
-  model = null
+  model = null,
+  providerOverride = null
 }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1066,12 +1184,49 @@ export async function askStylistStructuredWithUsage({
     }
   }
 
-  assertProviderKey()
+  const target = resolveAiTarget(providerOverride)
+  assertProviderKey(target)
 
-  if (AI_PROVIDER === 'openai') {
+  if (target.provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
+    const startedAt = Date.now()
+    let interaction
+    try {
+      interaction = await ai.interactions.create({
+        model: target.model,
+        system_instruction: plainSystem,
+        input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
+        generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+        // Gemini's JSON-Schema subset does not necessarily accept every construct Closet's
+        // schemas use (e.g. FREEFORM_EXECUTION_ROUTE_SCHEMA's plain enums are fine; a schema using
+        // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent
+        // simplification: if a real schema fails here, that is Stage C's problem to diagnose and
+        // is intentionally NOT worked around in this experimental slice (plan: don't widen scope).
+        response_format: { type: 'json_object', name, description, schema },
+      })
+    } catch (err) {
+      await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
+      throw err
+    }
+    const latencyMs = Date.now() - startedAt
+    const text = (interaction.steps || [])
+      .filter(s => s.type === 'model_output')
+      .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
+      .join('\n\n').trim() || String(interaction.output_text || '').trim()
+    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: null })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    try {
+      return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
+    } catch (err) {
+      err.usage = usage
+      throw err
+    }
+  }
+
+  if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const response = await client.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: target.model,
       max_tokens: maxTokens,
       messages: [
         { role: 'system', content: plainSystem },
@@ -1084,7 +1239,7 @@ export async function askStylistStructuredWithUsage({
     })
     const text = response.choices?.[0]?.message?.content || ''
     const stopReason = response.choices?.[0]?.finish_reason
-    const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL, stopReason })
+    const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1162,7 +1317,7 @@ Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, f
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '' } = {}) {
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', providerOverride = null } = {}) {
   return askStylistStructuredWithUsage({
     system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
     messages: [{
@@ -1172,7 +1327,8 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
     name: 'freeform_execution_route',
     description: 'Choose one narrow execution profile only when its contract and supplied compact context are sufficient.',
-    maxTokens: 350
+    maxTokens: 350,
+    providerOverride
   })
 }
 
@@ -1281,6 +1437,276 @@ export function discloseUnresolvedFreeformChecks(answerText, toolContext = {}, r
   return `${text}\n\n${[...new Set(notes)].join('\n')}`.trim()
 }
 
+// ---- Canonical tool-loop history (Gemini evaluation slice, plan: quizzical-foraging-boot) -----
+// currentMessages inside askStylistWithTools used to start in this canonical shape but get
+// overwritten with PROVIDER-NATIVE shapes after the first iteration (OpenAI's
+// tool_calls/tool_call_id messages, Anthropic's raw content blocks) — that leak, not just the
+// branch itself, was what made the loop two independent implementations. It now stays in one
+// shape for the whole loop:
+//   caller-supplied entries:    { role, content }                         (unchanged from before)
+//   a model turn:               { role: 'assistant', text, toolCalls: [{ id, name, args }] }
+//   one executed tool's result: { role: 'tool_result', toolCallId, name, text, images }
+// Gemini's continuation is deliberately NOT part of any canonical entry (Stage-0 spike,
+// scratch/gemini_tool_loop_spike_findings.md: a single opaque previous_interaction_id threaded
+// through the loop's own local state is sufficient) — no other adapter reads or writes it, and
+// the loop itself never inspects it.
+
+export function toGeminiFunctionDeclaration(tool) {
+  return { type: 'function', name: tool.name, description: tool.description, parameters: tool.input_schema }
+}
+
+export function canonicalToolResultBlocksForAnthropic(entry) {
+  const contentBlocks = [{ type: 'text', text: entry.text }]
+  if (entry.images?.length) {
+    contentBlocks.push({ type: 'text', text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight.' })
+    for (const img of entry.images) {
+      contentBlocks.push({ type: 'text', text: img.label })
+      contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: img.mime, data: img.base64 } })
+    }
+  }
+  return contentBlocks
+}
+
+export function canonicalHistoryToAnthropicMessages(canonicalMessages) {
+  return canonicalMessages.map(entry => {
+    if (entry.role === 'assistant' && Array.isArray(entry.toolCalls)) {
+      if (!entry.toolCalls.length) return { role: 'assistant', content: entry.text || '' }
+      const content = []
+      if (entry.text) content.push({ type: 'text', text: entry.text })
+      for (const tc of entry.toolCalls) content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args })
+      return { role: 'assistant', content }
+    }
+    if (entry.role === 'tool_result') {
+      return { role: 'user', content: [{ type: 'tool_result', tool_use_id: entry.toolCallId, content: canonicalToolResultBlocksForAnthropic(entry) }] }
+    }
+    return { role: entry.role, content: toAnthropicContentBlocks(entry.content) }
+  })
+}
+
+export function canonicalHistoryToOpenAiMessages(canonicalMessages) {
+  const out = []
+  let i = 0
+  while (i < canonicalMessages.length) {
+    const entry = canonicalMessages[i]
+    if (entry.role === 'assistant' && Array.isArray(entry.toolCalls)) {
+      out.push({
+        role: 'assistant',
+        content: entry.text || '',
+        ...(entry.toolCalls.length ? {
+          tool_calls: entry.toolCalls.map(tc => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.args || {}) } }))
+        } : {})
+      })
+      i += 1
+      continue
+    }
+    if (entry.role === 'tool_result') {
+      const images = []
+      while (i < canonicalMessages.length && canonicalMessages[i].role === 'tool_result') {
+        const tr = canonicalMessages[i]
+        out.push({ role: 'tool', tool_call_id: tr.toolCallId, name: tr.name, content: tr.text })
+        if (tr.images?.length) images.push(...tr.images)
+        i += 1
+      }
+      if (images.length) {
+        const content = [{ type: 'text', text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight:' }]
+        for (const img of images) {
+          content.push({ type: 'text', text: img.label })
+          content.push({ type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.base64}`, detail: 'low' } })
+        }
+        out.push({ role: 'user', content })
+      }
+      continue
+    }
+    out.push({ role: entry.role, content: contentToOpenAI(entry.content) })
+    i += 1
+  }
+  return out
+}
+
+export function canonicalContentToGeminiParts(content) {
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : []
+  return (Array.isArray(content) ? content : []).map(part => {
+    if (part.type === 'text') return { type: 'text', text: part.text }
+    if (part.type === 'image') return { type: 'image', data: part.source?.data, mime_type: part.source?.media_type }
+    if (part.type === 'image_url') {
+      const match = /^data:([^;]+);base64,(.*)$/.exec(part.image_url?.url || '')
+      return match ? { type: 'image', data: match[2], mime_type: match[1] } : { type: 'text', text: JSON.stringify(part) }
+    }
+    return { type: 'text', text: JSON.stringify(part) }
+  })
+}
+
+// Gemini's Interactions API is stateful server-side (previous_interaction_id) — the Stage-0 spike
+// confirmed the loop never needs to resend prior assistant/tool_result turns, only what changed
+// since the last Gemini call: on the FIRST call that's the caller's own prior thread history (Gemini
+// has never seen it), on every later call it's just this iteration's tool results or a retry-
+// correction message. Gemini's own turns are dropped here (`role === 'assistant'` continue) — the
+// server already has them via previous_interaction_id.
+export function canonicalHistoryToGeminiInput(unsyncedEntries) {
+  const input = []
+  for (const entry of unsyncedEntries) {
+    if (entry.role === 'assistant') continue
+    if (entry.role === 'tool_result') {
+      const result = [{ type: 'text', text: entry.text }]
+      for (const img of entry.images || []) result.push({ type: 'image', data: img.base64, mime_type: img.mime })
+      input.push({ type: 'function_result', name: entry.name, call_id: entry.toolCallId, result })
+      continue
+    }
+    input.push(...canonicalContentToGeminiParts(entry.content))
+  }
+  return input
+}
+
+async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }) {
+  const client = new Anthropic({ apiKey: resolveAnthropicKey() })
+  const formattedMessages = withMovingCacheBreakpoint(canonicalHistoryToAnthropicMessages(canonicalMessages))
+  const response = await client.messages.create({
+    model: ANTHROPIC_MODEL,
+    max_tokens: maxTokens,
+    system: systemToAnthropicBlocks(system),
+    messages: formattedMessages,
+    ...(tools.length ? { tools } : {})
+  })
+  const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL, stopReason: response.stop_reason })
+  const toolUses = (response.content || []).filter(block => block.type === 'tool_use')
+  return {
+    text: collectAssistantText(response.content),
+    toolCalls: toolUses.map(tu => ({ id: tu.id, name: tu.name, args: tu.input })),
+    usage,
+    hasToolCalls: response.stop_reason === 'tool_use',
+  }
+}
+
+async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens }) {
+  const client = new OpenAI({ apiKey: resolveOpenAiKey() })
+  const response = await client.chat.completions.create({
+    model: OPENAI_MODEL,
+    max_tokens: maxTokens,
+    messages: [{ role: 'system', content: plainSystem }, ...canonicalHistoryToOpenAiMessages(canonicalMessages)],
+    ...(tools.length ? {
+      tools: tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }))
+    } : {})
+  })
+  const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+  const message = response.choices?.[0]?.message
+  if (!message) return { text: '', toolCalls: [], usage, hasToolCalls: false, noMessage: true }
+  const toolCalls = (message.tool_calls || []).map(tc => ({ id: tc.id, name: tc.function.name, args: JSON.parse(tc.function.arguments || '{}') }))
+  return {
+    text: String(message.content || '').trim(),
+    toolCalls,
+    usage,
+    hasToolCalls: toolCalls.length > 0,
+  }
+}
+
+// Telemetry note (plan §5): Anthropic/OpenAI are observed implicitly by installAiCallTelemetry.js
+// patching each SDK's own fetchWithTimeout transport method — that patch is Stainless-specific and
+// @google/genai shows no evidence of using the same shim, so this is a deliberate, scoped-to-the-
+// experiment divergence: the Gemini branch calls logAiCall() explicitly. If Gemini is promoted past
+// this evaluation slice, that's the point to decide between a real transport-level patch or moving
+// to a shared invocation boundary — not to be decided here.
+const GEMINI_DEBUG = process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production'
+
+// Persisted into ai_call_log's generic `context` column (no schema change) so a diagnostic script
+// can later separate image-token cost from text-token cost per call, and cache-hit vs cache-miss
+// latency, without re-deriving it from raw API responses that were never saved. Stage C's own
+// image-heavy comparison run is the reason this exists — see scratch/gemini_comparison_runs.js.
+function geminiModalityContext(interaction) {
+  return {
+    inputTokensByModality: interaction.usage?.input_tokens_by_modality || null,
+    cachedTokensByModality: interaction.usage?.cached_tokens_by_modality || null,
+  }
+}
+
+// Diagnostic-only: counts/sizes of what's actually being sent this call, never contents (no image
+// bytes, no API key). Exists to answer, from real captured data rather than inference, whether a
+// continuation call re-sends prior canonical history (it must not — Gemini already has it via
+// previous_interaction_id) and how big the tool-declaration payload is on its own.
+function describeGeminiInputShape(input, continuation, toolCount) {
+  const byType = {}
+  let approxChars = 0
+  for (const item of input) {
+    byType[item.type] = (byType[item.type] || 0) + 1
+    approxChars += JSON.stringify(item).length
+  }
+  return { usedContinuation: Boolean(continuation), inputItemCount: input.length, inputItemsByType: byType, approxInputJsonChars: approxChars, toolDeclarationCount: toolCount }
+}
+
+async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
+  const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
+  const input = canonicalHistoryToGeminiInput(unsyncedEntries)
+  const callKind = tools.length ? 'tool_loop' : 'text'
+  if (GEMINI_DEBUG) {
+    console.log('[gemini request shape]', describeGeminiInputShape(input, continuation, tools.length))
+  }
+  const startedAt = Date.now()
+  let interaction
+  try {
+    interaction = await ai.interactions.create({
+      model,
+      ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
+      input,
+      generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+      ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
+    })
+  } catch (err) {
+    await logAiCall({
+      provider: 'gemini', model, callKind, success: false,
+      errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false,
+    })
+    throw err
+  }
+  // Isolates PURE ai.interactions.create() network/server latency from Closet's own tool
+  // execution (search_wardrobe DB queries, sharp image thumbnailing, etc.) — that work happens in
+  // the caller (askStylistWithTools), after this function returns, so it is never included here.
+  const latencyMs = Date.now() - startedAt
+  const steps = interaction.steps || []
+  const functionCalls = steps.filter(s => s.type === 'function_call')
+  const modelOutputs = steps.filter(s => s.type === 'model_output')
+  const text = modelOutputs
+    .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
+    .join('\n\n')
+    .trim() || String(interaction.output_text || '').trim()
+  // Gemini's truncation signal was never exercised by the Stage-0 spike (it never hit the token
+  // cap) — stopReason stays null here until a real truncated response is observed; see the TODO
+  // on normalizeStopReason's gemini branch and the corresponding adapter test.
+  const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model, stopReason: null })
+  if (GEMINI_DEBUG) {
+    // Full breakdown the SQL columns don't carry (item 4 of the latency diagnosis): thought vs
+    // tool-use vs plain output tokens, and cache/input split by modality (text vs image) — the
+    // direct evidence for how much of the retained context is images vs structured text.
+    console.log('[gemini raw usage]', {
+      latencyMs,
+      total_tokens: interaction.usage?.total_tokens,
+      total_input_tokens: interaction.usage?.total_input_tokens,
+      total_cached_tokens: interaction.usage?.total_cached_tokens,
+      total_output_tokens: interaction.usage?.total_output_tokens,
+      total_thought_tokens: interaction.usage?.total_thought_tokens,
+      total_tool_use_tokens: interaction.usage?.total_tool_use_tokens,
+      input_tokens_by_modality: interaction.usage?.input_tokens_by_modality,
+      cached_tokens_by_modality: interaction.usage?.cached_tokens_by_modality,
+    })
+  }
+  await logAiCall({
+    provider: 'gemini', model, callKind, usage, success: true, latencyMs, isMock: false,
+    toolNames: functionCalls.map(fc => fc.name).filter(Boolean).join(','),
+    context: geminiModalityContext(interaction),
+  })
+  return {
+    text,
+    toolCalls: functionCalls.map(fc => ({ id: fc.id, name: fc.name, args: fc.arguments || {} })),
+    usage,
+    hasToolCalls: interaction.status === 'requires_action' && functionCalls.length > 0,
+    continuation: interaction.id,
+  }
+}
+
+async function callProviderTurn(provider, ctx) {
+  if (provider === 'gemini') return callGeminiTurn(ctx)
+  if (provider === 'openai') return callOpenAiTurn(ctx)
+  return callAnthropicTurn(ctx)
+}
+
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1315,9 +1741,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     return { answer: boundedAtomicMultiLookFinalAnswer(answerStr, toolContext), savedCorrections: [] }
   }
 
-  assertProviderKey()
+  // Experimental provider override (plan §4): only ever set by a comparison-run script or the
+  // Stage-0 spike, never by a route/session/UI. Absent, this resolves to today's
+  // AI_PROVIDER/ACTIVE_STYLIST_MODEL exactly as before — a no-op for every real call site.
+  const target = resolveAiTarget(toolContext.providerOverride)
+  assertProviderKey(target)
 
   let currentMessages = [...messages]
+  let providerContinuation = null
+  let syncedHistoryLength = 0
   const savedCorrections = []
   const retriedChecks = new Set()
   // docs/activity-and-roster-spec.md Part 4. The model writes its conversational prose — intro, the
@@ -1327,7 +1759,6 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // reply arrived as a bare "---" followed by notes referring to "Look 1/2/3", labels no card
   // carries, because the looks themselves had been written beside the propose_outfit calls.
   const narration = []
-  const collectText = collectAssistantText
   const joinAnswer = finalText => joinAssistantNarration(narration, finalText, {
     cardCount: Array.isArray(toolContext?.generatedOutfits)
       ? toolContext.generatedOutfits.filter(card => !card?.broken).length
@@ -1357,223 +1788,65 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       })
       toolContext._pendingFreeformRetryReason = ''
     }
-    if (AI_PROVIDER === 'openai') {
-      const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-      const availableTools = stylistToolsForTurn(toolContext)
-      const response = await client.chat.completions.create({
-        model: OPENAI_MODEL,
-        max_tokens: maxTokens,
-        messages: [
-          { role: 'system', content: plainSystem },
-          ...currentMessages.map(m => {
-            const mapped = { role: m.role }
-            if (m.content) {
-              mapped.content = contentToOpenAI(m.content)
-            }
-            if (m.tool_calls) {
-              mapped.tool_calls = m.tool_calls
-            }
-            if (m.tool_call_id) {
-              mapped.tool_call_id = m.tool_call_id
-            }
-            if (m.name) {
-              mapped.name = m.name
-            }
-            return mapped
-          })
-        ],
-        ...(availableTools.length ? {
-          tools: availableTools.map(t => ({
-            type: "function",
-            function: {
-              name: t.name,
-              description: t.description,
-              parameters: t.input_schema
-            }
-          }))
-        } : {})
+    const availableTools = stylistToolsForTurn(toolContext)
+    const unsyncedEntries = currentMessages.slice(syncedHistoryLength)
+    const turn = await callProviderTurn(target.provider, {
+      system, plainSystem, model: target.model,
+      canonicalMessages: currentMessages,
+      unsyncedEntries, continuation: providerContinuation,
+      tools: availableTools, maxTokens,
+    })
+    syncedHistoryLength = currentMessages.length
+    if (turn.continuation !== undefined) providerContinuation = turn.continuation
+
+    recordToolLoopUsage(toolContext, turn.usage, { cacheSite: 'tool_loop' })
+    if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
+      console.log(`[${target.provider} Tool Loop Usage]`, {
+        iter,
+        inputTokens: turn.usage?.inputTokens,
+        outputTokens: turn.usage?.outputTokens,
+        cacheReadInputTokens: turn.usage?.cacheReadInputTokens,
+        cacheCreationInputTokens: turn.usage?.cacheCreationInputTokens
       })
-      const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
-      recordToolLoopUsage(toolContext, usage, { cacheSite: 'tool_loop' })
-      if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
-        console.log('[OpenAI Tool Loop Usage]', {
-          iter,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cacheReadInputTokens: usage.cacheReadInputTokens,
-          cacheCreationInputTokens: usage.cacheCreationInputTokens
-        })
+    }
+
+    if (turn.noMessage) return { answer: '', savedCorrections }
+
+    if (turn.hasToolCalls) {
+      recordFreeformToolIteration(toolContext, turn.toolCalls.map(tc => tc.name))
+      if (turn.text) narration.push(turn.text)
+      currentMessages.push({ role: 'assistant', text: turn.text || '', toolCalls: turn.toolCalls })
+
+      for (const tc of turn.toolCalls) {
+        const result = await executeTool(tc.name, tc.args, toolContext)
+        if (tc.name === 'store_user_correction' && result?.status === 'success') {
+          savedCorrections.push({ ...tc.args, ...result })
+        }
+        const extracted = extractToolResultImages(result)
+        currentMessages.push({ role: 'tool_result', toolCallId: tc.id, name: tc.name, text: extracted.textResult, images: extracted.images })
       }
-
-      const message = response.choices?.[0]?.message
-      if (!message) return { answer: '', savedCorrections }
-
-      if (message.tool_calls && message.tool_calls.length) {
-        recordFreeformToolIteration(toolContext, message.tool_calls.map(tc => tc?.function?.name))
-        const interim = String(message.content || '').trim()
-        if (interim) narration.push(interim)
-        currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
-        
-        const toolOutputs = []
-        const collectedImages = []
-        for (const tc of message.tool_calls) {
-          const name = tc.function.name
-          const args = JSON.parse(tc.function.arguments || '{}')
-          const result = await executeTool(name, args, toolContext)
-          if (name === 'store_user_correction' && result?.status === 'success') {
-            savedCorrections.push({ ...args, ...result })
-          }
-          
-          const extracted = extractToolResultImages(result)
-          const toolContent = extracted.textResult
-          collectedImages.push(...extracted.images)
-
-          toolOutputs.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            name: name,
-            content: toolContent
-          })
-        }
-        if (toolContext.atomicMultiLookCompleted) {
-          return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
-        }
-        currentMessages.push(...toolOutputs)
-
-        if (collectedImages.length > 0) {
-          const content = [
-            { type: 'text', text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight:' }
-          ]
-          for (const img of collectedImages) {
-            content.push({ type: 'text', text: img.label })
-            content.push({
-              type: 'image_url',
-              image_url: { url: `data:${img.mime};base64,${img.base64}`, detail: 'low' }
-            })
-          }
-          currentMessages.push({ role: 'user', content })
-        }
-        continue
-      } else {
-        const finalText = joinAnswer(String(message.content || '').trim())
-        const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
-        if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
-        const check = toolContext.skipFreeformOutputChecks
-          ? { block: false }
-          : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
-        if (check.block) {
-          retriedChecks.add(check.blockType)
-          toolContext._pendingFreeformRetryReason = check.blockType
-          supersedeNarrationOnRetry(narration)
-          currentMessages.push({ role: 'assistant', content: finalText })
-          currentMessages.push({ role: 'user', content: check.correctionMessage })
-          continue
-        }
-        const authoritative = applyAcceptedCardAuthority(finalText, toolContext)
-        const disclosed = discloseUnresolvedFreeformChecks(authoritative, toolContext, retriedChecks)
-        return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
+      if (toolContext.atomicMultiLookCompleted) {
+        return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
       }
+      continue
     } else {
-      const client = new Anthropic({ apiKey: resolveAnthropicKey() })
-      
-      const formattedMessages = withMovingCacheBreakpoint(currentMessages.map(m => {
-        return { role: m.role, content: toAnthropicContentBlocks(m.content) }
-      }))
-
-      const availableTools = stylistToolsForTurn(toolContext)
-      const response = await client.messages.create({
-        model: ANTHROPIC_MODEL,
-        max_tokens: maxTokens,
-        system: systemToAnthropicBlocks(system),
-        messages: formattedMessages,
-        ...(availableTools.length ? { tools: availableTools } : {})
-      })
-      const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
-      recordToolLoopUsage(toolContext, usage, { cacheSite: 'tool_loop' })
-      if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
-        console.log('[Anthropic Tool Loop Usage]', {
-          iter,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cacheReadInputTokens: usage.cacheReadInputTokens,
-          cacheCreationInputTokens: usage.cacheCreationInputTokens
-        })
-      }
-
-      if (response.stop_reason === 'tool_use') {
-        const toolUses = response.content.filter(block => block.type === 'tool_use')
-        recordFreeformToolIteration(toolContext, toolUses.map(tu => tu.name))
-        const interim = collectText(response.content)
-        if (interim) narration.push(interim)
-        currentMessages.push({ role: 'assistant', content: response.content })
-
-        const toolResponses = []
-        for (const tu of toolUses) {
-          const name = tu.name
-          const args = tu.input
-          const result = await executeTool(name, args, toolContext)
-          if (name === 'store_user_correction' && result?.status === 'success') {
-            savedCorrections.push({ ...args, ...result })
-          }
-          
-          const extracted = extractToolResultImages(result)
-          const contentBlocks = [{
-            type: 'text',
-            text: extracted.textResult
-          }]
-          if (extracted.images.length) {
-            contentBlocks.push({
-              type: 'text',
-              text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight.'
-            })
-            for (const img of extracted.images) {
-              contentBlocks.push({ type: 'text', text: img.label })
-              contentBlocks.push({
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: img.mime,
-                  data: img.base64
-                }
-              })
-            }
-          }
-
-          toolResponses.push({
-            role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: tu.id,
-                content: contentBlocks
-              }
-            ]
-          })
-        }
-        if (toolContext.atomicMultiLookCompleted) {
-          return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
-        }
-        currentMessages.push(...toolResponses)
+      const finalText = joinAnswer(turn.text || '')
+      const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
+      if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
+      const check = toolContext.skipFreeformOutputChecks
+        ? { block: false }
+        : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
+      if (check.block) {
+        retriedChecks.add(check.blockType)
+        toolContext._pendingFreeformRetryReason = check.blockType
+        supersedeNarrationOnRetry(narration)
+        currentMessages.push({ role: 'assistant', text: finalText, toolCalls: [] })
+        currentMessages.push({ role: 'user', content: check.correctionMessage })
         continue
-      } else {
-        const finalText = joinAnswer(collectText(response.content))
-        const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
-        if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
-        const check = toolContext.skipFreeformOutputChecks
-          ? { block: false }
-          : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
-        if (check.block) {
-          retriedChecks.add(check.blockType)
-          toolContext._pendingFreeformRetryReason = check.blockType
-          supersedeNarrationOnRetry(narration)
-          currentMessages.push({ role: 'assistant', content: response.content })
-          currentMessages.push({ role: 'user', content: check.correctionMessage })
-          continue
-        }
-        const authoritative = applyAcceptedCardAuthority(finalText, toolContext)
-        const disclosed = discloseUnresolvedFreeformChecks(authoritative, toolContext, retriedChecks)
-        return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
       }
+      const authoritative = applyAcceptedCardAuthority(finalText, toolContext)
+      const disclosed = discloseUnresolvedFreeformChecks(authoritative, toolContext, retriedChecks)
+      return { answer: boundedAtomicMultiLookFinalAnswer(disclosed, toolContext), savedCorrections }
     }
   }
 
