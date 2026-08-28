@@ -69,7 +69,7 @@ test('GET /api/settings/api-keys reports only booleans, never the stored key val
   setOwnKey('anthropic', 'super-secret-key-value')
   const res = await fetch(`${baseUrl}/api/settings/api-keys`)
   const body = await res.json()
-  assert.deepEqual(body, { hasOwnAnthropicKey: true, hasOwnOpenAiKey: false, hasOperatorKeyAccess: true })
+  assert.deepEqual(body, { hasOwnAnthropicKey: true, hasOwnOpenAiKey: false, hasOwnGeminiKey: false, hasOperatorKeyAccess: true })
   assert.ok(!JSON.stringify(body).includes('super-secret-key-value'))
   setOwnKey('anthropic', '')
 })
@@ -81,7 +81,7 @@ test('PUT /api/settings/api-keys saves and clears keys, reflected in status', as
     body: JSON.stringify({ anthropicKey: 'a-real-looking-key', openAiKey: 'another-key' })
   })
   assert.equal(setRes.status, 200)
-  assert.deepEqual(await setRes.json(), { hasOwnAnthropicKey: true, hasOwnOpenAiKey: true, hasOperatorKeyAccess: true })
+  assert.deepEqual(await setRes.json(), { hasOwnAnthropicKey: true, hasOwnOpenAiKey: true, hasOwnGeminiKey: false, hasOperatorKeyAccess: true })
   assert.equal(resolveAnthropicKey(), 'a-real-looking-key')
 
   const clearRes = await fetch(`${baseUrl}/api/settings/api-keys`, {
@@ -89,13 +89,13 @@ test('PUT /api/settings/api-keys saves and clears keys, reflected in status', as
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ anthropicKey: '', openAiKey: '' })
   })
-  assert.deepEqual(await clearRes.json(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: false, hasOperatorKeyAccess: true })
+  assert.deepEqual(await clearRes.json(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: false, hasOwnGeminiKey: false, hasOperatorKeyAccess: true })
   assert.equal(resolveAnthropicKey(), 'operator-anthropic-key')
 })
 
 test('ownKeyStatus matches the route response shape', () => {
   setOwnKey('openai', 'x')
-  assert.deepEqual(ownKeyStatus(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: true, hasOperatorKeyAccess: true })
+  assert.deepEqual(ownKeyStatus(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: true, hasOwnGeminiKey: false, hasOperatorKeyAccess: true })
   setOwnKey('openai', '')
 })
 

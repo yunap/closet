@@ -10,7 +10,7 @@ import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets
 import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
-import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
+import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
@@ -516,9 +516,12 @@ export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flas
 // run against it).
 const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
 
-export function resolveGeminiKey() {
-  return process.env.GEMINI_API_KEY || null
-}
+// resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
+// above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
+// experimental slice before real key management existed for this provider. Re-exported for
+// scratch-script callers that imported it from this module directly (e.g.
+// scratch/gemini_image_resolution_diagnostic.js).
+export { resolveGeminiKey }
 
 // resolveAiTarget: the ONLY sanctioned way to run a call through Gemini. `override` is passed
 // explicitly by comparison-run scripts (scratch/gemini_comparison_runs.js) and the Stage-0 spike —
@@ -560,8 +563,16 @@ const OPENAI_PRICING_PER_MILLION = [
 // caching has no separate write charge the way Anthropic's does).
 const GEMINI_PRICING_PER_MILLION = [
   { match: /^gemini-3\.7-flash(?:-|$)/i, input: 0.75, cacheRead: 0.075, output: 3.75 },
+  // -lite entries MUST precede the bare 3.5-flash pattern below — Array.find takes the first
+  // match, and "gemini-3.5-flash-lite" also satisfies /^gemini-3\.5-flash(?:-|$)/i (the "-lite"
+  // suffix starts with "-"), so ordering the other way silently mispriced every -lite call.
   { match: /^gemini-3\.5-flash-lite(?:-|$)/i, input: 0.30, cacheRead: 0.03, output: 2.50 },
   { match: /^gemini-3\.1-flash-lite(?:-|$)/i, input: 0.25, cacheRead: 0.025, output: 1.50 },
+  // Verified 2026-08-27 against ai.google.dev/gemini-api/docs/pricing — notably priced ABOVE
+  // 3.7-flash despite the lower version number; Google's Flash naming doesn't track a monotonic
+  // price ladder. Real ladder (input/output per M): flash-lite ($0.30/$2.50) < 3.7-flash
+  // ($0.75/$3.75) < 3.5-flash ($1.50/$9.00) < Sonnet ($3/$15).
+  { match: /^gemini-3\.5-flash(?:-|$)/i, input: 1.50, cacheRead: 0.15, output: 9.00 },
 ]
 
 function envPricingOverride() {

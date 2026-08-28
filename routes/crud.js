@@ -2012,9 +2012,10 @@ router.get('/settings/api-keys', (req, res) => {
 
 router.put('/settings/api-keys', (req, res) => {
   try {
-    const { anthropicKey, openAiKey } = req.body || {}
+    const { anthropicKey, openAiKey, geminiKey } = req.body || {}
     if (anthropicKey !== undefined) setOwnKey('anthropic', String(anthropicKey).trim())
     if (openAiKey !== undefined) setOwnKey('openai', String(openAiKey).trim())
+    if (geminiKey !== undefined) setOwnKey('gemini', String(geminiKey).trim())
     res.json(ownKeyStatus())
   } catch (err) {
     console.error('Error saving API keys:', err)

@@ -369,7 +369,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [sessions, setSessions] = useState([])
   const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState(null)
-  const [apiKeyDrafts, setApiKeyDrafts] = useState({ anthropicKey: '', openAiKey: '' })
+  const [apiKeyDrafts, setApiKeyDrafts] = useState({ anthropicKey: '', openAiKey: '', geminiKey: '' })
   const [isAdmin, setIsAdmin] = useState(false)
   const [status, setStatus] = useState('')
 
@@ -411,7 +411,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
       setSessions(sessionData?.sessions || [])
       setApiKeyStatus(await fetch('/api/settings/api-keys').then(r => r.json()).catch(() => null))
-      setApiKeyDrafts({ anthropicKey: '', openAiKey: '' })
+      setApiKeyDrafts({ anthropicKey: '', openAiKey: '', geminiKey: '' })
       const me = await fetch('/api/auth/me').then(r => r.json()).catch(() => null)
       setIsAdmin(Boolean(me?.isAdmin))
     } catch (err) {
@@ -2245,6 +2245,27 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                 <button className="btn-secondary" disabled={!apiKeyDrafts.openAiKey} onClick={() => saveApiKey('openAiKey', apiKeyDrafts.openAiKey)}>Save</button>
                 {apiKeyStatus.hasOwnOpenAiKey && (
                   <button className="account-settings-clear-key" onClick={() => saveApiKey('openAiKey', '')}>Clear</button>
+                )}
+              </div>
+            </div>
+            <div className="account-settings-provider">
+              <div className="account-settings-provider-copy">
+                <strong>Gemini</strong>
+                <span className="account-settings-provider-status">
+                  {apiKeyStatus.hasOwnGeminiKey ? 'Personal key saved' : apiKeyStatus.hasOperatorKeyAccess ? 'Using installation key' : 'No key available'}
+                </span>
+              </div>
+              <div className="account-settings-provider-control">
+                <input
+                  type="password"
+                  aria-label="Gemini API key"
+                  placeholder={apiKeyStatus.hasOwnGeminiKey ? '••••••••••••' : 'AIza...'}
+                  value={apiKeyDrafts.geminiKey}
+                  onChange={e => setApiKeyDrafts({ ...apiKeyDrafts, geminiKey: e.target.value })}
+                />
+                <button className="btn-secondary" disabled={!apiKeyDrafts.geminiKey} onClick={() => saveApiKey('geminiKey', apiKeyDrafts.geminiKey)}>Save</button>
+                {apiKeyStatus.hasOwnGeminiKey && (
+                  <button className="account-settings-clear-key" onClick={() => saveApiKey('geminiKey', '')}>Clear</button>
                 )}
               </div>
             </div>
