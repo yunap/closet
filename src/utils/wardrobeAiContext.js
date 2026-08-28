@@ -206,8 +206,15 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
     // `occasion_permissions` is tagged with the individual occasion words from that same profile
     // (docs/garment-field-reference.md: "multi-select from the `occasions` list") — never the
     // composite id itself. A literal permissions.includes(occasion) can never match in that case,
-    // silently rejecting every piece with an explicit allowlist. Match on the same alias set
-    // explicitOccasionMatches already uses for this profile-vs-word gap.
+    // silently rejecting every piece with an explicit allowlist.
+    //
+    // ANY-of-constituent-words is deliberate, not a loosened re-guess: styling-engine/occasions.js
+    // has no separate "city" profile and no separate "smart_casual" profile — both words are
+    // keywords on the single city_smart_casual OCCASION_PROFILES entry, so a "city" request and a
+    // "smart casual" request already resolve to the identical rules/register ceiling. They are two
+    // names for one register, not two requirements a piece must jointly satisfy. Matches
+    // explicitOccasionMatches's existing (tested) policy for the same profile-vs-word gap on
+    // piece.occasions.
     const permissionAliases = occasionAliasesFor(occasion, normOcc)
     const normalizedPermissions = permissions.map(p => String(p || '').toLowerCase())
     const permitted = normalizedPermissions.some(p => permissionAliases.has(p))

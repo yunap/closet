@@ -182,6 +182,44 @@ test('an occasion_permissions allowlist matches a composite profile id via its c
   assert.equal(decision.reasons.includes('not permitted for city_smart_casual'), false)
 })
 
+// Partial-constituent case, traced against styling-engine/occasions.js rather than assumed: there
+// is no separate "city" profile and no separate "smart_casual" profile in OCCASION_PROFILES — both
+// words are keywords on the single city_smart_casual entry, so a "city" request and a "smart
+// casual" request resolve to the identical profile object (same register_ceiling, same rules).
+// The two words are not independent requirements that combine into a stricter AND; they are two
+// names for one occasion register. explicitOccasionMatches already encodes this — its own test
+// above ("manual fit confidence and city tag override...") passes a piece tagged only `city`
+// (no `smart-casual`) against occasion 'city_smart_casual' and treats it as an explicit match. An
+// occasion_permissions allowlist draws from the same base vocabulary
+// (docs/garment-field-reference.md: "multi-select from the `occasions` list") answering the same
+// question — is this occasion word among what the piece was tagged permitted for — so ANY
+// constituent match is the correct policy here too, not an accidental broadening of the earlier
+// false-negative. A permission list naming neither word (e.g. ['evening'] in the test below) must
+// still block, which is what keeps this from being "always permitted for any composite profile."
+test('an occasion_permissions allowlist permitted for only "city" is sufficient for city_smart_casual', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'black button detail top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    occasion_permissions: ['city'],
+  }, { occasion: 'city_smart_casual' })
+
+  assert.equal(decision.allowed, true)
+  assert.equal(decision.reasons.includes('not permitted for city_smart_casual'), false)
+})
+
+test('an occasion_permissions allowlist permitted for only "smart-casual" is sufficient for city_smart_casual', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'black button detail top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    occasion_permissions: ['smart-casual'],
+  }, { occasion: 'city_smart_casual' })
+
+  assert.equal(decision.allowed, true)
+  assert.equal(decision.reasons.includes('not permitted for city_smart_casual'), false)
+})
+
 test('an occasion_permissions allowlist still blocks an occasion genuinely absent from it', () => {
   const decision = autoStylingTrustDecision({
     name: 'black button detail top',
