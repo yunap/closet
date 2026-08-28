@@ -16,12 +16,13 @@ process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
 const { app, db, userUploadsDir } = await import('../server.js')
 const { resolveComfortFootwearConstraint, applyComfortFootwearRepair } = await import('../styling-engine/footwear-comfort.js')
+const { pieceIdsWithApplicableNegativeFeedback } = await import('../styling-engine/rules.js')
 const { generateWholeWardrobeOutfitsVisualInternal, generateOutfitsForPieceInternal } = await import('../routes/ai.js')
 const { parsePiece } = await import('../db.js')
 const { OCCASION_PROFILES } = await import('../styling-engine/occasions.js')
 
 function resetTables() {
-  for (const table of ['outfits', 'outfit_pieces', 'pieces', 'saved_boards', 'stylist_feedback']) {
+  for (const table of ['outfits', 'outfit_pieces', 'pieces', 'saved_boards', 'stylist_feedback', 'feedback_synthesis_drafts', 'feedback_synthesis_batches']) {
     db.prepare(`DELETE FROM ${table}`).run()
   }
 }
@@ -284,6 +285,57 @@ test('2b. applyComfortFootwearRepair swaps boots for warm-weather walking', () =
     weatherProfile: { isHot: false, isCold: false }
   })
   assert.deepEqual(repairedNeutral.pieceIds, bootOutfit.pieceIds, 'Neutral/cool walking can keep boots')
+})
+
+// thread_1787895437637: applyComfortFootwearRepair can pull a substitute shoe from a pool the
+// model never saw (the recovery tier), with no way to consult owner feedback about that specific
+// piece. pieceIdsWithApplicableNegativeFeedback (rules.js) is the structured verdict a
+// deterministic repair can consult instead of prose; these two tests cover it directly and end to
+// end through the repair itself.
+test('2c. pieceIdsWithApplicableNegativeFeedback flags pieces via accepted synthesis and provisional wrong-choice rows', () => {
+  const batchId = db.prepare(`
+    INSERT INTO feedback_synthesis_batches (status, feedback_ids, compact_input, input_hash)
+    VALUES ('completed', '[]', '', 'test-hash')
+  `).run().lastInsertRowid
+  db.prepare(`
+    INSERT INTO feedback_synthesis_drafts (batch_id, disposition, status, source_feedback_ids, payload)
+    VALUES (?, 'personal_contextual_lesson', 'accepted', '[]', ?)
+  `).run(batchId, JSON.stringify({
+    applicability: { version: 1, scope: 'piece', piece_ids: [seeded.blockHeel], occasions: [], activities: [], seasons: [], weather_terms: [] }
+  }))
+  db.prepare(`
+    INSERT INTO stylist_feedback (feedback_type, target_type, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', ?)
+  `).run(JSON.stringify({
+    feedbackEvidence: { version: 2, action: 'wrong_piece_for_outfit', subject: { pieceId: seeded.sneaker, name: 'canvas sneakers', category: 'shoes' } }
+  }))
+
+  const flagged = pieceIdsWithApplicableNegativeFeedback([seeded.blockHeel, seeded.sneaker, seeded.ankleBoot], { occasion: 'casual' })
+  assert.ok(flagged.has(seeded.blockHeel), 'accepted personal_contextual_lesson piece must be flagged')
+  assert.ok(flagged.has(seeded.sneaker), 'provisional wrong_piece_for_outfit piece must be flagged')
+  assert.equal(flagged.has(seeded.ankleBoot), false, 'a piece with no feedback must not be flagged')
+})
+
+test('2d. applyComfortFootwearRepair excludes an avoidPieceIds match, falling through to the next valid candidate', () => {
+  const constraint = resolveComfortFootwearConstraint({ request: 'lots of walking' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const topPiece = allPieces.find(p => p.id === seeded.top)
+  const bottomPiece = allPieces.find(p => p.id === seeded.bottom)
+  const stilettoPiece = allPieces.find(p => p.id === seeded.stiletto)
+
+  const stilettoOutfit = {
+    label: 'Test Outfit',
+    pieceIds: [seeded.top, seeded.bottom, seeded.stiletto],
+    pieces: [topPiece, bottomPiece, stilettoPiece]
+  }
+
+  // Both blockHeel and sneaker are otherwise valid substitutes (test 2 above accepts either).
+  // Flagging blockHeel must force the repair onto sneaker instead of silently ignoring the flag.
+  const avoidPieceIds = new Set([seeded.blockHeel])
+  const repaired = applyComfortFootwearRepair(stilettoOutfit, allPieces, constraint, { occasion: 'casual', avoidPieceIds })
+  const newShoeId = Number(repaired.pieceIds.find(id => id !== seeded.top && id !== seeded.bottom))
+  assert.notEqual(newShoeId, seeded.blockHeel, 'flagged piece must not be selected as the repair substitute')
+  assert.equal(newShoeId, seeded.sneaker, 'repair must fall through to the remaining valid candidate')
 })
 
 test('3. Kitten-heel asymmetry: kitten heels are swapped on walk intent but left untouched on long events', () => {

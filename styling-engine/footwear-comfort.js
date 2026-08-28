@@ -154,7 +154,7 @@ export function resolveComfortFootwearConstraint({ occasion = '', mood = '', req
   return null
 }
 
-export function applyComfortFootwearRepair(outfit, candidatePieces = [], constraint, { weatherProfile, occasion, mood, activity } = {}) {
+export function applyComfortFootwearRepair(outfit, candidatePieces = [], constraint, { weatherProfile, occasion, mood, activity, avoidPieceIds = null } = {}) {
   if (!constraint) return outfit
 
   const warning = constraint.reason === 'hiking comfort'
@@ -193,6 +193,12 @@ export function applyComfortFootwearRepair(outfit, candidatePieces = [], constra
   if (matchesAny(currentShoe, discouragedFootwear)) {
     const candidateShoes = candidatePieces.filter(p => {
       if (p.category !== 'shoes' && wardrobeCategoryGroup(p) !== 'shoes') return false
+      // This substitution never passes through a model turn, so a piece with an applicable
+      // owner-approved objection (accepted personal_contextual_lesson or a provisional
+      // wrong-choice row — see rules.js's pieceIdsWithApplicableNegativeFeedback) gets the same
+      // hard exclusion as a discouraged footwear type, not a silent pass-through. avoidPieceIds is
+      // optional so existing unit tests that construct this function directly keep working.
+      if (avoidPieceIds && avoidPieceIds.has(Number(p.id))) return false
       return matchesAny(p, keepFootwear) && !matchesAny(p, discouragedFootwear)
     })
 

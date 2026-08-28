@@ -986,6 +986,54 @@ export function getAcceptedFeedbackSynthesisMemory(limit = 8, requestContext = {
   }
 }
 
+// Structured verdict version of the two readers above, for callers that have no model turn to
+// hand prose reminders to. thread_1787895437637: applyComfortFootwearRepair (styling-engine/
+// footwear-comfort.js) substitutes a shoe deterministically from a wide recovery pool with zero
+// feedback awareness — the model never sees or judges the substitute, so there is no prompt for
+// getAcceptedFeedbackSynthesisMemory/getProvisionalWrongChoiceMemory's prose to land in. This
+// reuses the identical tables, acceptance rules, and matching functions those two readers already
+// use (acceptedSynthesisApplicabilityMatches, acceptedPersonalSynthesisSources,
+// WRONG_PIECE_FOR_OUTFIT_FEEDBACK) and returns which of the given piece ids are flagged, so a
+// deterministic repair can exclude them the same way it already excludes discouraged footwear
+// types. Provisional rows intentionally carry no context filter here either, matching
+// getProvisionalWrongChoiceMemory's existing "ever explicitly rejected" semantics.
+export function pieceIdsWithApplicableNegativeFeedback(pieceIds = [], context = {}) {
+  const ids = new Set((Array.isArray(pieceIds) ? pieceIds : [])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))
+  const flagged = new Set()
+  if (!ids.size) return flagged
+  try {
+    const rows = db.prepare(`
+      SELECT payload FROM feedback_synthesis_drafts
+      WHERE status = 'accepted' AND disposition = 'personal_contextual_lesson'
+    `).all()
+    for (const row of rows) {
+      const applicability = (safeJsonParse(row.payload, {}) || {}).applicability
+      const ruledPieceIds = Array.isArray(applicability?.piece_ids) ? applicability.piece_ids.map(Number) : []
+      for (const pieceId of ruledPieceIds) {
+        if (!ids.has(pieceId) || flagged.has(pieceId)) continue
+        if (acceptedSynthesisApplicabilityMatches(applicability, { ...context, pieceIds: [pieceId] })) flagged.add(pieceId)
+      }
+    }
+  } catch {}
+  try {
+    const acceptedSources = acceptedPersonalSynthesisSources().feedbackIds
+    const rows = db.prepare(`
+      SELECT id, payload FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0 AND feedback_type = ?
+      ORDER BY id DESC LIMIT 240
+    `).all(WRONG_PIECE_FOR_OUTFIT_FEEDBACK)
+    for (const row of rows) {
+      if (acceptedSources.has(Number(row.id))) continue
+      const evidence = (safeJsonParse(row.payload, {}) || {}).feedbackEvidence
+      if (Number(evidence?.version) !== 2 || evidence?.action !== 'wrong_piece_for_outfit') continue
+      const pieceId = Number(evidence?.subject?.pieceId)
+      if (ids.has(pieceId)) flagged.add(pieceId)
+    }
+  } catch {}
+  return flagged
+}
+
 // Chat threads have no per-message table — the whole conversation lives in
 // payload.messages[]. Piece references show up as structuredOutfits[].pieceIds
 // (or .pieces[].id) on assistant messages proposing an outfit.
