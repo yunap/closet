@@ -471,6 +471,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Color
     background_color: piece?.background_color || '',
     tagger_version: piece?.tagger_version || null,
+    tag_provider: piece?.tag_provider || null,
+    tag_model: piece?.tag_model || null,
     tag_state: piece?.tag_state || 'untagged',
   })
   const initialConfidence = piece?.style_profile_json?._confidence || {}
@@ -533,6 +535,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [dirty, setDirty] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [aiUpdateSummary, setAiUpdateSummary] = useState(null)
+  // Lightweight tagging-quality verdict (plan: quizzical-foraging-boot, Stage G) — accumulates
+  // real good/questionable/bad evidence about whichever model actually tagged this piece, keyed
+  // off form.tag_provider/tag_model set by handleTagThis below.
+  const [tagVerdict, setTagVerdict] = useState(null)
+  const [tagVerdictNote, setTagVerdictNote] = useState('')
+  const [tagVerdictSaved, setTagVerdictSaved] = useState(false)
   const [colorTaxonomyGaps, setColorTaxonomyGaps] = useState([])
   const dialogRef = useRef(null)
   const stylistControlsRef = useRef(null)
@@ -686,6 +694,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       next.style_profile_json = mergeTagProfile(form.style_profile_json, tags.style_profile_json)
       if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
       applyTagValue(next, 'tagger_version', tags.tagger_version)
+      applyTagValue(next, 'tag_provider', tags.tag_provider)
+      applyTagValue(next, 'tag_model', tags.tag_model)
       applyTagValue(next, 'tag_state', tags.tag_state || (wornFile || piece?.worn_photo ? 'fully_tagged' : 'provisional'))
       const changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(form[key])).length
       setForm(next)
@@ -705,8 +715,39 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         })
         setConfidenceFlags(flags)
       }
+      // A fresh tagging call produced new tags from (possibly) a different model — any prior
+      // verdict was about the old result and no longer applies.
+      setTagVerdict(null); setTagVerdictNote(''); setTagVerdictSaved(false)
     } catch { setTagError('AI could not update the details. Your current edits are unchanged.') }
     finally { setTagging(false) }
+  }
+
+  const submitTagVerdict = async (verdict) => {
+    if (!piece?.id) return
+    setTagVerdict(verdict)
+    try {
+      const res = await fetch('/api/stylist-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          feedbackType: `model_quality_${verdict}`,
+          targetType: 'piece_tagging',
+          contextType: 'piece',
+          contextId: piece.id,
+          contextName: form.name,
+          note: tagVerdictNote,
+          payload: {
+            sourceSurface: 'piece_form',
+            tag_provider: form.tag_provider || '',
+            tag_model: form.tag_model || '',
+          },
+        }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      setTagVerdictSaved(true)
+    } catch {
+      setTagVerdict(null)
+    }
   }
 
   const handleSubmit = async () => {
@@ -966,6 +1007,37 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               </div>
               {tagError && <div className="piece-form-status piece-form-status-error" role="alert">{tagError}</div>}
               {aiUpdateSummary && <div className="piece-form-status" role="status">{aiUpdateSummary}</div>}
+              {form.tag_provider && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    Tagged by {form.tag_provider}{form.tag_model ? ` · ${form.tag_model}` : ''} — how did it do?
+                  </div>
+                  {tagVerdictSaved ? (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Thanks — noted.</div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {['good', 'questionable', 'bad'].map(verdict => (
+                        <button
+                          key={verdict}
+                          type="button"
+                          onClick={() => submitTagVerdict(verdict)}
+                          disabled={tagVerdict === verdict}
+                          style={{ fontSize: 11, padding: '4px 9px', borderRadius: 8, border: '1px solid var(--border-light)', background: tagVerdict === verdict ? 'var(--surface-2)' : 'transparent', color: 'var(--text)', cursor: 'pointer', textTransform: 'capitalize' }}
+                        >
+                          {verdict}
+                        </button>
+                      ))}
+                      <input
+                        type="text"
+                        value={tagVerdictNote}
+                        onChange={e => setTagVerdictNote(e.target.value)}
+                        placeholder="Optional note"
+                        style={{ fontSize: 11, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text)', flex: '1 1 120px', minWidth: 100 }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

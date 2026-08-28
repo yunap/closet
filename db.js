@@ -422,6 +422,12 @@ function initDb(dbPath) {
     // categories, and a legitimate, common answer for outerwear too (an ordinary denim jacket
     // protects against neither). See docs/outerwear-weather-capability-spec.md §3.
     'weather_protection TEXT DEFAULT "[]"',
+    // Provenance for the tagger call that produced this piece's current tags — which
+    // provider/model tagged it, so a routing change (plan: quizzical-foraging-boot,
+    // Stage F) can be evaluated against real usage. Mirrors feedback_synthesis_batches'
+    // provider/model naming. Empty string for pieces tagged before this column existed.
+    'tag_provider TEXT DEFAULT ""',
+    'tag_model TEXT DEFAULT ""',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}

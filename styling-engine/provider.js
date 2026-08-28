@@ -1757,6 +1757,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // AI_PROVIDER/ACTIVE_STYLIST_MODEL exactly as before — a no-op for every real call site.
   const target = resolveAiTarget(toolContext.providerOverride)
   assertProviderKey(target)
+  // Out-channel for the real resolved {provider, model} this turn used (plan:
+  // quizzical-foraging-boot, Stage F) — same pattern as toolContext.generatedOutfits/
+  // freeformDiagnostics. Lets /ask report the turn's actual target instead of the stale
+  // process-global AI_PROVIDER constant, without touching this function's several returns.
+  toolContext.resolvedProviderTarget = target
 
   let currentMessages = [...messages]
   let providerContinuation = null

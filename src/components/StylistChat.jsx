@@ -16,6 +16,7 @@ import {
   SHAPE_BALANCE_REASONS,
   IMAGE_FIDELITY_FEEDBACK_LABELS,
   WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
+  MODEL_QUALITY_VERDICT_LABELS,
   wrongLengthReasonsForCategory,
 } from '../../lib/feedbackTaxonomy.js'
 
@@ -4952,6 +4953,11 @@ export default function StylistChat({
       let generatedBoards = null
       let replyRenderedBoards = null
       let replyIsLocalAcknowledgment = false
+      // Provenance (plan: quizzical-foraging-boot, Stage E/F): which provider/model actually
+      // answered this turn, sourced from /ask's response. Rides along on the message object —
+      // chat messages are already a client-owned JSON blob, so no schema migration needed.
+      let replyProvider = null
+      let replyModel = null
 
       if (useCapsuleExpansion) {
         const existingCapsuleOutfits = messages.flatMap(message =>
@@ -5295,6 +5301,7 @@ export default function StylistChat({
             outfit: rememberedOutfit,
             pieceIds: outfitPieceIds,
             activeContext,
+            ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
           })
@@ -5304,6 +5311,8 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyProvider = data.provider || null
+        replyModel = data.model || null
         replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
@@ -5374,6 +5383,7 @@ export default function StylistChat({
             },
             pieceIds: outfitPieceIds,
             activeContext,
+            ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
           })
@@ -5383,6 +5393,8 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyProvider = data.provider || null
+        replyModel = data.model || null
         replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
@@ -5449,6 +5461,7 @@ export default function StylistChat({
             threadContext,
             activeContext,
             uploadedPhoto: latestUploadedPhoto,
+            ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...stylingContextFromMemory(threadMemory, activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity),
             ...currentChatDateContext(),
           })
@@ -5463,6 +5476,8 @@ export default function StylistChat({
         }
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
+        replyProvider = data.provider || null
+        replyModel = data.model || null
         replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (Array.isArray(data.renderedBoards) && data.renderedBoards.length) {
@@ -5499,6 +5514,8 @@ export default function StylistChat({
       const assistantMsg = {
         role: 'assistant',
         text: replyText,
+        provider: replyProvider,
+        model: replyModel,
         renderedBoards: replyRenderedBoards,
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: replyWholeWardrobe,
@@ -5580,7 +5597,10 @@ export default function StylistChat({
 
     } catch (err) {
       const errText = `Error: ${err.message}`
-      const errMsg = { role: 'assistant', text: errText }
+      // isError was previously never set here despite the renderer checking m.isError — every
+      // failed turn silently rendered as a plain bubble instead of the styled error state, and
+      // nothing could key a retry action off it (plan: quizzical-foraging-boot, Stage F).
+      const errMsg = { role: 'assistant', text: errText, isError: true, retryInput: q }
       const updatedMessages = [...nextMessages, errMsg]
       const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: errText }]
 
@@ -6114,11 +6134,20 @@ export default function StylistChat({
                 }
                 if (m.isError) {
                   return (
-                    <div className="ai-message assistant error-bubble" style={{ padding: '12px 14px', background: 'rgba(219, 68, 85, 0.08)', border: '1px solid rgba(219, 68, 85, 0.25)', color: 'var(--text)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div className="ai-message assistant error-bubble" style={{ padding: '12px 14px', background: 'rgba(219, 68, 85, 0.08)', border: '1px solid rgba(219, 68, 85, 0.25)', color: 'var(--text)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 16 }}>⚠️</span>
-                      <div style={{ fontSize: 13, lineHeight: 1.45 }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.45, flex: 1 }}>
                         {m.text}
                       </div>
+                      {m.retryInput && (
+                        <button
+                          type="button"
+                          onClick={() => send({ input: m.retryInput, providerOverride: 'sonnet' })}
+                          style={{ fontSize: 12, padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(219, 68, 85, 0.35)', background: 'transparent', color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          Retry with Sonnet
+                        </button>
+                      )}
                     </div>
                   )
                 }
@@ -6269,6 +6298,64 @@ export default function StylistChat({
                           ? <CritiqueBody text={m.text} />
                           : <MarkdownMessage text={m.text} />)
                       : m.text.split('\n').filter(Boolean).map((line, j) => <p key={j}>{line}</p>)}
+                  </div>
+                )
+              })()}
+
+              {/* Manual "easy retry/switch to Sonnet" (plan: quizzical-foraging-boot, Stage F) —
+                  the owner's own words: not automatic failover, just a click when a non-Sonnet
+                  reply is slow, fails, or reads poorly. Scoped to the last assistant turn only,
+                  and only when the turn didn't already come from Sonnet. */}
+              {m.role === 'assistant' && !m.isError && i === messages.length - 1 && m.provider && m.provider !== 'anthropic' && (
+                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    Answered by {m.provider}{m.model ? ` · ${m.model}` : ''}
+                  </span>
+                  {(() => {
+                    const priorUserText = [...messages].slice(0, i).reverse().find(msg => msg.role === 'user')?.text
+                    return priorUserText ? (
+                      <button
+                        type="button"
+                        onClick={() => send({ input: priorUserText, providerOverride: 'sonnet' })}
+                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 8, border: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+                      >
+                        Retry with Sonnet
+                      </button>
+                    ) : null
+                  })()}
+                </div>
+              )}
+
+              {/* Lightweight good/questionable/bad on this reply (plan: quizzical-foraging-boot,
+                  Stage G) — reuses the same stylist_feedback table/toggle pattern as the
+                  outfit/board verdict chips elsewhere in this file, just target_type 'message'
+                  with messageIndex in the payload to disambiguate one turn from another (chat
+                  messages have no DB row/id of their own). Skipped for the canned opening line,
+                  local acknowledgments, and error bubbles — none are a model's styling answer. */}
+              {m.role === 'assistant' && !m.isError && !m.isLocalAcknowledgment && String(m.text || '').trim() &&
+                !(i === 0 && String(m.text || '').includes('personal stylist')) && (() => {
+                const qualityBaseKey = `message-quality:${i}`
+                const activeVerdict = MODEL_QUALITY_VERDICT_LABELS.find(([type]) => feedbackSaved.has(`${qualityBaseKey}:${type}`))?.[0]
+                return (
+                  <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Reply quality:</span>
+                    {MODEL_QUALITY_VERDICT_LABELS.map(([type, label]) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => toggleStylistFeedback({
+                          key: `${qualityBaseKey}:${type}`,
+                          feedbackType: type,
+                          targetType: 'message',
+                          label,
+                          payload: { messageIndex: i, sourceSurface: 'stylist_chat_quality', provider: m.provider || '', model: m.model || '' },
+                          contextOverride: { type: 'wardrobe', id: null, name: 'Stylist reply quality' },
+                        })}
+                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 8, border: '1px solid var(--border-light)', background: activeVerdict === type ? 'var(--surface-2)' : 'transparent', color: 'var(--text)', cursor: 'pointer' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 )
               })()}

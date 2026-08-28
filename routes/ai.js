@@ -380,17 +380,38 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
+// Real routing (plan: quizzical-foraging-boot, Stage F) — env-controlled, reversible without a
+// code change. Unset (the default on a fresh checkout / real dev pair): TAGGER_PROVIDER_OVERRIDE
+// is '', so tagPieceWithProvider's own internal Haiku default applies exactly as before. Set it to
+// 'gemini' to route new tagging to the tier this session's §6d benchmark found strongest on cost
+// and failure rate (docs/tagger-cost-spec.md §6d).
+const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || ''
+const TAGGER_MODEL_OVERRIDE = process.env.TAGGER_MODEL_OVERRIDE || 'gemini-3.1-flash-lite'
+const taggerProviderOverride = TAGGER_PROVIDER_OVERRIDE
+  ? { provider: TAGGER_PROVIDER_OVERRIDE, model: TAGGER_MODEL_OVERRIDE }
+  : null
+
+// Same shape for the stylist chat turn (/ask). Unset by default — Sonnet stays the immediate
+// fallback with zero code change. gemini-3.5-flash-lite is the tier this session's stylist
+// comparison actually quality-tested; gemini-3.7-flash (GEMINI_MODEL's own default) stays excluded
+// here — its latency pathology (4/17 calls at 8-11.5min) was never confirmed resolved.
+const STYLIST_PROVIDER_OVERRIDE = process.env.STYLIST_PROVIDER_OVERRIDE || ''
+const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5-flash-lite'
+const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
+  ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
+  : null
+
 // docs/tagger-cost-spec.md §6b/§6c: standard tagging (add/edit/retag) defaults to the cheaper
 // tagger tier — screened cold-start and warm-anchored, no material regression found. Callers that
 // need the full stylist model (currently: routes/importer.js, whose crop/fallback-photo
 // distribution was never screened) must pass `model` explicitly to override this default.
-// providerOverride (Gemini evaluation slice, plan: quizzical-foraging-boot): only ever set by the
-// tagger benchmark script (scratch/gemini_tagger_benchmark.js), never a route/session/UI. Absent,
-// resolves exactly as before — no behavior change for any real call site.
+// providerOverride (Gemini evaluation slice, plan: quizzical-foraging-boot): defaults to
+// taggerProviderOverride above (env-controlled, real routing); a caller may still pass its own
+// (e.g. the comparison-run/benchmark scripts) to override that default per-call.
 // model's default (the Anthropic tagger tier) is skipped when providerOverride routes elsewhere —
 // harmless either way (askStylistWithUsage ignores `model` for its openai/gemini branches) but
 // confusing to read otherwise.
-export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = null, excludeAnchorPieceId, providerOverride = null } = {}) {
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage, model = null, excludeAnchorPieceId, providerOverride = taggerProviderOverride } = {}) {
   if (model === null && !providerOverride) model = AI_PROVIDER === 'openai' ? null : ANTHROPIC_TAGGER_MODEL
   // Snapshot the request's AsyncLocalStorage telemetry context (flow, tagger_source, etc.) right
   // at entry, then re-apply it in a fresh frame directly around the provider call below. Found
@@ -508,6 +529,10 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
   }
   if (tags && typeof tags === 'object') {
     tags.tagger_version = TAGGER_VERSION
+    // Provenance (plan: quizzical-foraging-boot, Stage E): which provider/model actually
+    // produced these tags, so a routing change (Stage F) can be evaluated against real usage.
+    tags.tag_provider = usage?.provider || ''
+    tags.tag_model = usage?.model || ''
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})
     const photoProperties = normalizePhotoProperties(tags.photo_properties || tags.style_profile_json?.photo_properties || {})
     tags.fiber_content = normalizeFiberContent(tags.fiber_content)
@@ -4539,7 +4564,12 @@ router.post('/ask', async (req, res) => {
       activeContext: req.body.activeContext || null,
       // Step 4 (model-declared intent): set by the declare_intent tool; guards
       // and composing tools consume it instead of keyword-guessing.
-      declaredIntent: null
+      declaredIntent: null,
+      // Real routing (plan: quizzical-foraging-boot, Stage F). req.body.provider === 'sonnet' is
+      // the manual "Retry with Sonnet" escape hatch — it wins over the env default for this one
+      // call, forcing Anthropic regardless of STYLIST_PROVIDER_OVERRIDE. Otherwise the env default
+      // applies (null when unset, so every existing caller is unaffected).
+      providerOverride: req.body.provider === 'sonnet' ? { provider: 'anthropic' } : stylistProviderOverride
     }
     // Point the hoisted reference at the live context as soon as it exists, so
     // anything that throws from here on still gets its diagnostics recorded.
@@ -4862,7 +4892,12 @@ router.post('/ask', async (req, res) => {
       answer: stripPieceIdCitations(answer),
       savedCorrections: allSaved,
       renderedBoards: Array.isArray(toolContext.renderedBoards) ? toolContext.renderedBoards : [],
-      provider: AI_PROVIDER,
+      // The turn's actual resolved target (plan: quizzical-foraging-boot, Stage F) — not the
+      // static AI_PROVIDER process-global, which stops reflecting reality once routing varies
+      // per-turn. Falls back to AI_PROVIDER/ACTIVE_STYLIST_MODEL only in the (never-expected) case
+      // askStylistWithTools returned without ever setting the out-channel.
+      provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+      model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
       structuredOutfits: toolContext.generatedOutfits,
       structuredOutfitsSource: toolContext.source,
       structuredOutfitsOccasion: toolContext.occasion,

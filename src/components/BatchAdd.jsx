@@ -94,6 +94,7 @@ function emptyForm() {
     shoe_type: null, toe_shape: null, outerwear_role: null, weather_protection: [],
     style_profile_json: {},
     tagger_version: null,
+    tag_provider: null, tag_model: null,
     manual_overrides: [],
   }
 }
@@ -1448,6 +1449,8 @@ export default function BatchAdd({ onDone }) {
             necklace_length:    tags.necklace_length    || null,
             style_profile_json: tags.style_profile_json || {},
             tagger_version:     tags.tagger_version     || null,
+            tag_provider:       tags.tag_provider       || null,
+            tag_model:          tags.tag_model          || null,
           },
           status: 'ready',
         }
