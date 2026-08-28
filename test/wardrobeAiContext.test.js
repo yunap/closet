@@ -164,6 +164,36 @@ test('outdoor_daytime_social still suppresses when casual/smart-casual/outdoor a
   assert.ok(decision.reasons.includes('AI profile low confidence for outdoor_daytime_social'))
 })
 
+// thread_1787895437637: piece 150's manual occasion_permissions allowlist explicitly includes
+// "city" and "smart-casual", but the resolved occasion profile for that turn was the composite id
+// "city_smart_casual" (docs/occasion_profiles_ratification.md: "city / city_smart_casual" and
+// "smart casual" both resolve through this one profile). A literal permissions.includes(occasion)
+// can never match a composite id against individually-tagged words, so the piece was wrongly
+// rejected as "not permitted for city_smart_casual" despite its own allowlist saying otherwise.
+test('an occasion_permissions allowlist matches a composite profile id via its constituent words', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'black button detail top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    occasion_permissions: ['city', 'evening', 'smart-casual'],
+  }, { occasion: 'city_smart_casual' })
+
+  assert.equal(decision.allowed, true)
+  assert.equal(decision.reasons.includes('not permitted for city_smart_casual'), false)
+})
+
+test('an occasion_permissions allowlist still blocks an occasion genuinely absent from it', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'black button detail top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    occasion_permissions: ['home'],
+  }, { occasion: 'city_smart_casual' })
+
+  assert.equal(decision.allowed, false)
+  assert.ok(decision.reasons.includes('not permitted for city_smart_casual'))
+})
+
 test('a plain hiking-flavored outdoor occasion still reads the strict outdoor key', () => {
   const decision = autoStylingTrustDecision({
     name: 'trail sneakers',

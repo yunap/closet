@@ -144,14 +144,25 @@ function manualOverridesForPiece(piece = {}) {
   return []
 }
 
-function explicitOccasionMatches(piece = {}, occasion = '', normalizedOccasion = '') {
-  const explicitOccasions = Array.isArray(piece.occasions) ? piece.occasions.map(o => String(o || '').toLowerCase()) : []
-  const normalizedExplicit = explicitOccasions.map(normalizeOccasionForConfidence)
+// A composite occasion profile id (e.g. "city_smart_casual") is one register reachable by either
+// of its constituent words — see docs/occasion_profiles_ratification.md's "city / city_smart_casual"
+// and "smart casual ... resolved through the city_smart_casual profile" rows. Any occasion-shaped
+// check that compares a piece's own occasion words against the resolved profile id needs the same
+// alias set, so it lives here once rather than re-deriving "does this profile text mean city/smart"
+// per caller.
+function occasionAliasesFor(occasion = '', normalizedOccasion = '') {
   const rawOccasion = String(occasion || '').toLowerCase()
   const profileText = rawOccasion.replace(/[-_]+/g, ' ')
   const aliases = new Set([rawOccasion, normalizedOccasion])
   if (profileText.includes('city')) aliases.add('city')
   if (profileText.includes('smart')) aliases.add('smart-casual')
+  return aliases
+}
+
+function explicitOccasionMatches(piece = {}, occasion = '', normalizedOccasion = '') {
+  const explicitOccasions = Array.isArray(piece.occasions) ? piece.occasions.map(o => String(o || '').toLowerCase()) : []
+  const normalizedExplicit = explicitOccasions.map(normalizeOccasionForConfidence)
+  const aliases = occasionAliasesFor(occasion, normalizedOccasion)
   return explicitOccasions.some(occ => aliases.has(occ)) ||
     normalizedExplicit.some(occ => aliases.has(occ))
 }
@@ -190,7 +201,18 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
   if (occasionConfidence === 'low' && !isExplicitlyTagged && !aggressive) {
     reasons.push(`AI profile low confidence for ${occasion}`)
   }
-  if (permissions.length && occasion && !permissions.includes(occasion)) reasons.push(`not permitted for ${occasion}`)
+  if (permissions.length && occasion) {
+    // `occasion` here is often a resolved composite profile id (e.g. "city_smart_casual"), while
+    // `occasion_permissions` is tagged with the individual occasion words from that same profile
+    // (docs/garment-field-reference.md: "multi-select from the `occasions` list") — never the
+    // composite id itself. A literal permissions.includes(occasion) can never match in that case,
+    // silently rejecting every piece with an explicit allowlist. Match on the same alias set
+    // explicitOccasionMatches already uses for this profile-vs-word gap.
+    const permissionAliases = occasionAliasesFor(occasion, normOcc)
+    const normalizedPermissions = permissions.map(p => String(p || '').toLowerCase())
+    const permitted = normalizedPermissions.some(p => permissionAliases.has(p))
+    if (!permitted) reasons.push(`not permitted for ${occasion}`)
+  }
   if (/\b(too small|too tight|does not fit|doesn't fit|bad fit|avoid auto|do not auto|do not auto-style|do not auto style|not evening|not for evening|testing only|only when requested|specifically requested|testing whether alteration)\b/.test(`${notes} ${profileNotes}`) && !aggressive) {
     reasons.push('engine notes suppress auto-use')
   }
