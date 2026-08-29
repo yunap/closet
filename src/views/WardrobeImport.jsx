@@ -4,7 +4,7 @@
 // (accept / merge / not mine / skip — accept lands PROVISIONAL, merges are permanent).
 // Every dropped item count from the server is surfaced verbatim (no silent caps).
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', marginBottom: 16 }
 const primaryBtn = { padding: '9px 18px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }
@@ -77,6 +77,7 @@ function SimpleBar({ done, total }) {
 }
 
 export default function WardrobeImport() {
+  const navigate = useNavigate()
   const [sessionId, setSessionId] = useState(null)
   const [phase, setPhase] = useState('upload') // upload | analyzing | preflight | tagging | review | done
   const [uploadTotals, setUploadTotals] = useState(null)
@@ -236,6 +237,15 @@ export default function WardrobeImport() {
     } catch (err) { setError(err.message); setPhase('preflight') } finally { clearInterval(poll) }
   }
 
+  const cancelImport = async () => {
+    const id = sessionId
+    localStorage.removeItem('importSessionId')
+    if (id) {
+      try { await fetch(`/api/import/sessions/${id}`, { method: 'DELETE' }) } catch {}
+    }
+    navigate('/wardrobe')
+  }
+
   const applyDecisions = async () => {
     setError('')
     try {
@@ -334,7 +344,7 @@ export default function WardrobeImport() {
             {' '}· spent so far on analysis: ${Number(preflight.spentSoFarUsd || 0).toFixed(2)}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
-            <Link to="/wardrobe" style={{ ...quietBtn, textDecoration: 'none' }}>Cancel</Link>
+            <button style={quietBtn} onClick={cancelImport}>Cancel</button>
             <button style={primaryBtn} onClick={approveTagging}>Tag {preflight.newPieceClusters} garments</button>
           </div>
         </div>

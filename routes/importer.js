@@ -834,4 +834,21 @@ router.get('/sessions/:id', (req, res) => {
   }
 })
 
+// Cancel: abandons an in-progress session so it doesn't resurface on the next visit
+// (the frontend resumes any unfinished session it finds). import_images/import_garments/
+// import_clusters all cascade off session_id — nothing accepted pre-review has a piece yet,
+// so there's nothing else to unwind.
+router.delete('/sessions/:id', (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    db.prepare('DELETE FROM import_sessions WHERE id = ?').run(session.id)
+    fs.rmSync(path.join(userUploadsDir(), 'import', String(session.id)), { recursive: true, force: true })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Import session delete error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router
