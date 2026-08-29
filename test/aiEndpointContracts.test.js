@@ -820,6 +820,26 @@ test('editorial-directions-preview generator accepts and forwards mission and mo
   assert.match(latestText, /Mood: dreamy retro/)
 })
 
+test('editorial-directions-preview falls back to deterministic directions when the model response is truncated', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system }) => {
+    if (system.includes('visual editorial stylist')) {
+      // Mimics a real observed failure: narration eats the token budget and the
+      // response is cut off by maxTokens before any closing brace/bracket.
+      return 'Now I can be more specific about what would elevate this piece.\n\n{"directions": [{"title": "Rust Contrast Layer'
+    }
+    return mockAiHandler({ system })
+  }
+
+  const json = await postJson('/api/ai/editorial-directions-preview', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.ok(Array.isArray(json.directions))
+  assert.ok(json.directions.length >= 1, 'truncated model output should fall through to deterministic ideal completions')
+})
+
 test('whole-wardrobe generator returns cards and records resettable session memory', async () => {
   const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',

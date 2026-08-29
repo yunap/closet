@@ -3491,8 +3491,16 @@ router.post('/editorial-directions-preview', async (req, res) => {
       ]
     })
 
-    let parsed = parseModelJson(raw, { context: 'editorial new pieces', maxTokens: 1200 })
-    let directions = Array.isArray(parsed?.directions) ? parsed.directions : []
+    let directions = []
+    try {
+      const parsed = parseModelJson(raw, { context: 'editorial new pieces', maxTokens: 1200 })
+      directions = Array.isArray(parsed?.directions) ? parsed.directions : []
+    } catch (err) {
+      // A truncated/unparseable response should fall through to the deterministic
+      // completions below, same as a genuinely empty model result — not surface a raw
+      // parse error to the user, who can't do anything about a token-cap cutoff.
+      console.error('Editorial directions preview: unusable model response, using deterministic fallback:', err.message)
+    }
     if (!directions.length) {
       directions = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => ({
         title: o.label || 'Ideal direction',
