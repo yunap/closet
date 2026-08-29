@@ -2625,15 +2625,24 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       return lines
     }
 
+    // Title used to render as one unwrapped centered <text> — a long label (e.g. "3. Stripe & Black
+    // Canvas Edge") routinely overran its own column width and visually spilled into the next
+    // column's title, since SVG text has no implicit wrapping. Wrapped the same way the reason text
+    // below it already was, at a shorter line length (16px bold vs. 12px regular chars are wider),
+    // and the reason block's start position now follows however many lines the title actually took
+    // instead of a fixed y — a single-line title reproduces the original y=76 exactly.
+    const titleLineHeight = 20
     const headerSvg = `<svg width="${imgW}" height="${headerHeight}" xmlns="http://www.w3.org/2000/svg">
       <rect width="100%" height="100%" fill="#f7f3ed"/>
       ${shown.map((outfit, index) => {
         const centerX = (index + 0.5) * colW
         const title = `${index + 1}. ${outfit.label || `Direction ${index + 1}`}`
+        const titleLines = wrapText(title, 22)
+        const reasonStartY = 48 + (titleLines.length - 1) * titleLineHeight + 28
         const lines = wrapText(outfit.reason || '', 32)
         return `
-          <text x="${centerX}" y="48" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#221c16">${escapeSvgText(title)}</text>
-          ${lines.map((line, lIdx) => `<text x="${centerX}" y="${76 + lIdx * 18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#5a5045">${escapeSvgText(line)}</text>`).join('')}
+          ${titleLines.map((line, tIdx) => `<text x="${centerX}" y="${48 + tIdx * titleLineHeight}" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#221c16">${escapeSvgText(line)}</text>`).join('')}
+          ${lines.map((line, lIdx) => `<text x="${centerX}" y="${reasonStartY + lIdx * 18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#5a5045">${escapeSvgText(line)}</text>`).join('')}
         `
       }).join('')}
       <line x1="0" y1="${headerHeight - 1}" x2="${imgW}" y2="${headerHeight - 1}" stroke="#d3c7b7" stroke-width="1.5"/>
