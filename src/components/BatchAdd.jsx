@@ -72,6 +72,7 @@ const REVIEW_CONSTRUCTION_CONFIG = {
     lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
   outerwear: {
+    showNeckline: true,
     showSleeve: true,
     silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
     lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],

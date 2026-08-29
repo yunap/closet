@@ -159,6 +159,7 @@ const CONSTRUCTION_BY_CATEGORY = {
   },
   outerwear: {
     sectionLabel: 'Construction',
+    showNeckline: true,
     showSleeve: true,
     silhouetteLabel: 'Outerwear shape',
     silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],

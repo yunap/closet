@@ -26,7 +26,7 @@ export function lowConfidenceFields(piece = {}) {
       
       // Category specific visibility constraints
       if ((field === 'heel_height' || field === 'walk_support') && category !== 'shoes') return false
-      if (field === 'neckline' && category !== 'top' && category !== 'dress') return false
+      if (field === 'neckline' && category !== 'top' && category !== 'dress' && category !== 'outerwear') return false
       if ((field === 'sleeve_length' || field === 'sleeve_shape') && category !== 'top' && category !== 'dress' && category !== 'outerwear') return false
       if (field === 'fit_on_body' && !['top', 'bottom', 'dress', 'outerwear'].includes(category)) return false
       if (field === 'stretch' && !['top', 'bottom', 'dress', 'outerwear'].includes(category)) return false
