@@ -3778,6 +3778,7 @@ export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
       if (!filePath) continue
       try {
         const buffer = await sharp(filePath)
+          .rotate()
           .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
           .jpeg({ quality: 80 })
           .toBuffer()
@@ -3937,6 +3938,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
         // Same reasoning as garmentReferencePlan's WORN_REFERENCE_MAX_PX: geometry survives the
         // downscale, facial detail does not, and that asymmetry is the whole point.
         const buffer = await sharp(filePath)
+          .rotate()
           .resize(WORN_REFERENCE_MAX_PX, WORN_REFERENCE_MAX_PX, { fit: 'inside', withoutEnlargement: true })
           .jpeg({ quality: 85 })
           .toBuffer()
@@ -3947,11 +3949,12 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
         })
       }
     }
- 
+
     if (selectedPiece.photo) {
       const filePath = path.join(userUploadsDir(), selectedPiece.photo)
       if (fs.existsSync(filePath)) {
         const buffer = await sharp(filePath)
+          .rotate()
           .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
           .jpeg({ quality: 85 })
           .toBuffer()

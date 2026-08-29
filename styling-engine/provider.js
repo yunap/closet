@@ -758,6 +758,7 @@ export function assertProviderKey(target = null) {
 export async function prepareImageForClaude(filePath) {
   const sharp = (await import('sharp')).default
   const buffer = await sharp(filePath)
+    .rotate()
     .resize(1568, 1568, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 82 })
     .toBuffer()
@@ -779,6 +780,7 @@ export async function prepareWardrobeThumb(filePath, cacheKey, { maxPx = 448 } =
   if (cacheKeyWithSize && wardrobeThumbCache.has(cacheKeyWithSize)) return wardrobeThumbCache.get(cacheKeyWithSize)
   const sharp = (await import('sharp')).default
   const buffer = await sharp(filePath)
+    .rotate()
     .resize(normalizedMaxPx, normalizedMaxPx, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 70 })
     .toBuffer()
