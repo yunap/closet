@@ -2282,7 +2282,12 @@ export default function StylistChat({
       ? 'Generation pipeline: whole-wardrobe outfit generation. Candidate ranking includes a visual critic pass over garment-photo contact sheets before the final text composer chooses returned cards.'
       : meta.source === 'selected_piece'
         ? 'Generation pipeline: selected-piece visual composer. The selected garment stays pinned as the anchor while saved wardrobe support pieces are reviewed from photos, confidence-aware tags, feedback, and outfit memory. The card thumbnails reflect the pieces reviewed; unless a rendered outfit image exists, discuss garment photos and card context rather than a full worn outfit image.'
-        : ''
+        : meta.source === 'ideal_editorial_directions'
+          // architecture-ownership-consolidation-spec.md 7.8 / do-not-regress #8: a follow-up must not
+          // treat a proposed-but-unowned garment as verified garment truth just because it arrived in
+          // the same "Verified current cards" channel as an owned-piece outfit.
+          ? `Generation pipeline: editorial ideal-additions. Every "missing" piece named below is a conceptual suggestion the user does not own — there is no saved garment record, tag data, or photograph for it, only the text description given. Discuss it as a styling idea, not a confirmed garment fact.${meta.usedFallback ? ' This specific set of directions came from a deterministic template, not live model reasoning about this exact piece, because the styling model’s response could not be used for this turn — say so if asked how these were produced.' : ''}`
+          : ''
     const cardContext = outfits.slice(0, 5).map((outfit, index) => {
       const displayPieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
       const pieceLines = displayPieces.map(piece => {
@@ -2300,6 +2305,7 @@ export default function StylistChat({
         outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
         outfit.bestFor ? `Best for: ${outfit.bestFor}` : '',
         pieceLines ? `Pieces:\n${pieceLines}` : '',
+        Array.isArray(outfit.missingPieces) && outfit.missingPieces.length ? `Suggested additions (not owned): ${outfit.missingPieces.join(' + ')}` : '',
         outfit.reason ? `Reason: ${outfit.reason}` : '',
         outfit.watchFor ? `Watch: ${outfit.watchFor}` : '',
       ].filter(Boolean).join('\n')
@@ -4523,6 +4529,22 @@ export default function StylistChat({
 
       setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, mode: 'ideal_styling_directions' }])
       addToHistory('assistant', replyText)
+      if (replyStructuredOutfits.length) {
+        setThreadMemory({
+          type: 'generated_outfits',
+          source: 'ideal_editorial_directions',
+          id: activeContext.id,
+          name: activeContext.name,
+          latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'ideal_editorial_directions', usedFallback: data.usedFallback }),
+          latestOutfits: replyStructuredOutfits,
+          stylingContext: {
+            occasion: outfit?.occasion || generateOccasion,
+            season: outfit?.season || generateSeason,
+            mood: generateMood,
+            mission: generateMission || 'mix',
+          },
+        })
+      }
     } catch (err) {
       const errText = `Error: ${err.message}`
       setMessages(m => [...m, { role: 'assistant', text: errText }])
@@ -5181,6 +5203,23 @@ export default function StylistChat({
           season: effectiveGenerateSeason,
         }))
         replyMode = 'ideal_styling_directions'
+        if (replyStructuredOutfits.length) {
+          nextThreadMemory = {
+            type: 'generated_outfits',
+            source: 'ideal_editorial_directions',
+            id: pieceToSend.id,
+            name: pieceToSend.name,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'ideal_editorial_directions', usedFallback: data.usedFallback }),
+            latestOutfits: replyStructuredOutfits,
+            stylingContext: {
+              occasion: effectiveGenerateOccasion,
+              season: effectiveGenerateSeason,
+              mood: effectiveGenerateMood,
+              mission: effectiveGenerateMission || 'mix',
+            },
+          }
+          setThreadMemory(nextThreadMemory)
+        }
 
       } else if (pieceToSend && shouldGenerateOutfits) {
         const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity }) })
@@ -5232,6 +5271,23 @@ export default function StylistChat({
           season: effectiveGenerateSeason,
         }))
         replyMode = 'ideal_styling_directions'
+        if (replyStructuredOutfits.length) {
+          nextThreadMemory = {
+            type: 'generated_outfits',
+            source: 'ideal_editorial_directions',
+            id: activeContext.id,
+            name: activeContext.name,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'ideal_editorial_directions', usedFallback: data.usedFallback }),
+            latestOutfits: replyStructuredOutfits,
+            stylingContext: {
+              occasion: effectiveGenerateOccasion,
+              season: effectiveGenerateSeason,
+              mood: effectiveGenerateMood,
+              mission: effectiveGenerateMission || 'mix',
+            },
+          }
+          setThreadMemory(nextThreadMemory)
+        }
 
       } else if (fileToSend) {
         const fd = new FormData()
