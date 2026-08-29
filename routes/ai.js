@@ -86,6 +86,7 @@ import {
   getProvisionalWrongChoiceMemory,
   getExactOutfitReactionMemory,
   getAcceptedFeedbackSynthesisMemory,
+  pieceIdsWithApplicableNegativeFeedback,
   getSavedBoardMemory,
   getWholeWardrobeFeedbackMemory,
   collectPieceIdsFromSavedBoardRow,
@@ -1310,10 +1311,22 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 
   if (comfortConstraint) {
     const visibleRepairPool = shownPieces.length ? shownPieces : candidatePieces
+    // The repair's candidate pool (especially the recovery tier) reaches well beyond what the
+    // model was ever shown, so it needs its own feedback check — memoryText above was scoped to
+    // the shown/ranked pool and never covers a piece introduced only here.
+    const repairFeedbackContext = projectStylingApplicabilityContext(
+      { occasion, season, activity, weatherProfile, requestText: question }, {}
+    )
+    const repairShoeIds = [...new Set(
+      [...visibleRepairPool, ...recoveryEvaluation.recoveryEligiblePieces]
+        .filter(p => wardrobeCategoryGroup(p) === 'shoes')
+        .map(p => Number(p.id))
+    )]
+    const avoidPieceIds = pieceIdsWithApplicableNegativeFeedback(repairShoeIds, repairFeedbackContext)
     outfits = outfits.map(o => {
-      const repairedFromShown = applyComfortFootwearRepair(o, visibleRepairPool, comfortConstraint, { weatherProfile, occasion, mood, activity })
+      const repairedFromShown = applyComfortFootwearRepair(o, visibleRepairPool, comfortConstraint, { weatherProfile, occasion, mood, activity, avoidPieceIds })
       return repairedFromShown === o
-        ? applyComfortFootwearRepair(o, recoveryEvaluation.recoveryEligiblePieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
+        ? applyComfortFootwearRepair(o, recoveryEvaluation.recoveryEligiblePieces, comfortConstraint, { weatherProfile, occasion, mood, activity, avoidPieceIds })
         : repairedFromShown
     })
   }
@@ -1838,7 +1851,14 @@ export async function generateOutfitsForPieceInternal({
   }
 
   if (comfortConstraint) {
-    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, recoveryPieces, comfortConstraint, { weatherProfile, occasion, mood, activity }))
+    const repairFeedbackContext = projectStylingApplicabilityContext(
+      { occasion, season, activity, weatherProfile, requestText: question }, {}
+    )
+    const repairShoeIds = [...new Set(
+      recoveryPieces.filter(p => wardrobeCategoryGroup(p) === 'shoes').map(p => Number(p.id))
+    )]
+    const avoidPieceIds = pieceIdsWithApplicableNegativeFeedback(repairShoeIds, repairFeedbackContext)
+    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, recoveryPieces, comfortConstraint, { weatherProfile, occasion, mood, activity, avoidPieceIds }))
   }
   structuredOutfits = structuredOutfits.map(outfit => normalizeDeliveredOutfit(outfit, {
     provenance: {

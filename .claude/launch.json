@@ -3,8 +3,11 @@
   "configurations": [
     {
       "name": "wardrobe-api",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "STYLIST_PROVIDER_OVERRIDE=gemini node server.js"
+      ],
       "port": 3001
     },
     {
