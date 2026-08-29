@@ -4471,6 +4471,12 @@ export default function StylistChat({
     }
   }
 
+  // architecture-ownership-consolidation-spec.md 7.8: a fallback must surface itself to the
+  // user rather than presenting a template result as the model's live judgment.
+  const withEditorialFallbackNote = (text, data) => data?.usedFallback
+    ? `${text} (These are template suggestions — the stylist couldn't generate custom ones for this piece just now.)`
+    : text
+
   const exploreIdealAdditionsFromBoard = async ({ board, outfit, messageIndex, outfitIndex, boardIndex }) => {
     if (!activeContext || activeContext.type !== 'piece' || !board) return
     const loadingKey = `ideal:${messageIndex}:${outfitIndex}:${boardIndex}`
@@ -4500,7 +4506,7 @@ export default function StylistChat({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate ideal additions')
 
-      const replyText = `Here are three ideal-additions directions inspired by ${boardTitle}. Review them and click "Generate image (~$0.07)" on any you want to render.`
+      const replyText = withEditorialFallbackNote(`Here are three ideal-additions directions inspired by ${boardTitle}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
       const replyStructuredOutfits = (data.directions || []).map(d => ({
         ...d,
         label: d.title,
@@ -5165,7 +5171,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = `Here are three styling directions for ${pieceToSend.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${pieceToSend.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,
@@ -5216,7 +5222,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = `Here are three styling directions for ${activeContext.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${activeContext.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,

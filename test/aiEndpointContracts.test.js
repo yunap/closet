@@ -818,6 +818,7 @@ test('editorial-directions-preview generator accepts and forwards mission and mo
 
   assert.match(latestText, /Mission: structured_soft/)
   assert.match(latestText, /Mood: dreamy retro/)
+  assert.equal(json.usedFallback, false, 'a normal model response must not be flagged as a fallback')
 })
 
 test('editorial-directions-preview falls back to deterministic directions when the model response is truncated', async () => {
@@ -838,6 +839,7 @@ test('editorial-directions-preview falls back to deterministic directions when t
 
   assert.ok(Array.isArray(json.directions))
   assert.ok(json.directions.length >= 1, 'truncated model output should fall through to deterministic ideal completions')
+  assert.equal(json.usedFallback, true, 'a fallback result must disclose itself rather than presenting as the model live judgment')
 })
 
 test('whole-wardrobe generator returns cards and records resettable session memory', async () => {

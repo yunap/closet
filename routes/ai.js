@@ -3501,7 +3501,11 @@ router.post('/editorial-directions-preview', async (req, res) => {
       // parse error to the user, who can't do anything about a token-cap cutoff.
       console.error('Editorial directions preview: unusable model response, using deterministic fallback:', err.message)
     }
-    if (!directions.length) {
+    // architecture-ownership-consolidation-spec.md 7.8: a fallback may reduce ambition, but
+    // must surface itself to the user rather than presenting a template result as if it were
+    // the model's live judgment.
+    const usedFallback = !directions.length
+    if (usedFallback) {
       directions = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => ({
         title: o.label || 'Ideal direction',
         missingPieces: (o.missingPieces || []).map(p => p.name),
@@ -3524,7 +3528,8 @@ router.post('/editorial-directions-preview', async (req, res) => {
       occasion,
       season,
       provider: AI_PROVIDER,
-      mode: 'editorial_directions_preview'
+      mode: 'editorial_directions_preview',
+      usedFallback
     })
   } catch (err) {
     console.error('Editorial directions preview error:', err)
