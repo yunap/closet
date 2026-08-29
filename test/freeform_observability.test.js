@@ -30,6 +30,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
   bumpFreeformDiagnostic(toolContext, 'searchCalls')
   assert.deepEqual(toolContext.freeformDiagnostics, {
     searchCalls: 2,
+    // docs/search-wardrobe-visual-budget-spec.md counters.
+    searchVisualImagesAttached: 0,
+    searchVisualMaxCategoryCount: 0,
     gateExcludedTotal: 3,
     proposeCalls: 0,
     proposeValidationFails: 0,
@@ -264,8 +267,14 @@ test('the search image budget is ranked per category, so batching cannot starve 
   assert.match(searchCase, /seenPerCategory/, 'per-category ranking must exist')
   assert.match(searchCase, /visualRankByPiece\.set\(p\.id, rank\)/)
   assert.match(searchCase, /const visualRank = visualRankByPiece\.get\(p\.id\)/)
-  assert.match(searchCase, /visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP/,
+  assert.match(searchCase, /visual && visualRank < perCategoryVisualCap/,
     'the cap must be applied to the per-category rank, never to the flat index')
+  // docs/search-wardrobe-visual-budget-spec.md — a single category still gets the full ceiling,
+  // and no category is starved below the floor purely because other categories were also asked for.
+  assert.match(searchCase, /visualCategoryCount <= 1[\s\S]*?SEARCH_WARDROBE_VISUAL_CAP/,
+    'a single-category call must keep the full per-category ceiling')
+  assert.match(searchCase, /SEARCH_WARDROBE_VISUAL_FLOOR/,
+    'a call-level cap must not be allowed to starve a category below the floor')
   // The tool description promises this, and the promise is what makes batching safe to encourage.
   const description = STYLIST_TOOLS.find(tool => tool.name === 'search_wardrobe').description
   assert.match(description, /image budget is per category/)
