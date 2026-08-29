@@ -639,8 +639,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -681,7 +681,9 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.historyMessagesReceived) || 0,
       Number(diagnostics.historyMessagesIncluded) || 0,
       Number(diagnostics.historyCharsRemoved) || 0,
-      diagnostics.executionProfile || ''
+      diagnostics.executionProfile || '',
+      Number(diagnostics.searchVisualImagesAttached) || 0,
+      Number(diagnostics.searchVisualMaxCategoryCount) || 0
     )
     // Every ai_call_log row this turn's provider calls wrote already carries freeformTurnToken
     // (staged before each call, before this row's real id existed). Correlate them now in one

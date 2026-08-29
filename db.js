@@ -851,7 +851,12 @@ function initDb(dbPath) {
     // Which of the 6 execution-router profiles (or 'full_stylist') this turn actually took. Computed
     // per-turn in routes/ai.js since the router shipped, but never persisted until now — cost/latency
     // by profile was previously only inferable from tool_sequence and the count-only router columns.
-    'execution_profile TEXT DEFAULT \'\''
+    'execution_profile TEXT DEFAULT \'\'',
+    // docs/search-wardrobe-visual-budget-spec.md. tool_sequence records which tools ran, not their
+    // arguments, so a multi-category visual search's real image cost was unmeasurable from existing
+    // telemetry — it took reproducing a specific ~103k-token turn locally to find it.
+    'search_visual_images_attached INTEGER DEFAULT 0',
+    'search_visual_max_category_count INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

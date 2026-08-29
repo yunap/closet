@@ -90,6 +90,12 @@ export function resolvePlanKind(rawKind = '', question = '') {
 }
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
+// docs/search-wardrobe-visual-budget-spec.md — the per-category cap alone let a batched call's
+// total grow linearly with category count (measured: 4 categories, 64 images, before a ~103k-token
+// turn). These bound the call as a whole without reopening the per-category design: no category is
+// ever pushed to a token-gesture image count just because the call also asked about others.
+const SEARCH_WARDROBE_VISUAL_TOTAL_CAP = 40
+const SEARCH_WARDROBE_VISUAL_FLOOR = 8
 
 // Relaxation ladder for automatic broadening. Deliberately boring: code owns retrieval completeness,
 // not styling judgment, so the order is fixed and each rung is reported back rather than applied
@@ -232,6 +238,8 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
   if (!toolContext.freeformDiagnostics) {
     toolContext.freeformDiagnostics = {
       searchCalls: 0,
+      searchVisualImagesAttached: 0,
+      searchVisualMaxCategoryCount: 0,
       gateExcludedTotal: 0,
       proposeCalls: 0,
       proposeValidationFails: 0,
@@ -1329,14 +1337,32 @@ async function executeToolInternal(name, args, toolContext = {}) {
           visualRankByPiece.set(p.id, rank)
           seenPerCategory.set(key, rank + 1)
         }
+        // docs/search-wardrobe-visual-budget-spec.md. A single category still gets the full
+        // per-category ceiling; a batch spanning several divides a call-level total instead of
+        // multiplying the ceiling by category count, floored so no category is starved to a
+        // token-gesture count by division alone.
+        const visualCategoryCount = seenPerCategory.size
+        const perCategoryVisualCap = visualCategoryCount <= 1
+          ? SEARCH_WARDROBE_VISUAL_CAP
+          : Math.min(
+              SEARCH_WARDROBE_VISUAL_CAP,
+              Math.max(SEARCH_WARDROBE_VISUAL_FLOOR, Math.floor(SEARCH_WARDROBE_VISUAL_TOTAL_CAP / visualCategoryCount))
+            )
+        if (visual) {
+          bumpFreeformDiagnostic(toolContext, 'searchVisualMaxCategoryCount', 0)
+          if (toolContext?.freeformDiagnostics) {
+            toolContext.freeformDiagnostics.searchVisualMaxCategoryCount =
+              Math.max(toolContext.freeformDiagnostics.searchVisualMaxCategoryCount || 0, visualCategoryCount)
+          }
+        }
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
           // The cap is per CATEGORY, not per call: batching three category searches into one must
           // not hand the model a third of the photos it used to get. Visual grounding is a founding
           // principle of this app, and quietly starving it to save a round-trip would be the wrong
-          // trade.
+          // trade. It is bounded across categories too — see perCategoryVisualCap above.
           const visualRank = visualRankByPiece.get(p.id) ?? index
-          if (visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP) {
+          if (visual && visualRank < perCategoryVisualCap) {
             const photoFile = p.worn_photo || p.photo || ''
             if (photoFile) {
               const filePath = path.join(userUploadsDir(), photoFile)
@@ -1412,6 +1438,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
             ...(image ? { image } : {})
           }
         }))
+
+        if (visual) {
+          bumpFreeformDiagnostic(toolContext, 'searchVisualImagesAttached', resultList.filter(r => r.image).length)
+        }
 
         if (fallbackNote) {
           resultList.push({ note: fallbackNote })
