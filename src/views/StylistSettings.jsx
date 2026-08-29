@@ -1387,7 +1387,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       )}
 
       {mode !== 'style' && demo?.count > 0 && (
-        <details className="account-settings-disclosure">
+        <details className="account-settings-disclosure" open>
           <summary>
             <span>
               <strong>Data &amp; maintenance</strong>
