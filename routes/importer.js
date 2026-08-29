@@ -191,7 +191,7 @@ router.post('/sessions/:id/classify', async (req, res) => {
       const batch = pending.slice(start, start + CLASSIFY_BATCH_SIZE)
       const content = [{ type: 'text', text: `Classify the following ${batch.length} numbered images.` }]
       for (let i = 0; i < batch.length; i++) {
-        const thumb = await sharp(path.join(dir, batch[i].file)).resize({ width: 512, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
+        const thumb = await sharp(path.join(dir, batch[i].file)).rotate().resize({ width: 512, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
         content.push({ type: 'text', text: `Image ${i + 1}:` })
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: thumb.toString('base64') } })
       }
@@ -525,7 +525,7 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
             const photoPath = path.join(userUploadsDir(), photoFile)
             if (!fs.existsSync(photoPath)) continue
             usable.push(piece)
-            const buffer = await sharp(photoPath).resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
+            const buffer = await sharp(photoPath).rotate().resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
             content.push({ type: 'text', text: `Existing piece ${usable.length}: ${piece.name}` })
             content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } })
           }
