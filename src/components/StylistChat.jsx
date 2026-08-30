@@ -4861,7 +4861,19 @@ export default function StylistChat({
       userMessage
     ] : [...messages, userMessage]
 
-    const nextChatHistory = forceNewFromExisting ? [
+    // overrides.forceNewRequest ("Retry with Sonnet"/error-retry): the whole point of a retry is
+    // that the attempt being retried away from never happened. Suppressing generatedContext/
+    // generatedOutfits/threadContext/activeContext/conversationMode (below) was not enough on its
+    // own — found live (thread_1788053088737): even with those suppressed, the retried Sonnet
+    // answer still opened "Both confirmed — here's the corrected take on those two," reading as a
+    // correction of the discarded Gemini answer rather than a fresh one, because chatHistory still
+    // carried that answer's raw text forward into `history`, unconditionally, regardless of
+    // conversationMode. A model given the failed attempt as prior turns will reasonably treat itself
+    // as continuing/correcting it. Same treatment as forceNewFromExisting's fresh-thread history,
+    // but without the thread-switch machinery that flag also does — messages (the visible
+    // transcript) keeps both turns; only chatHistory (what the model sees as prior context) drops
+    // the retried-away attempt.
+    const nextChatHistory = (forceNewFromExisting || overrides.forceNewRequest) ? [
       { role: 'user', content: q || 'What do you think?' }
     ] : [...chatHistory, { role: 'user', content: q || 'What do you think?' }]
 
