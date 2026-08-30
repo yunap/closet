@@ -36,6 +36,19 @@ test('recentlyDiscussedPieceIdsFromAnswer keeps only cited-and-verified pieces, 
   assert.deepEqual(result, [10, 11], 'only cited ids that were also verified this turn should survive')
 })
 
+// Live case (thread_1788054462046, Gemini 3.5 Flash Lite): a real, correctly-verified 12-piece
+// discovery answer cited every piece as a bare "(146)" instead of the mandated "(ID 146)" form, and
+// this field silently came out empty on a perfect target case as a result.
+test('recentlyDiscussedPieceIdsFromAnswer recognizes a bare (n) citation of a verified piece, not just the mandated (ID n) form', () => {
+  const toolContext = {
+    retrievedPieceIds: new Set([146, 144, 999]), // 999: retrieved but never actually cited
+    visuallySeenPieceIds: new Set(),
+    generatedOutfits: []
+  }
+  const answer = 'Navy wool turtleneck (146) or Black turtleneck (144): warm for a cool evening.'
+  assert.deepEqual(recentlyDiscussedPieceIdsFromAnswer(answer, toolContext), [146, 144])
+})
+
 test('recentlyDiscussedPieceIdsFromAnswer also honours known (card) pieces, not just retrieved', () => {
   const toolContext = {
     retrievedPieceIds: new Set(),
