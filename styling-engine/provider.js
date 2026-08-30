@@ -1721,7 +1721,12 @@ function describeGeminiInputShape(input, continuation, toolCount) {
   return { usedContinuation: Boolean(continuation), inputItemCount: input.length, inputItemsByType: byType, approxInputJsonChars: approxChars, toolDeclarationCount: toolCount }
 }
 
-async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
+// Exported for direct unit testing (test/gemini_call_turn.test.js) — this is the one Gemini-facing
+// function the tool loop actually calls per iteration, and it was previously exercised by no test
+// at all: askStylistWithTools short-circuits on takeTestAiResponse before ever reaching a provider
+// branch, so the ordinary mock path skips this function's own status/truncation/malformed-call
+// handling entirely.
+export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
   const input = canonicalHistoryToGeminiInput(unsyncedEntries)
   const callKind = tools.length ? 'tool_loop' : 'text'

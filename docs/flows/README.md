@@ -10,9 +10,21 @@ the app's own code, hexagons are model calls (`LLM ·` = text model, `Image ·` 
 image model), diamonds are decisions.** A model is only touched at the hexagons.
 Full convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow).
 
-**Model usage:** text, vision, and composition flows call Claude
-(`askStylist*`). Image-rendering flows call a separate image model
-(GPT-4o). The stylist chat brain (`/ask`) is the only tool-using flow.
+**Model usage:** text, vision, and composition flows call the stylist model via
+`askStylist*` — by default Claude (Anthropic), but the actual provider is
+per-call, not fixed. Families A–E are direct HTTP routes and always call the
+default provider (`AI_PROVIDER`/Claude as configured today); they are
+deliberately never affected by the chat's per-turn routing (see below).
+Family F (`/ask`, the stylist chat brain) is the one flow whose provider can
+vary per turn: `STYLIST_PROVIDER_OVERRIDE` (env, off by default) or a manual
+"Retry with Sonnet" click resolves a `providerOverride` once per turn, and
+every model call attributable to that turn — the execution router, a compact
+answer, the tool loop, and capsule-from-chat composition — is threaded that
+same override so it can't silently mix providers within one turn. Piece
+tagging (family A) has its own independent, currently-unset
+`TAGGER_PROVIDER_OVERRIDE`. Image-rendering flows call a separate image model
+(GPT-4o), untouched by either override. The stylist chat brain (`/ask`) is the
+only tool-using flow.
 
 Status: `done` · `next` · `todo`
 

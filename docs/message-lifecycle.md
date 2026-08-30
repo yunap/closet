@@ -50,6 +50,12 @@ Four things decide everything downstream, and three of them are invisible to the
 | Which execution profile | a model call inside `/ask` | No |
 | Which tools are offered | `stylistToolsForTurn` | No |
 | Which conversation mode | `classifyChatTurn` regexes, client-side | No |
+| Which provider | `toolContext.providerOverride`, resolved once in `/ask` | No (labeled on the response) |
+
+Provider is Claude (Anthropic) unless `STYLIST_PROVIDER_OVERRIDE` (env, off by default) is set or
+the user clicks "Retry with Sonnet" — see the note at the top of Stage 4 for what changes when it
+isn't Anthropic. This document otherwise describes the Anthropic path throughout, since that is the
+default and the only path with the caching mechanics discussed in Stage 4.
 
 ---
 
@@ -220,6 +226,16 @@ silently become the most expensive path.
 [:3877](../styling-engine/core.js#L3877).** Roughly 500 lines producing one object: `{ system,
 messages, maxTokens: 1500, threadState, historyDiagnostics, wardrobeManifestIncluded }`.
 
+> **Provider note.** This payload is provider-agnostic — it feeds `askStylistWithTools`
+> ([:1817](../styling-engine/provider.js#L1817)), which dispatches to Anthropic, OpenAI, or Gemini
+> based on `toolContext.providerOverride`. Everything below about cache breakpoints and
+> `systemToAnthropicBlocks` is specific to the Anthropic path (today's default). A turn routed to
+> Gemini (`STYLIST_PROVIDER_OVERRIDE=gemini`) goes through `callGeminiTurn`
+> ([:1724](../styling-engine/provider.js#L1724)) instead: no explicit cache breakpoints — Gemini
+> keeps prior turns server-side via `previous_interaction_id` and a continuation call resends only
+> the unsynced tail, not the whole prefix. The prompt content itself (system, manifest, thread
+> state, tool schemas) is the same regardless of which provider answers.
+
 ### The wardrobe manifest
 
 ```js
@@ -296,7 +312,7 @@ image in an earlier turn is gone by turn two**, which is Stage 9's first discont
 ## Stage 5 — The tool loop
 
 **`askStylistWithTools`, `styling-engine/provider.js`
-[:1212](../styling-engine/provider.js#L1212).** Up to **10** iterations (the comment records that the
+[:1817](../styling-engine/provider.js#L1817).** Up to **10** iterations (the comment records that the
 disciplined flow — declare, search, view supports, view layers, propose ×N — legitimately needs 6–8,
 and a cap of 7 killed live turns with zero cards).
 
@@ -364,6 +380,14 @@ produced it:
   structuredOutfits, structuredOutfitsSource, structuredOutfitsOccasion, …,
   debug, suggestedTitle, isLocalAcknowledgment? }
 ```
+
+`provider` reflects the turn's actual resolved target (`toolContext.resolvedProviderTarget`,
+computed once from `toolContext.providerOverride`) on all six exits — `wardrobe_inventory`, a
+compact answer, `bounded_multi`, and `full_stylist` alike. It used to fall back to the static
+`AI_PROVIDER` default on everything but `full_stylist`, which meant a Gemini-routed turn that
+happened to land on the router, a compact answer, or `bounded_multi` was silently answered on
+Anthropic while the router/compact/composer calls themselves were also not receiving the override —
+both halves of that gap were fixed together (2026-08-30).
 
 **Server-side persistence:** `persistFreeformGenerationRun` writes one row to
 `freeform_generation_runs` — iterations, token counts and cache splits, gate exclusions, propose
