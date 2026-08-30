@@ -1074,7 +1074,10 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   weatherProfile = null,
   comfortConstraint = null,
   occasionProfile = null,
-  activityProfile = null
+  activityProfile = null,
+  // Same gap and fix as generateWholeWardrobeOutfitsVisualInternal (see its own providerOverride
+  // comment) -- absent by default, only forwarded by the freeform-chat selected-piece path.
+  providerOverride = null
 }) {
   const routeStartedAt = Date.now()
   const selectedId = Number(selectedPiece.id)
@@ -1264,7 +1267,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     const composerResult = await withTimeout(askStylistWithUsage({
       system: selectedItemVisualComposerSystemPrompt(),
       maxTokens: composerMaxTokens,
-      messages: [{ role: 'user', content }]
+      messages: [{ role: 'user', content }],
+      providerOverride
     }), 120000, 'Selected-piece visual composer')
     timings.composerMs = Date.now() - composerStartedAt
     composerUsage = composerResult.usage || null
@@ -1725,7 +1729,10 @@ export async function generateOutfitsForPieceInternal({
   date = null,
   currentDate = null,
   statedWeather = '',
-  resolvedWeatherProfile = null
+  resolvedWeatherProfile = null,
+  // Same gap and fix as generateWholeWardrobeOutfitsVisualInternal (see its own providerOverride
+  // comment) -- absent by default, only forwarded by the freeform-chat selected-piece path.
+  providerOverride = null
 }) {
   console.log(`\n[0] 🧥 generateOutfitsForPieceInternal called:`)
   console.log(`    - pieceId: ${pieceId}`)
@@ -1833,7 +1840,8 @@ export async function generateOutfitsForPieceInternal({
       weatherProfile,
       comfortConstraint,
       occasionProfile,
-      activityProfile
+      activityProfile,
+      providerOverride
     })
     visualCriticDebug = composed.debug || null
   } else {
@@ -1846,7 +1854,8 @@ export async function generateOutfitsForPieceInternal({
         mission,
         mood,
         question,
-        memoryText
+        memoryText,
+        providerOverride
       }), 20000, 'Selected-piece visual critic')
       if (visualReview?.rankedCandidates?.length) {
         rankedCandidates = visualReview.rankedCandidates
@@ -1871,7 +1880,8 @@ export async function generateOutfitsForPieceInternal({
       history,
       activity,
       occasionProfile,
-      activityProfile
+      activityProfile,
+      providerOverride
     })
   }
 
@@ -2060,7 +2070,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   date = null,
   currentDate = null,
   adaptiveVisualDetail = false,
-  comparisonSetGuidance = true
+  comparisonSetGuidance = true,
+  // Absent by default so the two production HTTP routes that call this function directly
+  // (/generate-wardrobe-outfits-visual, saved-outfit variants) are unaffected and keep using the
+  // default provider — only the freeform-chat tool case (styling-engine/tools.js's generate_outfits)
+  // passes toolContext.providerOverride through. Found live: a freeform turn running under
+  // STYLIST_PROVIDER_OVERRIDE=gemini still made its nested whole-wardrobe composer call on
+  // Anthropic ($0.12 of that turn's $0.15, unrelated to and larger than the visible Gemini calls),
+  // because this function's own askStylistWithUsage call never accepted or forwarded an override.
+  providerOverride = null
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
@@ -2468,7 +2486,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const composerResult = await withTimeout(askStylistWithUsage({
         system: systemPrompt,
         maxTokens: composerMaxTokens,
-        messages: [{ role: 'user', content }]
+        messages: [{ role: 'user', content }],
+        providerOverride
       }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
       composerUsage = composerResult.usage

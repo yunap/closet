@@ -1050,7 +1050,10 @@ export function anchorRegisterFootwearComputedChecks({ selectedPiece, occasion, 
   ].filter(Boolean).join('\n')
 }
 
-export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [], activity = '', occasionProfile = null, activityProfile = null }) {
+// providerOverride: same gap and fix as generateWholeWardrobeOutfitsVisualInternal/
+// composeSelectedPieceVisualWardrobeOutfits (routes/ai.js) -- absent by default, only forwarded
+// from the freeform-chat idealMode/idealOnlyMode path via generateOutfitsForPieceInternal.
+export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [], activity = '', occasionProfile = null, activityProfile = null, providerOverride = null }) {
   const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
   const candidateText = buildOutfitGenerationCandidateText(rankedCandidates)
   const userPayload = [
@@ -1077,7 +1080,8 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     messages: [
       ...(history || []).map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: [{ type: 'text', text: userPayload }] }
-    ]
+    ],
+    providerOverride
   })
 
   let composerParsed = parseModelJson(rawComposer, { context: 'outfit composer', maxTokens: 1800 })
@@ -1102,7 +1106,8 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
         mood ? `Mood: ${mood}` : '',
         anchorComputedChecks,
         `Composer JSON to audit:\n${JSON.stringify({ outfits: normalized, skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }, null, 2)}`
-      ].filter(Boolean).join('\n\n') }] }]
+      ].filter(Boolean).join('\n\n') }] }],
+      providerOverride
     })
     const gateParsed = parseModelJson(rawGate, { context: 'outfit evaluator gate', maxTokens: 1400 })
     console.log(`[0]    - Raw Evaluator Gate response:\n${rawGate}\n`)
@@ -1364,7 +1369,9 @@ export async function makeSelectedPieceCandidateContactSheet(selectedPiece, rank
   return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownPieceIds: shown.map(r => Number(r.piece.id)).filter(Boolean) }
 }
 
-export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '' }) {
+// providerOverride: same gap and fix as composeStructuredOutfitsForPiece above -- absent by
+// default, only forwarded from the freeform-chat idealMode/idealOnlyMode path.
+export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '', providerOverride = null }) {
   const candidatesWithPhotos = rankedCandidates.filter(r => r?.piece && (r.piece.photo || r.piece.worn_photo))
   const reviewCandidates = (candidatesWithPhotos.length >= 8 ? candidatesWithPhotos : rankedCandidates).slice(0, 18)
   if (!selectedPiece || !reviewCandidates.length || !(selectedPiece.photo || selectedPiece.worn_photo || reviewCandidates.some(r => r.piece?.photo || r.piece?.worn_photo))) return null
@@ -1400,7 +1407,8 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
           'Reject or push down pieces where the actual photo contradicts the text/tag read, the style family fights the selected garment, or the shoe/outerwear looks wrong for the outfit logic.'
         ].filter(Boolean).join('\n\n') }
       ]
-    }]
+    }],
+    providerOverride
   })
   const parsed = parseModelJson(raw, { context: 'visual support critic', maxTokens: 900 })
   const rejectMap = new Map((parsed.rejectedPieceIds || []).map(item => {
