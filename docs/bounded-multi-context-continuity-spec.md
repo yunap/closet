@@ -1,8 +1,9 @@
 # Spec — a prose-only stylist answer leaves no continuity for the next turn
 
-**Status:** proposed, not implemented — the three open questions from the first draft are now
-answered (§7); one of them (the piece-id cap) changes the design in §5.2 from what was first
-proposed.
+**Status:** proposed, not implemented — revised after external review (see §8 for what changed and
+why). The design now differs from the first draft in three ways: the persisted field holds pieces
+actually *discussed* in the answer, not raw search candidates; the router is informed rather than
+deterministically gated; and the soft-anchor bias into `bounded_multi` (originally §5.4) is dropped.
 **Route:** [docs/README.md](README.md). Sources this spec must not restate:
 [architecture-responsibility-census.md](architecture-responsibility-census.md) (the ownership model
 this fix must align to), [message-lifecycle.md](message-lifecycle.md) (the router and its six
@@ -50,8 +51,7 @@ a prose-only wardrobe answer, even one that named and reasoned about specific pi
    — a genuine per-session, server-authoritative persisted table, already read by
    `compactFreeformContext` and explicitly documented as authoritative over the client's echo
    (`routes/ai.js:868`: *"Server state is the verified authority. The browser echo remains a legacy
-   fallback"*). There are in fact **two** writers (corrected after checking — the first draft of
-   this spec found only one), and between them they still miss this case:
+   fallback"*). There are in fact **two** writers, and between them they still miss this case:
    - [routes/ai.js:4822](../routes/ai.js#L4822), gated on `toolContext.atomicMultiLookCompleted` —
      only after a successful `bounded_multi` turn.
    - [styling-engine/core.js:4505](../styling-engine/core.js#L4505), inside
@@ -65,21 +65,21 @@ a prose-only wardrobe answer, even one that named and reasoned about specific pi
    writer ran, but because the one writer that ran for that turn (`core.js:4505`) fires too early to
    see it, and the other writer never fires at all outside `bounded_multi`.
 
-Given all three are `null`/empty, `boundedRouterEligible` ([routes/ai.js:4649](../routes/ai.js#L4649))
-— `conversationMode === 'new_request' && !activeContext && !pieceIds.length` — passes cleanly, and
-`routeFreeformExecutionProfile` is asked to classify turn 2 with a `contextSummary` that has nothing
-to summarize. It correctly (in isolation) reads *"put together three complete outfits"* as an
-ordinary `bounded_multi` ask. The router did its job; it was never given the evidence to do it
-right.
+Given all three are `null`/empty, the execution router (which does run for this turn — see §5.3) is
+asked to classify turn 2 with a `contextSummary` that has nothing to summarize. It correctly (in
+isolation) reads *"put together three complete outfits"* as an ordinary `bounded_multi` ask. The
+router did its job; it was never given the evidence to do it right.
 
-**A second, smaller inconsistency, found while tracing this:** `boundedRouterEligible` at
-`routes/ai.js:4649` reads the raw `req.body.pieceIds` directly, while `contextSummary` and the
+**A second, smaller, independent inconsistency, found while tracing this:** `boundedRouterEligible`
+at `routes/ai.js:4649` reads the raw `req.body.pieceIds` directly, while `contextSummary` and the
 compact profiles a few lines later read `compactContext.pieceIds` — the *merged, server-authoritative*
 list `compactFreeformContext` already builds from server state, body, and named pieces. These two
 checks can already disagree today: a turn can be `boundedRouterEligible` (raw body field empty)
 while `compactContext.pieceIds.length > 0` (server state has a real subject) at the same time. That
 is exactly architecture-responsibility-census.md §1's second failure pattern: *"missing context is
-resolved differently before the same shared gate runs."*
+resolved differently before the same shared gate runs."* **This is worth fixing on its own merits,
+but it is not part of the causal chain for this incident** (§5.3 explains why) — tracked as
+independent cleanup, not bundled into the behavioral fix below.
 
 ## 3. Why the cheap fix is wrong
 
@@ -95,132 +95,191 @@ somewhere else instead of resolving it.
 
 ## 4. What already exists to build on — the canonical stage, not a new one
 
-The full tool loop already has the exact record this needs, and it already has a name:
-`verifiedPieceIdSets(toolContext)` ([styling-engine/tools.js:1015](../styling-engine/tools.js#L1015)),
-built from `recordRetrievedPieces` ([styling-engine/tools.js:1003](../styling-engine/tools.js#L1003)).
-This is the same mechanism `message-lifecycle.md`'s verification contract already relies on — *"Any
-piece named in an answer or placed in a card must be verified this turn via `view_pieces`,
-`search_wardrobe`, or `get_garment_details`."* Turn 1's `search_wardrobe` call already populated
-`toolContext.retrievedPieceIds` with exactly the pieces it surfaced. That data exists; it is simply
-discarded the moment the turn ends without producing a card.
+The full tool loop already has records this needs, and they already have names:
+
+- `verifiedPieceIdSets(toolContext)` ([styling-engine/tools.js:1015](../styling-engine/tools.js#L1015)),
+  built from `recordRetrievedPieces` ([styling-engine/tools.js:1003](../styling-engine/tools.js#L1003)).
+  This is the same mechanism `message-lifecycle.md`'s verification contract already relies on —
+  *"Any piece named in an answer or placed in a card must be verified this turn via `view_pieces`,
+  `search_wardrobe`, or `get_garment_details`."*
+- `extractPieceIdsFromProse(answerText)` ([styling-engine/provider.js:115](../styling-engine/provider.js#L115))
+  — already extracts the piece IDs a model's answer actually cited, before
+  `stripPieceIdCitations` scrubs them for display. `applyFreeformOutputChecks`'s truth clause
+  ([styling-engine/provider.js:156](../styling-engine/provider.js#L156)) already computes
+  `citedIds = extractPieceIdsFromProse(answerText)` and intersects it against
+  `verifiedPieceIdSets(toolContext)` to enforce that every citation was actually verified this
+  turn. **This intersection — cited AND verified — is exactly the set of pieces the user would
+  reasonably call "the ones we just talked about,"** and it is already computed, at the exact point
+  in the code where this spec's write needs to happen.
+
+`retrievedPieceIds` alone (what the first draft of this spec proposed persisting) is the wrong
+signal: `search_wardrobe` can return considerably more than what the assistant's prose actually
+discusses — broadened/relaxed matches per the relaxation ladder, or candidates surfaced but not
+mentioned. Persisting the first N of those risks the same shape of bug this spec exists to fix: the
+next turn "continues" with pieces the user never actually saw discussed.
 
 `stylist_conversation_state` is the canonical server-side persistence stage for this class of fact
-— `compactFreeformContext` already prefers it over the client echo. It just has one writer, gated
-too narrowly.
+— `compactFreeformContext` already prefers it over the client echo. It just has no writer that
+captures this fact today.
 
-## 5. Design — extend the two existing canonical stages, add no new one
+## 5. Design — extend the two existing canonical stages, inform the router, don't gate it
 
-**5.1 — Persist verified-piece evidence from every `full_stylist` turn, not only `bounded_multi`, at
-a point that can actually see it.**
+**5.1 — Persist *discussed*, not *retrieved*, piece evidence, from every `full_stylist` turn.**
 
-`core.js:4505` cannot carry this (§2: it runs before the tool loop). The write has to happen where
-`bounded_multi`'s already does — after the turn's tool calls complete, at `full_stylist`'s answer
-branch in `routes/ai.js` (the one that returns `answer: stripPieceIdCitations(answerCall.text)`
-without a `generate_outfits` call) — with a new field alongside the existing `current_outfit_set`:
+At the point `full_stylist` accepts its final answer — where `applyFreeformOutputChecks` already
+computes `citedIds` and cross-checks it against `verifiedPieceIdSets(toolContext)` — capture the
+same intersection as a new field, alongside the existing `current_outfit_set`, the same place
+`bounded_multi`'s writer already runs (`routes/ai.js`, the branch that returns
+`answer: stripPieceIdCitations(answerCall.text)`):
 
 ```js
-recently_verified_pieces: {
-  piece_ids: [...verifiedPieceIdSets(toolContext).retrieved].slice(0, RECENT_VERIFIED_CAP),
-  seen_piece_ids: [...verifiedPieceIdSets(toolContext).seen],
+const { retrieved, known } = verifiedPieceIdSets(toolContext)
+const citedIds = extractPieceIdsFromProse(answerText)
+const discussedIds = citedIds.filter(id => retrieved.has(id) || known.has(id))
+
+recently_discussed_piece_ids: {
+  piece_ids: discussedIds.slice(0, RECENTLY_DISCUSSED_CAP), // generous cap (e.g. 16) — this set is
+                                                              // already precise, not a raw candidate
+                                                              // dump, so the cap is a safety bound,
+                                                              // not a selection rule
   turn_token: freeformTurnToken,
 }
 ```
+
+If the answer discussed six garments out of a 24-piece search result, this persists those six — not
+an arbitrary insertion-order slice of the 24.
 
 **This write must not be silently erased by the other writer.** `saveStylistConversationState`
 replaces the entire `state_json` blob — it is not a partial merge (`conversationState.js:14`
 does `INSERT ... ON CONFLICT DO UPDATE SET state_json = excluded.state_json`, the whole value). Since
 `core.js:4505` fires unconditionally at the *start* of every subsequent `full_stylist` turn and only
-knows about `established`/`current_outfit_set`, it would silently wipe `recently_verified_pieces`
+knows about `established`/`current_outfit_set`, it would silently wipe `recently_discussed_piece_ids`
 one turn after this write, exactly the same way a `new_request`-classified turn already drops
 `current_outfit_set` today (`core.js:4472-4474`). `core.js:4505` must be updated to read the incoming
-`restoredState.recently_verified_pieces` and carry it forward in its own write, the same pattern
-`current_outfit_set` already uses for its own restore-vs-drop decision. Both writers need to agree
-on this field's shape, not just the new one.
+`restoredState.recently_discussed_piece_ids` and carry it forward in its own write. Both writers
+need to agree on this field's shape, not just the new one.
 
 **5.2 — Do NOT fold it into `compactFreeformContext`'s merged `pieceIds` list. Keep it a separate,
 purpose-scoped field.**
 
-The first draft of this spec proposed merging `recently_verified_pieces` straight into
-`compactContext.pieceIds`, the same list `compactFreeformContext` already builds. Checking the
-downstream consumers of that exact list changes this: at `routes/ai.js:4732`,
-`compactContext.pieceIds` is used as a **direct subject-resolution fallback** for `garment_fact`
-when a vague reference ("these shorts") can't be resolved any other way — and that fallback already
-has a named, documented failure mode in the code's own comment (`thread_1787435527800 msg 16/17`:
-an unresolved vague reference falling back to *every* piece in the accumulated current-card set).
-Merging in up to `RECENT_VERIFIED_CAP` more ids from a `search_wardrobe` call — which can include
-broadened/relaxed matches per the relaxation ladder, not just tightly-relevant ones — would widen
-that exact failure surface, not just fix router eligibility.
+At `routes/ai.js:4732`, `compactContext.pieceIds` is used as a **direct subject-resolution
+fallback** for `garment_fact` when a vague reference ("these shorts") can't be resolved any other
+way — and that fallback already has a named, documented failure mode in the code's own comment
+(`thread_1787435527800 msg 16/17`: an unresolved vague reference falling back to *every* piece in
+the accumulated current-card set). Even with the more precise `discussedIds` set from §5.1, merging
+it into that list would widen the scope `garment_fact` resolves an ambiguous reference against in a
+way that field was never designed for.
 
-Instead: keep `recently_verified_pieces` as its own field, read directly (not merged into
-`compactContext.pieceIds`) by exactly the two consumers this spec targets — the router-eligibility
-check (§5.3) and the `contextSummary` hint text — and by nothing that does direct ID-scoped subject
+Instead: `recently_discussed_piece_ids` stays its own field, read directly by exactly one consumer
+— the router's `contextSummary` (§5.3) — and by nothing that does direct ID-scoped subject
 resolution.
 
-**5.3 — Fix `boundedRouterEligible` to also check for verified-piece evidence, read directly, not
-merged.**
+**5.3 — Inform the router; do not gate it.**
 
-Replace the check at `routes/ai.js:4649` — `!(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)`
-— with a check against `compactContext.pieceIds.length` (still fixing the found inconsistency in §2:
-raw body field vs. merged server state) **and** `state.recently_verified_pieces?.piece_ids?.length`
-(the new field from §5.1, read directly). Either one being non-empty should make
-`boundedRouterEligible` false. This is what actually keeps turn 2 out of the `bounded_multi` fast
-path: `recently_verified_pieces` would now be non-empty from turn 1's search, so the turn correctly
-falls through toward `full_stylist` — and if compact profiles are still reachable, `contextSummary`
-can independently mention "verified garment subjects available" from this field too, without ever
-routing it through the noise-sensitive `pieceIds` list from §5.2.
+The first draft of this spec proposed making `boundedRouterEligible` (`routes/ai.js:4649`) false
+whenever recent-piece evidence exists — a deterministic veto forcing every such turn through
+`full_stylist`. **This is wrong and has been dropped**, for two reasons found on review:
 
-**5.4 — Thread the same evidence into eligibility as a soft anchor, not a hard override, when
-`bounded_multi` does run.**
+1. **It is unreachable-in-practice as a fix, and unnecessary.** `boundedRouterEligible` doesn't
+   bias which profile the router picks — it gates whether the router is *invoked at all*
+   (`routerEligible = (boundedRouterEligible || compactRouterEligible) && ...`; false skips the
+   router and falls straight to `full_stylist`). But `compactRouterTurnHasContext`
+   (`routes/ai.js:902`) already returns `true` unconditionally whenever
+   `conversationMode === 'new_request'` — exactly turn 2's classification. So the router was
+   *already* going to run for this turn; `boundedRouterEligible` never needed to change to fix this
+   incident.
+2. **It is wrong product behavior anyway.** Consider: *"Do I have jackets suitable for a work
+   dinner?"* → discussion → *"Actually, forget that — give me three outfits for hiking tomorrow."*
+   The existence of the prior turn's jacket evidence must not make `bounded_multi` categorically
+   unavailable for a request that is plainly unrelated to it. A hard code-level veto can't tell
+   those two cases apart; the router — a model making exactly this kind of judgment call for every
+   other profile already — can.
 
-Per architecture-responsibility-census.md, piece eligibility is canonically owned by
-`evaluateAutomaticUsePiecePool`, and "Anchor Piece" bias is already a named, existing concept there
-for selected-piece flows (§3, row 1: *"visual policy with the anchor protected"*). When
-`recently_verified_pieces` is present and `bounded_multi` still fires (e.g. the user pivots to a
-genuinely new context), pass those piece ids into `generate_outfits`'s candidate resolution as a
-**soft bias** through the same anchor mechanism — not a hard requirement that they appear, since
-the user may have moved on. This keeps the fix inside the existing eligibility-pool contract rather
-than adding a bounded_multi-only parameter that only this one call site understands.
+The actual fix: extend the `contextSummary` string already built at `routes/ai.js:4680` (which
+today says things like *"no verified garment subject"* / *"verified current outfit set: N
+card(s)"*) with the new fact:
+
+```js
+recentlyDiscussedPieces.length
+  ? `previous answer discussed ${recentlyDiscussedPieces.length} specific verified wardrobe piece(s)`
+  : 'no recently discussed wardrobe pieces'
+```
+
+The router then makes the same kind of continuation-vs-fresh-request judgment it already makes for
+every other profile, now with a true fact to reason from instead of nothing. This preserves the
+existing division of labor exactly: code supplies truthful context, the model judges conversational
+intent.
+
+The independent `req.body.pieceIds`-vs-`compactContext.pieceIds` inconsistency (§2) should still be
+fixed, but as its own change — it affects `boundedRouterEligible`'s correctness in general, not this
+incident specifically, and bundling it with a behavioral change this spec explicitly rejects (a
+router-invocation gate) would blur why each change exists.
 
 ## 6. What this does not change
 
 - The router's own architecture (question + date + one-line `contextSummary`, never the wardrobe)
   is unchanged — it still never sees garment truth, only richer evidence of *whether* a subject
   exists, which is exactly the class of fact it already consumes for `garment_fact`/
-  `existing_card_explanation`.
+  `existing_card_explanation`. The router's judgment is still the deciding factor, not a code-level
+  gate.
+- `bounded_multi`'s own candidate resolution (`generate_outfits` → the Visual Composer) is
+  unchanged. An earlier draft of this spec (§5.4, now removed — see §8) proposed biasing its
+  candidate pool toward recently-discussed pieces as a soft anchor whenever `bounded_multi` still
+  fired. Dropped: once routing correctly sends continuations to `full_stylist` (where the discussed
+  pieces can be restored and composed from directly) and correctly leaves unrelated fresh requests
+  on `bounded_multi` untouched, there is no remaining case where biasing the composer's own pool
+  earns its complexity — it would only reintroduce a version of the stale-context risk this spec
+  exists to remove.
 - `full_stylist` turns that never call a retrieval tool (`general_advice`,
-  `wardrobe_inventory`-shaped prose) write nothing new — `verifiedPieceIdSets` would be empty for
-  them, so `recently_verified_pieces` is simply absent, same as today.
+  `wardrobe_inventory`-shaped prose) write nothing new — `citedIds`/`discussedIds` would be empty
+  for them, so `recently_discussed_piece_ids` is simply absent, same as today.
 - No change to `search_wardrobe`'s own behavior, the visual budget cap (#272), or EXIF handling
   (#273) — unrelated surfaces.
 
-## 7. Open questions — checked, answered
+## 7. Acceptance criteria
 
-1. **Expiry — checked.** `current_outfit_set` has no soft-expiry rule; the existing model is a hard
-   "whichever turn's writer runs last, wins" full-blob-replace (`conversationState.js:14`), gated on
-   `conversationMode`, not time or turn count (`core.js:4472-4474`). There is no decay precedent to
-   copy — but checking this surfaced a sharper problem than "what's the expiry policy": **a
-   `new_request`-misclassified `full_stylist` turn doesn't just fail to use restored
-   `current_outfit_set`, it actively overwrites the stored row and erases it for every turn after**,
-   because `core.js:4505` unconditionally persists whatever it just computed (empty, in the
-   misclassified case). §5.1's fix for `recently_verified_pieces` has to avoid the same trap — see
-   the "must not be silently erased" requirement added to §5.1 above. Resolution: no expiry field
-   needed; "superseded by the next writer, and both writers must agree on the field's shape" is
-   sufficient and consistent with how the table already works — but only once §5.1's cross-writer
-   fix lands, otherwise this field would suffer the exact bug it's meant to fix.
-2. **Which retrieval tools count — checked, no gap.** `recordRetrievedPieces` is already called by
-   every retrieval-shaped tool: `search_wardrobe` (`tools.js:1475-76`), `view_pieces`
-   (`tools.js:1927-28`), `get_garment_details` (`tools.js:2335-36`), and `suggest_slot_swaps`
-   (`tools.js:2144`). `verifiedPieceIdSets(toolContext)` already aggregates all of them correctly.
-   No new call site needed — §5.1 can read this helper as-is.
-3. **Cap of 16 — checked, this changes the design.** `compactFreeformContext`'s merged `pieceIds`
-   list is not just a "does context exist" signal — `routes/ai.js:4732` uses it directly as
-   `garment_fact`'s vague-reference subject-resolution fallback, a path with an existing documented
-   failure mode (`thread_1787435527800`: an unresolved vague reference resolving against the entire
-   accumulated set instead of the one piece meant). Folding `recently_verified_pieces` into that same
-   list — the original §5.2 proposal — would widen exactly that failure surface with
-   `search_wardrobe` results that can include relaxed/broadened matches, not just tight ones. Revised
-   design in §5.2 above: `recently_verified_pieces` stays a separate field with its own cap
-   (`RECENT_VERIFIED_CAP`, tentatively 8 — half of `compactFreeformContext`'s existing 16, since this
-   is router-eligibility evidence, not a resolvable-subject list, and doesn't need the same headroom),
-   read directly by the router-eligibility check and `contextSummary`, never merged into the list
-   `garment_fact` resolves subjects against.
+Two live-shaped test cases, both required — one alone would let a future change reintroduce exactly
+the bug just rejected in §5.3:
+
+1. **Continuation case (the original incident).** Reproduce the two-turn sequence: a `full_stylist`
+   coverage answer naming specific pieces, followed by *"yes, put together three complete
+   outfits."* Assert:
+   - the execution router is still invoked for turn 2 (not skipped — guards against a future
+     "fix" that reintroduces a hard `boundedRouterEligible` veto instead of informing the router);
+   - `contextSummary` for turn 2 states that the previous answer discussed specific verified
+     pieces;
+   - the router's chosen profile is a continuation path (`full_stylist`), and the resulting
+     outfits draw from the pieces turn 1 actually discussed.
+2. **Unrelated-pivot case (the counter-case).** Same first turn, followed by an explicitly
+   unrelated fresh request — *"Actually, give me three hiking outfits tomorrow."* Assert:
+   - `bounded_multi` remains reachable and is chosen (not forced off by the mere existence of
+     `recently_discussed_piece_ids`);
+   - the resulting outfits are not constrained toward, or biased by, the previously discussed
+     work-dinner pieces.
+
+Together these two cases encode the actual product contract — "the router should know what was
+discussed and judge accordingly" — rather than just the one incident that surfaced it.
+
+## 8. Revision history
+
+**First draft (this session, before review):** proposed persisting up to 8 of `retrievedPieceIds`
+into `compactFreeformContext`'s merged `pieceIds` list, and making `boundedRouterEligible` false
+whenever that evidence existed (plus a §5.4 soft-anchor bias into `bounded_multi`'s candidate pool
+when it still fired despite that evidence).
+
+**Revised after external review**, which found two substantive issues, both confirmed against the
+actual code before accepting:
+
+- The hard `boundedRouterEligible` veto directly contradicted the (accepted) soft-anchor case in
+  the original §5.4 — that state was made unreachable by the veto — and was also shown to be
+  unnecessary: the router already runs for the incident turn regardless (`compactRouterTurnHasContext`
+  returns `true` for any `new_request`-labeled turn), so the fix only needed to inform the router via
+  `contextSummary`, never gate its invocation. §5.4 was dropped as a result — no remaining case it
+  would fix once routing itself is correct.
+- `retrievedPieceIds` is not "the pieces we discussed" — it can include broadened/fallback search
+  candidates the answer never mentioned. `extractPieceIdsFromProse(answerText)` intersected with
+  `verifiedPieceIdSets(toolContext)` — already computed by `applyFreeformOutputChecks`'s existing
+  truth clause — is the correct, already-canonical signal for what was actually discussed.
+
+The `req.body.pieceIds`-vs-`compactContext.pieceIds` inconsistency (§2) remains flagged as
+independent cleanup, kept separate from the causal chain per the review's recommendation.
