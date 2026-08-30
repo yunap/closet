@@ -4869,13 +4869,23 @@ export default function StylistChat({
     // correction of the discarded Gemini answer rather than a fresh one, because chatHistory still
     // carried that answer's raw text forward into `history`, unconditionally, regardless of
     // conversationMode. A model given the failed attempt as prior turns will reasonably treat itself
-    // as continuing/correcting it. Same treatment as forceNewFromExisting's fresh-thread history,
-    // but without the thread-switch machinery that flag also does — messages (the visible
-    // transcript) keeps both turns; only chatHistory (what the model sees as prior context) drops
-    // the retried-away attempt.
-    const nextChatHistory = (forceNewFromExisting || overrides.forceNewRequest) ? [
+    // as continuing/correcting it.
+    //
+    // Dropping ALL of chatHistory (matching forceNewFromExisting's fresh-thread reset) over-corrected
+    // this, though — found live (thread_1788054462046): a retry on a turn several messages into a
+    // real conversation came back with "I don't have any prior conversation loaded in this session,"
+    // because it lost turn 1 and turn 2 along with the one retried-away answer. The retry button is
+    // documented as scoped to "the last assistant turn only" (see its own comment below), so it
+    // should drop only that one exchange, not the thread's real history before it. Both retry paths
+    // append the failed/errored attempt as the last {user, assistant} pair before this runs (see
+    // updatedChatHistory in both the success and catch branches below), so slicing off exactly the
+    // last two entries removes precisely the attempt being retried and nothing earlier.
+    const nextChatHistory = forceNewFromExisting ? [
       { role: 'user', content: q || 'What do you think?' }
-    ] : [...chatHistory, { role: 'user', content: q || 'What do you think?' }]
+    ] : [
+      ...(overrides.forceNewRequest ? chatHistory.slice(0, -2) : chatHistory),
+      { role: 'user', content: q || 'What do you think?' }
+    ]
 
     let derivedTitle = 'Chat'
     let threadKind = 'chat'
