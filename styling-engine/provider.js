@@ -1135,8 +1135,8 @@ export function withMovingCacheBreakpoint(messages = []) {
   return cleaned
 }
 
-export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
-  const { text } = await askStylistWithUsage({ system, messages, maxTokens })
+export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, providerOverride = null }) {
+  const { text } = await askStylistWithUsage({ system, messages, maxTokens, providerOverride })
   return text
 }
 

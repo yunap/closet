@@ -1854,7 +1854,8 @@ export async function generateOutfitsForPieceInternal({
         mission,
         mood,
         question,
-        memoryText
+        memoryText,
+        providerOverride
       }), 20000, 'Selected-piece visual critic')
       if (visualReview?.rankedCandidates?.length) {
         rankedCandidates = visualReview.rankedCandidates
@@ -1879,7 +1880,8 @@ export async function generateOutfitsForPieceInternal({
       history,
       activity,
       occasionProfile,
-      activityProfile
+      activityProfile,
+      providerOverride
     })
   }
 
