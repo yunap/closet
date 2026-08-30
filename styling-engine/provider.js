@@ -685,11 +685,11 @@ function assertGeminiInteractionUsable(interaction, { model }) {
 // previously swallowed silently (`fc.arguments || {}`), so a malformed call surfaced as a
 // confusing failure one iteration later — a `function_result` sent with `call_id: undefined` —
 // rather than where the bad data actually originated.
-function assertGeminiFunctionCallsUsable(functionCalls) {
-  const malformed = functionCalls.find(fc => !fc?.id || typeof fc.id !== 'string' || !fc?.name)
-  if (malformed) {
-    throw new Error(`Gemini returned a function_call step without a usable id/name (name: ${malformed?.name || 'unknown'}, id: ${malformed?.id ?? 'missing'}) — refusing to continue the tool loop with an unmatchable call.`)
-  }
+// Returns the first malformed call (or undefined) rather than throwing directly — the caller
+// needs usage computed and a failure logAiCall row written before it raises, the same as every
+// other failure path in this file, so the throw happens at the call site instead.
+function firstMalformedGeminiFunctionCall(functionCalls) {
+  return functionCalls.find(fc => !fc?.id || typeof fc.id !== 'string' || !fc?.name)
 }
 
 export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL, stopReason = null } = {}) {
@@ -1764,13 +1764,27 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
   const latencyMs = Date.now() - startedAt
   const steps = interaction.steps || []
   const functionCalls = steps.filter(s => s.type === 'function_call')
-  assertGeminiFunctionCallsUsable(functionCalls)
   const modelOutputs = steps.filter(s => s.type === 'model_output')
   const text = modelOutputs
     .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
     .join('\n\n')
     .trim() || String(interaction.output_text || '').trim()
   const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model, stopReason: geminiStopReasonFromStatus(interaction.status) })
+  // Checked here, after usage is computed, rather than at the try/catch above: this call already
+  // succeeded and cost real usage, so a malformed function_call step must still produce a logAiCall
+  // row (success: false, with the usage this call actually spent) instead of vanishing from
+  // telemetry entirely — the earlier position threw before either log call could ever run.
+  const malformedCall = firstMalformedGeminiFunctionCall(functionCalls)
+  if (malformedCall) {
+    await logAiCall({
+      provider: 'gemini', model, callKind, usage, success: false,
+      errorMessage: `Gemini function_call step missing a usable id/name (name: ${malformedCall?.name || 'unknown'}, id: ${malformedCall?.id ?? 'missing'})`,
+      latencyMs, isMock: false,
+    })
+    const err = new Error(`Gemini returned a function_call step without a usable id/name (name: ${malformedCall?.name || 'unknown'}, id: ${malformedCall?.id ?? 'missing'}) — refusing to continue the tool loop with an unmatchable call.`)
+    err.usage = usage
+    throw err
+  }
   if (GEMINI_DEBUG) {
     // Full breakdown the SQL columns don't carry (item 4 of the latency diagnosis): thought vs
     // tool-use vs plain output tokens, and cache/input split by modality (text vs image) — the
@@ -1792,11 +1806,15 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     toolNames: functionCalls.map(fc => fc.name).filter(Boolean).join(','),
     context: geminiModalityContext(interaction),
   })
-  // Presence of function_call steps, not interaction.status === 'requires_action', is the real
-  // signal — @google/genai's own InteractionStatus enum marks REQUIRES_ACTION deprecated in favor
-  // of IDLE, so gating on that exact string risked silently dropping real tool calls returned
-  // under a different status.
-  const hasToolCalls = functionCalls.length > 0
+  // Restored to match the documented contract (2026-08-30 review correction): the earlier version
+  // of this line dropped the status check on the mistaken belief that 'requires_action' was
+  // deprecated. That deprecation belongs to a DIFFERENT, unrelated uppercase `InteractionStatus`
+  // enum (Live API sessions); the Interactions API's actual `Interaction.status` field is typed as
+  // the separate `InteractionStatus_2` string union, where 'requires_action' is the current,
+  // non-deprecated value Google's own function-call example returns. function_call steps under any
+  // other status (e.g. 'completed') would contradict that contract rather than represent a
+  // legitimate alternate shape, so gating on the status string here is correct, not a risk.
+  const hasToolCalls = interaction.status === 'requires_action' && functionCalls.length > 0
   // No tool calls and no text: previously read through as a legitimate blank final answer (there
   // was no Gemini equivalent of the OpenAI branch's `if (!message) ... noMessage: true` short
   // circuit above). Mirror that behavior instead of letting an empty reply reach the citation/
@@ -1932,6 +1950,23 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     }
 
     if (turn.noMessage) return { answer: '', savedCorrections }
+
+    // A token-capped turn can return partial prose or a tool call with truncated arguments —
+    // either would otherwise be treated as a normal, complete turn. This was previously
+    // unreachable for Gemini (stopReason was hardcoded null) and was already silently possible
+    // for every provider even when the signal was available, since nothing in this loop consulted
+    // it. One retry, same shape as applyFreeformOutputChecks's other clauses: discard the
+    // truncated turn without executing/shipping it and ask for a shorter, complete one.
+    if (turn.usage?.stopReason === 'max_tokens' && !retriedChecks.has('providerTruncation')) {
+      retriedChecks.add('providerTruncation')
+      bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
+      toolContext._pendingFreeformRetryReason = 'providerTruncation'
+      currentMessages.push({
+        role: 'user',
+        content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
+      })
+      continue
+    }
 
     if (turn.hasToolCalls) {
       recordFreeformToolIteration(toolContext, turn.toolCalls.map(tc => tc.name))

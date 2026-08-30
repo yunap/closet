@@ -1541,7 +1541,7 @@ export async function makeComposedOutfitClashContactSheet(outfits = [], maxOutfi
   return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCount: shown.length }
 }
 
-export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '' } = {}) {
+export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '', providerOverride = null } = {}) {
   const reviewable = outfits.filter(outfit => (outfit.pieces || []).some(piece => piece.photo || piece.worn_photo))
   if (reviewable.length < 1) return null
 
@@ -1549,6 +1549,7 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
   const raw = await askStylist({
     system: prompts.WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM,
     maxTokens: 700,
+    providerOverride,
     messages: [{
       role: 'user',
       content: [

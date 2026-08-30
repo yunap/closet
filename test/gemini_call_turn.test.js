@@ -22,6 +22,11 @@ process.env.GEMINI_API_KEY = 'test-key'
 
 const { GoogleGenAI } = await import('@google/genai')
 const { callGeminiTurn } = await import('../styling-engine/provider.js')
+const { db } = await import('../db.js')
+
+function lastAiCallLogRow() {
+  return db.prepare('SELECT * FROM ai_call_log ORDER BY id DESC LIMIT 1').get()
+}
 
 // Queue of fake `interactions.create` responses/behaviors, consumed one per call. Each entry is
 // either a plain object (returned as the resolved interaction) or a function of the request.
@@ -110,18 +115,30 @@ test('narration alongside tool calls is preserved as text, not discarded', async
   assert.equal(result.toolCalls.length, 1)
 })
 
-test('hasToolCalls is driven by function_call presence, not the deprecated requires_action status string', async () => {
-  // @google/genai's own InteractionStatus enum marks REQUIRES_ACTION deprecated (use IDLE) — a
-  // real response could carry function_call steps under a different status string. Gating on the
-  // exact 'requires_action' value would silently drop these real tool calls.
+test('hasToolCalls requires status requires_action, matching the documented contract', async () => {
   queueGeminiResponse({
-    id: 'interaction_4', status: 'completed',
+    id: 'interaction_4', status: 'requires_action',
     steps: [{ type: 'function_call', id: 'call_d', name: 'declare_intent', arguments: { want: 'cards' } }],
     usage: { total_tokens: 8, total_input_tokens: 6, total_output_tokens: 2 },
   })
   const result = await callGeminiTurn(baseArgs({ tools: [{ name: 'declare_intent' }] }))
   assert.equal(result.hasToolCalls, true)
   assert.equal(result.toolCalls[0].id, 'call_d')
+})
+
+test('a function_call step under a status other than requires_action (a contract violation) does not trigger hasToolCalls', async () => {
+  // Interaction.status is typed as InteractionStatus_2 ("in_progress" | "requires_action" |
+  // "completed" | "failed" | "cancelled" | "incomplete" | "budget_exceeded" | "queued"), where
+  // 'requires_action' — not deprecated — is the value Google's own function-call example returns.
+  // A function_call step under 'completed' would contradict that contract; this documents the
+  // current (conservative) behavior rather than treating it as a legitimate alternate shape.
+  queueGeminiResponse({
+    id: 'interaction_4b', status: 'completed',
+    steps: [{ type: 'function_call', id: 'call_d2', name: 'declare_intent', arguments: {} }],
+    usage: { total_tokens: 8, total_input_tokens: 6, total_output_tokens: 2 },
+  })
+  const result = await callGeminiTurn(baseArgs({ tools: [{ name: 'declare_intent' }] }))
+  assert.equal(result.hasToolCalls, false)
 })
 
 test('an empty response (no tool calls, no text) short-circuits as noMessage, mirroring the OpenAI branch', async () => {
@@ -159,7 +176,7 @@ test('a cancelled interaction status throws', async () => {
   await assert.rejects(() => callGeminiTurn(baseArgs()), /cancelled/i)
 })
 
-test('a malformed function_call step (missing id) throws at its origin rather than propagating undefined', async () => {
+test('a malformed function_call step (missing id) throws at its origin rather than propagating undefined, and is still logged to ai_call_log as a failure', async () => {
   queueGeminiResponse({
     id: 'interaction_8', status: 'requires_action',
     steps: [{ type: 'function_call', name: 'search_wardrobe', arguments: {} }],
@@ -169,6 +186,13 @@ test('a malformed function_call step (missing id) throws at its origin rather th
     () => callGeminiTurn(baseArgs({ tools: [{ name: 'search_wardrobe' }] })),
     /without a usable id\/name/
   )
+  // This call reached a real (mocked) API response and spent real usage before the malformed
+  // step was discovered — it must not vanish from telemetry entirely just because it errored.
+  const row = lastAiCallLogRow()
+  assert.equal(row.provider, 'gemini')
+  assert.equal(row.success, 0)
+  assert.match(row.error_message, /missing a usable id\/name/)
+  assert.equal(row.input_tokens, 5)
 })
 
 test('a malformed function_call step (missing name) also throws', async () => {

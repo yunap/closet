@@ -4798,7 +4798,9 @@ router.post('/ask', async (req, res) => {
           clearRecentlyDiscussedPieceIds(req.body.sessionId)
           return res.json({
             answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
-            savedCorrections: [], renderedBoards: [], provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+            savedCorrections: [], renderedBoards: [],
+            provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+            model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
             structuredOutfits: [], structuredOutfitsSource: null,
             structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
             structuredOutfitsMood: null, structuredOutfitsMission: null,
@@ -4882,7 +4884,9 @@ router.post('/ask', async (req, res) => {
               clearRecentlyDiscussedPieceIds(req.body.sessionId)
               return res.json({
                 answer: stripPieceIdCitations(answerCall.text),
-                savedCorrections: [], renderedBoards: [], provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+                savedCorrections: [], renderedBoards: [],
+                provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+                model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
                 structuredOutfits: [], structuredOutfitsSource: null,
                 structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
                 structuredOutfitsMood: null, structuredOutfitsMission: null,
@@ -4924,6 +4928,7 @@ router.post('/ask', async (req, res) => {
               savedCorrections: [],
               renderedBoards: [],
               provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+              model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
               structuredOutfits: toolContext.generatedOutfits,
               structuredOutfitsSource: toolContext.source,
               structuredOutfitsOccasion: toolContext.occasion,
