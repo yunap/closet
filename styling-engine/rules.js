@@ -4630,6 +4630,22 @@ export function exposesComposerDeliberation(text = '') {
   return false
 }
 
+// docs/freeform-batched-discovery-spec.md's inherited acceptance case 7 ("final prose exposes no
+// machinery") was enforced only against bare (ID n) citations — a model that instead writes its
+// own tool-call-shaped JSON straight into the answer as a fenced code block sailed through
+// untouched, because a JSON key like "id": 70 doesn't match the ID-citation regex at all. Live case
+// (thread_1788053088737): the model called propose_outfit correctly, then also dumped the same
+// payload as ```outfit fenced JSON in its free-text reply — nothing strips or renders that
+// specially, so it would have shown as literal JSON in the chat. A card the model already delivered
+// via a real tool call never needs to be restated as raw data for the reader; any fenced block whose
+// content looks like JSON is machinery, full stop, regardless of the language tag on the fence.
+export function exposesRawStructuredPayload(text = '') {
+  const value = String(text || '')
+  const fenceMatch = value.match(/```[\w-]*\n([\s\S]*?)```/)
+  if (fenceMatch && /^\s*[{[]/.test(fenceMatch[1])) return true
+  return false
+}
+
 export function sanitizeWholeWardrobeOutfitProse(outfit = {}) {
   const finalIds = new Set((outfit?.pieceIds || []).map(Number).filter(Number.isFinite))
   const proseFields = ['reason', 'watchFor', 'stylingInstructions']

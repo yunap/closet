@@ -528,6 +528,30 @@ test('an accepted card has authority over the closing prose that comments on it'
   assert.equal(counted.freeformDiagnostics.closingProseWithheld, 1)
 })
 
+// Live case (thread_1788053088737): propose_outfit succeeded via the real tool call, and the model
+// ALSO dumped the same payload as a ```outfit fenced JSON block in its free-text closing answer.
+// Nothing renders that fence specially, so it would have shown as literal JSON in the chat. The
+// existing ID-citation check does not catch this: `"id": 70` does not match the (ID n) citation
+// regex at all.
+test('a fenced raw-JSON payload in the closing prose is withheld like any other exposed machinery', () => {
+  const ctx = () => ({
+    generatedOutfits: [{ label: 'Rainy Commute', pieceIds: [70, 191, 996763], pieces: [{ id: 70 }, { id: 191 }, { id: 996763 }] }],
+    freeformDiagnostics: {},
+  })
+  const good = 'Layer the blouse under the raincoat with the ankle boots for wet pavements.'
+  const leaked = `Here is the outfit proposal for your rainy commute:\n\n${good}\n\n\`\`\`outfit\n{\n "label": "Rainy Commute Trench Look",\n "pieces": [{"id": 70, "role": "primary_top"}]\n}\n\`\`\``
+  const result = applyAcceptedCardAuthority(leaked, ctx())
+  assert.ok(!result.includes('```'), 'the fenced JSON block must never reach the reader')
+  assert.ok(!result.includes('"role"'), 'raw JSON keys must never reach the reader')
+  assert.ok(result.includes(good), 'the legitimate styling paragraph survives alongside the intro')
+
+  // A fenced block that is NOT JSON (a real markdown code example, however unlikely in this domain)
+  // must not be caught by the same net -- the rule is specifically about raw structured data, not
+  // fences in general.
+  const notJson = `${good}\n\n\`\`\`\nHold the collar flat, tuck once.\n\`\`\``
+  assert.equal(applyAcceptedCardAuthority(notJson, ctx()), notJson)
+})
+
 test('the deliberation vocabulary does not eat legitimate styling instructions', async () => {
   // This predicate also gates the card's own styling_instructions, so a loose term deletes advice
   // rather than leaking a sentence. "instead of the" and "rejected" were drafted into it and pulled
