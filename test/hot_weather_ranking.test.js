@@ -157,6 +157,69 @@ test('an explicit heat word still wins over a cool qualifier: "hot days, cool ev
   assert.equal(profile.isCold, false)
 })
 
+// --- Cold severity tier (thread_1788050815289) --------------------------
+// "chilly" drove identical downstream behavior to "freezing" — a whole-wardrobe
+// composer surfaced a long leather coat as the top-ranked outerwear pick for a
+// merely-chilly dinner. isCold itself keeps its existing (minimum-warmth)
+// meaning and the "cool coastal summer"/"summer rain, cool mountain" fixtures
+// above are unaffected; isColdSevere is the new tier that lets a consumer tell
+// "chilly" apart from "freezing".
+
+test('a mild-cool word is cold but not severely cold: "chilly work dinner tonight" (thread_1788050815289)', () => {
+  const profile = weatherProfileFromContext({ season: 'chilly work dinner tonight' })
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, true)
+  assert.ok(!profile.isColdSevere, 'a bare "chilly" must not read as severe cold')
+})
+
+test('explicit hard-cold words are severely cold: "freezing cold morning"', () => {
+  const profile = weatherProfileFromContext({ season: 'freezing cold morning' })
+  assert.equal(profile.isCold, true)
+  assert.equal(profile.isColdSevere, true)
+})
+
+test('a sub-45F reading is severely cold', () => {
+  const profile = weatherProfileFromContext({ season: 'winter, 30F' })
+  assert.equal(profile.isCold, true)
+  assert.equal(profile.isColdSevere, true)
+})
+
+test('a bare cool signal alone (no hard-cold word) stays mild, not severe: "cool coastal summer" (Point Reyes fixture, unaffected)', () => {
+  const profile = weatherProfileFromContext({ season: 'cool coastal summer' })
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, true)
+  assert.ok(!profile.isColdSevere)
+})
+
+test('composer scoring: the heavy-fabric bonus that surfaced a leather coat requires severe cold, not merely chilly (thread_1788050815289)', () => {
+  const heavyCoat = {
+    id: 7201, name: 'long leather coat', category: 'outerwear', photo: 'img.jpg',
+    fabric_weight: 'heavy', occasions: '["casual"]', formality: 'everyday'
+  }
+  const mediumJacket = {
+    id: 7202, name: 'medium wool jacket', category: 'outerwear', photo: 'img.jpg',
+    fabric_weight: 'medium', occasions: '["casual"]', formality: 'everyday'
+  }
+  const chilly = weatherProfileFromContext({ season: 'chilly work dinner tonight' })
+  const severe = weatherProfileFromContext({ season: 'freezing cold morning' })
+  assert.ok(!chilly.isColdSevere && chilly.isCold)
+  assert.ok(severe.isColdSevere)
+
+  const chillyRes = buildVisualComposerRoster([heavyCoat, mediumJacket], {
+    occasion: 'casual', weatherProfile: chilly, includeAccessories: true
+  })
+  const severeRes = buildVisualComposerRoster([heavyCoat, mediumJacket], {
+    occasion: 'casual', weatherProfile: severe, includeAccessories: true
+  })
+
+  const chillyCoatReasons = chillyRes.debug.relevanceAdjustments?.[heavyCoat.id] || []
+  const severeCoatReasons = severeRes.debug.relevanceAdjustments?.[heavyCoat.id] || []
+  assert.ok(!chillyCoatReasons.includes('cold weather: heavy fabric (+10)'),
+    'a merely-chilly evening must not give the heaviest coat the max-warmth bonus')
+  assert.ok(severeCoatReasons.includes('cold weather: heavy fabric (+10)'),
+    'severe cold still rewards the heavy coat')
+})
+
 test('gate metadata helpers use structured fields without text guessing', () => {
   assert.equal(pieceFabricWeight({ fabric_weight: 'ultralight' }), 'light')
 

@@ -2907,9 +2907,15 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const forecastTemperature = Number.isFinite(Number(resolvedWeather.highF))
             ? `forecast high ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? `, low ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
             : ''
+          // Cold gets the same 3-tier treatment as heat (isExtremeHeat) rather than
+          // collapsing "chilly" and "freezing" into one "cold weather" label that
+          // primes the model toward the heaviest owned piece — see
+          // docs/cold-severity-spec.md.
           const physicalWeather = resolvedWeather.isExtremeHeat
             ? 'extreme hot weather'
-            : (resolvedWeather.isHot ? 'hot weather' : (resolvedWeather.isCold ? 'cold weather' : 'mild weather'))
+            : (resolvedWeather.isHot ? 'hot weather'
+              : (resolvedWeather.isColdSevere ? 'cold weather'
+                : (resolvedWeather.isCold ? 'cool weather' : 'mild weather')))
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
             : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
