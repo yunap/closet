@@ -83,10 +83,17 @@ export function isStyleSelectedQuestion(question = '') {
 // is demoted, which is the same asymmetry this function already applies to
 // cool signals.
 //
-// Cold is deliberately untouched. The measured defect is on the hot side, and
-// a winter capsule's covered-base and transition-layer post-conditions depend
-// on cold gating behaving as it does; changing both directions at once without
-// evidence for the second would be guesswork.
+// Cold's binary isCold gate (kept below, unchanged) stays deliberate — a
+// winter capsule's covered-base and transition-layer post-conditions depend
+// on cold gating behaving as it does. What's added below is a severity tier,
+// not a change to when isCold itself fires: see docs/cold-severity-spec.md.
+// Live thread_1788050815289 showed "chilly work dinner tonight" driving
+// identical downstream behavior to "freezing" — the whole-wardrobe composer's
+// scoring gave a flat +10 bonus to every heavy-fabric candidate and surfaced
+// a long leather coat as the top outerwear pick for a merely-cool evening.
+// isColdSevere lets a consumer that wants "how cold" rather than "some cold"
+// tell "chilly"/"cool"/"breezy" apart from "freezing"/"frigid"/"snow"/"winter"
+// or an actual sub-45°F reading, mirroring the existing isExtremeHeat tier.
 export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date(), seasonIsCalendarOnly = false } = {}) {
   if (String(season || '').trim().toLowerCase() === 'indoor') {
     return { isHot: false, isCold: false }
@@ -119,9 +126,13 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const extremeHeatSignal = hasExtremeHeatTemperature || /\b(extreme heat|100s|triple[- ]digit)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
   const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal && !seasonIsCalendarOnly)
-  const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
+  // "chilly" is deliberately NOT in this severe list — it's a mild-cool word
+  // (extractWeatherContext in stylingIntent.js already buckets it separately
+  // from cold/freezing/frigid/snow/winter) and only ever needs to reach
+  // isCold via hasCoolSignal below, not isColdSevere.
+  const hasSevereColdSignal = /\b(cold|freezing|frigid|snow|winter)\b/.test(text)
     || hasColdTemperature
-    || (hasCoolSignal && !strongHotSignal)
+  const explicitCold = hasSevereColdSignal || (hasCoolSignal && !strongHotSignal)
 
   // An explicit weather word/temperature always wins over the "current season" calendar guess below —
   // otherwise a stated "it'll be cold" during a warm month cancels itself out against the calendar
@@ -134,7 +145,8 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
       isCold: explicitCold && !explicitHot,
       isRainy: hasRainSignal,
       isWetExposure,
-      ...(explicitHot && extremeHeatSignal ? { isExtremeHeat: true } : {})
+      ...(explicitHot && extremeHeatSignal ? { isExtremeHeat: true } : {}),
+      ...(explicitCold && !explicitHot && hasSevereColdSignal ? { isColdSevere: true } : {})
     }
   }
 
@@ -3336,7 +3348,13 @@ export function buildVisualComposerRoster(allowedPieces = [], {
           pushAdjustmentReason(p.id, 'cold weather: lightweight fabric (-10)')
         }
       }
-      if (isHeavy) {
+      // The heavy-fabric bonus (unlike the lightweight penalty above) requires
+      // isColdSevere, not just isCold: mild cold ("chilly") is a minimum-warmth
+      // signal, not a mandate to rank the heaviest owned piece top — see
+      // docs/cold-severity-spec.md (thread_1788050815289: a merely-chilly
+      // dinner surfaced a long leather coat as the top-ranked outerwear pick
+      // via this exact bonus).
+      if (isHeavy && weatherProfile.isColdSevere) {
         weatherBonus += 10
         pushAdjustmentReason(p.id, 'cold weather: heavy fabric (+10)')
       }
