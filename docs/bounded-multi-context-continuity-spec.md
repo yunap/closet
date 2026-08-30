@@ -1,7 +1,7 @@
 # Spec — a prose-only stylist answer leaves no continuity for the next turn
 
-**Status:** proposed, not implemented — revised twice after external review (see §8 for what changed
-and why, across both rounds). The design now differs from the first draft in four ways: the
+**Status:** implemented (§9) — revised twice after external review before implementation (see §8 for
+what changed and why, across both rounds). The design differs from the first draft in four ways: the
 persisted field holds pieces actually *discussed* in the answer, not raw search candidates; the
 router is informed rather than deterministically gated; the soft-anchor bias into `bounded_multi`
 (originally §5.4) is dropped; and the persisted IDs are explicitly routed to `full_stylist` as
@@ -375,3 +375,62 @@ and ambiguous in one smaller way:
   section's write before the turn ends.
 
 No further open questions from this round.
+
+## 9. Implementation
+
+Implemented as designed, plus one correctness gap found only while writing the code — the design
+docs above didn't need to know about it, but the implementation would have been silently broken
+without it.
+
+**The gap: `buildStylistConversationPayload` only loaded `restoredState` at all when
+`requestedConversationMode !== 'new_request'`** ([styling-engine/core.js:4277](../styling-engine/core.js#L4277),
+pre-existing code). That guard exists to keep a genuinely-fresh request from inheriting stale
+`established`/`current_outfit_set` context — correct for those two fields. But it meant `restoredState`
+itself was an empty `{}` on any `new_request`-labeled turn, so §5.2's read of
+`restoredState.recently_discussed_piece_ids` would never fire on exactly the turns this spec exists
+to fix — a `new_request`-mislabeled continuation is the incident's own root cause (§2.2). Fixed by
+loading `restoredState` unconditionally, while keeping every *existing* consumer's own gate
+unchanged: `active_outfit`/`active_piece_ids` restoration and `current_outfit_set` restoration both
+kept their original `requestedConversationMode !== 'new_request'` checks explicitly (one of them,
+`restoredEstablished`, previously relied implicitly on the outer `{}` rather than checking the mode
+itself, so it needed an explicit guard added rather than removed). Only
+`recently_discussed_piece_ids` reads unconditionally, consistent with its own designed semantic — a
+read-only hint the model judges relevance of, not a restore-or-drop context switch. A regression
+test (`test/bounded_multi_context_continuity.test.js`) asserts `established`/`current_outfit_set`
+still do not leak on a `new_request` turn while `recently_discussed_pieces` does surface.
+
+**What was built, mapped to the design:**
+
+- `recentlyDiscussedPieceIdsFromAnswer(answerText, toolContext, { cap })` ([routes/ai.js](../routes/ai.js))
+  — new, exported, directly unit-tested helper implementing §5.1's `citedIds ∩ (retrieved ∪ known)`,
+  capped at `RECENTLY_DISCUSSED_PIECE_CAP` (16). Extracted into a named function (matching the
+  existing `boundedConversationStateFromToolContext` precedent) rather than left inline, so it is
+  testable without the HTTP layer.
+- The `full_stylist` answer branch now reads the session's current persisted state, spreads it, and
+  overlays `recently_discussed_piece_ids` — never a from-scratch save — per §5.1's "must layer onto,
+  not replace" requirement, since `saveStylistConversationState` has no partial merge.
+- The router's `contextSummary` (§5.4) gained one more clause, read from the same persisted state,
+  sourced before the router call: *"previous answer discussed N specific verified wardrobe
+  piece(s)"* / *"no recently discussed wardrobe pieces"*.
+- `buildStylistConversationPayload`'s `threadState` gained `recently_discussed_pieces` (§5.2),
+  populated only when non-empty, plus one instruction sentence requiring `view_pieces` before use —
+  never merged into `current_outfit_set`, never marked retrieved/seen.
+- `compactFreeformContext`/`compactContext.pieceIds` (§5.3) — untouched, as designed.
+- `bounded_multi`'s own writer (`boundedConversationStateFromToolContext`) — untouched, as designed;
+  it already implicitly clears the field per §5.1's replace semantics.
+
+**Acceptance criteria (§7) — coverage status:** unit-tested directly: the persisted-set computation
+(cited-and-verified vs. raw-retrieved, cap enforcement, empty-answer case) and
+`buildStylistConversationPayload`'s continuation-context surfacing (both the positive case and the
+`new_request` regression guard). **Not yet covered:** a full live-shaped integration test driving
+`/api/ai/ask` through the actual router classification for both Acceptance Criterion 1 (continuation
+→ `full_stylist` → `view_pieces` re-verification → composition) and Criterion 2 (unrelated pivot →
+`bounded_multi` remains reachable and unbiased) — the existing mock-AI test harness
+(`test/aiEndpointContracts.test.js`) supports this but has no router-dispatch mock branch yet to
+build on. Worth adding before this is considered fully verified against its own acceptance criteria,
+not just its component logic.
+
+**Tests:** `test/bounded_multi_context_continuity.test.js` (7 new), plus the full existing suite
+re-run clean (one pre-existing, unrelated failure in `test/accountSettingsLayout.test.js`, confirmed
+present with these changes reverted — not caused by this work).
+

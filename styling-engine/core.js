@@ -4274,15 +4274,26 @@ export async function buildStylistConversationPayload(body) {
   // Structured thread state: on follow-up turns, restore established context and
   // the current outfit set from the server-side session state so the thread
   // survives the client omitting fields. Body values always win; state fills gaps.
-  let restoredState = {}
+  //
+  // docs/bounded-multi-context-continuity-spec.md §5.2: the read itself must not be gated on
+  // requestedConversationMode. That client-supplied label is exactly what this spec's incident
+  // showed can be wrong ("yes, do it" arriving labeled new_request) — gating the read the same
+  // way would mean the continuation-context block below never reaches the prompt on precisely the
+  // turns it exists to help. active_outfit/active_piece_ids and established/current_outfit_set
+  // restoration keep their existing new_request gate unchanged below; only
+  // recently_discussed_piece_ids is read unconditionally, since its own design is a read-only
+  // hint the model judges relevance of, not a restore-or-drop context switch.
+  const restoredState = getStylistConversationState(sessionId) || {}
   if (requestedConversationMode !== 'new_request') {
-    restoredState = getStylistConversationState(sessionId) || {}
     if (!activeOutfit && restoredState.active_outfit) {
       activeOutfit = restoredState.active_outfit
       activePieceIds = restoredState.active_piece_ids
     }
   }
-  const restoredEstablished = restoredState.established && typeof restoredState.established === 'object'
+  // Explicitly gated here now that restoredState itself is read unconditionally (see above) —
+  // preserves the exact prior behavior: a new_request turn never inherits established context.
+  const restoredEstablished = requestedConversationMode !== 'new_request' &&
+    restoredState.established && typeof restoredState.established === 'object'
     ? restoredState.established
     : {}
   const restoredWeatherProfile = requestedConversationMode !== 'new_request'
@@ -4498,6 +4509,15 @@ export async function buildStylistConversationPayload(body) {
       }
     } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+    // docs/bounded-multi-context-continuity-spec.md §5.2. Continuation context ONLY — pieces the
+    // immediately preceding accepted answer discussed, not verified this turn. Deliberately a
+    // separate key from current_outfit_set (which IS this turn's verified truth for outfit cards)
+    // and never folded into it. The prompt instruction below (and the tool-loop's own verification
+    // contract) requires view_pieces on these before they may be cited or composed from.
+    ...(Array.isArray(restoredState.recently_discussed_piece_ids?.piece_ids) &&
+        restoredState.recently_discussed_piece_ids.piece_ids.length
+      ? { recently_discussed_pieces: { piece_ids: restoredState.recently_discussed_piece_ids.piece_ids } }
+      : {}),
   }
 
   // Persist the full turn state (overwrites the previous turn: body values won,
@@ -4694,6 +4714,9 @@ export async function buildStylistConversationPayload(body) {
     JSON.stringify(threadState, null, 1),
     'THREAD STATE is the single source of truth for established styling context and the current outfit set. Reuse its values for follow-ups unless the user changes them; when it conflicts with older prose context, THREAD STATE wins. When the user references outfits by position ("the first one", "#2"), resolve against current_outfit_set. For a one-slot variant request against a current outfit, prefer suggest_slot_swaps so the alternatives stay tied to the existing card instead of restarting full outfit composition.',
     'CURRENT-SET AUTHORITY: current_outfit_set is the default referent for unqualified discussion ("these outfits", "the second one", "add a layer", "which works best?") — always reason from it, not from an earlier turn\'s conversational framing. Earlier outfit sets and critiques of them are historical context, discussable only when the user explicitly refers back (see HISTORICAL OUTFIT SETS below if supplied this turn). A critique or rejection recorded against an earlier set — "these don\'t work," "too elevated," any objection — must NOT be applied to current_outfit_set unless the user states or repeats that same critique about the current set now. Regenerating the set resolves the earlier objection; do not re-litigate it from memory of the prior turn.',
+    threadState.recently_discussed_pieces
+      ? 'RECENTLY DISCUSSED PIECES: threadState.recently_discussed_pieces lists pieces the immediately preceding answer discussed. These are CONTINUATION SUBJECTS ONLY — they have not been verified this turn. If the user is continuing that discussion (e.g. "yes, put those together", "make outfits from those"), call view_pieces on them before composing or citing them; do not cite or compose from them until they have been re-verified this turn this way. Do not assume they are still relevant if the user has moved on to something unrelated.'
+      : '',
     '',
     historicalOutfitContextText,
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',

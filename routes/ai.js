@@ -29,7 +29,8 @@ import {
   ACTIVE_STYLIST_MODEL,
   ANTHROPIC_MODEL,
   ANTHROPIC_TAGGER_MODEL,
-  describeAiError
+  describeAiError,
+  extractPieceIdsFromProse
 } from '../styling-engine/provider.js'
 
 import {
@@ -65,7 +66,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -695,6 +696,23 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
   } catch (err) {
     console.warn('Failed to persist freeform generation run:', err.message)
   }
+}
+
+// docs/bounded-multi-context-continuity-spec.md §5.1. A safety bound, not a selection rule — the
+// set it caps (cited AND verified this turn) is already precise, unlike a raw retrieval dump.
+const RECENTLY_DISCUSSED_PIECE_CAP = 16
+
+// docs/bounded-multi-context-continuity-spec.md §5.1/§4. The pieces a full_stylist answer actually
+// discussed — cited in its own prose AND verified this turn (search_wardrobe/view_pieces/
+// get_garment_details/suggest_slot_swaps, via the same verifiedPieceIdSets applyFreeformOutputChecks's
+// truth clause already checks citations against) — not every candidate a retrieval tool happened to
+// surface. A search can broaden past what the prose ever mentions; persisting the raw retrieval set
+// would let the next turn "continue" with pieces the user never actually saw discussed.
+export function recentlyDiscussedPieceIdsFromAnswer(answerText, toolContext = {}, { cap = RECENTLY_DISCUSSED_PIECE_CAP } = {}) {
+  const { retrieved, known } = verifiedPieceIdSets(toolContext)
+  const citedIds = extractPieceIdsFromProse(answerText)
+  const discussedIds = citedIds.filter(id => retrieved.has(id) || known.has(id))
+  return discussedIds.slice(0, cap)
 }
 
 export function boundedConversationStateFromToolContext(toolContext = {}) {
@@ -4627,6 +4645,15 @@ router.post('/ask', async (req, res) => {
       toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
+    // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
+    // full_stylist answer actually discussed (cited in prose AND verified that turn) — not raw
+    // search candidates. Read-only here: informs the router's contextSummary (§5.4) and, if the
+    // turn falls through to full_stylist, buildStylistConversationPayload's continuation-context
+    // block (§5.2). Never merged into compactContext.pieceIds (§5.3) and never treated as verified
+    // this turn on its own — the model must call view_pieces before composing from it.
+    const recentlyDiscussedPieceIds = Array.isArray(compactState.recently_discussed_piece_ids?.piece_ids)
+      ? compactState.recently_discussed_piece_ids.piece_ids
+      : []
     const activePieceIdentities = db.prepare("SELECT id, name, photo, worn_photo FROM pieces WHERE status = 'active'").all()
     const exactNamedPieceIds = exactNamedPieceIdsFromQuestion(currentQuestion, activePieceIdentities)
     // A garment cited as "ID 127" never has a name for exactNamedPieceIdsFromQuestion to find, and
@@ -4679,7 +4706,13 @@ router.post('/ask', async (req, res) => {
             compactContext.outfits.length ? `verified current outfit set: ${compactContext.outfits.length} card(s)` : 'no current outfit set',
             compactContext.pieceIds.length ? `${exactNamedPieceIds.length ? 'exact active garment name resolved' : 'verified garment subjects available'}: ${compactContext.pieceIds.length}` : 'no verified garment subject',
             compactSavedPhotoCount ? `saved garment photographs available: ${compactSavedPhotoCount} resolved subject(s)` : 'no saved garment photographs for resolved subjects',
-            req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : ''
+            req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : '',
+            // docs/bounded-multi-context-continuity-spec.md §5.4. An informational hint only — the
+            // router still judges continuation-vs-fresh-request itself; this never gates which
+            // profile is reachable. Populated by the full_stylist end-of-turn write below.
+            recentlyDiscussedPieceIds.length
+              ? `previous answer discussed ${recentlyDiscussedPieceIds.length} specific verified wardrobe piece(s)`
+              : 'no recently discussed wardrobe pieces'
           ].filter(Boolean).join('; '),
           // Just the immediately preceding turn (docs/deferred-conversational-cache-spec.md's sibling
           // finding: the router was classifying purely from an isolated sentence, so a reply that only
@@ -4896,6 +4929,24 @@ router.post('/ask', async (req, res) => {
     const allSaved = [...(savedCorrections || [])]
     if (payload.automaticallySavedCorrection) {
       allSaved.push(payload.automaticallySavedCorrection)
+    }
+
+    // docs/bounded-multi-context-continuity-spec.md §5.1. Always written explicitly (including
+    // empty) so a stale value from an earlier turn cannot linger — this field reflects only the
+    // immediately preceding accepted answer, never a growing memory. Reads the state fresh rather
+    // than reconstructing it, so this write layers onto whatever
+    // buildStylistConversationPayload's own earlier-in-this-turn save already set
+    // (established/current_outfit_set/weather_profile) instead of replacing it — the whole-blob
+    // store has no partial merge, so overwriting from scratch here would silently drop those.
+    {
+      const priorConversationState = getStylistConversationState(req.body.sessionId || 'default') || {}
+      saveStylistConversationState({
+        ...priorConversationState,
+        recently_discussed_piece_ids: {
+          piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
+          turn_token: freeformTurnToken
+        }
+      }, req.body.sessionId || 'default')
     }
 
     const isTravel = isTravelOrPackingRequest(req.body.question || '', req.body.occasion || '')
