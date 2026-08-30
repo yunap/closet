@@ -8,7 +8,7 @@ import { GoogleGenAI } from '@google/genai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
 import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
-import { unexplainedLayeredTops, exposesComposerDeliberation } from './rules.js'
+import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructuredPayload } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
@@ -327,6 +327,7 @@ export function applyAcceptedCardAuthority(answerText = '', toolContext = {}) {
   const withheld = []
   const kept = paragraphs.filter(part => {
     if (exposesComposerDeliberation(part)) { withheld.push('deliberation'); return false }
+    if (exposesRawStructuredPayload(part)) { withheld.push('raw_payload'); return false }
     const outside = extractPieceIdsFromProse(part).filter(id => !acceptedIds.has(Number(id)))
     if (outside.length) { withheld.push(`ids:${outside.join(',')}`); return false }
     return true
