@@ -5349,7 +5349,12 @@ export default function StylistChat({
         if (!outfitPieceIds.length) {
           throw new Error('Generated outfit context is missing linked pieces. Re-evaluate the outfit card and try again.')
         }
-        const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        // overrides.forceNewRequest: a "Retry with Sonnet"/error-retry resend must not inherit
+        // whatever thread memory the attempt being retried already set — a card-producing failed
+        // attempt otherwise makes the identical retried question read as a followup instead of the
+        // fresh question it actually is (found live: the retry answered "Confirmed — the taupe
+        // suede boots are real..." instead of redoing the original discovery question).
+        const conversationMode = overrides.forceNewRequest ? 'new_request' : classifyChatTurn(q, { hasThreadMemory: true })
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5423,7 +5428,12 @@ export default function StylistChat({
         const memoryText = threadMemory?.type === 'outfit' && String(threadMemory.id) === String(activeOutfit.id)
           ? threadMemory.latestEvaluationText
           : ''
-        const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        // overrides.forceNewRequest: a "Retry with Sonnet"/error-retry resend must not inherit
+        // whatever thread memory the attempt being retried already set — a card-producing failed
+        // attempt otherwise makes the identical retried question read as a followup instead of the
+        // fresh question it actually is (found live: the retry answered "Confirmed — the taupe
+        // suede boots are real..." instead of redoing the original discovery question).
+        const conversationMode = overrides.forceNewRequest ? 'new_request' : classifyChatTurn(q, { hasThreadMemory: true })
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5496,14 +5506,23 @@ export default function StylistChat({
         }
 
       } else {
-        const generatedContext = threadMemory?.type === 'generated_outfits'
+        // forceNewRequest suppresses the SAME fields conversationMode:'new_request' alone cannot
+        // reach: generatedContext/generatedOutfits/threadContext echo the retried-away attempt's
+        // own cards straight through the request body, and the server's current_outfit_set
+        // restoration prefers a body value over conversationMode gating unconditionally
+        // (buildStylistConversationPayload, styling-engine/core.js) — so conversationMode alone
+        // would have fixed nothing here. activeContext is included for the same reason: a card
+        // clicked into focus by the failed attempt must not carry into a "start over" retry either.
+        const generatedContext = (!overrides.forceNewRequest && threadMemory?.type === 'generated_outfits')
           ? threadMemory.latestContextText
           : ''
-        const generatedOutfits = threadMemory?.type === 'generated_outfits'
+        const generatedOutfits = (!overrides.forceNewRequest && threadMemory?.type === 'generated_outfits')
           ? threadMemory.latestOutfits || []
           : []
-        const conversationMode = classifyChatTurn(q, { hasThreadMemory: Boolean(threadMemory || activeContext) })
-        const threadContext = compactThreadContext(threadMemory, activeContext)
+        // See the forceNewRequest comment on the other two conversationMode sites above — same reasoning.
+        const conversationMode = overrides.forceNewRequest ? 'new_request' : classifyChatTurn(q, { hasThreadMemory: Boolean(threadMemory || activeContext) })
+        const effectiveActiveContext = overrides.forceNewRequest ? null : activeContext
+        const threadContext = overrides.forceNewRequest ? '' : compactThreadContext(threadMemory, effectiveActiveContext)
         // An uploaded outfit photo has no linked pieces and no activeContext/threadMemory of its
         // own (see the fileToSend branch above), so a follow-up question about it lands here with
         // no way to see the photo again unless we hand it back explicitly. Most recent upload in
@@ -5521,10 +5540,10 @@ export default function StylistChat({
             generatedOutfits,
             conversationMode,
             threadContext,
-            activeContext,
+            activeContext: effectiveActiveContext,
             uploadedPhoto: latestUploadedPhoto,
             ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
-            ...stylingContextFromMemory(threadMemory, activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity),
+            ...(overrides.forceNewRequest ? {} : stylingContextFromMemory(threadMemory, effectiveActiveContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity)),
             ...currentChatDateContext(),
           })
         })
@@ -6204,7 +6223,7 @@ export default function StylistChat({
                       {m.retryInput && (
                         <button
                           type="button"
-                          onClick={() => send({ input: m.retryInput, providerOverride: 'sonnet' })}
+                          onClick={() => send({ input: m.retryInput, providerOverride: 'sonnet', forceNewRequest: true })}
                           style={{ fontSize: 12, padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(219, 68, 85, 0.35)', background: 'transparent', color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap' }}
                         >
                           Retry with Sonnet
@@ -6378,7 +6397,7 @@ export default function StylistChat({
                     return priorUserText ? (
                       <button
                         type="button"
-                        onClick={() => send({ input: priorUserText, providerOverride: 'sonnet' })}
+                        onClick={() => send({ input: priorUserText, providerOverride: 'sonnet', forceNewRequest: true })}
                         style={{ fontSize: 11, padding: '3px 8px', borderRadius: 8, border: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
                       >
                         Retry with Sonnet
