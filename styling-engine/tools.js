@@ -2957,6 +2957,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
             question: toolContext.question || '',
             activity: resolvedActivity,
             currentDate: stylingContext.date,
+            // Found live: this nested composer call ran on Anthropic even under
+            // STYLIST_PROVIDER_OVERRIDE=gemini, since neither this call site nor the function
+            // itself forwarded any provider override — a real gap, not deliberate pinning.
+            providerOverride: toolContext.providerOverride || null,
           })
         } else {
           toolContext.source = 'whole_wardrobe'
@@ -2971,7 +2975,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activity: resolvedActivity,
             resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
-            adaptiveVisualDetail: boundedMultiLook
+            adaptiveVisualDetail: boundedMultiLook,
+            // Same reasoning as the selected-piece branch above — this is the exact call site
+            // implicated in the live $0.122-inside-a-"Gemini"-turn finding.
+            providerOverride: toolContext.providerOverride || null,
           })
         }
         
