@@ -18,6 +18,7 @@ import {
   askStylistStructuredWithUsage,
   askStylistWithTools,
   routeFreeformExecutionProfile,
+  resolveAiTarget,
   boundedAtomicMultiLookResponse,
   stripPieceIdCitations,
   recordToolLoopUsage,
@@ -4116,6 +4117,7 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     schema: capsuleRosterSelectionSchema(budget),
     name: 'capsule_roster_selection',
     description: 'Choose the garments for this capsule from the supplied candidates.',
+    providerOverride: toolContext?.providerOverride || null,
     // This formula (previously a private 300 + budget*65, itself a bump from an
     // even tighter 1,260-token ceiling) hit its cap exactly on both the initial
     // attempt and the repair in the same live turn (thread_1787725557304),
@@ -4224,6 +4226,7 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
     schema: capsulePlanCompositionSchema(targetOutfitCount),
     name: 'capsule_plan_composition',
     description: 'Compose the complete representative capsule rotation from the fixed roster and slots.',
+    providerOverride: toolContext?.providerOverride || null,
     // A 12-look rotation with IDs, titles, reasons, and styling_instructions is
     // heavier per outfit than the visual composers' shape, against a fixed
     // roster catalog. The old flat 3200 ceiling silently truncated a real
@@ -4667,6 +4670,12 @@ router.post('/ask', async (req, res) => {
       // applies (null when unset, so every existing caller is unaffected).
       providerOverride: req.body.provider === 'sonnet' ? { provider: 'anthropic' } : stylistProviderOverride
     }
+    // Computed once, up front, from the same providerOverride every call below reads from
+    // toolContext — so the router/compact/bounded-atomic response branches (none of which go
+    // through askStylistWithTools, which is the only place that otherwise sets this) report the
+    // turn's actual resolved provider instead of the static AI_PROVIDER default.
+    // askStylistWithTools recomputes and overwrites this identically for full_stylist turns.
+    toolContext.resolvedProviderTarget = resolveAiTarget(toolContext.providerOverride)
     // Point the hoisted reference at the live context as soon as it exists, so
     // anything that throws from here on still gets its diagnostics recorded.
     diagnosticsContext = toolContext
@@ -4762,7 +4771,8 @@ router.post('/ask', async (req, res) => {
           // makes sense as an answer to the assistant's own prior question — e.g. naming a garment
           // while answering "which outfit's layer?" — read like a standalone garment_fact question).
           // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
-          recentExchange: compactRecentHistory(req.body.history, 2)
+          recentExchange: compactRecentHistory(req.body.history, 2),
+          providerOverride: toolContext.providerOverride
         })
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
@@ -4788,7 +4798,7 @@ router.post('/ask', async (req, res) => {
           clearRecentlyDiscussedPieceIds(req.body.sessionId)
           return res.json({
             answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
-            savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
+            savedCorrections: [], renderedBoards: [], provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
             structuredOutfits: [], structuredOutfitsSource: null,
             structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
             structuredOutfitsMood: null, structuredOutfitsMission: null,
@@ -4856,7 +4866,8 @@ router.post('/ask', async (req, res) => {
                     ? [{ type: 'text', text: answerText }, ...visualEvidence]
                     : answerText
                 }],
-                maxTokens: 700
+                maxTokens: 700,
+                providerOverride: toolContext.providerOverride
               })
               recordToolLoopUsage(toolContext, answerCall.usage)
               recordFreeformToolIteration(toolContext, [`compact_${compactProfile}`])
@@ -4871,7 +4882,7 @@ router.post('/ask', async (req, res) => {
               clearRecentlyDiscussedPieceIds(req.body.sessionId)
               return res.json({
                 answer: stripPieceIdCitations(answerCall.text),
-                savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
+                savedCorrections: [], renderedBoards: [], provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
                 structuredOutfits: [], structuredOutfitsSource: null,
                 structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
                 structuredOutfitsMood: null, structuredOutfitsMission: null,
@@ -4912,7 +4923,7 @@ router.post('/ask', async (req, res) => {
               answer: stripPieceIdCitations(boundedAtomicMultiLookResponse(toolContext)),
               savedCorrections: [],
               renderedBoards: [],
-              provider: AI_PROVIDER,
+              provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
               structuredOutfits: toolContext.generatedOutfits,
               structuredOutfitsSource: toolContext.source,
               structuredOutfitsOccasion: toolContext.occasion,
