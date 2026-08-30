@@ -8,6 +8,7 @@ import { GoogleGenAI } from '@google/genai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
 import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
+import { captureNormalizedProviderInput, captureWireProviderInput } from '../lib/providerInputCapture.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructuredPayload } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
@@ -1154,6 +1155,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
 
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow: 'ask_stylist_with_usage', system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
@@ -1230,6 +1232,7 @@ export async function askStylistStructuredWithUsage({
 
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow: 'execution_router', system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
@@ -1604,13 +1607,15 @@ export function canonicalHistoryToGeminiInput(unsyncedEntries) {
 async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }) {
   const client = new Anthropic({ apiKey: resolveAnthropicKey() })
   const formattedMessages = withMovingCacheBreakpoint(canonicalHistoryToAnthropicMessages(canonicalMessages))
-  const response = await client.messages.create({
+  const anthropicRequest = {
     model: ANTHROPIC_MODEL,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
     messages: formattedMessages,
     ...(tools.length ? { tools } : {})
-  })
+  }
+  captureWireProviderInput({ provider: 'anthropic', model: ANTHROPIC_MODEL, subflow: 'stylist_tool_loop', request: anthropicRequest })
+  const response = await client.messages.create(anthropicRequest)
   const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL, stopReason: response.stop_reason })
   const toolUses = (response.content || []).filter(block => block.type === 'tool_use')
   return {
@@ -1623,14 +1628,16 @@ async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }
 
 async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens }) {
   const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-  const response = await client.chat.completions.create({
+  const openAiRequest = {
     model: OPENAI_MODEL,
     max_tokens: maxTokens,
     messages: [{ role: 'system', content: plainSystem }, ...canonicalHistoryToOpenAiMessages(canonicalMessages)],
     ...(tools.length ? {
       tools: tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }))
     } : {})
-  })
+  }
+  captureWireProviderInput({ provider: 'openai', model: OPENAI_MODEL, subflow: 'stylist_tool_loop', request: openAiRequest })
+  const response = await client.chat.completions.create(openAiRequest)
   const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
   const message = response.choices?.[0]?.message
   if (!message) return { text: '', toolCalls: [], usage, hasToolCalls: false, noMessage: true }
@@ -1685,14 +1692,21 @@ async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tool
   }
   const startedAt = Date.now()
   let interaction
+  const geminiRequest = {
+    model,
+    ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
+    input,
+    generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+    ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
+  }
+  // Note for comparison purposes: on a continuation call (iteration 2+ within one turn), this wire
+  // request intentionally omits system_instruction and prior history — Gemini's own backend already
+  // has both via previous_interaction_id. That's not missing input, it's a different transport for
+  // the same logical context; compare against the 'normalized' capture (canonicalMessages), not this
+  // one, to see what the model logically had.
+  captureWireProviderInput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', request: geminiRequest })
   try {
-    interaction = await ai.interactions.create({
-      model,
-      ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
-      input,
-      generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
-      ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
-    })
+    interaction = await ai.interactions.create(geminiRequest)
   } catch (err) {
     await logAiCall({
       provider: 'gemini', model, callKind, success: false,
@@ -1839,6 +1853,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     }
     const availableTools = stylistToolsForTurn(toolContext)
     const unsyncedEntries = currentMessages.slice(syncedHistoryLength)
+    captureNormalizedProviderInput({
+      provider: target.provider, model: target.model, subflow: 'stylist_tool_loop', iterationIndex: iter,
+      system, messages: currentMessages, tools: availableTools,
+    })
     const turn = await callProviderTurn(target.provider, {
       system, plainSystem, model: target.model,
       canonicalMessages: currentMessages,
