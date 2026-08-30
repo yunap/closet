@@ -1,9 +1,11 @@
 # Spec — a prose-only stylist answer leaves no continuity for the next turn
 
-**Status:** proposed, not implemented — revised after external review (see §8 for what changed and
-why). The design now differs from the first draft in three ways: the persisted field holds pieces
-actually *discussed* in the answer, not raw search candidates; the router is informed rather than
-deterministically gated; and the soft-anchor bias into `bounded_multi` (originally §5.4) is dropped.
+**Status:** proposed, not implemented — revised twice after external review (see §8 for what changed
+and why, across both rounds). The design now differs from the first draft in four ways: the
+persisted field holds pieces actually *discussed* in the answer, not raw search candidates; the
+router is informed rather than deterministically gated; the soft-anchor bias into `bounded_multi`
+(originally §5.4) is dropped; and the persisted IDs are explicitly routed to `full_stylist` as
+continuation context requiring fresh `view_pieces` re-verification, not treated as already verified.
 **Route:** [docs/README.md](README.md). Sources this spec must not restate:
 [architecture-responsibility-census.md](architecture-responsibility-census.md) (the ownership model
 this fix must align to), [message-lifecycle.md](message-lifecycle.md) (the router and its six
@@ -65,7 +67,7 @@ a prose-only wardrobe answer, even one that named and reasoned about specific pi
    writer ran, but because the one writer that ran for that turn (`core.js:4505`) fires too early to
    see it, and the other writer never fires at all outside `bounded_multi`.
 
-Given all three are `null`/empty, the execution router (which does run for this turn — see §5.3) is
+Given all three are `null`/empty, the execution router (which does run for this turn — see §5.4) is
 asked to classify turn 2 with a `contextSummary` that has nothing to summarize. It correctly (in
 isolation) reads *"put together three complete outfits"* as an ordinary `bounded_multi` ask. The
 router did its job; it was never given the evidence to do it right.
@@ -78,7 +80,7 @@ checks can already disagree today: a turn can be `boundedRouterEligible` (raw bo
 while `compactContext.pieceIds.length > 0` (server state has a real subject) at the same time. That
 is exactly architecture-responsibility-census.md §1's second failure pattern: *"missing context is
 resolved differently before the same shared gate runs."* **This is worth fixing on its own merits,
-but it is not part of the causal chain for this incident** (§5.3 explains why) — tracked as
+but it is not part of the causal chain for this incident** (§5.4 explains why) — tracked as
 independent cleanup, not bundled into the behavioral fix below.
 
 ## 3. Why the cheap fix is wrong
@@ -149,18 +151,72 @@ recently_discussed_piece_ids: {
 If the answer discussed six garments out of a 24-piece search result, this persists those six — not
 an arbitrary insertion-order slice of the 24.
 
-**This write must not be silently erased by the other writer.** `saveStylistConversationState`
-replaces the entire `state_json` blob — it is not a partial merge (`conversationState.js:14`
-does `INSERT ... ON CONFLICT DO UPDATE SET state_json = excluded.state_json`, the whole value). Since
-`core.js:4505` fires unconditionally at the *start* of every subsequent `full_stylist` turn and only
-knows about `established`/`current_outfit_set`, it would silently wipe `recently_discussed_piece_ids`
-one turn after this write, exactly the same way a `new_request`-classified turn already drops
-`current_outfit_set` today (`core.js:4472-4474`). `core.js:4505` must be updated to read the incoming
-`restoredState.recently_discussed_piece_ids` and carry it forward in its own write. Both writers
-need to agree on this field's shape, not just the new one.
+**Replace semantics, not accumulate-and-carry-forward.** `saveStylistConversationState` replaces the
+entire `state_json` blob — it is not a partial merge (`conversationState.js:14` does
+`INSERT ... ON CONFLICT DO UPDATE SET state_json = excluded.state_json`, the whole value). This spec's
+first two drafts disagreed with themselves about what that implies for this field (flagged directly
+by the second review — see §8): does it need to survive untouched across turns, or does it reset?
+The resolved semantic, chosen deliberately over "durable accumulated memory":
 
-**5.2 — Do NOT fold it into `compactFreeformContext`'s merged `pieceIds` list. Keep it a separate,
-purpose-scoped field.**
+> `recently_discussed_piece_ids` reflects only the immediately preceding accepted `full_stylist`
+> answer. It is not a growing memory and does not need multi-turn carry-forward.
+
+Concretely: **the write in this section is the sole and always-explicit authority for this field's
+value.** Every `full_stylist` turn that reaches its answer branch writes it — `discussedIds.slice(...)`
+if the answer cited verified pieces, or an explicit empty array if it didn't (never omitted, so a
+stale value from two turns ago cannot survive by default). This write always runs *after*
+`core.js:4505`'s earlier, same-turn save (prompt assembly happens before the tool loop and the
+answer), so it always supersedes it within one turn — `core.js:4505` does not need to be taught to
+preserve this field in its own save; see §5.2 for what it *does* need to do, which is read it, not
+re-save it.
+
+A `bounded_multi` turn that succeeds is also a legitimate replacement: `boundedConversationStateFromToolContext`
+does not carry this field forward, so a successful `bounded_multi` turn implicitly clears it — correct,
+since that turn produces its own `current_outfit_set`, which becomes the new "what we're discussing"
+via the mechanism that already exists for outfit cards. No code change needed there. A compact-profile
+turn (`general_advice`, `wardrobe_inventory`, ...) never calls either writer, so it leaves whatever
+was last persisted untouched — also correct, since those turns are wardrobe-independent by design and
+have nothing to say about which pieces are "recently discussed."
+
+**5.2 — Route the persisted IDs to `full_stylist` as continuation context requiring re-verification —
+not as already-verified evidence.**
+
+A gap the second round of review found: §5.4 (below) tells the router a subject exists, which fixes
+*routing*. But once the router picks `full_stylist`, the actual IDs went nowhere — the first
+revision of this spec read `recently_discussed_piece_ids` from exactly one consumer (the router's
+`contextSummary`), which left Acceptance Criterion 1's requirement — *"the resulting outfits draw
+from the pieces turn 1 actually discussed"* — with no mechanism to make it true. Relying on the
+pieces still being nameable from raw conversation history text is exactly the "approximate
+conversational recovery" this spec exists to replace, and more importantly it would violate the
+turn's own verification contract if the model treated a name it recalled from prose as already
+verified.
+
+The fix: `buildStylistConversationPayload` ([styling-engine/core.js:4277](../styling-engine/core.js#L4277))
+already reads `restoredState` once, at the top, before the tool loop. Read
+`restoredState.recently_discussed_piece_ids` there too, and surface it in `threadState` (the same
+JSON block already injected as `THREAD STATE (STRUCTURED)`, `core.js:4694`) as its own key, with
+accompanying instruction text — not merged into `current_outfit_set`, and **not marked as retrieved
+or seen**:
+
+```js
+recently_discussed_pieces: restoredState.recently_discussed_piece_ids?.piece_ids?.length
+  ? { piece_ids: restoredState.recently_discussed_piece_ids.piece_ids }
+  : undefined
+```
+
+```
+'Pieces explicitly discussed in the previous answer (see recently_discussed_pieces in THREAD STATE, if present) are CONTINUATION SUBJECTS ONLY — they have not been verified this turn. If the user is continuing that discussion (e.g. "yes, put those together", "make outfits from those"), call view_pieces on them before composing or citing them. Do not cite or compose from them until they have been re-verified this turn, and do not assume they are still relevant if the user has moved on to something unrelated.'
+```
+
+This is a read, not a write: `recently_discussed_piece_ids` is not added to `toolContext.allowedPieceIds`,
+not pre-populated into `verifiedPieceIdSets`, and not merged into `compactContext.pieceIds` (§5.3
+below). The model must call `view_pieces` — the existing, cheap,
+purpose-built tool for exactly this — to satisfy the same current-turn verification contract every
+other citation already goes through. This keeps `recently_discussed_piece_ids` honestly labeled as
+what it is: a hint about where to look, not a claim about what is already true this turn.
+
+**5.3 — Do NOT fold it into `compactFreeformContext`'s merged `pieceIds` list either. Two read-only
+consumers, neither of which is direct ID-scoped subject resolution.**
 
 At `routes/ai.js:4732`, `compactContext.pieceIds` is used as a **direct subject-resolution
 fallback** for `garment_fact` when a vague reference ("these shorts") can't be resolved any other
@@ -170,11 +226,12 @@ the accumulated current-card set). Even with the more precise `discussedIds` set
 it into that list would widen the scope `garment_fact` resolves an ambiguous reference against in a
 way that field was never designed for.
 
-Instead: `recently_discussed_piece_ids` stays its own field, read directly by exactly one consumer
-— the router's `contextSummary` (§5.3) — and by nothing that does direct ID-scoped subject
-resolution.
+`recently_discussed_piece_ids` has exactly two consumers, both read-only, neither treating it as a
+resolved or verified subject list: the router's `contextSummary` (§5.4) and `full_stylist`'s
+`threadState` continuation-context block (§5.2, requiring `view_pieces` before use). Nothing else
+reads it.
 
-**5.3 — Inform the router; do not gate it.**
+**5.4 — Inform the router; do not gate it.**
 
 The first draft of this spec proposed making `boundedRouterEligible` (`routes/ai.js:4649`) false
 whenever recent-piece evidence exists — a deterministic veto forcing every such turn through
@@ -230,16 +287,19 @@ router-invocation gate) would blur why each change exists.
   on `bounded_multi` untouched, there is no remaining case where biasing the composer's own pool
   earns its complexity — it would only reintroduce a version of the stale-context risk this spec
   exists to remove.
-- `full_stylist` turns that never call a retrieval tool (`general_advice`,
-  `wardrobe_inventory`-shaped prose) write nothing new — `citedIds`/`discussedIds` would be empty
-  for them, so `recently_discussed_piece_ids` is simply absent, same as today.
+- `general_advice`/`wardrobe_inventory` never reach `full_stylist` at all (they end the turn as a
+  compact profile — message-lifecycle.md's profile table), so they never touch this field either
+  way; whatever a prior turn set stands untouched, which is correct since those turns have nothing
+  wardrobe-specific to say about it. A `full_stylist` turn that runs but cites no verified pieces
+  (e.g. a clarifying question) explicitly writes an empty array per §5.1's replace semantics — not
+  "absent," so a stale value from an earlier turn cannot linger past the turn that supersedes it.
 - No change to `search_wardrobe`'s own behavior, the visual budget cap (#272), or EXIF handling
   (#273) — unrelated surfaces.
 
 ## 7. Acceptance criteria
 
 Two live-shaped test cases, both required — one alone would let a future change reintroduce exactly
-the bug just rejected in §5.3:
+the bug just rejected in §5.4, and the missing full_stylist mechanism added in §5.2:
 
 1. **Continuation case (the original incident).** Reproduce the two-turn sequence: a `full_stylist`
    coverage answer naming specific pieces, followed by *"yes, put together three complete
@@ -248,8 +308,12 @@ the bug just rejected in §5.3:
      "fix" that reintroduces a hard `boundedRouterEligible` veto instead of informing the router);
    - `contextSummary` for turn 2 states that the previous answer discussed specific verified
      pieces;
-   - the router's chosen profile is a continuation path (`full_stylist`), and the resulting
-     outfits draw from the pieces turn 1 actually discussed.
+   - the router's chosen profile is a continuation path (`full_stylist`);
+   - `full_stylist`'s prompt for turn 2 includes the `recently_discussed_pieces` continuation-context
+     block from §5.2, and the model calls `view_pieces` on those ids before composing (i.e. they are
+     re-verified this turn — `verifiedPieceIdSets(toolContext)` includes them only *after* that
+     call, never before it, which is what distinguishes this from treating stale IDs as pre-verified);
+   - the resulting outfits draw from the pieces turn 1 actually discussed.
 2. **Unrelated-pivot case (the counter-case).** Same first turn, followed by an explicitly
    unrelated fresh request — *"Actually, give me three hiking outfits tomorrow."* Assert:
    - `bounded_multi` remains reachable and is chosen (not forced off by the mere existence of
@@ -258,7 +322,8 @@ the bug just rejected in §5.3:
      work-dinner pieces.
 
 Together these two cases encode the actual product contract — "the router should know what was
-discussed and judge accordingly" — rather than just the one incident that surfaced it.
+discussed, the stylist can pick it back up, and neither treats it as durable memory or pre-verified
+truth" — rather than just the one incident that surfaced it.
 
 ## 8. Revision history
 
@@ -283,3 +348,30 @@ actual code before accepting:
 
 The `req.body.pieceIds`-vs-`compactContext.pieceIds` inconsistency (§2) remains flagged as
 independent cleanup, kept separate from the causal chain per the review's recommendation.
+
+**Revised again after a second round of external review**, on the resulting design (router informed,
+not gated; `recently_discussed_piece_ids` derived from cited-and-verified prose, not raw retrieval).
+That review found the first revision correct as far as it went, but incomplete in one substantive way
+and ambiguous in one smaller way:
+
+- **The missing mechanism (substantive).** §5.2 (as it stood after the first revision) declared
+  `recently_discussed_piece_ids` had exactly one consumer — the router's `contextSummary`. But §6
+  and Acceptance Criterion 1 both asserted that a continuation turn's outfits would "draw from the
+  pieces turn 1 actually discussed" once routed to `full_stylist` — a claim the design had no
+  mechanism to make true. The persisted IDs reached the router and then went nowhere. Fixed by
+  adding §5.2 (new): `buildStylistConversationPayload` reads `restoredState.recently_discussed_piece_ids`
+  and surfaces it in `threadState` as an explicit continuation-context block requiring `view_pieces`
+  re-verification before use — never pre-marked as retrieved/seen/verified, and never merged into
+  `compactContext.pieceIds`, preserving the boundary the first revision already got right for a
+  different reason (§5.3).
+- **State-lifetime ambiguity (smaller, but a real inconsistency).** The first revision's §5.1 said
+  the field "must not be silently erased" by the other writer, while §6 said a turn with nothing to
+  discuss leaves it "simply absent" — two different implied lifetimes (durable-until-overwritten vs.
+  reset-per-turn) for a full-blob-replace store, never reconciled. Resolved explicitly in §5.1:
+  `recently_discussed_piece_ids` reflects only the immediately preceding accepted `full_stylist`
+  answer, is always written explicitly (including as an empty array when nothing was discussed) by
+  the one writer that has the authority to set it, and does not need `core.js:4505` to preserve it
+  across turns, since that writer runs earlier in the same turn and is always superseded by this
+  section's write before the turn ends.
+
+No further open questions from this round.
