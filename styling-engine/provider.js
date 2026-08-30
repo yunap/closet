@@ -112,9 +112,25 @@ export function looksLikeDestinationOrWeatherQuestion(answerText = '') {
 // reconstruct later. This hardens the existing looksLikeUnproposedOutfitProse signal (previously a
 // spec-3 soft flag only) into a hard block — same "don't trust the model's self-report, verify
 // mechanically" pattern as every other check in this file.
-export function extractPieceIdsFromProse(answerText = '') {
-  const matches = [...String(answerText || '').matchAll(/\bID\s*:?\s*(\d+)\b/gi)] // ratchet-allow: model's own reply prose, not garment matching
+// knownPieceIds (optional): a model that skips the mandated "(ID n)" form but still writes a bare
+// parenthesized number right after naming a piece — "Navy wool turtleneck (146)" — is citing just as
+// unambiguously; live case (thread_1788054462046, Gemini 3.5 Flash Lite) cited 12 real, verified
+// pieces this way and the mandated-form-only regex missed every one of them, silently defeating both
+// the truth clause's verification check and docs/bounded-multi-context-continuity-spec.md's
+// persisted-discussion tracking. Only counted when knownPieceIds is supplied AND the number is a
+// member of it, so this never turns an arbitrary parenthetical number ("(2 items)", "in the 1990s",
+// "$50 (on sale)") into a false citation — it has to already be a real, in-scope piece id, which
+// callers are expected to pass as exactly the set they would otherwise treat as verified/known.
+export function extractPieceIdsFromProse(answerText = '', { knownPieceIds = null } = {}) {
+  const text = String(answerText || '')
+  const matches = [...text.matchAll(/\bID\s*:?\s*(\d+)\b/gi)] // ratchet-allow: model's own reply prose, not garment matching
   const ids = matches.map(m => Number(m[1])).filter(Number.isFinite)
+  if (knownPieceIds && knownPieceIds.size) {
+    for (const m of text.matchAll(/\((\d+)\)/g)) { // ratchet-allow: model's own reply prose, not garment matching
+      const id = Number(m[1])
+      if (knownPieceIds.has(id)) ids.push(id)
+    }
+  }
   return [...new Set(ids)]
 }
 
@@ -153,9 +169,12 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // the model can name real IDs it has never actually checked; the manifest is
   // an index, not garment truth.
   if (!retried.has('unverifiedCitation')) {
-    const citedIds = extractPieceIdsFromProse(answerText)
+    const { retrieved, known } = verifiedPieceIdSets(toolContext)
+    // knownPieceIds here is deliberately the verified set itself: a bare "(146)" only ever counts
+    // as a citation when 146 is already something this clause would accept as verified anyway, so
+    // extending the citation format can never let an unverified id slip past this check.
+    const citedIds = extractPieceIdsFromProse(answerText, { knownPieceIds: new Set([...retrieved, ...known]) })
     if (citedIds.length) {
-      const { retrieved, known } = verifiedPieceIdSets(toolContext)
       const unverifiedCited = citedIds.filter(id => !retrieved.has(id) && !known.has(id))
       if (unverifiedCited.length) {
         return fail('unverifiedCitation', 'unverifiedCitationBlocks',
@@ -288,8 +307,19 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
 // that needs them runs on the text that still has them, and this strips them at the last boundary
 // before the answer is sent. Never call this before validation — that would silently disarm three
 // guards at once. Structured cards keep their piece IDs, so nothing downstream loses the reference.
-export function stripPieceIdCitations(answerText = '') {
-  return String(answerText || '')
+// knownPieceIds (optional): strips a bare-number citation like "(146)" too, when 146 matches a
+// supplied known/verified piece id — same reasoning and the same live incident as
+// extractPieceIdsFromProse's knownPieceIds. Without this, a model that skips the mandated "(ID n)"
+// form still leaks raw database ids straight into what the user reads. Deliberately narrow: only a
+// number that is ALSO a real in-scope piece id gets stripped, so an ordinary parenthetical like
+// "(2 items)" or "(on sale)" is untouched.
+export function stripPieceIdCitations(answerText = '', { knownPieceIds = null } = {}) {
+  let text = String(answerText || '')
+  if (knownPieceIds && knownPieceIds.size) {
+    text = text.replace(/[ \t]*\((\d+)\)/g, (match, digits) => // ratchet-allow: model-output integrity boundary, not garment classification
+      knownPieceIds.has(Number(digits)) ? '' : match)
+  }
+  return text
     // The mandated form, and its bracketed and plural variants: "(ID 196)", "[IDs 196, 204]".
     .replace(/[ \t]*[([]\s*IDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
     // A bare inline citation the model wrote without brackets.

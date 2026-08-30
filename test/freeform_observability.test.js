@@ -2432,6 +2432,38 @@ test('extractPieceIdsFromProse returns an empty array when no IDs are present', 
   assert.deepEqual(extractPieceIdsFromProse('A relaxed outfit with a linen top and denim.'), [])
 })
 
+// Live case (thread_1788054462046, Gemini 3.5 Flash Lite): a real, correctly-verified answer cited
+// every one of its 12 pieces as a bare "(146)" instead of the mandated "(ID 146)" — the mandated-form-
+// only regex found nothing, silently defeating both the truth clause's verification check and
+// docs/bounded-multi-context-continuity-spec.md's persisted-discussion tracking on a perfect target
+// case.
+test('extractPieceIdsFromProse also recognizes a bare (n) citation, but only when it is a known piece id', () => {
+  const prose = 'Navy wool turtleneck (146) or Black turtleneck (144): warm for a cool evening.'
+  assert.deepEqual(extractPieceIdsFromProse(prose), [], 'without knownPieceIds, bare citations are not recognized at all')
+  assert.deepEqual(extractPieceIdsFromProse(prose, { knownPieceIds: new Set([146, 144]) }), [146, 144])
+  // A number that happens to sit in parentheses but is not a real, in-scope piece id must never
+  // become a false citation -- the whole point of gating this on knownPieceIds.
+  assert.deepEqual(
+    extractPieceIdsFromProse('We have 3 formal events (2 weddings) this month.', { knownPieceIds: new Set([2, 3]) }),
+    [],
+    'a coincidental in-parens number that is not actually a garment reference must not be swept in'
+  )
+})
+
+test('stripPieceIdCitations also removes a bare (n) citation when it is a known piece id, and nothing else', () => {
+  const text = 'Wear the blouse (146) with the trousers (182).'
+  assert.equal(stripPieceIdCitations(text), text, 'without knownPieceIds, bare citations are left alone')
+  assert.equal(
+    stripPieceIdCitations(text, { knownPieceIds: new Set([146, 182]) }),
+    'Wear the blouse with the trousers.'
+  )
+  assert.equal(
+    stripPieceIdCitations('We have 3 formal events (2 weddings) this month.', { knownPieceIds: new Set([2, 3]) }),
+    'We have 3 formal events (2 weddings) this month.',
+    'a coincidental in-parens number that is not a garment reference must survive untouched'
+  )
+})
+
 test('persistFreeformGenerationRun does not throw when diagnostics are missing', () => {
   assert.doesNotThrow(() => persistFreeformGenerationRun({ occasion: 'casual', diagnostics: {} }))
   assert.doesNotThrow(() => persistFreeformGenerationRun({}))

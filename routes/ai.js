@@ -710,7 +710,12 @@ const RECENTLY_DISCUSSED_PIECE_CAP = 16
 // would let the next turn "continue" with pieces the user never actually saw discussed.
 export function recentlyDiscussedPieceIdsFromAnswer(answerText, toolContext = {}, { cap = RECENTLY_DISCUSSED_PIECE_CAP } = {}) {
   const { retrieved, known } = verifiedPieceIdSets(toolContext)
-  const citedIds = extractPieceIdsFromProse(answerText)
+  // knownPieceIds recognizes a bare "(146)" citation too, not just the mandated "(ID 146)" form —
+  // live case (thread_1788054462046, Gemini 3.5 Flash Lite): a real, correctly-verified 12-piece
+  // answer cited every piece this way, and the mandated-form-only regex silently left this field
+  // empty despite a perfect target case. Still cannot pull in an unverified id: discussedIds below
+  // filters against the exact same retrieved/known sets regardless of citation shape.
+  const citedIds = extractPieceIdsFromProse(answerText, { knownPieceIds: new Set([...retrieved, ...known]) })
   const discussedIds = citedIds.filter(id => retrieved.has(id) || known.has(id))
   return discussedIds.slice(0, cap)
 }
@@ -4993,10 +4998,16 @@ router.post('/ask', async (req, res) => {
       freeformTurnToken
     })
 
+    // knownPieceIds lets stripPieceIdCitations also strip a bare "(146)" citation left over from a
+    // model that skipped the mandated "(ID 146)" form — otherwise a raw database id reaches the
+    // user untouched (live: thread_1788054462046).
+    const finalVerifiedIds = verifiedPieceIdSets(toolContext)
     res.json({
       // Last boundary before the user sees it: every guard that needs the citations has
       // already run on the text that still had them.
-      answer: stripPieceIdCitations(answer),
+      answer: stripPieceIdCitations(answer, {
+        knownPieceIds: new Set([...finalVerifiedIds.retrieved, ...finalVerifiedIds.known])
+      }),
       savedCorrections: allSaved,
       renderedBoards: Array.isArray(toolContext.renderedBoards) ? toolContext.renderedBoards : [],
       // The turn's actual resolved target (plan: quizzical-foraging-boot, Stage F) — not the

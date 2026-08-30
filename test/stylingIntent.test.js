@@ -304,7 +304,12 @@ test('StylistChat carries generated styling context into ask requests', () => {
 
   assert.ok(content.includes('const stylingContextFromMemory ='), 'StylistChat should expose a stylingContext request helper')
   assert.ok((content.match(/stylingContext:\s*\{/g) || []).length >= 3, 'generated outfit thread memory should store stylingContext')
-  assert.ok((content.match(/\.\.\.stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
+  // Not anchored to a literal leading "..." — the "Retry with Sonnet"/error-retry request
+  // (overrides.forceNewRequest, PR #276) deliberately wraps its stylingContextFromMemory(threadMemory)
+  // call in a spread ternary (skip it entirely on a forced-fresh retry, same as the other threadMemory-
+  // derived fields it suppresses), which moves the "..." off the literal call site without dropping
+  // the call itself.
+  assert.ok((content.match(/stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
   assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
 })
 
