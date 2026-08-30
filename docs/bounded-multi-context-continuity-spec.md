@@ -1,11 +1,14 @@
 # Spec — a prose-only stylist answer leaves no continuity for the next turn
 
-**Status:** implemented (§9) — revised twice after external review before implementation (see §8 for
-what changed and why, across both rounds). The design differs from the first draft in four ways: the
+**Status:** implemented and integration-tested (§9, §10) — revised three times after external review
+(§8 for the first two rounds before implementation; §10 for a third round after implementation found
+a real gap in the implementation itself). The design differs from the first draft in five ways: the
 persisted field holds pieces actually *discussed* in the answer, not raw search candidates; the
 router is informed rather than deterministically gated; the soft-anchor bias into `bounded_multi`
-(originally §5.4) is dropped; and the persisted IDs are explicitly routed to `full_stylist` as
-continuation context requiring fresh `view_pieces` re-verification, not treated as already verified.
+(originally §5.4) is dropped; the persisted IDs are explicitly routed to `full_stylist` as
+continuation context requiring fresh `view_pieces` re-verification, not treated as already verified;
+and every compact-profile turn explicitly clears the field on completion (Option A, "last
+assistant-turn continuity" — §10), so the router's hint text is never stale.
 **Route:** [docs/README.md](README.md). Sources this spec must not restate:
 [architecture-responsibility-census.md](architecture-responsibility-census.md) (the ownership model
 this fix must align to), [message-lifecycle.md](message-lifecycle.md) (the router and its six
@@ -419,18 +422,80 @@ still do not leak on a `new_request` turn while `recently_discussed_pieces` does
 - `bounded_multi`'s own writer (`boundedConversationStateFromToolContext`) — untouched, as designed;
   it already implicitly clears the field per §5.1's replace semantics.
 
-**Acceptance criteria (§7) — coverage status:** unit-tested directly: the persisted-set computation
-(cited-and-verified vs. raw-retrieved, cap enforcement, empty-answer case) and
-`buildStylistConversationPayload`'s continuation-context surfacing (both the positive case and the
-`new_request` regression guard). **Not yet covered:** a full live-shaped integration test driving
-`/api/ai/ask` through the actual router classification for both Acceptance Criterion 1 (continuation
-→ `full_stylist` → `view_pieces` re-verification → composition) and Criterion 2 (unrelated pivot →
-`bounded_multi` remains reachable and unbiased) — the existing mock-AI test harness
-(`test/aiEndpointContracts.test.js`) supports this but has no router-dispatch mock branch yet to
-build on. Worth adding before this is considered fully verified against its own acceptance criteria,
-not just its component logic.
+**Acceptance criteria (§7) at this point:** unit-tested directly (persisted-set computation,
+`buildStylistConversationPayload`'s continuation-context surfacing including the `new_request`
+regression guard). The full live-shaped integration test was still open — see §10, where it was
+built, and where a third review round found one more real bug before it could be trusted.
 
-**Tests:** `test/bounded_multi_context_continuity.test.js` (7 new), plus the full existing suite
-re-run clean (one pre-existing, unrelated failure in `test/accountSettingsLayout.test.js`, confirmed
-present with these changes reverted — not caused by this work).
+**Tests:** `test/bounded_multi_context_continuity.test.js` (7 unit tests at this point), full
+existing suite re-run clean (one pre-existing, unrelated failure in
+`test/accountSettingsLayout.test.js`, confirmed present with these changes reverted).
+
+## 10. Third review round — compact-turn clearing, and the integration test
+
+A third review, after §9's implementation, found one more real bug and asked for the integration
+test to encode the fix rather than just the original two acceptance criteria.
+
+**The bug.** §5.1 claims `recently_discussed_piece_ids` "reflects only the immediately preceding
+accepted `full_stylist` answer." §6 (unchanged since §8's second revision) says a compact-profile
+turn "leaves whatever was last persisted untouched." Those two statements contradict each other —
+confirmed against the code: `wardrobe_inventory`, `garment_fact`, `existing_card_explanation`, and
+`general_advice` all return before ever calling `saveStylistConversationState`, so a discovery
+answer's persisted pieces survive through any number of intervening compact turns untouched. The
+router's own hint string — *"previous answer discussed N pieces"* — would then be **factually
+false** on the next turn if that immediately preceding turn was actually a compact answer about
+something else entirely (the review's example: discovery → *"what does business casual mean?"* →
+*"give me three hiking outfits"*, where the persisted pieces are still the work-dinner ones two
+turns stale). Feeding the router a false claim is exactly the category of problem this spec exists
+to eliminate, just relocated one field over.
+
+**The fix — Option A, "last assistant-turn continuity"** (the review's stated preference, adopted
+without a defensible counter-argument for Option B's longer-lived variant): every successfully
+completed turn either sets or clears the field, so the claim is always literally true. New export
+`clearRecentlyDiscussedPieceIds(sessionId)` ([routes/ai.js](../routes/ai.js)) — reads current state,
+spreads it, overlays an explicit `{ piece_ids: [], turn_token: '' }` (same "layer onto, not replace"
+discipline as §5.1's own writer) — called from both compact-profile success branches
+(`wardrobe_inventory`'s return and the shared `existing_card_explanation`/`garment_fact`/
+`general_advice` return). `bounded_multi` and `full_stylist` already satisfied Option A without
+changes: `full_stylist` already writes explicitly (empty when nothing was cited, per §5.1's original
+design), and `bounded_multi`'s writer already implicitly clears by omission.
+
+**The integration test.** Built as three cases, not two — the review's addition of a third
+(intervening non-piece turn) is what actually pins Option A rather than just exercising the routing
+outcome, and was the case that would have caught the bug above. All three run as real, sequential
+`/api/ai/ask` HTTP calls against the live route and the real `stylist_conversation_state` table —
+`test/bounded_multi_context_continuity_e2e.test.js`:
+
+1. **Continuation** — a discovery turn's cited-and-verified pieces persist; the next turn's router
+   call is still made (never skipped) and its `contextSummary` states the correct count.
+2. **Pivot** — after a discovery turn, an unrelated request still reaches `bounded_multi`
+   (`debug.executionProfile` asserted directly, not inferred), and that turn's own writer clears the
+   field — turned out not to need a manual composer mock at all: with a minimal 2-piece wardrobe,
+   `generate_outfits` reaches `atomicMultiLookCompleted` through its own fallback path even under
+   generic mock text, so this asserts on the real post-turn state rather than a simulated one.
+3. **Intervening non-piece turn** — the case that pins the semantics: after a discovery turn, a
+   `general_advice` turn about business-casual definitions must clear the field, and the *following*
+   turn's router call must say "no recently discussed wardrobe pieces," not repeat the stale
+   work-dinner count.
+
+**A real, separate harness bug found while building the test, unrelated to this spec's own logic:**
+both `askStylistStructuredWithUsage` (used by the router) and `askStylistWithUsage` (used by compact
+profiles) call `normalizeAiUsage(testResponse?.usage || null)` in their test-mode shortcuts, which
+returns `null` when a mock response omits `.usage` — and their callers
+(`recordToolLoopUsage(toolContext, routed.usage)` / `recordToolLoopUsage(toolContext,
+answerCall.usage)`) call it unconditionally, crashing with *"Cannot read properties of null (reading
+'inputTokens')"*. The router's own surrounding `try/catch` swallows this and silently falls back to
+`full_stylist` — meaning a naive mock omitting `.usage` doesn't error the test, it just silently
+defeats the mocked router profile every time, which is worse than a loud failure. No prior test in
+this suite had exercised the router or a compact-profile answer through this HTTP+mock path, so
+this had no prior coverage to have caught it. Worked around in the test file (mock responses
+explicitly include `usage: {}`); not fixed at the source, since `takeTestAiResponse`'s shortcut
+contract is shared infrastructure outside this spec's scope — flagged here for whoever next touches
+it.
+
+**Tests, final count:** `test/bounded_multi_context_continuity.test.js` (8, one more added for
+`clearRecentlyDiscussedPieceIds`), `test/bounded_multi_context_continuity_e2e.test.js` (3, new).
+Full suite re-run clean (1521 tests, same one pre-existing unrelated failure).
+
+No further open questions.
 

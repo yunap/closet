@@ -715,6 +715,25 @@ export function recentlyDiscussedPieceIdsFromAnswer(answerText, toolContext = {}
   return discussedIds.slice(0, cap)
 }
 
+// docs/bounded-multi-context-continuity-spec.md §5.1, "last assistant-turn continuity" (chosen over
+// letting the field survive through an unrelated turn, per review). `recently_discussed_piece_ids`
+// claims to reflect "the immediately preceding accepted answer" and the router hint claims "previous
+// answer discussed N pieces" — both are only true if EVERY successfully completed turn either sets
+// or clears the field, never leaves it untouched. `full_stylist` sets or clears via
+// recentlyDiscussedPieceIdsFromAnswer above (empty answer -> empty array, still an explicit write).
+// bounded_multi already implicitly clears it (boundedConversationStateFromToolContext's full-blob
+// replace omits the key). This covers the remaining case: a compact profile
+// (wardrobe_inventory/existing_card_explanation/garment_fact/general_advice) is wardrobe-independent
+// or answers a different, narrower subject than "what was just discussed" means here, so its
+// completion must clear the field rather than let a stale set from two turns ago survive through it.
+export function clearRecentlyDiscussedPieceIds(sessionId) {
+  const priorConversationState = getStylistConversationState(sessionId || 'default') || {}
+  saveStylistConversationState({
+    ...priorConversationState,
+    recently_discussed_piece_ids: { piece_ids: [], turn_token: '' }
+  }, sessionId || 'default')
+}
+
 export function boundedConversationStateFromToolContext(toolContext = {}) {
   const outfits = Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : []
   const currentOutfitSet = outfits.slice(0, 8).map((outfit, index) => ({
@@ -4742,6 +4761,7 @@ router.post('/ask', async (req, res) => {
             sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
             diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
           })
+          clearRecentlyDiscussedPieceIds(req.body.sessionId)
           return res.json({
             answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
             savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,
@@ -4824,6 +4844,7 @@ router.post('/ask', async (req, res) => {
                 sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
                 diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
               })
+              clearRecentlyDiscussedPieceIds(req.body.sessionId)
               return res.json({
                 answer: stripPieceIdCitations(answerCall.text),
                 savedCorrections: [], renderedBoards: [], provider: AI_PROVIDER,

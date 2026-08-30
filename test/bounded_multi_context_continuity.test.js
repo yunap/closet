@@ -15,8 +15,8 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { recentlyDiscussedPieceIdsFromAnswer } = await import('../routes/ai.js')
-const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+const { recentlyDiscussedPieceIdsFromAnswer, clearRecentlyDiscussedPieceIds } = await import('../routes/ai.js')
+const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
 const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
 
 test.after(() => {
@@ -113,4 +113,20 @@ test('buildStylistConversationPayload omits the continuation-context block when 
   })
   assert.equal(payload.threadState.recently_discussed_pieces, undefined)
   assert.ok(!String(payload.system).includes('RECENTLY DISCUSSED PIECES'))
+})
+
+test('clearRecentlyDiscussedPieceIds empties the field without touching other persisted state (Option A: last-assistant-turn continuity)', () => {
+  saveStylistConversationState({
+    established: { occasion: 'work dinner' },
+    current_outfit_set: [{ index: 1, label: 'Keep Me', piece_ids: [1] }],
+    recently_discussed_piece_ids: { piece_ids: [501, 502], turn_token: 'discovery-turn' }
+  }, 'continuity-clear')
+
+  clearRecentlyDiscussedPieceIds('continuity-clear')
+
+  const state = getStylistConversationState('continuity-clear')
+  assert.deepEqual(state.recently_discussed_piece_ids, { piece_ids: [], turn_token: '' })
+  assert.deepEqual(state.established, { occasion: 'work dinner' },
+    'clearing the piece-continuity field must not disturb established/current_outfit_set')
+  assert.deepEqual(state.current_outfit_set, [{ index: 1, label: 'Keep Me', piece_ids: [1] }])
 })
