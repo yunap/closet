@@ -2109,7 +2109,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion: args?.occasion,
             activity: args?.activity,
             season: extractSeasonRequest(args?.season),
-            statedWeather: extractSeasonRequest(args?.season) ? '' : args?.season,
+            // Spec §3.1: no free-text weather authority. suggest_slot_swaps'
+            // schema has no documented 'indoor' sentinel, and — more
+            // seriously — this wiring didn't just affect this tool's own
+            // resolution: resolveToolStylingContext threads any non-empty
+            // statedWeather onto toolContext.weather, which a LATER call this
+            // same turn (search_wardrobe/propose_outfit/generate_outfits)
+            // reads back via establishedState.statedWeather, so an arbitrary
+            // season string here could silently outrank a genuine
+            // weather_estimate/user_weather on one of the actual four
+            // composition tools later in the same turn.
+            statedWeather: '',
             requestText,
           },
           actionArtifact: {

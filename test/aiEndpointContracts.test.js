@@ -6341,6 +6341,64 @@ test('buildStylistConversationPayload persists per-outfit weatherUsed/resolvedWe
   assert.match(String(payload.system), /Cambria, CA/)
 })
 
+// Spec §7 continuity, the gap found by external review: buildStylistConversationPayload's OWN save
+// (inside it, before the model/tool call) can only persist cards the browser already echoed back
+// from the PREVIOUS turn — it has no way to know about cards THIS turn's tool loop is about to
+// produce. Without routes/ai.js's persistFullStylistTurnState (called once, right after
+// askStylistWithTools returns), a freshly accepted plan_outfit_set/propose_outfit/generate_outfits
+// result depended entirely on the browser echoing toolContext.generatedOutfits back on the NEXT
+// request to survive server-side at all.
+//
+// This proves the fix at the real boundary that matters — the actual persisted-state round trip a
+// browser omitting its echo would exercise — using the exact functions and call sequence
+// routes/ai.js's /ask handler uses. It stops short of driving a real tool call through the live HTTP
+// route: askStylistWithTools's NODE_ENV=test shortcut (styling-engine/provider.js) returns a canned
+// final-answer STRING directly and structurally cannot execute a tool, a pre-existing test-harness
+// limitation already documented in test/bounded_multi_context_continuity_e2e.test.js's file header.
+// Simulating toolContext.generatedOutfits as "the tool loop just produced this" is the same
+// documented workaround that file uses for the analogous bounded_multi case.
+test('persistFullStylistTurnState: a fresh plan_outfit_set result survives to the next turn even when the browser never echoes it back', async () => {
+  const { persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState, saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `full-stylist-persist-${Date.now()}`
+
+  // Turn 1: askStylistWithTools has just returned. toolContext.generatedOutfits holds what the tool
+  // loop actually produced this turn (here, standing in for a real plan_outfit_set/propose_outfit
+  // result — see the harness-limitation note above for why this can't come from a live tool call).
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Vienna Evening',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      weatherUsed: '65°F high / 45°F low — seasonal estimate, not a live forecast',
+    }],
+  }
+  persistFullStylistTurnState({ toolContext, answer: 'Here is your Vienna evening look.', freeformTurnToken: 'tok-1', sessionId })
+
+  const afterTurnOne = getStylistConversationState(sessionId)
+  assert.equal(afterTurnOne.current_outfit_set?.[0]?.label, 'Vienna Evening', 'the tool loop\'s own cards must be persisted without the browser echoing anything')
+  assert.equal(afterTurnOne.current_outfit_set[0].weather_used, '65°F high / 45°F low — seasonal estimate, not a live forecast')
+
+  // Turn 2: a genuine follow-up, exactly as buildStylistConversationPayload sees it when the browser
+  // sends no generatedOutfits of its own (real behavior — the browser only echoes what it was given,
+  // and this is the first time turn 2 has ever been rendered client-side).
+  const payload = await buildStylistConversationPayload({
+    question: 'what weather were you planning for that?',
+    conversationMode: 'followup',
+    sessionId,
+    // generatedOutfits intentionally omitted — this is the browser-echo-omitted case.
+  })
+  assert.equal(payload.threadState.current_outfit_set?.[0]?.label, 'Vienna Evening', 'turn 2 must read the card back from SERVER state, not depend on a browser echo that never happened')
+  assert.equal(payload.threadState.current_outfit_set[0].weather_used, '65°F high / 45°F low — seasonal estimate, not a live forecast')
+
+  // A prose-only turn with no fresh cards must not clear the prior set (the "layers onto" merge
+  // philosophy already documented on persistFullStylistTurnState).
+  const proseOnlyContext = { generatedOutfits: [] }
+  persistFullStylistTurnState({ toolContext: proseOnlyContext, answer: 'Just a quick note.', freeformTurnToken: 'tok-2', sessionId })
+  const afterProseOnlyTurn = getStylistConversationState(sessionId)
+  assert.equal(afterProseOnlyTurn.current_outfit_set?.[0]?.label, 'Vienna Evening', 'a turn with no fresh cards must leave the prior set untouched, not clear it')
+})
+
 test('freeform current-season prompts receive applicable calendar-season lessons', async () => {
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
   insertAcceptedSeasonLesson(
