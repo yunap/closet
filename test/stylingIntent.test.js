@@ -67,7 +67,12 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.deepEqual(generateTool.input_schema.required, ['occasion', 'season'])
   assert.ok(!generateTool.input_schema.required.includes('activity'), 'activity omission must remain meaningful')
 
-  assert.ok(searchTool.input_schema.properties.weather, 'search_wardrobe should accept weather for fit flags')
+  // Spec future-trip-weather-estimate-spec.md §3.1/§6.5: free-text weather
+  // is removed from the schema entirely; structured user_weather/
+  // weather_estimate (plus location/date) are the fit-flag inputs now.
+  assert.equal(searchTool.input_schema.properties.weather, undefined, 'free-text weather is removed from search_wardrobe')
+  assert.ok(searchTool.input_schema.properties.user_weather, 'search_wardrobe should accept structured user_weather')
+  assert.ok(searchTool.input_schema.properties.weather_estimate, 'search_wardrobe should accept structured weather_estimate')
   assert.deepEqual(searchTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
   assert.ok(searchTool.input_schema.properties.visual, 'search_wardrobe should accept visual mode')
   assert.ok(proposeTool, 'propose_outfit tool must exist')

@@ -1364,10 +1364,13 @@ test('executeTool propose_outfit inherits hot-weather card context from prior se
   `).run().lastInsertRowid
 
   try {
+    // Spec future-trip-weather-estimate-spec.md §3.1/§6.5: free-text weather
+    // is removed from search_wardrobe's schema; a structured weather_estimate
+    // establishes the hot context now, and toolContext.weather (the old
+    // free-text echo) is no longer touched by this tool at all.
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], season: 'current season' }
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot weather', visual: true }, toolContext)
+    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather_estimate: { high_f: 92, low_f: 78 }, visual: true }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
-    assert.equal(toolContext.weather, 'hot weather')
 
     const result = await executeTool('propose_outfit', {
       label: 'Hot City Polish',
@@ -2232,13 +2235,16 @@ test('shared context resolves live weather only for Current season', async () =>
   const current = await resolveStylingContext({
     explicitRequest: { season: 'current season', location: 'Walnut Creek, CA', date: '2026-08-19' },
   })
-  assert.deepEqual(current.weatherProfile, {
-    isHot: false,
-    isCold: false,
-    highF: 69,
-    lowF: 55,
-    weatherSource: 'live'
-  })
+  // Spec future-trip-weather-estimate-spec.md §6.5: location+date now
+  // resolves through the structured contract, whose profile carries fuller
+  // field-level info (isExtremeHeat/isRainy/isWetExposure/
+  // resolvedWeatherContext) than the raw weatherResolver return value alone.
+  assert.equal(current.weatherProfile.isHot, false)
+  assert.equal(current.weatherProfile.isCold, false)
+  assert.equal(current.weatherProfile.highF, 69)
+  assert.equal(current.weatherProfile.lowF, 55)
+  assert.equal(current.weatherProfile.weatherSource, 'live')
+  assert.equal(current.weatherProfile.resolvedWeatherContext.location, 'Walnut Creek, CA')
   assert.equal(calls.length, 1)
 
   const hypothetical = await resolveStylingContext({
@@ -2469,15 +2475,16 @@ test('persistFreeformGenerationRun does not throw when diagnostics are missing',
   assert.doesNotThrow(() => persistFreeformGenerationRun({}))
 })
 
-// Spec 4: search_wardrobe records which weather source it resolved (stated vs live vs heuristic) for
-// spec 3's observability. This call's own `weather` arg is a stated override (resolveStatedOrLiveWeather)
-// and short-circuits straight to 'stated' without ever attempting live resolution — this test only
-// verifies the wiring, not live weather (see weather.test.js for live-path coverage via a mocked
-// fetchImpl).
+// Spec future-trip-weather-estimate-spec.md §3.1/§6.5: search_wardrobe's
+// free-text `weather` is removed; a structured weather_estimate resolves
+// through resolveWeatherForRequest and short-circuits before any live
+// lookup is even attempted (no location/date here to geocode against) —
+// this test only verifies the wiring, not live weather (see weather.test.js
+// for live-path coverage via a mocked fetchImpl).
 test('executeTool search_wardrobe records weatherSource onto toolContext.freeformDiagnostics', async () => {
   const toolContext = {}
-  await executeTool('search_wardrobe', { occasion: 'city', weather: 'hot' }, toolContext)
-  assert.equal(toolContext.freeformDiagnostics.weatherSource, 'stated')
+  await executeTool('search_wardrobe', { occasion: 'city', weather_estimate: { high_f: 90, low_f: 75 } }, toolContext)
+  assert.equal(toolContext.freeformDiagnostics.weatherSource, 'model_estimate')
 })
 
 // With no weather arg of its own and no location, resolution falls all the way through to the text
@@ -2524,6 +2531,127 @@ test('shared tool context falls through to live resolution when weather is unsta
   assert.equal(profile.isHot, true)
 })
 
+// ============================================================================
+// docs/future-trip-weather-estimate-spec.md §6.5 single-outfit parity —
+// search_wardrobe/propose_outfit/generate_outfits now resolve a named
+// destination/date through the SAME structured contract as plan_outfit_set,
+// via resolveNamedDestinationWeather (styling-engine/stylingContext.js).
+// ============================================================================
+
+// A location alone (no date, no structured weather) must NOT be treated as a
+// named destination/date — it stays on the legacy live-for-today path
+// (previous test above). Only location+date (or a structured weather input
+// on its own) activates the new resolver.
+test('resolveToolStylingContext: location+date resolves through the structured contract via live weather', async () => {
+  const toolContext = {}
+  const weatherResolver = async ({ location, date }) => {
+    assert.equal(location, 'Vienna, Virginia')
+    assert.equal(date, '2026-09-05')
+    return { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05', season: 'current season' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'live')
+  assert.equal(context.weatherProfile.isCold, true)
+  assert.ok(toolContext.resolvedWeatherContext, 'the resolved context must be cached onto toolContext for a later propose_outfit call to reuse')
+  assert.equal(toolContext.resolvedWeatherContext.location, 'Vienna, Virginia')
+})
+
+test('resolveToolStylingContext: a future destination outside live coverage falls back to weather_estimate, then stays unavailable without one', async () => {
+  const unavailableResolver = async () => ({ weatherSource: 'unavailable' })
+  const withEstimate = await resolveToolStylingContext({
+    explicitRequest: {
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    toolContext: {},
+    policy: { allowLiveWeather: true },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(withEstimate.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(withEstimate.weatherProfile.isCold, true)
+
+  const withoutEstimate = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-10-12' },
+    toolContext: {},
+    policy: { allowLiveWeather: true },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(withoutEstimate.weatherProfile.weatherSource, 'unavailable')
+  assert.equal(withoutEstimate.weatherProfile.isCold, false, 'unresolved must never read as mild/known')
+})
+
+test('resolveToolStylingContext: a bare structured user_weather with no named place resolves via the no-destination branch, not the legacy heuristic', async () => {
+  const context = await resolveToolStylingContext({
+    explicitRequest: { userWeather: { temperature_band: 'cold' } },
+    policy: { allowLiveWeather: true },
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'stated_user')
+  assert.equal(context.weatherProfile.isCold, true)
+})
+
+// Spec §6.5: "search stores its resolved context in toolContext; proposal
+// consumes the matching context." A second call with the SAME location/date
+// identity and no new structured weather reuses the cached result instead of
+// re-resolving (re-geocoding).
+test('resolveToolStylingContext: a matching second call reuses the cached resolved context instead of re-fetching', async () => {
+  let resolverCalls = 0
+  const toolContext = {}
+  const weatherResolver = async () => {
+    resolverCalls += 1
+    return { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+  }
+  await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  const callsAfterFirst = resolverCalls
+  assert.ok(callsAfterFirst > 0, 'the first call must actually resolve live weather')
+
+  // propose_outfit-style follow-up: same location/date, no fresh structured input.
+  const reused = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(resolverCalls, callsAfterFirst, 'a matching identity must reuse the cache, not re-resolve')
+  assert.equal(reused.weatherProfile.weatherSource, 'live')
+  assert.equal(reused.weatherProfile.isCold, true)
+})
+
+test('executeTool: search_wardrobe then propose_outfit share the same resolved weather context', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+  }
+  await executeTool('search_wardrobe', {
+    occasion: 'city',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+    weather_estimate: { high_f: 65, low_f: 45 },
+  }, toolContext)
+  assert.equal(toolContext.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(toolContext.weatherProfile.isCold, true)
+
+  // propose_outfit passes no location/date of its own — it must inherit the
+  // context search_wardrobe already resolved for the same turn.
+  const proposeContext = await resolveToolStylingContext({
+    explicitRequest: {},
+    toolContext,
+    policy: { allowLiveWeather: true },
+  })
+  assert.equal(proposeContext.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(proposeContext.weatherProfile.isCold, true)
+})
+
 // End-to-end reproduction of the observable symptom: a stated followup weather, once cached onto
 // toolContext.weatherProfile by search_wardrobe, must let propose_outfit accept pieces that are
 // correct for THAT weather (not the piece that would only be safe in heat).
@@ -2547,8 +2675,9 @@ test('executeTool propose_outfit accepts cold/rainy-appropriate pieces after a s
 
   try {
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
-    // Simulates the model correctly stating the followup's new weather, as it did live.
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'none', weather: 'rainy weather' }, toolContext)
+    // Simulates the model correctly translating the followup's own explicit
+    // weather claim into structured user_weather, as it should have done live.
+    await executeTool('search_wardrobe', { occasion: 'city', activity: 'none', user_weather: { precipitation: 'rain' } }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, false)
 
     const result = await executeTool('propose_outfit', {

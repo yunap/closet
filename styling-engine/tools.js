@@ -434,6 +434,7 @@ export async function resolveToolStylingContext({
     establishedState,
     inferred,
     policy,
+    toolContext,
   })
   toolContext.occasion = context.occasion
   toolContext.activity = context.activity
@@ -679,8 +680,10 @@ export const STYLIST_TOOLS = [
         fabric_weight: { type: "string", description: "Filter by fabric weight, e.g. ultralight, light, medium, heavy" },
         fabric_category: { type: "string", description: "Filter by fabric category, e.g. jersey, knit, linen, silk, satin, cotton, wool, cashmere, viscose, denim, twill, canvas, corduroy, tweed, velvet, leather, suede, ponte, synthetic, fleece, other" },
         neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" },
-        weather: { type: "string", description: "Established conditions (e.g. hot, highs 80-90F, cold). Ranks and flags results by weather fit; pass it whenever conditions are known." },
-        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set, weather is resolved from a live forecast for that place instead of the text-heuristic fallback — pass it whenever a concrete location is established in the conversation." },
+        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set alongside `date`, weather resolves through the structured contract (live forecast, then weather_estimate, then user_weather) instead of the text-heuristic fallback — pass it whenever a concrete future destination is relevant, not the user's home city." },
+        date: { type: "string", description: "YYYY-MM-DD for the destination day, when known. Pairs with `location` to resolve real weather for that place/date; without a date, `location` alone still improves ranking but the forecast defaults to today." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical demand of the outing. 'hiking' = trails, nature walks, woods, uneven or unpaved ground — a nature walk IS hiking even when it is gentle. 'walking' = pavement: city days, sightseeing, all-day errands on foot. 'none' = no sustained walking. With occasion, flags pieces by profile-rule fit; pass it whenever known." },
         visual: { type: "boolean", description: "When true, attach low-detail thumbnails for the top ranked matches so you can judge color, texture, print, and proportion by sight. Use before proposing or refining outfits; leave false for quick text lookups." },
         intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you compose only from wearable pieces (no need to self-reject anything). Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
@@ -839,8 +842,10 @@ export const STYLIST_TOOLS = [
         occasion: { type: "string", enum: OCCASION_VALUES, description: "The occasion. Pick the closest allowed value; do not invent. casual/gallery/concert/travel are intentionally permissive." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
-        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it so the bounded composer uses live weather rather than a seasonal guess." },
-        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it." },
+        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it (with `date`) so the bounded composer uses live weather, then weather_estimate, then user_weather, rather than a seasonal guess." },
+        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it. Pairs with `location`." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
         limit: { type: "integer", description: "Number of outfits to generate (1 to 5). Default to 2 for an ordinary new 'what should I wear?' request. Honor an explicit count; use 1 when the user asks for one best look or says to pick one." },
@@ -985,7 +990,11 @@ export const STYLIST_TOOLS = [
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
         season: { type: "string", description: "Season/weather context. Optional. For indoor occasions (office, restaurant, meeting, gallery), pass season:'indoor' — the live forecast applies only to time spent outdoors." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." }
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." },
+        location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
+        date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA
       },
       required: ["pieces"]
     }
@@ -1156,7 +1165,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // one model-visible search stays one searchCalls bump however many rungs code climbed.
         const relaxationPass = Number(args.__relaxationPass) || 0
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
-        const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
+        const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, activity, visual, intent, location, date } = args
         const requestText = [
           toolContext.request,
           toolContext.question,
@@ -1169,8 +1178,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion,
             activity,
             season: extractSeasonRequest(args?.season),
-            statedWeather: weatherText,
             location,
+            date,
+            dateRange: date ? { start: date, end: date } : null,
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
             requestText,
           },
           toolContext,
@@ -1560,7 +1572,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -1692,6 +1704,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activity,
             season: extractSeasonRequest(season),
             statedWeather: extractSeasonRequest(season) ? '' : season,
+            location: proposeLocation,
+            date: proposeDate,
+            dateRange: proposeDate ? { start: proposeDate, end: proposeDate } : null,
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
             requestText: requestTextForProposal,
           },
           toolContext,
@@ -2971,7 +2988,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
             mood,
             statedWeather: toolContext.weather || (extractSeasonRequest(season) ? '' : season),
             location,
+            // `date` here defaults all the way to today (`new Date()`) for the
+            // legacy season/date field below — deliberately NOT reused as the
+            // named-destination trigger's own date, which must stay empty
+            // unless the model actually named one, and must be an ISO string
+            // (a Date object stringifies to something resolveWeatherForRequest
+            // was never designed to parse).
             date: date || toolContext.currentDate || new Date(),
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
+            dateRange: date ? { start: date, end: date } : null,
             requestText: toolContext.question || '',
           },
           toolContext,
