@@ -1223,6 +1223,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // one model-visible search stays one searchCalls bump however many rungs code climbed.
         const relaxationPass = Number(args.__relaxationPass) || 0
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
+        const hardGateExcludedIds = new Set(Array.isArray(args.__hardGateExcludedIds) ? args.__hardGateExcludedIds.map(Number) : [])
+        const requestExcludedIds = new Set(Array.isArray(args.__requestExcludedIds) ? args.__requestExcludedIds.map(Number) : [])
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, activity, visual, intent, location, date } = args
         const hadEstablishedWeatherContext = relaxationPass > 0
           ? args.__automaticGateContext === true
@@ -1299,7 +1301,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         let fallbackNote = ''
         let gateSupplyFallbackNote = ''
-        let automaticGateExcludedCount = 0
         // A plain inventory/fact search with no composition context remains a
         // no-op for suitability. Once this call (or an earlier call in the
         // same turn) establishes occasion/activity/weather, the shared hard
@@ -1337,10 +1338,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // consume the automatic-use verdict as a hard roster boundary;
           // otherwise invalid pieces reach the model and rely on a later
           // proposal rejection to repair the search roster.
-          if (intent === 'explain') return !decision?.findings.some(finding => finding.authority === 'owner')
-          return decision?.underlyingAllowed !== false
+          const allowed = intent === 'explain'
+            ? !decision?.findings.some(finding => finding.authority === 'owner')
+            : decision?.underlyingAllowed !== false
+          if (!allowed) hardGateExcludedIds.add(Number(p.id))
+          return allowed
         })
-        automaticGateExcludedCount = automaticGatePool.length - automaticGateFiltered.length
         // Hard validity findings do not degrade to an annotated fallback in
         // compose mode: that would put the exact weather/activity-invalid
         // pieces back into the roster the model composes from. Explain mode
@@ -1367,8 +1370,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         let excludedCount = 0
-        let gateExcludedCount = automaticGateExcludedCount
-        let requestExcludedCount = 0
         if (toolContext && toolContext.allowedPieceIds) {
           const allowedSet = toolContext.allowedPieceIds instanceof Set 
             ? toolContext.allowedPieceIds 
@@ -1392,9 +1393,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         if (requestText) {
-          const beforeRequestExclusions = results.length
-          results = results.filter(p => requestExclusionReasonsForPiece(p, requestText).length === 0)
-          requestExcludedCount = beforeRequestExclusions - results.length
+          results = results.filter(p => {
+            const allowed = requestExclusionReasonsForPiece(p, requestText).length === 0
+            if (!allowed) requestExcludedIds.add(Number(p.id))
+            return allowed
+          })
         }
         const occasionProfile = stylingContext.occasionProfile
         const activityProfile = stylingContext.activityProfile
@@ -1447,7 +1450,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // Count what the gate found either way: the diagnostic is about what the gate judged,
             // not about what survived, and a fallback that silently reports zero exclusions would
             // hide exactly the case worth knowing about.
-            gateExcludedCount += beforeGate - kept.length
+            for (const piece of results) {
+              if (piece.ruleFit === 'prohibited') hardGateExcludedIds.add(Number(piece.id))
+            }
             if (!kept.length && beforeGate > 0) {
               gateSupplyFallbackNote = `No active pieces fully satisfy ${activityProfile?.label || 'this activity'}${occasion ? ` for ${occasion}` : ''}; showing the closest available pieces instead, annotated with ruleFit so you can judge and say what is missing.`
             } else {
@@ -1455,6 +1460,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }
           }
         }
+        const gateExcludedCount = hardGateExcludedIds.size
+        const requestExcludedCount = requestExcludedIds.size
         
         // Trim only when the manifest is genuinely in the prompt to join against. Above the piece
         // cap it is omitted and the full rows are the model's only view of a garment.
@@ -1601,8 +1608,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         if (!relaxationPass) bumpFreeformDiagnostic(toolContext, 'searchCalls')
-        if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
-        if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
         recordRetrievedPieces(toolContext, resultList.filter(item => item.id).map(item => item.id))
         recordRetrievedPieces(toolContext, resultList.filter(item => item.image).map(item => item.id), { seen: true })
@@ -1637,10 +1642,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
             __relaxationPass: relaxationPass + 1,
             __relaxedFilters: [...relaxedSoFar, ...relaxable],
             __automaticGateContext: hasAutomaticGateContext,
+            __hardGateExcludedIds: [...hardGateExcludedIds],
+            __requestExcludedIds: [...requestExcludedIds],
           }
           for (const name of relaxable) delete relaxedArgs[name]
           return executeToolInternal('search_wardrobe', relaxedArgs, toolContext)
         }
+
+        // Relaxation is one model-visible search. Count each affected piece
+        // once, after the final internal pass, instead of once per retry rung.
+        if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
+        if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
         // Report the compromise, and only the compromise: with nothing relaxed and nothing missing
         // the result is exactly what it always was, so 37 existing callers see no shape change.

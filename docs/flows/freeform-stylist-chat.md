@@ -829,6 +829,11 @@ plan_outfit_set({
   cached destination for the new date; `season:'indoor'` projects cached weather
   into outdoor-transit fields instead of erasing it; and compose-mode wardrobe
   search removes automatic-use hard failures before returning the model roster.
+  **[independent-review follow-up, 2026-08-31]** Cache consumption does not require
+  live-network permission. Partial structured weather on a later tool call inherits
+  the matching cached location/date and replaces only the fields the user supplied.
+  Internal search-relaxation rungs carry unique exclusion IDs, so diagnostics and the
+  returned hard-gate note count affected garments once per model-visible search.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning

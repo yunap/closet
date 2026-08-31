@@ -188,14 +188,21 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
     ? explicitRequest.dateRange
     : null
   const singleDate = explicitRequest.dateRange === undefined ? text(explicitRequest.date) : ''
-  const dateRange = explicitDateRange || (singleDate ? { start: singleDate, end: singleDate } : null)
-  // Follow-up tools may omit a location after discovery, but a newly supplied
-  // date still changes the cache identity. Bind that date to the cached named
-  // location so it resolves afresh instead of either reusing the old date or
-  // becoming an unbound weather lookup.
-  const resolutionLocation = explicitLocation || (dateRange?.start ? text(cached?.location) : '')
+  const requestedDateRange = explicitDateRange || (singleDate ? { start: singleDate, end: singleDate } : null)
   const userWeather = validateUserWeather(explicitRequest.userWeather)
   const modelEstimate = validateWeatherEstimate(explicitRequest.weatherEstimate)
+  const hasFreshStructuredWeather = Boolean(userWeather || modelEstimate)
+  // Follow-up tools may omit a location after discovery, but a newly supplied
+  // date or structured weather still belongs to the cached named destination
+  // unless this call explicitly names a different place. Preserve both halves
+  // of that identity so a partial field update (for example, newly stated
+  // rain) augments the cached temperature instead of creating an unbound
+  // context that erases it.
+  const resolutionLocation = explicitLocation || ((requestedDateRange?.start || hasFreshStructuredWeather) ? text(cached?.location) : '')
+  const cachedLocationMatches = Boolean(cached) &&
+    normalizedWeatherLocationIdentity(cached.location) === normalizedWeatherLocationIdentity(resolutionLocation)
+  const resolutionDateRange = requestedDateRange ||
+    (hasFreshStructuredWeather && cachedLocationMatches ? cached.dateRange : null)
 
   // Trigger the structured contract when THIS call supplies fresh evidence
   // of either shape — a destination WITH a date (matching plan_outfit_set's
@@ -221,8 +228,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   // structured weather input, is not enough to override that existing,
   // documented behavior. A structured user_weather/weather_estimate is a
   // stronger, independent signal and triggers regardless of season text.
-  const hasFreshDestination = Boolean(allowLiveLookup && resolutionLocation && dateRange?.start && isCurrentSeason(season))
-  const hasFreshStructuredWeather = Boolean(userWeather || modelEstimate)
+  const hasFreshDestination = Boolean(allowLiveLookup && resolutionLocation && resolutionDateRange?.start && isCurrentSeason(season))
   if (!hasFreshDestination && !hasFreshStructuredWeather) {
     // A location was named this call but does not match the cached
     // destination (e.g. a follow-up naming a different place with no date of
@@ -232,19 +238,19 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
     // mismatch falls through to null so the caller reaches the legacy
     // live-for-today/heuristic branch instead of a stale destination's cache.
     if (cached && explicitLocation && normalizedWeatherLocationIdentity(cached.location) !== normalizedWeatherLocationIdentity(explicitLocation)) return null
-    if (cached && dateRange?.start) {
+    if (cached && requestedDateRange?.start) {
       const cachedEnd = cached.dateRange?.end || cached.dateRange?.start
-      const requestedEnd = dateRange.end || dateRange.start
-      if ((cached.dateRange?.start || null) !== dateRange.start || cachedEnd !== requestedEnd) return null
+      const requestedEnd = requestedDateRange.end || requestedDateRange.start
+      if ((cached.dateRange?.start || null) !== requestedDateRange.start || cachedEnd !== requestedEnd) return null
     }
     return cached || null
   }
 
   const cachedEnd = cached?.dateRange?.end || cached?.dateRange?.start
-  const requestedEnd = dateRange ? (dateRange.end || dateRange.start) : null
+  const requestedEnd = resolutionDateRange ? (resolutionDateRange.end || resolutionDateRange.start) : null
   const identityMatches = cached &&
     normalizedWeatherLocationIdentity(cached.location) === normalizedWeatherLocationIdentity(resolutionLocation) &&
-    (cached.dateRange?.start || null) === (dateRange?.start || null) &&
+    (cached.dateRange?.start || null) === (resolutionDateRange?.start || null) &&
     cachedEnd === requestedEnd
   if (identityMatches && !userWeather && !modelEstimate) return cached
 
@@ -262,15 +268,22 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   // for my October Vienna trip") must go straight to the estimate, never
   // attempt a live lookup that would silently override the stated
   // hypothetical.
-  if (allowLiveLookup && resolutionLocation && dateRange?.start && isCurrentSeason(season)) {
+  if (allowLiveLookup && resolutionLocation && resolutionDateRange?.start && isCurrentSeason(season)) {
     try {
-      const live = await weatherResolver({ date: dateRange.start, location: resolutionLocation, mood, season })
+      const live = await weatherResolver({ date: resolutionDateRange.start, location: resolutionLocation, mood, season })
       if (live?.weatherSource === 'live') liveWeather = live
     } catch {
       liveWeather = null
     }
   }
-  const resolved = resolveWeatherContext({ userWeather, liveWeather, modelEstimate, location: resolutionLocation, dateRange })
+  const resolved = resolveWeatherContext({
+    userWeather,
+    liveWeather,
+    modelEstimate,
+    fallbackContext: identityMatches ? cached : null,
+    location: resolutionLocation,
+    dateRange: resolutionDateRange,
+  })
   if (toolContext && typeof toolContext === 'object') toolContext.resolvedWeatherContext = resolved
   return resolved
 }
@@ -356,13 +369,18 @@ async function resolveWeather({
 
   // Spec §6.1/§6.5: a named destination/date resolves before every
   // lower-authority artifact/state prose or snapshot fallback.
-  if (allowLiveWeather) {
-    const namedDestination = await resolveNamedDestinationWeather({ explicitRequest, toolContext, weatherResolver, mood, season })
-    if (namedDestination) {
-      return {
-        profile: profileFromResolvedWeatherContext(namedDestination, { indoor: indoorEnvironment }),
-        provenance: { source: `named_destination.${namedDestination.temperature.source}` },
-      }
+  const namedDestination = await resolveNamedDestinationWeather({
+    explicitRequest,
+    toolContext,
+    weatherResolver,
+    mood,
+    season,
+    allowLiveLookup: allowLiveWeather,
+  })
+  if (namedDestination) {
+    return {
+      profile: profileFromResolvedWeatherContext(namedDestination, { indoor: indoorEnvironment }),
+      provenance: { source: `named_destination.${namedDestination.temperature.source}` },
     }
   }
 

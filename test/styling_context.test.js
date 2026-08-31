@@ -162,10 +162,12 @@ test('indoor projects cached destination weather into transit constraints instea
       weatherEstimate: { high_f: 65, low_f: 45 },
     },
     toolContext,
+    policy: { allowLiveWeather: false },
   })
   const indoor = await resolveStylingContext({
     explicitRequest: { statedWeather: 'indoor' },
     toolContext,
+    policy: { allowLiveWeather: false },
   })
 
   assert.equal(indoor.weatherProfile.isIndoor, true)
@@ -174,6 +176,39 @@ test('indoor projects cached destination weather into transit constraints instea
   assert.equal(indoor.weatherProfile.weatherSource, 'model_estimate')
   assert.equal(indoor.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
   assert.equal(indoor.provenanceByField.weatherProfile.source, 'named_destination.model_estimate')
+})
+
+test('a partial user-weather follow-up augments its cached destination instead of detaching from it', async () => {
+  const toolContext = {}
+  const resolveStylingContext = createStylingContextResolver()
+  await resolveStylingContext({
+    explicitRequest: {
+      season: 'current season',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    toolContext,
+    policy: { allowLiveWeather: false },
+  })
+
+  const rainy = await resolveStylingContext({
+    explicitRequest: { userWeather: { precipitation: 'rain' } },
+    toolContext,
+    policy: { allowLiveWeather: false },
+  })
+
+  const resolved = rainy.weatherProfile.resolvedWeatherContext
+  assert.equal(resolved.location, 'Vienna, Virginia')
+  assert.deepEqual(resolved.dateRange, { start: '2026-10-12', end: '2026-10-12' })
+  assert.equal(resolved.temperature.highF, 65)
+  assert.equal(resolved.temperature.lowF, 45)
+  assert.equal(resolved.temperature.source, 'model_estimate')
+  assert.equal(resolved.precipitation.value, 'rain')
+  assert.equal(resolved.precipitation.source, 'stated_user')
+  assert.equal(resolved.overallSource, 'mixed')
+  assert.equal(rainy.weatherProfile.isCold, true)
+  assert.equal(rainy.weatherProfile.isRainy, true)
 })
 
 test('live weather refreshes an older artifact snapshot for current season', async () => {

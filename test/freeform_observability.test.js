@@ -2543,6 +2543,34 @@ test('executeTool search_wardrobe excludes ordinary open sandals from a cold com
   }
 })
 
+test('search relaxation counts one hard-gated piece once across all internal retry rungs', async () => {
+  const activeShoeIds = db.prepare("SELECT id FROM pieces WHERE category = 'shoes' AND status = 'active'").all().map(row => Number(row.id))
+  db.prepare("UPDATE pieces SET status = 'inactive' WHERE category = 'shoes' AND status = 'active'").run()
+  const sandalId = Number(db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES ('relaxation cold open sandal', 'shoes', 'active', '["city"]', 'everyday', 'sandal', 'open_toe', 'flat', 'high')
+  `).run().lastInsertRowid)
+  try {
+    const toolContext = { freeformDiagnostics: {} }
+    const results = await executeTool('search_wardrobe', {
+      category: 'shoes',
+      occasion: 'city',
+      activity: 'walking',
+      weather_estimate: { high_f: 55, low_f: 40 },
+    }, toolContext)
+
+    assert.equal(results.some(item => Number(item?.id) === sandalId), false)
+    assert.ok(results.some(item => /1 piece\(s\) filtered out/.test(item?.note || '')))
+    assert.equal(toolContext.freeformDiagnostics.searchCalls, 1)
+    assert.equal(toolContext.freeformDiagnostics.gateExcludedTotal, 1)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(sandalId)
+    const restore = db.prepare("UPDATE pieces SET status = 'active' WHERE id = ?")
+    for (const id of activeShoeIds) restore.run(id)
+  }
+})
+
 test('executeTool propose_outfit preserves cached cold transit when season is indoor', async () => {
   const insert = db.prepare(`
     INSERT INTO pieces

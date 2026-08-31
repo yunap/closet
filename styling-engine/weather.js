@@ -383,23 +383,34 @@ function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimat
 // matching live field → matching structured model-estimate field →
 // unavailable. A user-stated PRECIPITATION does not block LIVE temperature
 // from winning, and vice versa — "the user said rainy, live says 65/45"
-// keeps both facts instead of one erasing the other.
-export function resolveWeatherContext({ userWeather = null, liveWeather = null, modelEstimate = null, location = '', dateRange = null } = {}) {
+// keeps both facts instead of one erasing the other. `fallbackContext` is
+// accepted only after a caller has proved matching location/date identity;
+// it supplies previously resolved fields that this update did not replace.
+export function resolveWeatherContext({ userWeather = null, liveWeather = null, modelEstimate = null, fallbackContext = null, location = '', dateRange = null } = {}) {
   const liveTemperature = liveWeather && liveWeather.weatherSource === 'live'
     ? { highF: liveWeather.highF, lowF: liveWeather.lowF, isHot: liveWeather.isHot, isCold: liveWeather.isCold, isExtremeHeat: liveWeather.isExtremeHeat }
     : null
 
-  const temperature = resolveTemperatureField({
+  const resolvedTemperature = resolveTemperatureField({
     userTemperature: userWeather?.temperature || null,
     liveTemperature,
     estimateTemperature: modelEstimate ? { highF: modelEstimate.highF, lowF: modelEstimate.lowF } : null,
   })
+  const temperature = resolvedTemperature.source === 'unavailable' && fallbackContext?.temperature && fallbackContext.temperature.source !== 'unavailable'
+    ? { ...fallbackContext.temperature }
+    : resolvedTemperature
   // Live weather currently carries no precipitation/wind data (Open-Meteo
   // call only fetches temperature_2m_max/min) — those dimensions fall
   // through past 'live' to a model estimate or stay unavailable. No
   // existing hard rule requires them to be more than that (spec §5.2).
-  const precipitation = resolveConditionField('precipitation', { userWeather, liveValue: null, modelEstimate })
-  const wind = resolveConditionField('wind', { userWeather, liveValue: null, modelEstimate })
+  const resolvedPrecipitation = resolveConditionField('precipitation', { userWeather, liveValue: null, modelEstimate })
+  const precipitation = resolvedPrecipitation.source === 'unavailable' && fallbackContext?.precipitation && fallbackContext.precipitation.source !== 'unavailable'
+    ? { ...fallbackContext.precipitation }
+    : resolvedPrecipitation
+  const resolvedWind = resolveConditionField('wind', { userWeather, liveValue: null, modelEstimate })
+  const wind = resolvedWind.source === 'unavailable' && fallbackContext?.wind && fallbackContext.wind.source !== 'unavailable'
+    ? { ...fallbackContext.wind }
+    : resolvedWind
 
   const sources = new Set([temperature.source, precipitation.source, wind.source].filter(s => s !== 'unavailable'))
   const overallSource = sources.size === 0 ? 'unavailable' : sources.size === 1 ? [...sources][0] : 'mixed'

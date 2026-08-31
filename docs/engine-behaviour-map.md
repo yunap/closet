@@ -1319,6 +1319,15 @@ for later repair, while `intent:'explain'` remains inspectable. The architecture
 legacy weather prose with structured ranges and preserves its reviewed candidate outputs; only the
 truthful structured weather labels change.
 
+**[independent-review follow-up, 2026-08-31]** Reusing a matching resolved destination is now
+independent of permission to perform a live lookup: an offline/disabled-live indoor follow-up still
+projects cached cold physics into `transitIsCold`. A fresh partial `user_weather` update with no
+repeated location/date inherits the cached identity and resolves field by field, so newly stated
+rain augments rather than erases the cached temperature and its source. Search relaxation carries
+sets of excluded piece IDs across internal rungs and increments `gateExcludedTotal` only after the
+terminal pass; one model-visible search therefore counts each hard-gated piece once, matching the
+returned exclusion note rather than the number of implementation retries.
+
 **Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
 owner's explicit confirmation before running, per the spec's own rule; not something to do
 unilaterally.

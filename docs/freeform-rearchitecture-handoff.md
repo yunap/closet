@@ -2122,5 +2122,10 @@ a `needs_base` garment remains a separate hard contract.
   roster reaches the model. The cross-flow fixture now replaces legacy weather
   prose with structured ranges while preserving its reviewed candidate outputs.
 
+  **[follow-up, 2026-08-31]** Matching cache reuse also runs when
+  live lookup is disabled; partial `user_weather` merges by field onto that bound
+  cache; and relaxation diagnostics deduplicate excluded piece IDs across internal
+  retries before incrementing `gateExcludedTotal`.
+
   Still open: §10's live paid Vienna VA verification — needs printed cost and
   the owner's explicit confirmation first, per the spec's own rule.
