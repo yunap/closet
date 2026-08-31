@@ -1161,11 +1161,31 @@ defect was that arbitrary model prose in `slot.weather` (e.g. "crisp outdoor wal
 became authoritative physical weather ahead of the live forecast, and a failed future-date forecast
 read as neutral with no structured fallback. `environment` (indoor/outdoor/beach_coastal) is now
 the sole model-facing setting field; the free-text `weather` field is removed from the tool schema
-entirely. **Not yet done:** §6.5 single-outfit parity (`search_wardrobe`/`propose_outfit`/
-`generate_outfits` still resolve weather through `resolveStylingContext`'s older free-text
-`statedWeather` path, unchanged by this entry) and §7's continuity persistence (accepted cards and
-`current_outfit_set` do not yet retain the resolved structured context/provenance for follow-up
-questions).
+entirely.
+
+**[single-outfit parity, 2026-08-31] `search_wardrobe`/`propose_outfit`/`generate_outfits` resolve
+weather through the same structured contract as `plan_outfit_set`.** `stylingContext.js`'s shared
+`resolveWeather` — used by every direct/non-chat generation caller too — gains
+`resolveNamedDestinationWeather`, slotted exactly where the legacy live-weather branch used to sit:
+after the existing prose-`statedWeather` and pre-resolved-`weatherProfile`-object precedence tiers
+(which still win outright when present — an already-settled resolution must never be silently
+re-resolved), gated by the same `isCurrentSeason` check the legacy branch used (an explicit
+hypothetical season still bypasses live resolution). Triggers on a fresh `location`+`date` or a bare
+structured `user_weather`/`weather_estimate` with no destination at all; reuses the injectable
+`weatherResolver` seam (not a separate fetch mechanism) so existing test mocks intercept it
+transparently. `toolContext.resolvedWeatherContext` caches the result — a matching second call
+(`propose_outfit` after `search_wardrobe`, no location/date of its own) reuses the cache instead of
+re-resolving. Deliberately does not fall back to `toolContext.location` (the route-level
+home-location default) as a trigger, so an ordinary "what should I wear today" request is
+unaffected. `search_wardrobe`'s free-text `weather` field is removed from its schema; `propose_outfit`
+keeps its unrelated `season:'indoor'` convention as-is (a separate, pre-existing mechanism, not
+weather prose about temperature).
+
+**Not yet done:** the typed `weather_context_required` stop for these three tools (only
+`plan_outfit_set` has it; the others resolve to `unavailable` and proceed — the same soft
+degradation as before this work, not a new regression) and §7's continuity persistence (accepted
+cards and `current_outfit_set` do not yet retain the resolved structured context/provenance for
+follow-up questions).
 
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source

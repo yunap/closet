@@ -2003,9 +2003,30 @@ a `needs_base` garment remains a separate hard contract.
   regex-based `currentTurnStatedWeather`/`statedUserWeather` repair attempt
   (five review rounds of prose-parsing edge cases — dates, Celsius, ranges,
   styling vocabulary — before the owner ruled to replace the whole approach);
-  that code was deleted, not kept alongside the new contract. **`search_wardrobe`,
-  `propose_outfit`, and `generate_outfits` still resolve weather through
-  `resolveStylingContext`'s older free-text `statedWeather` path (unchanged) —
-  spec §6.5 single-outfit parity is not done.** Accepted plan cards and
-  `current_outfit_set` also do not yet persist the resolved structured
-  context/provenance for follow-up questions (spec §7, not done).
+  that code was deleted, not kept alongside the new contract.
+
+  **[single-outfit parity, 2026-08-31]** `search_wardrobe`, `propose_outfit`, and
+  `generate_outfits` now resolve weather through the same structured contract as
+  `plan_outfit_set`. `stylingContext.js`'s shared `resolveWeather` — used by every
+  direct/non-chat generation caller too, not just freeform tools — gained
+  `resolveNamedDestinationWeather`, slotted exactly where the legacy live-weather
+  branch used to sit: after the existing prose-`statedWeather` and
+  pre-resolved-`weatherProfile`-object precedence tiers (which still win outright
+  when present) and behind the same `isCurrentSeason` gate the legacy branch used
+  (a hypothetical season still bypasses live resolution). It triggers on a fresh
+  `location`+`date`/`dateRange` or a bare structured `user_weather`/`weather_estimate`
+  with no destination at all, and deliberately never falls back to
+  `toolContext.location` (the route-level home-location default) as a trigger, so an
+  ordinary "what should I wear today" call is unaffected. It reuses the injectable
+  `weatherResolver` seam rather than a separate fetch mechanism, so existing test
+  mocks intercept it transparently, and caches its result on
+  `toolContext.resolvedWeatherContext` so a matching later call in the same turn
+  (e.g. `propose_outfit` after `search_wardrobe`, with no destination of its own)
+  reuses the cache instead of re-resolving. `search_wardrobe`'s free-text `weather`
+  field is removed from its schema; `propose_outfit`'s unrelated `season:'indoor'`
+  convention is untouched. **Not done:** the typed `weather_context_required` stop
+  (spec §6.2) for these three tools — only `plan_outfit_set` has it; the others
+  still resolve to `unavailable` and proceed, the same soft degradation as before
+  this work. Accepted plan cards and `current_outfit_set` also do not yet persist
+  the resolved structured context/provenance for follow-up questions (spec §7, not
+  done).

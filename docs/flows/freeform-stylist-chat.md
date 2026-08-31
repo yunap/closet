@@ -807,8 +807,16 @@ plan_outfit_set({
   temperature stays unresolved. See
   `docs/future-trip-weather-estimate-spec.md`; the earlier regex-based
   `currentTurnStatedWeather` repair this replaced is deleted, not kept
-  alongside it. Not yet extended to `search_wardrobe`/`propose_outfit`/
-  `generate_outfits`, which still use the older free-text path below.
+  alongside it. **[single-outfit parity, 2026-08-31]** Extended to
+  `search_wardrobe`/`propose_outfit`/`generate_outfits`: the shared
+  `resolveWeather` in `stylingContext.js` gained `resolveNamedDestinationWeather`,
+  slotted where the legacy live-weather branch sat (after stated-prose and
+  pre-resolved-profile precedence, behind the same hypothetical-season gate),
+  triggering on a fresh `location`+`date` or a bare `user_weather`/`weather_estimate`
+  and caching onto `toolContext.resolvedWeatherContext` so a later call in the same
+  turn reuses it. The typed `weather_context_required` stop (spec §6.2) is still
+  `plan_outfit_set`-only — the other three tools resolve to `unavailable` and
+  proceed, unchanged from before this step.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning
