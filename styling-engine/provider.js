@@ -1985,15 +1985,24 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     // available, since nothing in this loop consulted it. One retry, same shape as
     // applyFreeformOutputChecks's other clauses: discard the truncated turn without executing/
     // shipping it and ask for a shorter, complete one.
-    if (turn.usage?.stopReason === 'max_tokens' && !retriedChecks.has('providerTruncation')) {
-      retriedChecks.add('providerTruncation')
-      bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
-      toolContext._pendingFreeformRetryReason = 'providerTruncation'
-      currentMessages.push({
-        role: 'user',
-        content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
-      })
-      continue
+    if (turn.usage?.stopReason === 'max_tokens') {
+      if (!retriedChecks.has('providerTruncation')) {
+        retriedChecks.add('providerTruncation')
+        bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
+        toolContext._pendingFreeformRetryReason = 'providerTruncation'
+        currentMessages.push({
+          role: 'user',
+          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
+        })
+        continue
+      }
+      // 2026-08-31 review correction: the retry-exhausted case previously fell through to the
+      // ordinary branches below — a second truncation with no content matched `turn.noMessage` and
+      // returned a silent blank answer; a second truncation with partial prose or a tool call was
+      // shipped/executed as if it were a normal, complete turn. One retry is already spent, so
+      // stop here rather than risk shipping content that may be silently incomplete twice over.
+      bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterationsUnrecovered')
+      return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
     }
 
     if (turn.noMessage) return { answer: '', savedCorrections }

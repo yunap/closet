@@ -113,6 +113,10 @@ function uploadsFilePath(relativeOrFilename) {
 // an image belongs to. Every block carries `_tokenEstimate` for structuredRequestInputTokenUpperBound
 // — see feedbackSynthesis.js for why that can't be derived from the block's own (base64) size.
 async function imageBlocksForEvidence(evidenceList, rawRowById) {
+  // Must agree with previewFor's own resolveAiTarget(stylistProviderOverride) call — this feeds
+  // estimateImagePixelTokens, which needs to know which provider's (very different) image-token
+  // formula applies to price the authorization preview accurately.
+  const estimateProvider = resolveAiTarget(stylistProviderOverride).provider
   const referencedPieceIds = [...new Set(evidenceList.flatMap(item => [
     Number(item?.subject?.id),
     ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : []),
@@ -133,7 +137,7 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
     if (boardFilePath) {
       const thumb = await prepareWardrobeThumb(boardFilePath, `synthesis-board:${item.evidenceId}`, { maxPx: BOARD_IMAGE_MAX_PX })
       blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — the generated outfit image the owner reacted to:` })
-      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(BOARD_IMAGE_MAX_PX) })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(BOARD_IMAGE_MAX_PX, estimateProvider) })
     }
 
     const itemPieceIds = [Number(item?.subject?.id), ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : [])]
@@ -147,7 +151,7 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
       const { maxPx } = pieceVisualDetailPolicy(piece)
       const thumb = await prepareWardrobeThumb(filePath, `synthesis-piece:${item.evidenceId}:${piece.id}`, { maxPx })
       blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — garment ${piece.id}:` })
-      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(maxPx) })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(maxPx, estimateProvider) })
     }
   }
   return blocks

@@ -339,3 +339,47 @@ test('a truncated, empty (noMessage-shaped) turn retries instead of returning a 
   })
   assert.equal(result.answer, 'Wear the navy sweater.')
 })
+
+// 2026-08-31 review correction: the one-retry guard only covers the FIRST truncation — a second
+// consecutive truncation matched retriedChecks.has('providerTruncation') as already-used and fell
+// through to the ordinary branches, silently shipping whatever the second truncated turn contained
+// (blank if empty, partial prose if not) as if it were a normal, complete answer.
+test('two consecutive truncated turns do not silently return a blank answer', async () => {
+  queueGeminiResponse({
+    id: 'interaction_19', status: 'incomplete',
+    steps: [], output_text: '',
+    usage: { total_tokens: 1200, total_input_tokens: 1150, total_output_tokens: 50 },
+  })
+  queueGeminiResponse({
+    id: 'interaction_20', status: 'incomplete',
+    steps: [], output_text: '',
+    usage: { total_tokens: 1200, total_input_tokens: 1150, total_output_tokens: 50 },
+  })
+  const result = await askStylistWithTools({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'what should I wear?' }],
+    toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
+  })
+  assert.notEqual(result.answer, '')
+  assert.match(result.answer, /ran out of steps/)
+})
+
+test('two consecutive truncated turns do not ship the second one\'s partial prose as a complete answer', async () => {
+  queueGeminiResponse({
+    id: 'interaction_21', status: 'incomplete',
+    steps: [], output_text: '',
+    usage: { total_tokens: 1200, total_input_tokens: 1150, total_output_tokens: 50 },
+  })
+  queueGeminiResponse({
+    id: 'interaction_22', status: 'incomplete',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Wear the navy sweater with' }] }],
+    usage: { total_tokens: 1200, total_input_tokens: 1150, total_output_tokens: 50 },
+  })
+  const result = await askStylistWithTools({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'what should I wear?' }],
+    toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
+  })
+  assert.notEqual(result.answer, 'Wear the navy sweater with')
+  assert.match(result.answer, /ran out of steps/)
+})

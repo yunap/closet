@@ -3123,12 +3123,14 @@ router.post('/generate-outfit-boards', async (req, res) => {
     const pieceById = new Map(candidatePieces.map(p => [Number(p.id), p]))
 
     let boardPlans = boardPlanFromStructuredOutfits(structuredOutfits, selectedPiece, candidatePieces)
+    let plannerCalled = false
 
     if (!boardPlans.length && conceptsText) {
       boardPlans = structuredOutfitsFromGeneratedText(conceptsText, selectedPiece, candidatePieces)
     }
 
     if (!boardPlans.length) {
+      plannerCalled = true
       const candidateText = candidatePieces.map(p => `${p.id}: ${p.name} (${p.category}) — ${buildPieceText(p)}`).join('\n')
       const content = [
         { type: 'text', text: `Candidate saved wardrobe pieces. Use ONLY these ids:\n${candidateText}`, cache_control: { type: 'ephemeral' } },
@@ -3178,12 +3180,13 @@ router.post('/generate-outfit-boards', async (req, res) => {
     }
 
     if (!boards.length) throw new Error('No usable boards were generated from structured outfit ids')
-    // The board images themselves always render through OpenAI (createOutfitBoardImage) — this
-    // label describes the text-planning step specifically (the askStylist call above, when it ran;
-    // boardPlans is often deterministic from structuredOutfits/conceptsText with no model call at
-    // all), not the images, matching how every other text/vision endpoint's provider field reports
-    // its own resolved config rather than the static AI_PROVIDER constant.
-    res.json({ boards, provider: resolveAiTarget(stylistProviderOverride).provider, mode: 'generate_outfit_boards' })
+    // 2026-08-31 review correction: this previously reported a resolved provider unconditionally,
+    // even on the common path where boardPlans came from structuredOutfits/conceptsText and the
+    // planner's askStylist call never ran at all — attributing a provider that was never called.
+    // createOutfitBoardImage (the board renderer) is a local sharp/SVG composite, not a model call
+    // of any kind — there is no "renderer provider" to report here, only whether the text planner
+    // ran and, if so, what it resolved to.
+    res.json({ boards, provider: plannerCalled ? resolveAiTarget(stylistProviderOverride).provider : null, mode: 'generate_outfit_boards' })
   } catch (err) {
     console.error('Generate outfit boards error:', err)
     res.status(500).json({ error: err.message })
