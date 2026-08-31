@@ -1192,8 +1192,24 @@ resolving precipitation/wind, and must proceed as an ordinary local turn rather 
 system prompt's Destination & Weather Clarification bullet now teaches this for all three tools, not
 just `plan_outfit_set`.
 
-**Not yet done:** §7's continuity persistence (accepted cards and `current_outfit_set` do not yet
-retain the resolved structured context/provenance for follow-up questions).
+**[§7 continuity persistence, 2026-08-31]** Every accepted card now carries `weatherUsed` (the
+truthful display label, `truthfulWeatherLabel` in `outfitSetPlanner.js`, exported for reuse) and a
+serialized `resolvedWeatherContext` alongside it — attached in `validateSubmittedPlanOutfits` for
+plan/capsule cards (from the slot's own already-resolved `weatherProfile`), and via a shared
+`weatherCardFields(stylingContext)` helper in `tools.js` for `propose_outfit` and `generate_outfits`.
+No-op when nothing was structurally resolved (an ordinary at-home heuristic call). Both current-set
+projections read these per-outfit fields as `weather_used`/`resolved_weather_context`:
+`boundedConversationStateFromToolContext` (`routes/ai.js`, the router's direct-routing path) and the
+`outfitSetFromBody` closure inside `buildStylistConversationPayload` (`styling-engine/core.js`, the
+full-stylist tool-loop path) — this is per-outfit specifically because a multi-slot trip can have
+different weather per slot, which the single shared `weather_profile`/`weatherProfile` field already
+on both projections cannot represent. `freeform_generation_runs.weather_source` now reads
+`resolvedWeatherContext.overallSource` (mixed-aware — e.g. user-stated rain + live temperature) when
+the structured resolver ran, falling back to the old plain per-field source otherwise;
+`plan_outfit_set` sets it from its own per-slot precheck (the shared source when every slot agrees,
+`'mixed'` when slots differ). **Not yet done:** §9's provider-schema-parity tests and the rest of the
+31-item acceptance checklist beyond what has been covered ad hoc; §10's live paid Vienna VA
+verification.
 
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source

@@ -41,7 +41,8 @@ import {
   completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
-  MIN_ENFORCED_CAPSULE_BUDGET
+  MIN_ENFORCED_CAPSULE_BUDGET,
+  truthfulWeatherLabel
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -448,7 +449,11 @@ export async function resolveToolStylingContext({
   if (String(explicitRequest.statedWeather || '').trim()) {
     toolContext.weather = String(explicitRequest.statedWeather).trim()
   }
-  setFreeformWeatherSource(toolContext, context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
+  // Spec §7: freeform_generation_runs.weather_source is set from overallSource
+  // (mixed-aware — e.g. user rain + live temperature) when the structured
+  // resolver actually ran; falls back to the plain per-field weatherSource for
+  // the legacy heuristic/live paths, which never populate resolvedWeatherContext.
+  setFreeformWeatherSource(toolContext, context.weatherProfile?.resolvedWeatherContext?.overallSource || context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
   return context
 }
 
@@ -470,6 +475,21 @@ function weatherContextRequiredStop(stylingContext, { verb }) {
     date_range: resolved.dateRange || null,
     missing: ["temperature"],
     message: `Live weather does not cover these dates${resolved.location ? ` for "${resolved.location}"` : ''}. Re-call this tool with weather_estimate.high_f and weather_estimate.low_f before ${verb}.`
+  }
+}
+
+// Spec §7: persist the truthful disclosure + serialized structured context onto
+// a proposed/generated card, mirroring what plan_outfit_set's slots already carry
+// (validateSubmittedPlanOutfits) — so a follow-up like "what weather were you
+// planning for?" can read it back per-outfit instead of only from the shared,
+// single toolContext-level weatherProfile. No-op when nothing was resolved (an
+// ordinary at-home heuristic call has no structured context to persist).
+function weatherCardFields(stylingContext) {
+  const resolved = stylingContext?.weatherProfile?.resolvedWeatherContext
+  if (!resolved) return {}
+  return {
+    weatherUsed: truthfulWeatherLabel(resolved.temperature, { location: resolved.location }),
+    resolvedWeatherContext: serializeResolvedWeatherContext(resolved),
   }
 }
 
@@ -1921,6 +1941,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           activity: resolvedActivity,
           debug: outfitDebug,
           previewOnly: true,
+          ...weatherCardFields(stylingContext),
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: supersededEngineNote ? 'annotated' : 'accepted',
@@ -2567,8 +2588,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
             fetchImpl: weatherFetchImpl,
             seasonIsCalendarOnly: planKind === 'seasonal_capsule',
           })
-          return { label: slot.label, status: profile?.resolvedWeatherContext?.status || 'unavailable' }
+          return { label: slot.label, status: profile?.resolvedWeatherContext?.status || 'unavailable', overallSource: profile?.resolvedWeatherContext?.overallSource || '' }
         }))
+        // Spec §7: freeform_generation_runs.weather_source from overallSource. A
+        // multi-slot plan can mix sources across slots (city day live, coast day
+        // estimated) — record the shared source when every slot agrees, 'mixed'
+        // when they don't, matching resolveWeatherContext's own 'mixed' semantics
+        // for a single slot with more than one source.
+        const planOverallSources = new Set(weatherPreCheckSlots.map(slot => slot.overallSource).filter(Boolean))
+        if (planOverallSources.size) {
+          setFreeformWeatherSource(toolContext, planOverallSources.size === 1 ? [...planOverallSources][0] : 'mixed')
+        }
         const unresolvedSlot = weatherPreCheckSlots.find(slot => slot.status === 'unavailable')
         if (unresolvedSlot) {
           bumpFreeformDiagnostic(toolContext, 'planWeatherContextRequired')
@@ -3124,7 +3154,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         
         if (result && result.structuredOutfits) {
           recordNestedFreeformUsage(toolContext, result?.debug?.composerUsage)
-          toolContext.generatedOutfits = result.structuredOutfits
+          const generatedWeatherFields = weatherCardFields(stylingContext)
+          toolContext.generatedOutfits = Object.keys(generatedWeatherFields).length
+            ? result.structuredOutfits.map(outfit => ({ ...outfit, ...generatedWeatherFields }))
+            : result.structuredOutfits
           if (boundedMultiLook) {
             toolContext.atomicMultiLookCompleted = true
             toolContext.atomicMultiLookRequestedCount = requestedCount

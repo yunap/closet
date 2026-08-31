@@ -814,6 +814,48 @@ test('plan_outfit_set stops with weather_context_required (typed) when live weat
   assert.equal(toolContext.pendingPlan, undefined, 'no pendingPlan may exist before weather context is resolved')
 })
 
+// Spec §7: an accepted plan card persists the truthful weather disclosure and
+// its serialized structured context, and freeform_generation_runs.weather_source
+// reads back overallSource — not just the model-facing plan_lines text.
+test('plan_outfit_set + submit_plan_outfits persists weatherUsed/resolvedWeatherContext onto the accepted card and sets the run weather_source diagnostic', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'vienna evening top', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'vienna evening pants', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'vienna evening shoes', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'outerwear', name: 'vienna evening coat', occasions: ['evening'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'trip to Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const workbench = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    weather_estimate: { high_f: 55, low_f: 40 },
+    slots: [{ label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 }]
+  }, toolContext)
+  assert.equal(workbench.status, 'slot_rosters')
+  assert.equal(toolContext.freeformDiagnostics?.weatherSource, 'model_estimate')
+
+  const ids = idsForSlot(toolContext.pendingPlan.slots[0])
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: toolContext.pendingPlan.slots[0].id,
+      piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes'), ids.get('outerwear')],
+    }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'success', `expected acceptance, got: ${JSON.stringify(submitted)}`)
+  const card = toolContext.generatedOutfits[0]
+  assert.match(card.weatherUsed, /55°F high \/ 40°F low — seasonal estimate, not a live forecast/)
+  assert.equal(card.resolvedWeatherContext.location, 'Vienna, Virginia')
+  assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+})
+
 test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed plan with only SOME slots unresolved', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })

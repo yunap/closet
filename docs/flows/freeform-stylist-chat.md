@@ -819,6 +819,11 @@ plan_outfit_set({
   (`weatherContextRequiredStop`, called right after weather resolution in each),
   gated on `resolvedWeatherContext.location` being non-empty so a bare structured
   weather claim with no named destination proceeds instead of stopping.
+  **[§7 continuity persistence, 2026-08-31]** Accepted cards now carry `weatherUsed`
+  (truthful label) + a serialized `resolvedWeatherContext`; both current-set writers
+  (`boundedConversationStateFromToolContext`, `outfitSetFromBody`) project them
+  per-outfit as `weather_used`/`resolved_weather_context`, so a follow-up about one
+  slot's weather in a multi-slot trip reads that slot's own resolution back.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning

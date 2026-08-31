@@ -2038,5 +2038,17 @@ a `needs_base` garment remains a separate hard contract.
   turn rather than stop. The system prompt's Destination & Weather Clarification
   bullet now teaches this for all three tools.
 
-  Accepted plan cards and `current_outfit_set` still do not persist the resolved
-  structured context/provenance for follow-up questions (spec §7, not done).
+  **[§7 continuity persistence, 2026-08-31]** Accepted cards now persist the resolved
+  structured context: `weatherUsed` (truthful display label) and a serialized
+  `resolvedWeatherContext`, attached in `validateSubmittedPlanOutfits` for
+  plan/capsule cards and via a shared `weatherCardFields()` helper for
+  `propose_outfit`/`generate_outfits`. Both `current_outfit_set` writers project
+  these per-outfit as `weather_used`/`resolved_weather_context` —
+  `boundedConversationStateFromToolContext` (`routes/ai.js`) and `outfitSetFromBody`
+  inside `buildStylistConversationPayload` (`styling-engine/core.js`) — per-outfit
+  because a multi-slot trip can have different weather per slot, unlike the single
+  shared `weather_profile` field already on both projections.
+  `freeform_generation_runs.weather_source` now reads `overallSource` (mixed-aware)
+  when the structured resolver ran. Still open: spec §9's provider-schema-parity
+  tests and the rest of the 31-item acceptance checklist; §10's live paid Vienna VA
+  verification.

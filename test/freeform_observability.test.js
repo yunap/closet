@@ -1992,6 +1992,38 @@ test('bounded router state preserves the generated set and established context f
   assert.equal(state.established.weather, 'a forecast high of 70°F and low of 55°F')
 })
 
+// Spec §7: current_outfit_set persists a per-outfit weather disclosure and its
+// serialized structured context (distinct from the single shared weather_profile
+// above, which cannot represent a multi-slot plan with different weather per
+// slot). A follow-up like "what weather were you planning for the coast day?"
+// reads this back per-outfit.
+test('bounded router state persists per-outfit weatherUsed/resolvedWeatherContext onto current_outfit_set', () => {
+  const state = boundedConversationStateFromToolContext({
+    generatedOutfits: [{
+      label: 'Coast Day',
+      pieceIds: [21],
+      pieces: [{ id: 21, name: 'jacket' }],
+      weatherUsed: '65°F high / 45°F low — live forecast, Cambria, CA',
+      resolvedWeatherContext: {
+        status: 'resolved',
+        location: 'Cambria, CA',
+        date_range: { start: '2026-10-14', end: '2026-10-14' },
+        temperature: { high_f: 65, low_f: 45, is_hot: false, is_cold: true, is_extreme_heat: false, source: 'live' },
+        overall_source: 'live',
+      }
+    }, {
+      label: 'No Weather Slot',
+      pieceIds: [22],
+      pieces: [{ id: 22, name: 'sweater' }]
+    }]
+  })
+  assert.equal(state.current_outfit_set[0].weather_used, '65°F high / 45°F low — live forecast, Cambria, CA')
+  assert.equal(state.current_outfit_set[0].resolved_weather_context.location, 'Cambria, CA')
+  assert.equal(state.current_outfit_set[0].resolved_weather_context.overall_source, 'live')
+  assert.equal(state.current_outfit_set[1].weather_used, undefined, 'an outfit with no resolved weather must not fabricate a disclosure')
+  assert.equal(state.current_outfit_set[1].resolved_weather_context, undefined)
+})
+
 test('stored weather physics survive echoed display prose but yield to explicit turn weather', async () => {
   const { buildStylistConversationPayload, saveStylistConversationState } = await import('../styling-engine/core.js')
   const sessionId = `weather-physics-${Date.now()}`
@@ -2691,6 +2723,52 @@ test('executeTool propose_outfit stops with weather_context_required for a named
     assert.equal(result.location, 'Vienna, Virginia')
     assert.equal(result.date_range.start, '2026-10-12')
     assert.deepEqual(result.missing, ['temperature'])
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Spec §7: an accepted card persists the truthful weather disclosure and its
+// serialized structured context, not just the shared toolContext-level
+// weatherProfile — so a later follow-up can read this specific outfit's weather
+// back even if other outfits in the set resolved differently.
+test('executeTool propose_outfit persists weatherUsed/resolvedWeatherContext onto the accepted card via a weather_estimate fallback', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-persist top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'wool', 'heavy', '["wool"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-persist bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('weather-persist shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Vienna Evening',
+      why_it_works: 'a warm layered city outfit',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 55, low_f: 40 },
+    }, toolContext)
+    assert.equal(result.status, 'success')
+    const card = toolContext.generatedOutfits[0]
+    assert.match(card.weatherUsed, /55°F high \/ 40°F low — seasonal estimate, not a live forecast/)
+    assert.equal(card.resolvedWeatherContext.location, 'Vienna, Virginia')
+    assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+    assert.equal(card.resolvedWeatherContext.temperature.high_f, 55)
   } finally {
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
   }

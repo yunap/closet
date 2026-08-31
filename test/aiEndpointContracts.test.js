@@ -6312,6 +6312,35 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages[1].role, 'assistant')
 })
 
+// Spec §7: outfitSetFromBody (inside buildStylistConversationPayload) persists a
+// per-outfit weather disclosure and its serialized structured context onto
+// current_outfit_set, mirroring the matching addition in
+// boundedConversationStateFromToolContext (routes/ai.js) — the other writer of
+// this same projection, for the router's direct-routing path.
+test('buildStylistConversationPayload persists per-outfit weatherUsed/resolvedWeatherContext onto current_outfit_set', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const payload = await buildStylistConversationPayload({
+    question: 'What weather were you planning for the coast day?',
+    conversationMode: 'new_request',
+    sessionId: 'weather-persist-payload',
+    generatedOutfits: [{
+      label: 'Coast Day',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      weatherUsed: '65°F high / 45°F low — live forecast, Cambria, CA',
+      resolvedWeatherContext: {
+        status: 'resolved',
+        location: 'Cambria, CA',
+        date_range: { start: '2026-10-14', end: '2026-10-14' },
+        temperature: { high_f: 65, low_f: 45, is_hot: false, is_cold: true, is_extreme_heat: false, source: 'live' },
+        overall_source: 'live',
+      }
+    }],
+  })
+  assert.equal(payload.threadState.current_outfit_set[0].weather_used, '65°F high / 45°F low — live forecast, Cambria, CA')
+  assert.equal(payload.threadState.current_outfit_set[0].resolved_weather_context.overall_source, 'live')
+  assert.match(String(payload.system), /Cambria, CA/)
+})
+
 test('freeform current-season prompts receive applicable calendar-season lessons', async () => {
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
   insertAcceptedSeasonLesson(

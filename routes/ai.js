@@ -752,6 +752,12 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     ...(outfit?.reason ? { reason: outfit.reason } : {}),
     ...(outfit?.stylingInstructions ? { styling_instructions: outfit.stylingInstructions } : {}),
     ...(outfit?.watchFor ? { watch_for: outfit.watchFor } : {}),
+    // Spec §7: per-outfit weather disclosure + its serialized structured
+    // context, so a follow-up ("what weather were you planning for the coast
+    // day?") reads the actual per-slot resolution back instead of only the
+    // single shared weather_profile below (which cannot distinguish slots).
+    ...(outfit?.weatherUsed ? { weather_used: outfit.weatherUsed } : {}),
+    ...(outfit?.resolvedWeatherContext ? { resolved_weather_context: outfit.resolvedWeatherContext } : {}),
     piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])

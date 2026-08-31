@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate } from './weather.js'
+import { resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -940,7 +940,7 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // prefers the model's own descriptive season text over the coarse hot/cold/
 // mild bucket when one was given. Every other source is fully structured,
 // so there is nothing to echo.
-function truthfulWeatherLabel(temperature, { location = '', heuristicText = '' } = {}) {
+export function truthfulWeatherLabel(temperature, { location = '', heuristicText = '' } = {}) {
   const where = location ? `, ${location}` : ''
   const range = Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
     ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
@@ -4067,7 +4067,16 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       pieces,
       pieceIds: dedupedIds,
       source: 'plan_outfit_set',
-      composedBy: 'model'
+      composedBy: 'model',
+      // Spec §7: persist the truthful weather disclosure and its serialized
+      // structured provenance on the accepted card itself, not only in the
+      // model-facing plan_lines text — a follow-up like "what weather were
+      // you planning for?" reads this back per-outfit (a multi-slot trip can
+      // have different weather per slot).
+      ...(slot.weatherLabel ? { weatherUsed: slot.weatherLabel } : {}),
+      ...(slot.weatherProfile?.resolvedWeatherContext
+        ? { resolvedWeatherContext: serializeResolvedWeatherContext(slot.weatherProfile.resolvedWeatherContext) }
+        : {}),
     }
     if (outfit.reason && reasonRevisesMidSentence(outfit.reason)) {
       reasons.push(REASON_REVISION_MESSAGE)
