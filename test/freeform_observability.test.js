@@ -2618,6 +2618,42 @@ test('resolveToolStylingContext: a future destination outside live coverage fall
   assert.equal(withoutEstimate.weatherProfile.isCold, false, 'unresolved must never read as mild/known')
 })
 
+// Spec §9 items 15/17: none of these date-, count-, temperature-, or
+// styling-flavored strings can create or alter resolved weather — the old
+// regex-based currentTurnStatedWeather repair this replaced was deleted
+// specifically because it scanned prose like this for numbers/condition
+// words; the new resolver never reads requestText/mood/season for temperature
+// at all, only structured user_weather/weather_estimate/live fields. Every
+// phrase below is taken verbatim from the spec's own anti-regression list.
+test('resolveToolStylingContext: prose (dates, counts, Celsius, styling adjectives) cannot create or alter resolved weather', async () => {
+  const proseNeedle = [
+    'October 12', '10 outfits', '18°C', 'warm colors', 'cool outfit',
+    'winter white', 'icy blue', 'crisp outdoor walking weather',
+  ].join(', please style for: ')
+  const unavailableResolver = async () => ({ weatherSource: 'unavailable' })
+  const context = await resolveToolStylingContext({
+    explicitRequest: {
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      requestText: proseNeedle,
+      // A malformed request also tries to smuggle the same prose into the
+      // structured fields themselves — the validator must reject the shape,
+      // not extract a number from within the string (item 17).
+      userWeather: { temperature_band: '18°C' },
+      weatherEstimate: { high_f: 'warm colors', low_f: 'icy blue' },
+    },
+    toolContext: {},
+    inferred: { requestText: proseNeedle },
+    policy: { allowLiveWeather: true, mode: 'freeform_action' },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'unavailable', 'malformed structured fields must be rejected outright, not parsed from their prose-like values')
+  assert.equal(context.weatherProfile.isHot, false)
+  assert.equal(context.weatherProfile.isCold, false, 'prose must never resolve to a known temperature, hot or cold')
+  assert.equal(context.weatherProfile.highF, undefined)
+  assert.equal(context.weatherProfile.lowF, undefined)
+})
+
 test('resolveToolStylingContext: a bare structured user_weather with no named place resolves via the no-destination branch, not the legacy heuristic', async () => {
   const context = await resolveToolStylingContext({
     explicitRequest: { userWeather: { temperature_band: 'cold' } },
@@ -2686,6 +2722,20 @@ test('executeTool search_wardrobe proceeds normally for a bare structured weathe
   }, toolContext)
   assert.ok(Array.isArray(result), 'no destination named — precipitation-only input must not stop the search')
   assert.equal(toolContext.weatherProfile?.isHot, false)
+})
+
+// Spec §9 item 16: "A free-text weather HTTP field cannot alter roster
+// membership or validation." search_wardrobe's schema no longer advertises a
+// `weather` argument at all, but executeTool takes a plain args object with no
+// schema enforcement of its own — a caller (or an unpatched client) could still
+// send one over HTTP. Prove it is silently ignored, not read for gating.
+test('executeTool search_wardrobe ignores an undeclared free-text weather arg entirely', async () => {
+  const withStray = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  await executeTool('search_wardrobe', { occasion: 'city', weather: 'freezing arctic blast' }, withStray)
+  const withoutStray = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  await executeTool('search_wardrobe', { occasion: 'city' }, withoutStray)
+  assert.equal(withStray.weatherProfile?.isCold, withoutStray.weatherProfile?.isCold, 'a stray weather string must not flip isCold')
+  assert.equal(withStray.weatherProfile?.weatherSource, withoutStray.weatherProfile?.weatherSource)
 })
 
 test('executeTool propose_outfit stops with weather_context_required for a named destination/date with no resolved temperature', async () => {

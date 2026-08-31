@@ -2061,5 +2061,25 @@ a `needs_base` garment remains a separate hard contract.
   `propose_outfit`, `generate_outfits`, `plan_outfit_set` at both plan and slot
   level) carry both fields.
 
-  Still open: the rest of spec §9's 31-item acceptance checklist; §10's live paid
-  Vienna VA verification.
+  **[§9 checklist audit, 2026-08-31]** Cross-referenced all 31 items against the test
+  suite; most were already covered by earlier phases. Closed the real gaps: item 13
+  (different-location slot doesn't inherit the plan's `weather_estimate` —
+  `normalizePlanSlots`), item 15/17 (a combined anti-regression test for every
+  prose phrase in the spec's own list — dates, counts, Celsius, styling
+  adjectives — against both `requestText` and malformed structured fields), item
+  16 (an undeclared `weather` HTTP arg is silently ignored end to end), item 19
+  (a submitted card with no warm layer is rejected once `weather_estimate`
+  establishes cold), item 23 (a shared coat repeats across two cold slots under
+  `reuse:'maximize'`), item 25 (the exact Vienna 65/45 request reaches
+  `plan_outfit_set` once and `submit_plan_outfits` once via
+  `replayStylistToolScript`, zero retries), item 26 (the same provider-free
+  replay stands in for per-provider fixtures — `executeTool` has zero
+  `AI_PROVIDER`-conditional branching in the weather path, confirmed by grep),
+  and item 28 (a mismatched location re-resolves rather than reusing the
+  cache). Item 30 is covered at the data layer only (the persisted label reads
+  the exact range + "seasonal estimate" verbatim); the model's actual
+  follow-up prose is live behavior, not offline-testable. Item 31 is the full
+  suite staying green after every commit.
+
+  Still open: §10's live paid Vienna VA verification — needs printed cost and
+  the owner's explicit confirmation first, per the spec's own rule.

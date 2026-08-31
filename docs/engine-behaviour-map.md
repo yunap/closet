@@ -1219,8 +1219,34 @@ exact `input_schema` object unchanged rather than holding an independent copy, s
 of the four composition tools (plus `plan_outfit_set`'s own per-slot schema) actually carries both
 fields.
 
-**Not yet done:** the rest of spec §9's 31-item acceptance checklist beyond what has been covered ad
-hoc; §10's live paid Vienna VA verification.
+**[§9 checklist audit, 2026-08-31]** Cross-referenced all 31 acceptance items against the test suite.
+Items 2-12, 14, 18, 20-22, 24, 27, 29 were already covered by earlier phases (`test/weather.test.js`,
+`test/plan_outfit_set.test.js`, `test/freeform_observability.test.js`). This pass closed the remaining
+gaps: item 13 (a different-location slot does not inherit the plan's `weather_estimate` —
+`normalizePlanSlots`' `locationMatchesPlan`/`inheritsPlanWeather` binding, not previously tested
+directly), item 15/17 (a single test feeding every prose phrase from the spec's own anti-regression
+list — dates, counts, Celsius, styling adjectives — through both `requestText` and malformed
+`user_weather`/`weather_estimate` shapes, proving none of it can create or alter resolved weather),
+item 16 (an undeclared `weather` HTTP arg is silently ignored by `search_wardrobe`, proven end to
+end via `executeTool`), item 19 (a submitted card with no outerwear/heavy main piece is rejected once
+`weather_estimate` establishes cold — `validateSlotOutfitConstraints`'s pre-existing "no warm layer"
+gate, now proven against the new resolver), item 23 (a shared coat repeats across two cold-weather
+slots under `reuse:'maximize'` with no `no_repeat` set — the default, unrestricted case), item 25 (the
+exact Vienna 65/45 request reaches `plan_outfit_set` once and `submit_plan_outfits` once, zero
+retries, via `replayStylistToolScript`), item 26 (the same provider-free replay stands in for
+per-provider fixtures: `executeTool` has zero `AI_PROVIDER`-conditional branching anywhere in the
+weather-resolution/gating path — confirmed by grep — so behavior cannot diverge by provider; only the
+wire-format adapters differ, and those are proven identical elsewhere), and item 28 (a mismatched
+location on a second `resolveToolStylingContext` call re-resolves rather than reusing the cache — the
+negative case of item 27's existing test). Item 30 (a follow-up states the exact range and calls it a
+seasonal estimate) is covered at the data layer only — the persisted `weatherUsed` label already reads
+`"65°F high / 45°F low — seasonal estimate, not a live forecast"` verbatim (spec §7's persistence
+work) — the model's actual follow-up prose is live behavior an offline test cannot exercise. Item 31
+is the full suite staying green, checked after every commit in this arc.
+
+**Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
+owner's explicit confirmation before running, per the spec's own rule; not something to do
+unilaterally.
 
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source

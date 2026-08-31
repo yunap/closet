@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY, resolveToolStylingContext } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
@@ -766,6 +766,135 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   assert.ok(allowed.has(closedFlats), 'closed footwear remains allowed')
 })
 
+// Spec §9 item 25: "The exact Vienna request reaches plan_outfit_set once with
+// 65/45 estimate input, receives a cold-valid roster, and submits valid cards
+// without a weather retry or outfit repair." Uses replayStylistToolScript — the
+// same provider-free harness the existing capsule-contract test above already
+// uses as its stand-in for "no API key/provider needed" — which doubles as item
+// 26's proof: executeTool has no provider branching anywhere in this path (only
+// the wire-format adapters proven identical in test/gemini_tool_loop_adapter.test.js
+// differ per provider), so one provider-free run IS the equivalent-provider-fixture
+// proof for this flow. The acceptance criterion is the FIRST submitted set —
+// tripPlanLines/tool_sequence below confirm plan_outfit_set and
+// submit_plan_outfits each ran exactly once.
+test('the exact Vienna VA request reaches plan_outfit_set once with a 65/45 estimate and submits a cold-valid card with zero retries (spec §9 items 25/26)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const layeredTop = insertPiece({ category: 'top', name: 'long sleeve knit top', occasions: ['evening'], formality: 'everyday', sleeve_length: 'long' })
+  const bareTank = insertPiece({ category: 'top', name: 'sleeveless tank', occasions: ['evening'], formality: 'everyday', sleeve_length: 'sleeveless' })
+  const pants = insertPiece({ category: 'bottom', name: 'evening trousers', occasions: ['evening'], formality: 'everyday' })
+  const coat = insertPiece({ category: 'outerwear', name: 'wool coat', occasions: ['evening'], formality: 'everyday' })
+  const closedFlats = insertPiece({ category: 'shoes', name: 'closed leather flats', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'flat' })
+  const openSandal = insertPiece({ category: 'shoes', name: 'open platform sandals', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+
+  const toolContext = {
+    generatedOutfits: [],
+    question: 'a week in Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const replay = await replayStylistToolScript({
+    toolContext,
+    steps: [
+      { tool: 'declare_intent', args: { want: 'cards' } },
+      {
+        tool: 'plan_outfit_set',
+        args: {
+          plan_kind: 'trip',
+          location: 'Vienna, Virginia',
+          date_range: { start: '2026-10-12', end: '2026-10-18' },
+          weather_estimate: { high_f: 65, low_f: 45 },
+          slots: [{ label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 }]
+        }
+      },
+      {
+        tool: 'submit_plan_outfits',
+        args: ({ results }) => {
+          const workbench = results.find(step => step.name === 'plan_outfit_set')?.result
+          const slot = workbench.slots[0]
+          const allowed = new Set(slot.allowed_piece_ids.map(Number))
+          // Both the bare tank and the open sandal must already be excluded from
+          // the roster by item 18/21 — asserted below — so composing only from
+          // allowed_piece_ids cannot accidentally include either.
+          return {
+            outfits: [{
+              slot_id: slot.id,
+              piece_ids: [layeredTop, pants, coat, closedFlats].filter(id => allowed.has(id)),
+              reason: 'A warm layered evening look for a 65/45 October night.'
+            }]
+          }
+        }
+      },
+      { final: 'Vienna evening plan complete.' }
+    ]
+  })
+
+  assert.deepEqual(replay.results.map(step => step.name || step.type), [
+    'declare_intent', 'plan_outfit_set', 'submit_plan_outfits', 'final'
+  ], 'exactly one plan_outfit_set call and one submit_plan_outfits call — no weather retry, no repair loop')
+
+  const planResult = replay.results.find(step => step.name === 'plan_outfit_set').result
+  const submitResult = replay.results.find(step => step.name === 'submit_plan_outfits').result
+  assert.equal(planResult.status, 'slot_rosters')
+  const rosterIds = new Set(planResult.slots[0].allowed_piece_ids.map(Number))
+  assert.equal(rosterIds.has(bareTank), false, 'cold-prohibited bare top excluded from the roster before composition')
+  assert.equal(rosterIds.has(openSandal), false, 'cold-prohibited open sandal excluded from the roster before composition')
+
+  assert.equal(submitResult.status, 'success', `first submission must be accepted outright, got: ${JSON.stringify(submitResult)}`)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  const card = toolContext.generatedOutfits[0]
+  assert.match(card.weatherUsed, /65°F high \/ 45°F low — seasonal estimate, not a live forecast/)
+  assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+})
+
+// Spec §9 item 23: "A shared valid layer may repeat under reuse:'maximize'."
+// modelPlanNoRepeatViolation only blocks a repeat for a category explicitly
+// listed in constraints.no_repeat — with no_repeat unset (the reuse:'maximize'
+// default), a coat is free to repeat across every cold-weather outfit in the
+// same trip. Confirms this holds once cold is established through the new
+// structured weather_estimate contract, across two DIFFERENT slots sharing it.
+test('plan_outfit_set + submit_plan_outfits: a shared coat may repeat across two cold-weather slots under reuse:maximize', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'reuse top A', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'top', name: 'reuse top B', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'reuse pants', occasions: ['evening'], formality: 'everyday' })
+  const coat = insertPiece({ category: 'outerwear', name: 'shared coat', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'reuse shoes', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const workbench = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    weather_estimate: { high_f: 55, low_f: 40 },
+    constraints: { reuse: 'maximize' },
+    slots: [
+      { label: 'Evening One', occasion: 'evening', activity: 'none', count: 1 },
+      { label: 'Evening Two', occasion: 'evening', activity: 'none', count: 1 },
+    ]
+  }, toolContext)
+  assert.equal(workbench.status, 'slot_rosters')
+
+  const [slotOne, slotTwo] = toolContext.pendingPlan.slots
+  const idsOne = idsForSlot(slotOne)
+  const idsTwo = idsForSlot(slotTwo, 1)
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: slotOne.id, piece_ids: [idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat] },
+      { slot_id: slotTwo.id, piece_ids: [idsTwo.get('top') ?? idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat] },
+    ]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'success', `both slots must accept the repeated coat, got: ${JSON.stringify(submitted)}`)
+  assert.equal(toolContext.generatedOutfits.length, 2)
+  assert.ok(toolContext.generatedOutfits.every(outfit => outfit.pieceIds.includes(coat)), 'the shared coat must appear in both accepted cards')
+})
+
 test('plan_outfit_set: cold-transit footwear rejection also fires for an indoor slot\'s preserved outdoor temperature, and spares closed sneakers', async () => {
   db.prepare('DELETE FROM pieces').run()
   const lightTop = insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })
@@ -854,6 +983,95 @@ test('plan_outfit_set + submit_plan_outfits persists weatherUsed/resolvedWeather
   assert.match(card.weatherUsed, /55°F high \/ 40°F low — seasonal estimate, not a live forecast/)
   assert.equal(card.resolvedWeatherContext.location, 'Vienna, Virginia')
   assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+})
+
+// Spec §9 item 19: "An outdoor sleeveless/bare look without adequate coverage is
+// rejected." validateSlotOutfitConstraints' cold-weather check (no outerwear and
+// no heavy-fabric main piece) fires the same way regardless of weather source —
+// this proves it fires for a card built entirely from a structured weather_estimate.
+test('plan_outfit_set + submit_plan_outfits rejects a submitted card with no warm layer once weather_estimate establishes cold', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'light city top', occasions: ['city'], formality: 'everyday', fabric_weight: 'light', sleeve_length: 'sleeveless' })
+  insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'city flats', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const workbench = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    weather_estimate: { high_f: 55, low_f: 40 },
+    slots: [{ label: 'City Day', occasion: 'city', activity: 'walking', count: 1 }]
+  }, toolContext)
+  assert.equal(workbench.status, 'slot_rosters')
+
+  const ids = idsForSlot(toolContext.pendingPlan.slots[0])
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: toolContext.pendingPlan.slots[0].id,
+      piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes')],
+    }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'validation_error')
+  assert.match(submitted.failures?.[0]?.reasons?.join('; ') || submitted.message, /no warm layer for cold weather/)
+})
+
+// Spec §9 item 13: "A different-location slot cannot inherit [the plan's weather]."
+// The binding lives in normalizePlanSlots (outfitSetPlanner.js's
+// locationMatchesPlan/inheritsPlanWeather), item 12's own primitive-level test
+// only proves resolveWeatherForRequest itself works given a location+estimate —
+// this proves the CALLER's binding logic that decides which slot gets it.
+test('normalizePlanSlots: a slot at a different location does not inherit the plan-level weather_estimate; a matching slot does', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Vienna Evening', occasion: 'evening', activity: 'none', count: 1 },
+    { label: 'Coast Detour', occasion: 'casual', activity: 'walking', location: 'Cambria, CA', count: 1 },
+  ], {
+    fallbackLocation: 'Vienna, Virginia',
+    fallbackWeatherEstimate: { high_f: 65, low_f: 45 },
+    dateRange: { start: '2026-10-12', end: '2026-10-18' },
+  })
+  const viennaSlot = slots.find(s => s.label === 'Vienna Evening')
+  const coastSlot = slots.find(s => s.label === 'Coast Detour')
+  assert.deepEqual(viennaSlot.weatherEstimate, { highF: 65, lowF: 45, precipitation: null, wind: null }, 'the matching-location slot inherits the plan estimate')
+  assert.equal(coastSlot.weatherEstimate, null, 'a slot at a different location must not silently inherit weather stated about the main destination')
+})
+
+// Spec §9 item 28: "A mismatched location/date prevents context reuse." The
+// positive case (a matching second call reuses the cache) is proven above;
+// this is the negative case for the same resolveToolStylingContext cache.
+test('resolveToolStylingContext: a mismatched location prevents cache reuse and re-resolves instead', async () => {
+  let resolverCalls = 0
+  const toolContext = {}
+  const weatherResolver = async ({ location }) => {
+    resolverCalls += 1
+    return location === 'Vienna, Virginia'
+      ? { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+      : { weatherSource: 'live', isHot: true, isCold: false, highF: 85, lowF: 60 }
+  }
+  await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(resolverCalls, 1)
+
+  const differentLocation = await resolveToolStylingContext({
+    explicitRequest: { location: 'Cambria, CA', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(resolverCalls, 2, 'a mismatched location must re-resolve, not reuse the Vienna cache')
+  assert.equal(differentLocation.weatherProfile.isHot, true)
+  assert.equal(differentLocation.weatherProfile.resolvedWeatherContext.location, 'Cambria, CA')
 })
 
 test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed plan with only SOME slots unresolved', async () => {
