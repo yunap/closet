@@ -1133,6 +1133,40 @@ brief and visibly says the forecast could not be verified. Requests without a lo
 the existing text/calendar heuristic. This follows `thread_1787098654251`, where failed Berkeley
 weather became `summer; hot weather` and wrongly removed 79 weather-related candidates.
 
+**[structured weather contract, 2026-08-30] Weather for `plan_outfit_set` is now typed at the tool
+boundary, never parsed from prose.** `docs/future-trip-weather-estimate-spec.md` §1-6 implemented:
+the model translates language into typed `user_weather` (only when the current message explicitly
+states weather — a numeric range or a qualitative `hot|cold|mild` band, never both) and
+`weather_estimate` (the model's own conservative seasonal numeric guess, used only as a fallback)
+tool arguments; `styling-engine/weather.js` owns validation (`validateUserWeather`/
+`validateWeatherEstimate`), field-level resolution (`resolveWeatherContext`: each of
+temperature/precipitation/wind resolves independently as `stated_user` → `live` →
+`model_estimate` → `unavailable`, so a stated condition and a live temperature coexist rather than
+one erasing the other), and the async orchestrator every call resolves through before retrieval
+(`resolveWeatherForRequest`). `classifyTemperatureRange` reuses the same HOT_F/COLD_F thresholds as
+live weather and supports non-exclusive classification, so a genuinely wide range (a model estimate
+or a user-stated range spanning both extremes) registers as both hot and cold instead of silently
+collapsing to neutral via the single-day exclusivity `weatherProfileFromContext`'s own text branch
+still applies elsewhere. A named destination/date with no resolved temperature returns a typed
+`weather_context_required` stop before any roster/pendingPlan is built — checked via each slot's
+actual `resolvedWeatherContext.status`, and via `.some()` so a mixed plan (one resolved slot, one
+not) still stops rather than proceeding partially gated. Cold-transit footwear
+(`wholeWardrobePieceTrustDecision`, `styling-engine/rules.js`) now hard-rejects open-toe/sandal
+shoes (structured `shoe_type`/`toe_shape` fields, never garment names) whenever
+`weatherProfile.isCold` or the indoor-transit-preserved `weatherProfile.transitIsCold` is true.
+Corrected root-cause note (`thread_1788147143882`, a Vienna VA October trip): the live incident was
+never a `propose_outfit`-vs-`plan_outfit_set` routing failure or a missing gate — both providers
+called `plan_outfit_set` correctly, and the hard cold-bareness gate already existed. The actual
+defect was that arbitrary model prose in `slot.weather` (e.g. "crisp outdoor walking weather")
+became authoritative physical weather ahead of the live forecast, and a failed future-date forecast
+read as neutral with no structured fallback. `environment` (indoor/outdoor/beach_coastal) is now
+the sole model-facing setting field; the free-text `weather` field is removed from the tool schema
+entirely. **Not yet done:** §6.5 single-outfit parity (`search_wardrobe`/`propose_outfit`/
+`generate_outfits` still resolve weather through `resolveStylingContext`'s older free-text
+`statedWeather` path, unchanged by this entry) and §7's continuity persistence (accepted cards and
+`current_outfit_set` do not yet retain the resolved structured context/provenance for follow-up
+questions).
+
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source
 precedence, normalization, occasion/activity profile construction, comfort constraints, and weather

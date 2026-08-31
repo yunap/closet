@@ -1991,3 +1991,21 @@ a `needs_base` garment remains a separate hard contract.
   history). The owner's live ruling wins (e.g. #47).
 - **`docs/flows/`** is the model-facing flow atlas (all 16 flows diagrammed);
   keep the freeform doc's status note current as steps land.
+- **Structured weather contract landed 2026-08-30 for `plan_outfit_set` only**
+  (`docs/future-trip-weather-estimate-spec.md`). `plan_outfit_set` accepts typed
+  `user_weather`/`weather_estimate` tool arguments (`styling-engine/weather.js`
+  owns validation/resolution/classification) and returns
+  `status: "weather_context_required"` before building any roster if neither
+  live weather nor a valid estimate/user_weather resolves a named
+  destination/date's temperature. The system prompt no longer teaches
+  `weather:'indoor'` — use `environment:'indoor'`; free-text `weather` is
+  removed from `plan_outfit_set`'s schema entirely. This supersedes an earlier
+  regex-based `currentTurnStatedWeather`/`statedUserWeather` repair attempt
+  (five review rounds of prose-parsing edge cases — dates, Celsius, ranges,
+  styling vocabulary — before the owner ruled to replace the whole approach);
+  that code was deleted, not kept alongside the new contract. **`search_wardrobe`,
+  `propose_outfit`, and `generate_outfits` still resolve weather through
+  `resolveStylingContext`'s older free-text `statedWeather` path (unchanged) —
+  spec §6.5 single-outfit parity is not done.** Accepted plan cards and
+  `current_outfit_set` also do not yet persist the resolved structured
+  context/provenance for follow-up questions (spec §7, not done).

@@ -795,6 +795,20 @@ plan_outfit_set({
   a coastal town). User-stated weather still wins when given for a slot; the
   forecast fills the gaps and catches microclimates. The plan lines should
   state the per-slot weather used, so the user can correct it conversationally.
+  **[structured weather contract, 2026-08-30]** "User-stated weather" above
+  now means only a typed `user_weather` argument the model fills in from an
+  explicit CURRENT-message claim — never free-text `slot.weather` prose
+  (removed from the schema) and never a regex re-parse of the question.
+  `plan_outfit_set` resolves live → `weather_estimate` (model's own numeric
+  seasonal guess, provided proactively for a future destination outside
+  live coverage) → `user_weather` in override order per field
+  (`styling-engine/weather.js`'s `resolveWeatherContext`), and returns
+  `weather_context_required` before composing if a named destination/date's
+  temperature stays unresolved. See
+  `docs/future-trip-weather-estimate-spec.md`; the earlier regex-based
+  `currentTurnStatedWeather` repair this replaced is deleted, not kept
+  alongside it. Not yet extended to `search_wardrobe`/`propose_outfit`/
+  `generate_outfits`, which still use the older free-text path below.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning
