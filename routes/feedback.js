@@ -3,11 +3,11 @@ import fs from 'fs'
 import path from 'path'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import {
-  ACTIVE_STYLIST_MODEL,
-  AI_PROVIDER,
   askStylistStructuredWithUsage,
   estimateAiUsageCost,
   prepareWardrobeThumb,
+  resolveAiTarget,
+  stylistProviderOverride,
 } from '../styling-engine/provider.js'
 import { pieceVisualDetailPolicy, visuallyPrioritizedPieces } from '../styling-engine/attributes.js'
 import {
@@ -156,16 +156,20 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
 async function previewFor(ids) {
   const rows = feedbackRows(ids)
   const rawRowById = new Map(rows.map(row => [Number(row.id), row]))
+  // The preview and the actual authorized call (below) must agree on provider/model — this used
+  // to hardcode AI_PROVIDER/ACTIVE_STYLIST_MODEL regardless of stylistProviderOverride, so a
+  // Gemini-routed deployment would preview and price an Anthropic call it never actually made.
+  const resolvedTarget = resolveAiTarget(stylistProviderOverride)
   const preview = await buildFeedbackSynthesisPreview(rows, {
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
+    provider: resolvedTarget.provider,
+    model: resolvedTarget.model,
     maxItems: MAX_BATCH,
     hydratePiece: pieceAttributeHydrator(),
     buildImageBlocks: evidence => imageBlocksForEvidence(evidence, rawRowById),
   })
   const cost = estimateAiUsageCost({
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
+    provider: resolvedTarget.provider,
+    model: resolvedTarget.model,
     inputTokens: preview.estimatedInputTokens,
     outputTokens: preview.estimatedOutputTokens,
     cacheReadInputTokens: 0,
@@ -227,9 +231,10 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
 
   try {
     db.prepare("UPDATE feedback_synthesis_batches SET status = 'processing' WHERE id = ?").run(batchId)
-    const { value, usage } = await askStylistStructuredWithUsage(
-      feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap, preview.imageBlocks)
-    )
+    const { value, usage } = await askStylistStructuredWithUsage({
+      ...feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap, preview.imageBlocks),
+      providerOverride: stylistProviderOverride,
+    })
     const allowedIds = new Set(preview.feedbackIds)
     const evidenceById = new Map(preview.evidence.map(item => [Number(item.evidenceId), item]))
     const coveredIds = new Set()

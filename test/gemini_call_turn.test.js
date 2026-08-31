@@ -21,7 +21,7 @@ process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK = 'true'
 process.env.GEMINI_API_KEY = 'test-key'
 
 const { GoogleGenAI } = await import('@google/genai')
-const { callGeminiTurn } = await import('../styling-engine/provider.js')
+const { callGeminiTurn, askStylistStructuredWithUsage, askStylistWithTools } = await import('../styling-engine/provider.js')
 const { db } = await import('../db.js')
 
 function lastAiCallLogRow() {
@@ -264,4 +264,78 @@ test('the first call of a turn (no continuation) sends system_instruction and om
 test('a network/API error from interactions.create rejects and is not swallowed', async () => {
   queueGeminiResponse(new Error('ECONNRESET'))
   await assert.rejects(() => callGeminiTurn(baseArgs()), /ECONNRESET/)
+})
+
+// 2026-08-31 review correction: askStylistStructuredWithUsage's Gemini branch was fixed twice —
+// first from the OpenAI convention 'json_object' to a guessed 'object' that merely stopped a 400
+// without confirming schema enforcement actually applied, then to the real shape. Assert the exact
+// wire shape directly against the installed @google/genai SDK's own TextResponseFormat_2 type
+// (type: 'text', mime_type: 'application/json', schema — no name/description field exists on that
+// type at all) so this class of "stopped erroring, still wrong" mistake can't silently recur.
+const SAMPLE_SCHEMA = { type: 'object', properties: { profile: { type: 'string' } }, required: ['profile'] }
+
+test('askStylistStructuredWithUsage(gemini) sends response_format shaped exactly like the SDK\'s TextResponseFormat_2 type', async () => {
+  queueGeminiResponse({
+    id: 'interaction_15', status: 'completed',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"profile":"full_stylist"}' }] }],
+    usage: { total_tokens: 10, total_input_tokens: 8, total_output_tokens: 2 },
+  })
+  await askStylistStructuredWithUsage({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'classify this' }],
+    schema: SAMPLE_SCHEMA,
+    name: 'execution_route',
+    description: 'Classify the turn.',
+    maxTokens: 350,
+    providerOverride: { provider: 'gemini' },
+  })
+  const sent = requestsSeen.at(-1)
+  assert.deepEqual(sent.response_format, { type: 'text', mime_type: 'application/json', schema: SAMPLE_SCHEMA })
+  // The exact bug this guards against: 'name'/'description' are OpenAI json_schema-wrapper fields
+  // copy-pasted in by mistake — TextResponseFormat_2 has no field for either, so their presence
+  // means the wrong shape crept back in even if the call itself doesn't error.
+  assert.equal('name' in sent.response_format, false)
+  assert.equal('description' in sent.response_format, false)
+})
+
+test('askStylistStructuredWithUsage(gemini) parses the structured JSON response correctly', async () => {
+  queueGeminiResponse({
+    id: 'interaction_16', status: 'completed',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"profile":"bounded_multi"}' }] }],
+    usage: { total_tokens: 10, total_input_tokens: 8, total_output_tokens: 2 },
+  })
+  const { value } = await askStylistStructuredWithUsage({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'classify this' }],
+    schema: SAMPLE_SCHEMA,
+    name: 'execution_route',
+    description: 'Classify the turn.',
+    maxTokens: 350,
+    providerOverride: { provider: 'gemini' },
+  })
+  assert.equal(value.profile, 'bounded_multi')
+})
+
+// 2026-08-31 review correction: askStylistWithTools checked `turn.noMessage` BEFORE the
+// truncation retry, so a token-capped turn with no narration and a function_call step too
+// incomplete to surface as a real tool call (Gemini's hasToolCalls requires status ===
+// 'requires_action', which a token-capped 'incomplete' status never is) matched noMessage first
+// and returned a blank answer, silently skipping the retry instead of using it.
+test('a truncated, empty (noMessage-shaped) turn retries instead of returning a blank answer', async () => {
+  queueGeminiResponse({
+    id: 'interaction_17', status: 'incomplete',
+    steps: [], output_text: '',
+    usage: { total_tokens: 1200, total_input_tokens: 1150, total_output_tokens: 50 },
+  })
+  queueGeminiResponse({
+    id: 'interaction_18', status: 'completed',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Wear the navy sweater.' }] }],
+    usage: { total_tokens: 20, total_input_tokens: 15, total_output_tokens: 5 },
+  })
+  const result = await askStylistWithTools({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'what should I wear?' }],
+    toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
+  })
+  assert.equal(result.answer, 'Wear the navy sweater.')
 })

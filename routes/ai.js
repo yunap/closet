@@ -2609,11 +2609,26 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         if (clashReview?.flaggedByOutfit?.size) {
           clashFlaggedByOutfit = clashReview.flaggedByOutfit
         }
+        // The critic's own spend was previously invisible to the turn's cost total — folded into
+        // composerUsage (below, before the final estimateAiUsageCost call) so the parent figure is
+        // no longer an undercount whenever the critic actually fires, not just recorded separately.
+        if (clashReview?.usage && composerUsage) {
+          composerUsage = {
+            ...composerUsage,
+            inputTokens: (composerUsage.inputTokens || 0) + (clashReview.usage.inputTokens || 0),
+            outputTokens: (composerUsage.outputTokens || 0) + (clashReview.usage.outputTokens || 0),
+            totalTokens: (composerUsage.totalTokens || 0) + (clashReview.usage.totalTokens || 0),
+            cacheReadInputTokens: (composerUsage.cacheReadInputTokens || 0) + (clashReview.usage.cacheReadInputTokens || 0),
+            cacheCreationInputTokens: (composerUsage.cacheCreationInputTokens || 0) + (clashReview.usage.cacheCreationInputTokens || 0),
+          }
+        }
         visualClashDebug = {
           reviewedCount: clashReview?.reviewedCount || 0,
           flaggedCount: clashFlaggedByOutfit.size,
           skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length,
           findingCounts: visualReviewFindingCounts,
+          usage: clashReview?.usage || null,
+          estimatedCost: clashReview?.usage ? estimateAiUsageCost(clashReview.usage) : null,
         }
       } catch (err) {
         console.warn('Whole-wardrobe clash critic fallback:', err.message)
@@ -3163,7 +3178,12 @@ router.post('/generate-outfit-boards', async (req, res) => {
     }
 
     if (!boards.length) throw new Error('No usable boards were generated from structured outfit ids')
-    res.json({ boards, provider: AI_PROVIDER, mode: 'generate_outfit_boards' })
+    // The board images themselves always render through OpenAI (createOutfitBoardImage) — this
+    // label describes the text-planning step specifically (the askStylist call above, when it ran;
+    // boardPlans is often deterministic from structuredOutfits/conceptsText with no model call at
+    // all), not the images, matching how every other text/vision endpoint's provider field reports
+    // its own resolved config rather than the static AI_PROVIDER constant.
+    res.json({ boards, provider: resolveAiTarget(stylistProviderOverride).provider, mode: 'generate_outfit_boards' })
   } catch (err) {
     console.error('Generate outfit boards error:', err)
     res.status(500).json({ error: err.message })

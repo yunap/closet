@@ -1417,7 +1417,10 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
   if (reviewable.length < 1) return null
 
   const sheet = await makeComposedOutfitClashContactSheet(reviewable, 12)
-  const raw = await askStylist({
+  // askStylistWithUsage, not askStylist (which discards usage entirely) — this call's spend was
+  // previously invisible to the parent turn's cost totals, undercounting real spend whenever the
+  // critic fired.
+  const { text: raw, usage } = await askStylistWithUsage({
     system: prompts.WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM,
     maxTokens: 700,
     providerOverride,
@@ -1442,7 +1445,7 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
     if (!Number.isInteger(index) || index < 0 || index >= reviewable.length) continue
     flaggedByOutfit.set(reviewable[index], String(item?.reason || 'visual critic flagged a clash in the photos').trim())
   }
-  return { flaggedByOutfit, reviewedCount: reviewable.length }
+  return { flaggedByOutfit, reviewedCount: reviewable.length, usage }
 }
 
 export function getOpenAIImageModel() {

@@ -1303,11 +1303,15 @@ export async function askStylistStructuredWithUsage({
         // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent
         // simplification: if a real schema fails here, that is Stage C's problem to diagnose and
         // is intentionally NOT worked around in this experimental slice (plan: don't widen scope).
-        // type: 'object' (not 'json_object', the OpenAI convention this was copy-pasted from) — a
-        // live call caught this returning a 400 ("Supported values: ... 'object' ..."). Previously
-        // invisible because every caller of this function was itself defaulting to Anthropic before
-        // the provider-propagation fixes above actually started reaching this branch.
-        response_format: { type: 'object', name, description, schema },
+        // 2026-08-31 review correction: a live call showing a 400 for 'json_object' (the OpenAI
+        // convention this was copy-pasted from) was wrongly "fixed" by trying 'object' — that just
+        // stopped the 400 without confirming schema enforcement actually applied; the model's own
+        // prompt-embedded JSON instructions were doing the real work of producing parseable output.
+        // The installed @google/genai SDK's own TextResponseFormat_2 type (the actual shape this
+        // field is typed as) is { type: 'text', mime_type: 'application/json', schema } — 'name' and
+        // 'description' have no field on that type at all, also copy-pasted from OpenAI's
+        // json_schema wrapper shape and silently ignored rather than erroring.
+        response_format: { type: 'text', mime_type: 'application/json', schema },
       })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
@@ -1970,14 +1974,17 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       })
     }
 
-    if (turn.noMessage) return { answer: '', savedCorrections }
-
-    // A token-capped turn can return partial prose or a tool call with truncated arguments —
-    // either would otherwise be treated as a normal, complete turn. This was previously
-    // unreachable for Gemini (stopReason was hardcoded null) and was already silently possible
-    // for every provider even when the signal was available, since nothing in this loop consulted
-    // it. One retry, same shape as applyFreeformOutputChecks's other clauses: discard the
-    // truncated turn without executing/shipping it and ask for a shorter, complete one.
+    // Checked BEFORE noMessage (2026-08-31 review correction): a truncated turn with no narration
+    // and a function_call step too incomplete to surface as a real tool call (Gemini's hasToolCalls
+    // requires status === 'requires_action', which a token-capped 'incomplete' status never is)
+    // previously matched `turn.noMessage` first and returned a blank answer, silently skipping this
+    // check entirely and burning the turn instead of retrying it. A token-capped turn can return
+    // partial prose or a tool call with truncated arguments — either would otherwise be treated as
+    // a normal, complete turn. This was previously unreachable for Gemini (stopReason was hardcoded
+    // null) and was already silently possible for every provider even when the signal was
+    // available, since nothing in this loop consulted it. One retry, same shape as
+    // applyFreeformOutputChecks's other clauses: discard the truncated turn without executing/
+    // shipping it and ask for a shorter, complete one.
     if (turn.usage?.stopReason === 'max_tokens' && !retriedChecks.has('providerTruncation')) {
       retriedChecks.add('providerTruncation')
       bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
@@ -1988,6 +1995,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       })
       continue
     }
+
+    if (turn.noMessage) return { answer: '', savedCorrections }
 
     if (turn.hasToolCalls) {
       recordFreeformToolIteration(toolContext, turn.toolCalls.map(tc => tc.name))

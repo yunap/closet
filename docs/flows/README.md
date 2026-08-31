@@ -12,19 +12,25 @@ Full convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow)
 
 **Model usage:** text, vision, and composition flows call the stylist model via
 `askStylist*` — by default Claude (Anthropic), but the actual provider is
-per-call, not fixed. Families A–E are direct HTTP routes and always call the
-default provider (`AI_PROVIDER`/Claude as configured today); they are
-deliberately never affected by the chat's per-turn routing (see below).
-Family F (`/ask`, the stylist chat brain) is the one flow whose provider can
-vary per turn: `STYLIST_PROVIDER_OVERRIDE` (env, off by default) or a manual
-"Retry with Sonnet" click resolves a `providerOverride` once per turn, and
-every model call attributable to that turn — the execution router, a compact
-answer, the tool loop, and capsule-from-chat composition — is threaded that
-same override so it can't silently mix providers within one turn. Piece
-tagging (family A) has its own independent, currently-unset
-`TAGGER_PROVIDER_OVERRIDE`. Image-rendering flows call a separate image model
-(GPT-4o), untouched by either override. The stylist chat brain (`/ask`) is the
-only tool-using flow.
+per-call, not fixed. Owner ruling 2026-08-30 reversed an earlier decision:
+*every* non-image-generation call must be configurable through one shared
+setting, `stylistProviderOverride` (`styling-engine/provider.js`, backed by
+the `STYLIST_PROVIDER_OVERRIDE` env var) — this now covers families A–E's
+direct HTTP routes as well as family F, not just `/ask`. Each of those
+routes' own composer/critic/evaluator functions defaults its own
+`providerOverride` parameter to this shared config, so a route handler that
+never explicitly mentions it still picks it up automatically. Family F
+(`/ask`) additionally supports a manual per-turn "Retry with Sonnet" override
+(`{provider: 'anthropic'}`, wins over the shared config for that one turn)
+and threads its resolved override through every call attributable to that
+turn — the execution router, a compact answer, the tool loop, and
+capsule-from-chat composition — so a turn can't silently mix providers.
+Piece tagging (family A) and the multi-piece `/extract-pieces` vision
+extraction have their own independent, currently-unset
+`TAGGER_PROVIDER_OVERRIDE` — deliberately not folded into the shared stylist
+config. Image-rendering flows call a separate image model (GPT-4o/OpenAI),
+untouched by either override per the ruling. The stylist chat brain (`/ask`)
+remains the only tool-using flow.
 
 Status: `done` · `next` · `todo`
 
