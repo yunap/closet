@@ -18,10 +18,16 @@ import { createStylingContextResolver, projectStylingApplicabilityContext, resol
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
+  resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
+  serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
+  TEMPERATURE_BAND_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+} from './weather.js'
+import {
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
   capsuleTotalOutfitCap,
   buildPlanSlotWorkbench,
+  resolveSlotWeather,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
   buildRejectedCapsuleCards,
@@ -36,7 +42,8 @@ import {
   completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
-  MIN_ENFORCED_CAPSULE_BUDGET
+  MIN_ENFORCED_CAPSULE_BUDGET,
+  truthfulWeatherLabel
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -387,10 +394,10 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
   toolContext.freeformDiagnostics.capsuleCompositionFailureCode = code
 }
 
-// Stated weather (this tool call's own weather/season text) wins outright over a
-// live location lookup — mirrors outfitSetPlanner.js's resolveSlotWeather
-// precedent ("user-stated per-slot weather wins outright... otherwise the
-// slot's own live forecast"). Without this, a followup that states NEW weather
+// Direct explicit weather remains authoritative, while typed user/model fields
+// resolve through the shared field-level contract. `indoor` is an environment
+// projection: it may neutralize the room's base without erasing cached outdoor
+// transit physics. Without the direct explicit tier, a followup that states NEW weather
 // ("add a rainy-day option") on a thread whose home location resolves to
 // different live conditions gets silently overridden: live-tested 2026-07-14 —
 // search_wardrobe's own weather:"rainy weather" arg was discarded because
@@ -408,12 +415,28 @@ export async function resolveToolStylingContext({
   const safeExplicitLocation = looksLikeTimezoneIdentifier(explicitRequest.location)
     ? ''
     : (explicitRequest.location || '')
+  // A mismatched location must not inherit a stale weatherProfile from an
+  // earlier call this turn (spec §9 item 28's mismatch case, at the
+  // establishedState layer — resolveNamedDestinationWeather's own
+  // toolContext.resolvedWeatherContext cache already guards its own reuse,
+  // but this SEPARATE flat-profile carryover is resolveWeather's last-resort
+  // fallback and was reachable even when that cache correctly refused to
+  // reuse itself). Carry it forward only when no location was named this
+  // call, or it matches the destination that produced it.
+  const carryForwardWeatherProfile = !safeExplicitLocation
+    ? toolContext.weatherProfile
+    : toolContext.resolvedWeatherContext?.location &&
+      normalizedWeatherLocationIdentity(toolContext.resolvedWeatherContext.location) === normalizedWeatherLocationIdentity(safeExplicitLocation)
+      ? toolContext.weatherProfile
+      : null
   const establishedState = {
     occasion: toolContext.occasion,
     activity: toolContext.activity,
     season: toolContext.season,
-    statedWeather: toolContext.weather,
-    weatherProfile: toolContext.weatherProfile,
+    // Blended legacy prose is display/history context only, never executable
+    // weather authority for a new composition action.
+    statedWeather: '',
+    weatherProfile: carryForwardWeatherProfile,
     mission: toolContext.mission,
     mood: toolContext.mood,
     requestText: toolContext.request || toolContext.question,
@@ -429,6 +452,7 @@ export async function resolveToolStylingContext({
     establishedState,
     inferred,
     policy,
+    toolContext,
   })
   toolContext.occasion = context.occasion
   toolContext.activity = context.activity
@@ -442,8 +466,48 @@ export async function resolveToolStylingContext({
   if (String(explicitRequest.statedWeather || '').trim()) {
     toolContext.weather = String(explicitRequest.statedWeather).trim()
   }
-  setFreeformWeatherSource(toolContext, context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
+  // Spec §7: freeform_generation_runs.weather_source is set from overallSource
+  // (mixed-aware — e.g. user rain + live temperature) when the structured
+  // resolver actually ran; falls back to the plain per-field weatherSource for
+  // the legacy heuristic/live paths, which never populate resolvedWeatherContext.
+  setFreeformWeatherSource(toolContext, context.weatherProfile?.resolvedWeatherContext?.overallSource || context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
   return context
+}
+
+// Spec §6.2, extended to search_wardrobe/propose_outfit/generate_outfits by §6.5.
+// A named destination/date whose temperature stayed unresolved (no live coverage,
+// no user_weather, no weather_estimate) must stop before retrieval/scoring — not
+// silently fall through to a heuristic. Gated on resolved.location: a bare
+// structured weather claim with no named destination (e.g. "it's raining" with no
+// place attached) legitimately resolves to status 'unavailable' on temperature
+// alone (nothing supplied one) while still carrying real precipitation/wind data —
+// that is an ordinary local conversation, not spec §6.2's "named destination/date"
+// case, and must proceed rather than stop.
+function weatherContextRequiredStop(stylingContext, { verb }) {
+  const resolved = stylingContext?.weatherProfile?.resolvedWeatherContext
+  if (!resolved || resolved.status !== 'unavailable' || !resolved.location) return null
+  return {
+    status: "weather_context_required",
+    location: resolved.location || '',
+    date_range: resolved.dateRange || null,
+    missing: ["temperature"],
+    message: `Live weather does not cover these dates${resolved.location ? ` for "${resolved.location}"` : ''}. Re-call this tool with weather_estimate.high_f and weather_estimate.low_f before ${verb}.`
+  }
+}
+
+// Spec §7: persist the truthful disclosure + serialized structured context onto
+// a proposed/generated card, mirroring what plan_outfit_set's slots already carry
+// (validateSubmittedPlanOutfits) — so a follow-up like "what weather were you
+// planning for?" can read it back per-outfit instead of only from the shared,
+// single toolContext-level weatherProfile. No-op when nothing was resolved (an
+// ordinary at-home heuristic call has no structured context to persist).
+function weatherCardFields(stylingContext) {
+  const resolved = stylingContext?.weatherProfile?.resolvedWeatherContext
+  if (!resolved) return {}
+  return {
+    weatherUsed: truthfulWeatherLabel(resolved.temperature, { location: resolved.location }),
+    resolvedWeatherContext: serializeResolvedWeatherContext(resolved),
+  }
 }
 
 function automaticUseContextFromStylingContext(stylingContext = {}, extras = {}) {
@@ -617,6 +681,34 @@ function pieceHasStructuredColor(piece = {}, requestedColor = '') {
     .some(value => colorPattern.test(String(value || '').toLowerCase().trim()))
 }
 
+// Spec docs/future-trip-weather-estimate-spec.md §4.1: shared, provider-portable
+// weather schemas reused verbatim across every composition tool (plan_outfit_set,
+// search_wardrobe, propose_outfit, generate_outfits). The model translates
+// language into these typed fields; the executor never parses prose into
+// physical weather (styling-engine/weather.js owns that validation/resolution).
+const USER_WEATHER_SCHEMA = {
+  type: "object",
+  description: "Structured translation of weather the CURRENT user message explicitly stated — include it ONLY when the user actually said it this turn, never your own seasonal knowledge (use weather_estimate for that instead). Carries a numeric range OR a qualitative band, never both. Convert a user-stated Celsius value to Fahrenheit yourself before setting high_f/low_f — never pass Celsius through.",
+  properties: {
+    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature, set high_f and low_f to the same value." },
+    low_f: { type: "number", description: "The user's stated low, Fahrenheit." },
+    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot') when the user gave no number. Never set this alongside high_f/low_f." },
+    precipitation: { type: "string", enum: PRECIPITATION_VALUES, description: "Only when the user stated it this turn." },
+    wind: { type: "string", enum: WIND_VALUES, description: "Only when the user stated it this turn." }
+  }
+}
+const WEATHER_ESTIMATE_SCHEMA = {
+  type: "object",
+  description: "Your own conservative seasonal estimate for this location and date range, used ONLY as a fallback when the live forecast does not cover these dates (e.g. a trip more than ~2 weeks out). The executor always tries live weather first and ignores this estimate whenever live weather succeeds. Provide it on every future named-destination call so composition is not blocked. Never call it a forecast or imply the user stated it — it is your own seasonal judgment, numeric only (no qualitative band).",
+  properties: {
+    high_f: { type: "number", description: "Typical daily high, Fahrenheit." },
+    low_f: { type: "number", description: "Typical daily low, Fahrenheit — use the cooler end for evening/early-morning transit." },
+    precipitation: { type: "string", enum: PRECIPITATION_VALUES },
+    wind: { type: "string", enum: WIND_VALUES }
+  },
+  required: ["high_f", "low_f"]
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -646,8 +738,10 @@ export const STYLIST_TOOLS = [
         fabric_weight: { type: "string", description: "Filter by fabric weight, e.g. ultralight, light, medium, heavy" },
         fabric_category: { type: "string", description: "Filter by fabric category, e.g. jersey, knit, linen, silk, satin, cotton, wool, cashmere, viscose, denim, twill, canvas, corduroy, tweed, velvet, leather, suede, ponte, synthetic, fleece, other" },
         neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" },
-        weather: { type: "string", description: "Established conditions (e.g. hot, highs 80-90F, cold). Ranks and flags results by weather fit; pass it whenever conditions are known." },
-        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set, weather is resolved from a live forecast for that place instead of the text-heuristic fallback — pass it whenever a concrete location is established in the conversation." },
+        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set alongside `date`, weather resolves through the structured contract (user_weather wins if you supplied it, else the live forecast, else weather_estimate) instead of the text-heuristic fallback — pass it whenever a concrete future destination is relevant, not the user's home city." },
+        date: { type: "string", description: "YYYY-MM-DD for the destination day, when known. Pairs with `location` to resolve real weather for that place/date; without a date, `location` alone still improves ranking but the forecast defaults to today." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical demand of the outing. 'hiking' = trails, nature walks, woods, uneven or unpaved ground — a nature walk IS hiking even when it is gentle. 'walking' = pavement: city days, sightseeing, all-day errands on foot. 'none' = no sustained walking. With occasion, flags pieces by profile-rule fit; pass it whenever known." },
         visual: { type: "boolean", description: "When true, attach low-detail thumbnails for the top ranked matches so you can judge color, texture, print, and proportion by sight. Use before proposing or refining outfits; leave false for quick text lookups." },
         intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you compose only from wearable pieces (no need to self-reject anything). Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
@@ -806,8 +900,10 @@ export const STYLIST_TOOLS = [
         occasion: { type: "string", enum: OCCASION_VALUES, description: "The occasion. Pick the closest allowed value; do not invent. casual/gallery/concert/travel are intentionally permissive." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
-        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it so the bounded composer uses live weather rather than a seasonal guess." },
-        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it." },
+        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it (with `date`) so the bounded composer uses user_weather if you supplied it, else the live forecast, else weather_estimate, rather than a seasonal guess." },
+        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it. Pairs with `location`." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
         limit: { type: "integer", description: "Number of outfits to generate (1 to 5). Default to 2 for an ordinary new 'what should I wear?' request. Honor an explicit count; use 1 when the user asks for one best look or says to pick one." },
@@ -845,9 +941,10 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting. Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling and overrides contradictory weather:'indoor'. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries). Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
-              weather: { type: "string", description: "This slot's known weather/context. Use `indoor` for climate-controlled destinations such as offices, restaurants, and galleries; the plan/location weather still governs the base outfit needed for transit, while indoor comfort may add a light optional layer. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
+              user_weather: USER_WEATHER_SCHEMA,
+              weather_estimate: WEATHER_ESTIMATE_SCHEMA,
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
               // Live thread_1785380251549: the plan's lifestyle answer listed
@@ -883,7 +980,8 @@ export const STYLIST_TOOLS = [
             piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
           }
         },
-        weather: { type: "string", description: "Plan-level known weather/context used as the fallback for slots that omit their own weather. Use this for user-stated conditions such as 'warm summer weather'. Slot-level weather still wins for indoor or special-case slots." },
+        user_weather: { ...USER_WEATHER_SCHEMA, description: `${USER_WEATHER_SCHEMA.description} Applies to every slot sharing the plan's own location/date_range; a slot at a different location or a date outside date_range needs its own user_weather.` },
+        weather_estimate: { ...WEATHER_ESTIMATE_SCHEMA, description: `${WEATHER_ESTIMATE_SCHEMA.description} Applies to every slot sharing the plan's own location/date_range; a slot at a different location or a date outside date_range needs its own weather_estimate.` },
         location: { type: "string", description: "The plan's overall location/destination (e.g. 'Paso Robles, CA'), geocoded for the per-slot live forecast. Slots inherit it unless they set their own `location`. Omit for at-home plans with no travel." },
         date_range: {
           type: "object",
@@ -949,8 +1047,12 @@ export const STYLIST_TOOLS = [
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
-        season: { type: "string", description: "Season/weather context. Optional. For indoor occasions (office, restaurant, meeting, gallery), pass season:'indoor' — the live forecast applies only to time spent outdoors." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." }
+        season: { type: "string", description: "Season/environment context. Optional. For an indoor occasion (office, restaurant, meeting, gallery), pass season:'indoor'. The indoor base is climate-controlled, but matching resolved destination weather still governs arrival/departure: when transit is cold, include removable sleeve-bearing coverage and cold-appropriate footwear." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." },
+        location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
+        date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
+        user_weather: USER_WEATHER_SCHEMA,
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA
       },
       required: ["pieces"]
     }
@@ -1121,7 +1223,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // one model-visible search stays one searchCalls bump however many rungs code climbed.
         const relaxationPass = Number(args.__relaxationPass) || 0
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
-        const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
+        const hardGateExcludedIds = new Set(Array.isArray(args.__hardGateExcludedIds) ? args.__hardGateExcludedIds.map(Number) : [])
+        const requestExcludedIds = new Set(Array.isArray(args.__requestExcludedIds) ? args.__requestExcludedIds.map(Number) : [])
+        const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, activity, visual, intent, location, date } = args
+        const hadEstablishedWeatherContext = relaxationPass > 0
+          ? args.__automaticGateContext === true
+          : Boolean(toolContext.resolvedWeatherContext || toolContext.weatherProfile)
         const requestText = [
           toolContext.request,
           toolContext.question,
@@ -1134,14 +1241,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion,
             activity,
             season: extractSeasonRequest(args?.season),
-            statedWeather: weatherText,
             location,
+            date,
+            dateRange: date ? { start: date, end: date } : null,
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
             requestText,
           },
           toolContext,
           inferred: { requestText },
           policy: { requireOccasion: false },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'searching' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'searchWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedOccasion = stylingContext.occasion
         const resolvedActivity = stylingContext.activity
         const resolvedWeather = stylingContext.weatherProfile
@@ -1186,34 +1301,54 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         let fallbackNote = ''
         let gateSupplyFallbackNote = ''
+        // A plain inventory/fact search with no composition context remains a
+        // no-op for suitability. Once this call (or an earlier call in the
+        // same turn) establishes occasion/activity/weather, the shared hard
+        // verdict becomes the roster boundary even if `occasion` itself was
+        // omitted.
+        const hasAutomaticGateContext = Boolean(
+          occasion || activity || location || date || args?.season ||
+          args?.user_weather || args?.weather_estimate || hadEstablishedWeatherContext
+        )
+        const searchEligibility = hasAutomaticGateContext
+          ? evaluateAutomaticUsePiecePool({
+              pieces: filtered,
+              context: automaticUseContextFromStylingContext(stylingContext),
+            })
+          : null
+        let automaticGatePool = filtered
         if (occasion) {
           const beforeOccasionFilter = filtered
-          const searchEligibility = evaluateAutomaticUsePiecePool({
-            pieces: filtered,
-            context: automaticUseContextFromStylingContext(stylingContext),
-          })
-          const occasionFiltered = filtered.filter(p => {
-            if (!pieceOccasionCompatible(p, occasion)) return false
-            // docs/activity-and-roster-spec.md §5.4. This passed `occasion` alone, so an
-            // owner_constraints row scoped to an activity, season or weather could never apply to
-            // the roster the model composes from — only to the proposal afterwards. Both stored
-            // constraints in the development wardrobe are activity- or season-scoped.
-            const decision = searchEligibility.decisionsById.get(Number(p.id))
-            if (decision?.underlyingAllowed) return true
-            // Reject HERE only for the owner's own standing decisions. Passing activity/season above
-            // also makes this call evaluate the full profile gate, and letting that reject at this
-            // stage would move profile exclusions ahead of the ruleFit pass that counts them, annotates
-            // them, and hands them back under intent:'explain' — the piece would vanish with no
-            // number, no label and no way to ask why. Profile fit is judged once, below.
-            return !decision?.findings.some(finding => finding.authority === 'owner')
-          })
-          if (occasionFiltered.length) {
-            filtered = occasionFiltered
-          } else {
-            filtered = beforeOccasionFilter
+          const explicitlyOccasionCompatible = filtered.filter(p => pieceOccasionCompatible(p, occasion))
+          automaticGatePool = explicitlyOccasionCompatible.length
+            ? explicitlyOccasionCompatible
+            : beforeOccasionFilter
+          if (!explicitlyOccasionCompatible.length) {
             fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
           }
         }
+        const automaticGateFiltered = !searchEligibility ? automaticGatePool : automaticGatePool.filter(p => {
+          // docs/activity-and-roster-spec.md §5.4. Evaluating the complete
+          // context here means activity-, season-, and weather-scoped validity
+          // applies even when no occasion filter was supplied.
+          const decision = searchEligibility.decisionsById.get(Number(p.id))
+          if (decision?.underlyingAllowed) return true
+          // Explain mode keeps engine findings visible for discussion but
+          // still honors the owner's standing decisions. Compose mode must
+          // consume the automatic-use verdict as a hard roster boundary;
+          // otherwise invalid pieces reach the model and rely on a later
+          // proposal rejection to repair the search roster.
+          const allowed = intent === 'explain'
+            ? !decision?.findings.some(finding => finding.authority === 'owner')
+            : decision?.underlyingAllowed !== false
+          if (!allowed) hardGateExcludedIds.add(Number(p.id))
+          return allowed
+        })
+        // Hard validity findings do not degrade to an annotated fallback in
+        // compose mode: that would put the exact weather/activity-invalid
+        // pieces back into the roster the model composes from. Explain mode
+        // remains inspectable, while owner constraints stay authoritative.
+        filtered = automaticGateFiltered
         if (query) {
           const qLower = query.toLowerCase()
           const queryOccasion = isOccasionOnlySearchQuery(query) ? canonicalOccasionFromQuery(query) : ''
@@ -1235,8 +1370,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         let excludedCount = 0
-        let gateExcludedCount = 0
-        let requestExcludedCount = 0
         if (toolContext && toolContext.allowedPieceIds) {
           const allowedSet = toolContext.allowedPieceIds instanceof Set 
             ? toolContext.allowedPieceIds 
@@ -1260,9 +1393,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         if (requestText) {
-          const beforeRequestExclusions = results.length
-          results = results.filter(p => requestExclusionReasonsForPiece(p, requestText).length === 0)
-          requestExcludedCount = beforeRequestExclusions - results.length
+          results = results.filter(p => {
+            const allowed = requestExclusionReasonsForPiece(p, requestText).length === 0
+            if (!allowed) requestExcludedIds.add(Number(p.id))
+            return allowed
+          })
         }
         const occasionProfile = stylingContext.occasionProfile
         const activityProfile = stylingContext.activityProfile
@@ -1315,7 +1450,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // Count what the gate found either way: the diagnostic is about what the gate judged,
             // not about what survived, and a fallback that silently reports zero exclusions would
             // hide exactly the case worth knowing about.
-            gateExcludedCount = beforeGate - kept.length
+            for (const piece of results) {
+              if (piece.ruleFit === 'prohibited') hardGateExcludedIds.add(Number(piece.id))
+            }
             if (!kept.length && beforeGate > 0) {
               gateSupplyFallbackNote = `No active pieces fully satisfy ${activityProfile?.label || 'this activity'}${occasion ? ` for ${occasion}` : ''}; showing the closest available pieces instead, annotated with ruleFit so you can judge and say what is missing.`
             } else {
@@ -1323,6 +1460,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }
           }
         }
+        const gateExcludedCount = hardGateExcludedIds.size
+        const requestExcludedCount = requestExcludedIds.size
         
         // Trim only when the manifest is genuinely in the prompt to join against. Above the piece
         // cap it is omitted and the full rows are the model's only view of a garment.
@@ -1458,7 +1597,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
 
         if (gateExcludedCount > 0) {
           resultList.push({
-            note: `(${gateExcludedCount} piece(s) filtered out as prohibited for this occasion/activity; re-query with intent:'explain' to see and discuss them)`
+            note: `(${gateExcludedCount} piece(s) filtered out by hard occasion/activity/weather gates; re-query with intent:'explain' to see and discuss them)`
           })
         }
 
@@ -1469,8 +1608,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         if (!relaxationPass) bumpFreeformDiagnostic(toolContext, 'searchCalls')
-        if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
-        if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
         recordRetrievedPieces(toolContext, resultList.filter(item => item.id).map(item => item.id))
         recordRetrievedPieces(toolContext, resultList.filter(item => item.image).map(item => item.id), { seen: true })
@@ -1500,10 +1637,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (shortfalls.length && nextRung) {
           // Climb a rung. If this rung has nothing to drop, keep climbing — an empty rung must not
           // silently end broadening while filters remain that could still be relaxed.
-          const relaxedArgs = { ...args, __relaxationPass: relaxationPass + 1, __relaxedFilters: [...relaxedSoFar, ...relaxable] }
+          const relaxedArgs = {
+            ...args,
+            __relaxationPass: relaxationPass + 1,
+            __relaxedFilters: [...relaxedSoFar, ...relaxable],
+            __automaticGateContext: hasAutomaticGateContext,
+            __hardGateExcludedIds: [...hardGateExcludedIds],
+            __requestExcludedIds: [...requestExcludedIds],
+          }
           for (const name of relaxable) delete relaxedArgs[name]
           return executeToolInternal('search_wardrobe', relaxedArgs, toolContext)
         }
+
+        // Relaxation is one model-visible search. Count each affected piece
+        // once, after the final internal pass, instead of once per retry rung.
+        if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
+        if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
         // Report the compromise, and only the compromise: with nothing relaxed and nothing missing
         // the result is exactly what it always was, so 37 existing callers see no shape change.
@@ -1525,7 +1674,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -1656,13 +1805,30 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion,
             activity,
             season: extractSeasonRequest(season),
-            statedWeather: extractSeasonRequest(season) ? '' : season,
+            // Spec §3.1: free-text weather must not exist as an authority on any
+            // tool. 'indoor' is the sole documented exception on this schema (its
+            // own field description teaches it) — any other season text (e.g. a
+            // model-invented "hot weather") must NOT reach statedWeather, or it
+            // silently outranks a genuine weather_estimate/user_weather for a
+            // named destination (resolveWeather checks statedWeatherCandidate
+            // before structured resolution ever runs).
+            statedWeather: season === 'indoor' ? 'indoor' : '',
+            location: proposeLocation,
+            date: proposeDate,
+            dateRange: proposeDate ? { start: proposeDate, end: proposeDate } : null,
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
             requestText: requestTextForProposal,
           },
           toolContext,
           inferred: { requestText: requestTextForProposal },
           policy: { mode: 'freeform_action' },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'proposing this outfit' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'proposeWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedOccasion = stylingContext.occasion
         const resolvedSeason = stylingContext.season
         const resolvedActivity = stylingContext.activity
@@ -1838,6 +2004,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           activity: resolvedActivity,
           debug: outfitDebug,
           previewOnly: true,
+          ...weatherCardFields(stylingContext),
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: supersededEngineNote ? 'annotated' : 'accepted',
@@ -1985,7 +2152,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion: args?.occasion,
             activity: args?.activity,
             season: extractSeasonRequest(args?.season),
-            statedWeather: extractSeasonRequest(args?.season) ? '' : args?.season,
+            // Spec §3.1: no free-text weather authority. suggest_slot_swaps'
+            // schema has no documented 'indoor' sentinel, and — more
+            // seriously — this wiring didn't just affect this tool's own
+            // resolution: resolveToolStylingContext threads any non-empty
+            // statedWeather onto toolContext.weather, which a LATER call this
+            // same turn (search_wardrobe/propose_outfit/generate_outfits)
+            // reads back via establishedState.statedWeather, so an arbitrary
+            // season string here could silently outrank a genuine
+            // weather_estimate/user_weather on one of the actual four
+            // composition tools later in the same turn.
+            statedWeather: '',
             requestText,
           },
           actionArtifact: {
@@ -2418,7 +2595,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )
-        const planWeather = String(args?.weather || '').trim()
+        // Spec future-trip-weather-estimate-spec.md §3.1: the free-text `weather`
+        // field is removed from this schema entirely — a non-conforming caller's
+        // args.weather is never read here, for gating or anything else.
+        // toolContext.weather (established display/season text, not physical
+        // weather) still seeds the heuristic no-location fallback below.
+        const planWeather = toolContext.weather || ''
         const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '')
         // Capsule safety net: "N-piece capsule" states an explicit budget. The
         // model routinely forgets to set piece_budget (live: a "14-piece capsule"
@@ -2443,10 +2625,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ? capsuleTotalOutfitCap(planConstraints.piece_budget)
           : planTotalOutfitCapForBudget(planConstraints.piece_budget)
         const planSlots = normalizePlanSlots(sanitizedSlots, {
-          fallbackWeather: planWeather || toolContext.weather || '',
+          fallbackWeather: planWeather,
           fallbackOccasion: toolContext.occasion || 'city',
           fallbackActivity: toolContext.activity || 'none',
           fallbackLocation,
+          fallbackUserWeather: args?.user_weather || null,
+          fallbackWeatherEstimate: args?.weather_estimate || null,
+          dateRange: planDateRange,
           maxSlots: planTotalOutfitCap,
           maxTotalOutfits: planTotalOutfitCap,
           tripSummary,
@@ -2456,6 +2641,46 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "validation_error",
             message: "plan_outfit_set needs at least one slot with a label. Decompose the request into use-case slots (label + occasion + activity + count) and call again."
+          }
+        }
+        const weatherFetchImpl = typeof toolContext.weatherFetchImpl === 'function' ? toolContext.weatherFetchImpl : undefined
+        // Spec §6.1/§6.2: resolve weather for every slot through the ONE
+        // structured contract BEFORE any roster, pendingPlan, or workbench is
+        // built. A named destination/date slot with no resolved temperature
+        // (no live coverage, no user_weather, no weather_estimate) stops the
+        // whole call here — checked via each slot's actual
+        // resolvedWeatherContext.status, not string-matching a display label,
+        // and via .some() so a mixed plan (one resolved slot, one not) still
+        // stops rather than proceeding partially gated.
+        const weatherPreCheckSlots = await Promise.all(planSlots.map(async slot => {
+          const { profile } = await resolveSlotWeather(slot, {
+            mood: toolContext.mood || '',
+            question: toolContext.planQuestion || toolContext.question || '',
+            dateRange: planDateRange,
+            location: toolContext.location || '',
+            fetchImpl: weatherFetchImpl,
+            seasonIsCalendarOnly: planKind === 'seasonal_capsule',
+          })
+          return { label: slot.label, status: profile?.resolvedWeatherContext?.status || 'unavailable', overallSource: profile?.resolvedWeatherContext?.overallSource || '' }
+        }))
+        // Spec §7: freeform_generation_runs.weather_source from overallSource. A
+        // multi-slot plan can mix sources across slots (city day live, coast day
+        // estimated) — record the shared source when every slot agrees, 'mixed'
+        // when they don't, matching resolveWeatherContext's own 'mixed' semantics
+        // for a single slot with more than one source.
+        const planOverallSources = new Set(weatherPreCheckSlots.map(slot => slot.overallSource).filter(Boolean))
+        if (planOverallSources.size) {
+          setFreeformWeatherSource(toolContext, planOverallSources.size === 1 ? [...planOverallSources][0] : 'mixed')
+        }
+        const unresolvedSlot = weatherPreCheckSlots.find(slot => slot.status === 'unavailable')
+        if (unresolvedSlot) {
+          bumpFreeformDiagnostic(toolContext, 'planWeatherContextRequired')
+          return {
+            status: "weather_context_required",
+            location: fallbackLocation,
+            date_range: planDateRange,
+            missing: ["temperature"],
+            message: `Live weather does not cover these dates for "${unresolvedSlot.label}". Re-call this tool with weather_estimate.high_f and weather_estimate.low_f (on the plan or on each affected slot) before selecting garments.`
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
@@ -2469,8 +2694,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion: slot.occasion,
             activity: slot.activity,
             season: slot.season || planConstraints.season || '',
-            weather: slot.weather || planWeather || '',
-            weatherText: slot.weather || planWeather || '',
+            weather: slot.season || planWeather || '',
+            weatherText: slot.season || planWeather || '',
             requestText: [slot.label, slot.occasion, slot.activity].filter(Boolean).join(' '),
           })),
           // Before the plan roster exists, only context/universal guidance can enter roster
@@ -2484,6 +2709,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           mood: toolContext.mood || '',
           question: toolContext.planQuestion || toolContext.question || '',
           location: toolContext.location || '',
+          // Test-only injection point (mirrors the fetchImpl convention already
+          // used throughout weather.js/outfitSetPlanner.js) — absent in
+          // production, so plan_outfit_set always resolves real live weather.
+          ...(weatherFetchImpl ? { fetchImpl: weatherFetchImpl } : {}),
           ownerRules,
           planKind,
           // Injected only when the route wired one (flag on). Absent, the
@@ -2891,15 +3120,37 @@ async function executeToolInternal(name, args, toolContext = {}) {
             season: extractSeasonRequest(season),
             mission,
             mood,
-            statedWeather: toolContext.weather || (extractSeasonRequest(season) ? '' : season),
+            // Spec §3.1: no free-text weather authority on any tool.
+            // generate_outfits' own schema has no documented 'indoor' sentinel
+            // (unlike propose_outfit's), and `toolContext.weather` here was only
+            // ever set by this same statedWeather wiring on an earlier call this
+            // turn (a self-perpetuating loop) — dropping both closes the path
+            // that let arbitrary model-invented season text (e.g. "hot weather")
+            // outrank a genuine weather_estimate/user_weather for a named
+            // destination.
+            statedWeather: '',
             location,
+            // `date` here defaults all the way to today (`new Date()`) for the
+            // legacy season/date field below — deliberately NOT reused as the
+            // named-destination trigger's own date, which must stay empty
+            // unless the model actually named one, and must be an ISO string
+            // (a Date object stringifies to something resolveWeatherForRequest
+            // was never designed to parse).
             date: date || toolContext.currentDate || new Date(),
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
+            dateRange: date ? { start: date, end: date } : null,
             requestText: toolContext.question || '',
           },
           toolContext,
           inferred: { requestText: toolContext.question || '' },
           policy: { mode: 'freeform_action', allowLiveWeather: boundedMultiLook },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'composing outfits' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'generateWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedActivity = stylingContext.activity
         let resolvedSeason = stylingContext.season
         if (boundedMultiLook) {
@@ -2984,7 +3235,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         
         if (result && result.structuredOutfits) {
           recordNestedFreeformUsage(toolContext, result?.debug?.composerUsage)
-          toolContext.generatedOutfits = result.structuredOutfits
+          const generatedWeatherFields = weatherCardFields(stylingContext)
+          toolContext.generatedOutfits = Object.keys(generatedWeatherFields).length
+            ? result.structuredOutfits.map(outfit => ({ ...outfit, ...generatedWeatherFields }))
+            : result.structuredOutfits
           if (boundedMultiLook) {
             toolContext.atomicMultiLookCompleted = true
             toolContext.atomicMultiLookRequestedCount = requestedCount

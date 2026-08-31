@@ -1,7 +1,7 @@
 {
   "warningCount": 54,
-  "recordedAt": "2026-08-16",
-  "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in.",
+  "recordedAt": "2026-08-31",
+  "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in. Restored to 54 on 2026-08-31 by adding the missing status header to docs/active-memory-surface-spec.md; the ratchet was repaired rather than weakened.",
   "composition": {
     "missingStatusHeader": "~40 — docs predate the Status/Last-verified convention. Backfilling them is the planned next commit; each one that gets a header lowers this number.",
     "staleFunctionCitations": "~9 — docs citing `someFunction()` that no longer exists in tracked source (e.g. rehydrateOutfitPieces, tripScopeClarificationEnabled, followupPrerouteEnabled). Each is either a rename to chase or a genuinely dead reference to fix.",

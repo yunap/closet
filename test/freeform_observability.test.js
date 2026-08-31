@@ -1364,10 +1364,13 @@ test('executeTool propose_outfit inherits hot-weather card context from prior se
   `).run().lastInsertRowid
 
   try {
+    // Spec future-trip-weather-estimate-spec.md §3.1/§6.5: free-text weather
+    // is removed from search_wardrobe's schema; a structured weather_estimate
+    // establishes the hot context now, and toolContext.weather (the old
+    // free-text echo) is no longer touched by this tool at all.
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], season: 'current season' }
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot weather', visual: true }, toolContext)
+    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather_estimate: { high_f: 92, low_f: 78 }, visual: true }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
-    assert.equal(toolContext.weather, 'hot weather')
 
     const result = await executeTool('propose_outfit', {
       label: 'Hot City Polish',
@@ -1989,6 +1992,38 @@ test('bounded router state preserves the generated set and established context f
   assert.equal(state.established.weather, 'a forecast high of 70°F and low of 55°F')
 })
 
+// Spec §7: current_outfit_set persists a per-outfit weather disclosure and its
+// serialized structured context (distinct from the single shared weather_profile
+// above, which cannot represent a multi-slot plan with different weather per
+// slot). A follow-up like "what weather were you planning for the coast day?"
+// reads this back per-outfit.
+test('bounded router state persists per-outfit weatherUsed/resolvedWeatherContext onto current_outfit_set', () => {
+  const state = boundedConversationStateFromToolContext({
+    generatedOutfits: [{
+      label: 'Coast Day',
+      pieceIds: [21],
+      pieces: [{ id: 21, name: 'jacket' }],
+      weatherUsed: '65°F high / 45°F low — live forecast, Cambria, CA',
+      resolvedWeatherContext: {
+        status: 'resolved',
+        location: 'Cambria, CA',
+        date_range: { start: '2026-10-14', end: '2026-10-14' },
+        temperature: { high_f: 65, low_f: 45, is_hot: false, is_cold: true, is_extreme_heat: false, source: 'live' },
+        overall_source: 'live',
+      }
+    }, {
+      label: 'No Weather Slot',
+      pieceIds: [22],
+      pieces: [{ id: 22, name: 'sweater' }]
+    }]
+  })
+  assert.equal(state.current_outfit_set[0].weather_used, '65°F high / 45°F low — live forecast, Cambria, CA')
+  assert.equal(state.current_outfit_set[0].resolved_weather_context.location, 'Cambria, CA')
+  assert.equal(state.current_outfit_set[0].resolved_weather_context.overall_source, 'live')
+  assert.equal(state.current_outfit_set[1].weather_used, undefined, 'an outfit with no resolved weather must not fabricate a disclosure')
+  assert.equal(state.current_outfit_set[1].resolved_weather_context, undefined)
+})
+
 test('stored weather physics survive echoed display prose but yield to explicit turn weather', async () => {
   const { buildStylistConversationPayload, saveStylistConversationState } = await import('../styling-engine/core.js')
   const sessionId = `weather-physics-${Date.now()}`
@@ -2232,13 +2267,16 @@ test('shared context resolves live weather only for Current season', async () =>
   const current = await resolveStylingContext({
     explicitRequest: { season: 'current season', location: 'Walnut Creek, CA', date: '2026-08-19' },
   })
-  assert.deepEqual(current.weatherProfile, {
-    isHot: false,
-    isCold: false,
-    highF: 69,
-    lowF: 55,
-    weatherSource: 'live'
-  })
+  // Spec future-trip-weather-estimate-spec.md §6.5: location+date now
+  // resolves through the structured contract, whose profile carries fuller
+  // field-level info (isExtremeHeat/isRainy/isWetExposure/
+  // resolvedWeatherContext) than the raw weatherResolver return value alone.
+  assert.equal(current.weatherProfile.isHot, false)
+  assert.equal(current.weatherProfile.isCold, false)
+  assert.equal(current.weatherProfile.highF, 69)
+  assert.equal(current.weatherProfile.lowF, 55)
+  assert.equal(current.weatherProfile.weatherSource, 'live')
+  assert.equal(current.weatherProfile.resolvedWeatherContext.location, 'Walnut Creek, CA')
   assert.equal(calls.length, 1)
 
   const hypothetical = await resolveStylingContext({
@@ -2469,15 +2507,112 @@ test('persistFreeformGenerationRun does not throw when diagnostics are missing',
   assert.doesNotThrow(() => persistFreeformGenerationRun({}))
 })
 
-// Spec 4: search_wardrobe records which weather source it resolved (stated vs live vs heuristic) for
-// spec 3's observability. This call's own `weather` arg is a stated override (resolveStatedOrLiveWeather)
-// and short-circuits straight to 'stated' without ever attempting live resolution — this test only
-// verifies the wiring, not live weather (see weather.test.js for live-path coverage via a mocked
-// fetchImpl).
+// Spec future-trip-weather-estimate-spec.md §3.1/§6.5: search_wardrobe's
+// free-text `weather` is removed; a structured weather_estimate resolves
+// through resolveWeatherForRequest and short-circuits before any live
+// lookup is even attempted (no location/date here to geocode against) —
+// this test only verifies the wiring, not live weather (see weather.test.js
+// for live-path coverage via a mocked fetchImpl).
 test('executeTool search_wardrobe records weatherSource onto toolContext.freeformDiagnostics', async () => {
   const toolContext = {}
-  await executeTool('search_wardrobe', { occasion: 'city', weather: 'hot' }, toolContext)
-  assert.equal(toolContext.freeformDiagnostics.weatherSource, 'stated')
+  await executeTool('search_wardrobe', { occasion: 'city', weather_estimate: { high_f: 90, low_f: 75 } }, toolContext)
+  assert.equal(toolContext.freeformDiagnostics.weatherSource, 'model_estimate')
+})
+
+test('executeTool search_wardrobe excludes ordinary open sandals from a cold compose roster', async () => {
+  const insert = db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES (?, 'shoes', 'active', '["city"]', 'everyday', ?, ?, 'flat', 'high')
+  `)
+  const sandalId = Number(insert.run('cold search open sandal', 'sandal', 'open_toe').lastInsertRowid)
+  const sneakerId = Number(insert.run('cold search closed sneaker', 'sneaker', 'round').lastInsertRowid)
+  try {
+    const toolContext = { freeformDiagnostics: {} }
+    const results = await executeTool('search_wardrobe', {
+      category: 'shoes',
+      occasion: 'city',
+      weather_estimate: { high_f: 65, low_f: 45 },
+    }, toolContext)
+    const ids = new Set(results.filter(item => item?.id).map(item => Number(item.id)))
+    assert.equal(ids.has(sandalId), false)
+    assert.equal(ids.has(sneakerId), true)
+    assert.ok(toolContext.freeformDiagnostics.gateExcludedTotal >= 1)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(sandalId, sneakerId)
+  }
+})
+
+test('search relaxation counts one hard-gated piece once across all internal retry rungs', async () => {
+  const activeShoeIds = db.prepare("SELECT id FROM pieces WHERE category = 'shoes' AND status = 'active'").all().map(row => Number(row.id))
+  db.prepare("UPDATE pieces SET status = 'inactive' WHERE category = 'shoes' AND status = 'active'").run()
+  const sandalId = Number(db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES ('relaxation cold open sandal', 'shoes', 'active', '["city"]', 'everyday', 'sandal', 'open_toe', 'flat', 'high')
+  `).run().lastInsertRowid)
+  try {
+    const toolContext = { freeformDiagnostics: {} }
+    const results = await executeTool('search_wardrobe', {
+      category: 'shoes',
+      occasion: 'city',
+      activity: 'walking',
+      weather_estimate: { high_f: 55, low_f: 40 },
+    }, toolContext)
+
+    assert.equal(results.some(item => Number(item?.id) === sandalId), false)
+    assert.ok(results.some(item => /1 piece\(s\) filtered out/.test(item?.note || '')))
+    assert.equal(toolContext.freeformDiagnostics.searchCalls, 1)
+    assert.equal(toolContext.freeformDiagnostics.gateExcludedTotal, 1)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(sandalId)
+    const restore = db.prepare("UPDATE pieces SET status = 'active' WHERE id = ?")
+    for (const id of activeShoeIds) restore.run(id)
+  }
+})
+
+test('executeTool propose_outfit preserves cached cold transit when season is indoor', async () => {
+  const insert = db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, fabric_category, fabric_weight, sleeve_length, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES (?, ?, 'active', '["city"]', 'everyday', ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const topId = Number(insert.run('indoor transit long sleeve top', 'top', 'cotton', 'light', 'long', null, null, null, null).lastInsertRowid)
+  const bottomId = Number(insert.run('indoor transit trousers', 'bottom', 'cotton', 'medium', null, null, null, null, null).lastInsertRowid)
+  const sandalId = Number(insert.run('indoor transit open sandal', 'shoes', 'leather', 'light', null, 'sandal', 'open_toe', 'flat', 'high').lastInsertRowid)
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], freeformDiagnostics: {} }
+    await executeTool('search_wardrobe', {
+      occasion: 'city',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 65, low_f: 45 },
+    }, toolContext)
+    await executeTool('search_wardrobe', {
+      query: 'indoor transit open sandal',
+      occasion: 'city',
+      intent: 'explain',
+    }, toolContext)
+
+    const result = await executeTool('propose_outfit', {
+      label: 'Cold museum transit',
+      season: 'indoor',
+      occasion: 'city',
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: sandalId, role: 'shoes' },
+      ],
+    }, toolContext)
+
+    assert.equal(toolContext.weatherProfile.isIndoor, true)
+    assert.equal(toolContext.weatherProfile.transitIsCold, true)
+    assert.equal(toolContext.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
+    assert.equal(result.status, 'validation_error')
+    assert.match(result.message, /cold weather.*(open-toe|sandal)/i)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, sandalId)
+  }
 })
 
 // With no weather arg of its own and no location, resolution falls all the way through to the text
@@ -2524,6 +2659,402 @@ test('shared tool context falls through to live resolution when weather is unsta
   assert.equal(profile.isHot, true)
 })
 
+// ============================================================================
+// docs/future-trip-weather-estimate-spec.md §6.5 single-outfit parity —
+// search_wardrobe/propose_outfit/generate_outfits now resolve a named
+// destination/date through the SAME structured contract as plan_outfit_set,
+// via resolveNamedDestinationWeather (styling-engine/stylingContext.js).
+// ============================================================================
+
+// A location alone (no date, no structured weather) must NOT be treated as a
+// named destination/date — it stays on the legacy live-for-today path
+// (previous test above). Only location+date (or a structured weather input
+// on its own) activates the new resolver.
+test('resolveToolStylingContext: location+date resolves through the structured contract via live weather', async () => {
+  const toolContext = {}
+  const weatherResolver = async ({ location, date }) => {
+    assert.equal(location, 'Vienna, Virginia')
+    assert.equal(date, '2026-09-05')
+    return { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05', season: 'current season' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'live')
+  assert.equal(context.weatherProfile.isCold, true)
+  assert.ok(toolContext.resolvedWeatherContext, 'the resolved context must be cached onto toolContext for a later propose_outfit call to reuse')
+  assert.equal(toolContext.resolvedWeatherContext.location, 'Vienna, Virginia')
+})
+
+test('resolveToolStylingContext: a future destination outside live coverage falls back to weather_estimate, then stays unavailable without one', async () => {
+  const unavailableResolver = async () => ({ weatherSource: 'unavailable' })
+  const withEstimate = await resolveToolStylingContext({
+    explicitRequest: {
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    toolContext: {},
+    policy: { allowLiveWeather: true },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(withEstimate.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(withEstimate.weatherProfile.isCold, true)
+
+  const withoutEstimate = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-10-12' },
+    toolContext: {},
+    policy: { allowLiveWeather: true },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(withoutEstimate.weatherProfile.weatherSource, 'unavailable')
+  assert.equal(withoutEstimate.weatherProfile.isCold, false, 'unresolved must never read as mild/known')
+})
+
+// Spec §9 items 15/17: none of these date-, count-, temperature-, or
+// styling-flavored strings can create or alter resolved weather — the old
+// regex-based currentTurnStatedWeather repair this replaced was deleted
+// specifically because it scanned prose like this for numbers/condition
+// words; the new resolver never reads requestText/mood/season for temperature
+// at all, only structured user_weather/weather_estimate/live fields. Every
+// phrase below is taken verbatim from the spec's own anti-regression list.
+test('resolveToolStylingContext: prose (dates, counts, Celsius, styling adjectives) cannot create or alter resolved weather', async () => {
+  const proseNeedle = [
+    'October 12', '10 outfits', '18°C', 'warm colors', 'cool outfit',
+    'winter white', 'icy blue', 'crisp outdoor walking weather',
+  ].join(', please style for: ')
+  const unavailableResolver = async () => ({ weatherSource: 'unavailable' })
+  const context = await resolveToolStylingContext({
+    explicitRequest: {
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      requestText: proseNeedle,
+      // A malformed request also tries to smuggle the same prose into the
+      // structured fields themselves — the validator must reject the shape,
+      // not extract a number from within the string (item 17).
+      userWeather: { temperature_band: '18°C' },
+      weatherEstimate: { high_f: 'warm colors', low_f: 'icy blue' },
+    },
+    toolContext: {},
+    inferred: { requestText: proseNeedle },
+    policy: { allowLiveWeather: true, mode: 'freeform_action' },
+    weatherResolver: unavailableResolver,
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'unavailable', 'malformed structured fields must be rejected outright, not parsed from their prose-like values')
+  assert.equal(context.weatherProfile.isHot, false)
+  assert.equal(context.weatherProfile.isCold, false, 'prose must never resolve to a known temperature, hot or cold')
+  assert.equal(context.weatherProfile.highF, undefined)
+  assert.equal(context.weatherProfile.lowF, undefined)
+})
+
+test('resolveToolStylingContext: a bare structured user_weather with no named place resolves via the no-destination branch, not the legacy heuristic', async () => {
+  const context = await resolveToolStylingContext({
+    explicitRequest: { userWeather: { temperature_band: 'cold' } },
+    policy: { allowLiveWeather: true },
+  })
+  assert.equal(context.weatherProfile.weatherSource, 'stated_user')
+  assert.equal(context.weatherProfile.isCold, true)
+})
+
+// Spec §6.5: "search stores its resolved context in toolContext; proposal
+// consumes the matching context." A second call with the SAME location/date
+// identity and no new structured weather reuses the cached result instead of
+// re-resolving (re-geocoding).
+test('resolveToolStylingContext: a matching second call reuses the cached resolved context instead of re-fetching', async () => {
+  let resolverCalls = 0
+  const toolContext = {}
+  const weatherResolver = async () => {
+    resolverCalls += 1
+    return { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+  }
+  await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  const callsAfterFirst = resolverCalls
+  assert.ok(callsAfterFirst > 0, 'the first call must actually resolve live weather')
+
+  // propose_outfit-style follow-up: same location/date, no fresh structured input.
+  const reused = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-09-05' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(resolverCalls, callsAfterFirst, 'a matching identity must reuse the cache, not re-resolve')
+  assert.equal(reused.weatherProfile.weatherSource, 'live')
+  assert.equal(reused.weatherProfile.isCold, true)
+})
+
+// Spec §6.2, extended to search_wardrobe/propose_outfit/generate_outfits by §6.5:
+// a named destination/date with no resolved temperature (no live coverage under
+// NODE_ENV=test's network skip, no weather_estimate, no user_weather) must stop
+// with a typed weather_context_required response before retrieval/scoring, the
+// same as plan_outfit_set already does.
+test('executeTool search_wardrobe stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [] }
+  const result = await executeTool('search_wardrobe', {
+    occasion: 'city',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+  }, toolContext)
+  assert.equal(result.status, 'weather_context_required')
+  assert.equal(result.location, 'Vienna, Virginia')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.deepEqual(result.missing, ['temperature'])
+  assert.match(result.message, /weather_estimate/)
+})
+
+test('executeTool search_wardrobe proceeds normally for a bare structured weather claim with no named destination', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  const result = await executeTool('search_wardrobe', {
+    occasion: 'city',
+    user_weather: { precipitation: 'rain' },
+  }, toolContext)
+  assert.ok(Array.isArray(result), 'no destination named — precipitation-only input must not stop the search')
+  assert.equal(toolContext.weatherProfile?.isHot, false)
+})
+
+// Spec §9 item 16: "A free-text weather HTTP field cannot alter roster
+// membership or validation." search_wardrobe's schema no longer advertises a
+// `weather` argument at all, but executeTool takes a plain args object with no
+// schema enforcement of its own — a caller (or an unpatched client) could still
+// send one over HTTP. Prove it is silently ignored, not read for gating.
+test('executeTool search_wardrobe ignores an undeclared free-text weather arg entirely', async () => {
+  const withStray = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  await executeTool('search_wardrobe', { occasion: 'city', weather: 'freezing arctic blast' }, withStray)
+  const withoutStray = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  await executeTool('search_wardrobe', { occasion: 'city' }, withoutStray)
+  assert.equal(withStray.weatherProfile?.isCold, withoutStray.weatherProfile?.isCold, 'a stray weather string must not flip isCold')
+  assert.equal(withStray.weatherProfile?.weatherSource, withoutStray.weatherProfile?.weatherSource)
+})
+
+test('executeTool propose_outfit stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-stop top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-stop bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('weather-stop shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Vienna Evening',
+      why_it_works: 'a simple city outfit',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+    }, toolContext)
+    assert.equal(result.status, 'weather_context_required')
+    assert.equal(result.location, 'Vienna, Virginia')
+    assert.equal(result.date_range.start, '2026-10-12')
+    assert.deepEqual(result.missing, ['temperature'])
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Spec §7: an accepted card persists the truthful weather disclosure and its
+// serialized structured context, not just the shared toolContext-level
+// weatherProfile — so a later follow-up can read this specific outfit's weather
+// back even if other outfits in the set resolved differently.
+test('executeTool propose_outfit persists weatherUsed/resolvedWeatherContext onto the accepted card via a weather_estimate fallback', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-persist top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'wool', 'heavy', '["wool"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-persist bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('weather-persist shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Vienna Evening',
+      why_it_works: 'a warm layered city outfit',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 55, low_f: 40 },
+    }, toolContext)
+    assert.equal(result.status, 'success')
+    const card = toolContext.generatedOutfits[0]
+    assert.match(card.weatherUsed, /55°F high \/ 40°F low — seasonal estimate, not a live forecast/)
+    assert.equal(card.resolvedWeatherContext.location, 'Vienna, Virginia')
+    assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+    assert.equal(card.resolvedWeatherContext.temperature.high_f, 55)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Regression: propose_outfit/generate_outfits used to funnel their own
+// `season` argument into legacy `statedWeather` whenever it wasn't a
+// recognized calendar-season word (extractSeasonRequest returns '' for
+// "hot weather") — and resolveWeather checks statedWeatherCandidate BEFORE
+// any structured resolution ever runs, so a model-invented free-text season
+// like "hot weather" silently outranked a genuine structured
+// weather_estimate for a named destination. This defeated the entire "one
+// structured authority" architecture on both single-outfit tools.
+test('executeTool propose_outfit: a genuine weather_estimate is not overridden by an arbitrary free-text season string', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('prose-bypass top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('prose-bypass bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('prose-bypass shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Prose Bypass Test',
+      why_it_works: 'test',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 65, low_f: 45 },
+      season: 'hot weather',
+    }, toolContext)
+    assert.equal(result.status, 'success')
+    assert.equal(toolContext.weatherProfile.isCold, true, 'the structured 65/45 estimate must win, not the "hot weather" prose')
+    assert.equal(toolContext.weatherProfile.weatherSource, 'model_estimate')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Regression: an unresolved named destination used to fall back to whatever
+// toolContext.weatherProfile already held from an EARLIER call this turn
+// (a different location, or a prior turn's snapshot) instead of surfacing as
+// genuinely unresolved. Because that stale snapshot carries no
+// resolvedWeatherContext, weatherContextRequiredStop could never fire — the
+// typed stop was silently bypassed whenever any prior weather happened to be
+// cached, which is common (search_wardrobe runs before most propose_outfit
+// calls).
+test('executeTool propose_outfit: an unresolved named destination stops even when a stale weatherProfile from an earlier call this turn exists', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('stale-snapshot top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('stale-snapshot bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('stale-snapshot shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+      // A stale snapshot from an earlier call this turn (e.g. an at-home
+      // search before the user mentioned a trip).
+      weatherProfile: { weatherSource: 'live', isHot: true, isCold: false, highF: 95, lowF: 75 },
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Stale Snapshot Test',
+      why_it_works: 'test',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+    }, toolContext)
+    assert.equal(result.status, 'weather_context_required', `an unresolved Vienna destination must stop, not silently reuse the stale hot snapshot, got: ${JSON.stringify(result)}`)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+test('executeTool generate_outfits stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    turnMode: 'new_request',
+  }
+  const result = await executeTool('generate_outfits', {
+    occasion: 'city',
+    season: 'current season',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+    limit: 2,
+  }, toolContext)
+  assert.equal(result.status, 'weather_context_required')
+  assert.equal(result.location, 'Vienna, Virginia')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.deepEqual(result.missing, ['temperature'])
+})
+
+test('executeTool: search_wardrobe then propose_outfit share the same resolved weather context', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+  }
+  await executeTool('search_wardrobe', {
+    occasion: 'city',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+    weather_estimate: { high_f: 65, low_f: 45 },
+  }, toolContext)
+  assert.equal(toolContext.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(toolContext.weatherProfile.isCold, true)
+
+  // propose_outfit passes no location/date of its own — it must inherit the
+  // context search_wardrobe already resolved for the same turn.
+  const proposeContext = await resolveToolStylingContext({
+    explicitRequest: {},
+    toolContext,
+    policy: { allowLiveWeather: true },
+  })
+  assert.equal(proposeContext.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(proposeContext.weatherProfile.isCold, true)
+})
+
 // End-to-end reproduction of the observable symptom: a stated followup weather, once cached onto
 // toolContext.weatherProfile by search_wardrobe, must let propose_outfit accept pieces that are
 // correct for THAT weather (not the piece that would only be safe in heat).
@@ -2547,8 +3078,9 @@ test('executeTool propose_outfit accepts cold/rainy-appropriate pieces after a s
 
   try {
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
-    // Simulates the model correctly stating the followup's new weather, as it did live.
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'none', weather: 'rainy weather' }, toolContext)
+    // Simulates the model correctly translating the followup's own explicit
+    // weather claim into structured user_weather, as it should have done live.
+    await executeTool('search_wardrobe', { occasion: 'city', activity: 'none', user_weather: { precipitation: 'rain' } }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, false)
 
     const result = await executeTool('propose_outfit', {
@@ -2569,7 +3101,7 @@ test('executeTool propose_outfit accepts cold/rainy-appropriate pieces after a s
   }
 })
 
-test('executeTool propose_outfit rejects hot-weather gated pieces using weather resolved by prior search', async () => {
+test('search excludes hot-weather hard failures before composition and propose_outfit still enforces the gate', async () => {
   const woolTopId = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
     VALUES ('obs green brown wool tunic', 'top', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'wool tunic', '', 'wool', 'medium', '["wool"]', 'everyday', '', '{}')
@@ -2585,9 +3117,24 @@ test('executeTool propose_outfit rejects hot-weather gated pieces using weather 
 
   try {
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot' }, toolContext)
+    const composeSearch = await executeTool('search_wardrobe', {
+      occasion: 'city',
+      activity: 'walking',
+      weather_estimate: { high_f: 92, low_f: 78 },
+    }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
     assert.equal(toolContext.activity, 'walking')
+    assert.equal(composeSearch.some(item => Number(item?.id) === Number(woolTopId)), false,
+      'the insulating top must not enter the model composition roster')
+
+    // Explain mode intentionally makes the rejected garment inspectable. Once
+    // verified, the proposal boundary must still enforce the same hard gate.
+    await executeTool('search_wardrobe', {
+      query: 'obs green brown wool tunic',
+      occasion: 'city',
+      activity: 'walking',
+      intent: 'explain',
+    }, toolContext)
 
     const result = await executeTool('propose_outfit', {
       label: 'City Day Stroll',

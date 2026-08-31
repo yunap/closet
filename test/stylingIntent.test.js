@@ -67,7 +67,12 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.deepEqual(generateTool.input_schema.required, ['occasion', 'season'])
   assert.ok(!generateTool.input_schema.required.includes('activity'), 'activity omission must remain meaningful')
 
-  assert.ok(searchTool.input_schema.properties.weather, 'search_wardrobe should accept weather for fit flags')
+  // Spec future-trip-weather-estimate-spec.md §3.1/§6.5: free-text weather
+  // is removed from the schema entirely; structured user_weather/
+  // weather_estimate (plus location/date) are the fit-flag inputs now.
+  assert.equal(searchTool.input_schema.properties.weather, undefined, 'free-text weather is removed from search_wardrobe')
+  assert.ok(searchTool.input_schema.properties.user_weather, 'search_wardrobe should accept structured user_weather')
+  assert.ok(searchTool.input_schema.properties.weather_estimate, 'search_wardrobe should accept structured weather_estimate')
   assert.deepEqual(searchTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
   assert.ok(searchTool.input_schema.properties.visual, 'search_wardrobe should accept visual mode')
   assert.ok(proposeTool, 'propose_outfit tool must exist')
@@ -175,8 +180,15 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // office day toward sleeveless/beachy pieces (live finding: office week
   // composed for the outdoor Walnut Creek heat).
   assert.ok(STYLIST_SYSTEM.includes('INDOOR slots are climate-controlled'))
-  assert.ok(STYLIST_SYSTEM.includes("pass \`weather:'indoor'\` so the slot is NOT composed for outdoor heat or cold"))
+  // docs/future-trip-weather-estimate-spec.md §3.2/§4.3: environment is now
+  // the sole model-facing indoor/outdoor/beach_coastal signal; weather is
+  // always structured (user_weather/weather_estimate), never free text.
+  assert.ok(STYLIST_SYSTEM.includes("set \`environment:'indoor'\` — the ONLY field for indoor/outdoor/beach_coastal"))
   assert.ok(STYLIST_SYSTEM.includes('Reserve the live per-slot forecast for slots actually spent OUTDOORS'))
+  assert.ok(STYLIST_SYSTEM.includes('pass a conservative numeric \`weather_estimate\`'))
+  assert.ok(STYLIST_SYSTEM.includes('risks a \`weather_context_required\` stop'))
+  assert.ok(STYLIST_SYSTEM.includes('translate only what they actually said into \`user_weather\`'))
+  assert.ok(STYLIST_SYSTEM.includes('convert a stated Celsius value to Fahrenheit yourself'))
   // Register escalation for event weekends (live finding: the wedding ceremony
   // came out in denim + a leather zip, not the dressiest slot).
   assert.ok(STYLIST_SYSTEM.includes("set each slot's \`register\` so the peak reads dressiest"))

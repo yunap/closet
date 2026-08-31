@@ -752,6 +752,12 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     ...(outfit?.reason ? { reason: outfit.reason } : {}),
     ...(outfit?.stylingInstructions ? { styling_instructions: outfit.stylingInstructions } : {}),
     ...(outfit?.watchFor ? { watch_for: outfit.watchFor } : {}),
+    // Spec §7: per-outfit weather disclosure + its serialized structured
+    // context, so a follow-up ("what weather were you planning for the coast
+    // day?") reads the actual per-slot resolution back instead of only the
+    // single shared weather_profile below (which cannot distinguish slots).
+    ...(outfit?.weatherUsed ? { weather_used: outfit.weatherUsed } : {}),
+    ...(outfit?.resolvedWeatherContext ? { resolved_weather_context: outfit.resolvedWeatherContext } : {}),
     piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
@@ -773,6 +779,49 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     ...(serializeWeatherProfile(toolContext?.weatherProfile) ? { weather_profile: serializeWeatherProfile(toolContext.weatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {})
   }
+}
+
+// Spec §7 continuity, the full-stylist tool-loop path. Called once, right
+// after askStylistWithTools returns, from the general (non-bounded_multi)
+// /ask handler.
+//
+// docs/bounded-multi-context-continuity-spec.md §5.1: recently_discussed_piece_ids
+// is always written explicitly (including empty) so a stale value from an
+// earlier turn cannot linger — it reflects only the immediately preceding
+// accepted answer, never a growing memory. Reads the state fresh rather than
+// reconstructing it, so this write layers onto whatever
+// buildStylistConversationPayload's own earlier-in-this-turn save already set
+// (established/current_outfit_set/weather_profile) instead of replacing it —
+// the whole-blob store has no partial merge, so overwriting from scratch here
+// would silently drop those.
+//
+// buildStylistConversationPayload's save (which runs BEFORE the tool loop, as
+// part of assembling the model's own input) only persists cards the BROWSER
+// already echoed back from the PREVIOUS turn — it cannot know about cards
+// THIS turn's tool loop is about to produce. Without this second write, a
+// freshly accepted plan_outfit_set/propose_outfit/generate_outfits result
+// depended entirely on the browser echoing toolContext.generatedOutfits back
+// on the NEXT request to survive server-side at all — exactly the continuity
+// gap spec §7 requires not to exist. Reuses
+// boundedConversationStateFromToolContext's own current_outfit_set/
+// weather_profile projection (the same one the bounded_multi router path
+// already uses at its own call site above) so both paths persist identically
+// shaped state. Only overwrites current_outfit_set when this turn actually
+// produced fresh cards — an ordinary prose-only turn leaves the prior set
+// alone, consistent with the "layers onto" merge philosophy above.
+export function persistFullStylistTurnState({ toolContext, answer, freeformTurnToken, sessionId = 'default' }) {
+  const priorConversationState = getStylistConversationState(sessionId) || {}
+  const hasFreshCards = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
+  const freshState = hasFreshCards ? boundedConversationStateFromToolContext(toolContext) : null
+  saveStylistConversationState({
+    ...priorConversationState,
+    ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
+    ...(freshState?.weather_profile ? { weather_profile: freshState.weather_profile } : {}),
+    recently_discussed_piece_ids: {
+      piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
+      turn_token: freeformTurnToken
+    }
+  }, sessionId)
 }
 
 export function compactFreeformAnswerSystem(profile = 'general_advice') {
@@ -5034,23 +5083,7 @@ router.post('/ask', async (req, res) => {
       allSaved.push(payload.automaticallySavedCorrection)
     }
 
-    // docs/bounded-multi-context-continuity-spec.md §5.1. Always written explicitly (including
-    // empty) so a stale value from an earlier turn cannot linger — this field reflects only the
-    // immediately preceding accepted answer, never a growing memory. Reads the state fresh rather
-    // than reconstructing it, so this write layers onto whatever
-    // buildStylistConversationPayload's own earlier-in-this-turn save already set
-    // (established/current_outfit_set/weather_profile) instead of replacing it — the whole-blob
-    // store has no partial merge, so overwriting from scratch here would silently drop those.
-    {
-      const priorConversationState = getStylistConversationState(req.body.sessionId || 'default') || {}
-      saveStylistConversationState({
-        ...priorConversationState,
-        recently_discussed_piece_ids: {
-          piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
-          turn_token: freeformTurnToken
-        }
-      }, req.body.sessionId || 'default')
-    }
+    persistFullStylistTurnState({ toolContext, answer, freeformTurnToken, sessionId: req.body.sessionId || 'default' })
 
     const isTravel = isTravelOrPackingRequest(req.body.question || '', req.body.occasion || '')
     let suggestedTitle = null

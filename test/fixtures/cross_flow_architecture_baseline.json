@@ -326,7 +326,7 @@
               "owner constraint 1: prohibited for season summer"
             ]
           },
-          "weatherUsed": "mild weather"
+          "weatherUsed": "72°F high / 56°F low — seasonal estimate, not a live forecast"
         },
         "capsule": {
           "requestedBudget": 10,
@@ -667,7 +667,7 @@
               "owner constraint 1: prohibited for season summer"
             ]
           },
-          "weatherUsed": "hot weather"
+          "weatherUsed": "92°F high / 78°F low — seasonal estimate, not a live forecast"
         },
         "capsule": {
           "requestedBudget": 10,
@@ -995,7 +995,7 @@
               "register: dressy exceeds everyday ceiling"
             ]
           },
-          "weatherUsed": "mild weather"
+          "weatherUsed": "68°F high / 52°F low — seasonal estimate, not a live forecast"
         },
         "capsule": {
           "requestedBudget": 6,

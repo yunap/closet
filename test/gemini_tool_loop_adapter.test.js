@@ -21,8 +21,10 @@ const {
   canonicalHistoryToGeminiInput,
   canonicalContentToGeminiParts,
   toGeminiFunctionDeclaration,
+  toOpenAiFunctionTool,
   normalizeAiUsage,
 } = await import('../styling-engine/provider.js')
+const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 
 // A representative canonical history: an initial user turn with an image, a model turn that made
 // two tool calls (parallel — Gemini supports this, the array shape already allows it), and the
@@ -133,6 +135,48 @@ test('toGeminiFunctionDeclaration reuses the real STYLIST_TOOLS schema field nam
   assert.equal(decl.type, 'function')
   assert.equal(decl.name, 'view_pieces')
   assert.deepEqual(decl.parameters, { type: 'object', properties: { ids: { type: 'array' } } })
+})
+
+// Spec §9 item 1 (docs/future-trip-weather-estimate-spec.md): "Tool schemas for Anthropic, OpenAI,
+// and Gemini expose identical user_weather and weather_estimate fields on all four composition
+// tools." Anthropic reads STYLIST_TOOLS' input_schema with no projection of its own (see
+// callAnthropicTurn), so proving Gemini's and OpenAI's projections both reuse that exact object
+// unchanged proves parity across all three — there is no separate per-provider copy that could
+// drift independently.
+const COMPOSITION_TOOL_NAMES = ['search_wardrobe', 'propose_outfit', 'generate_outfits', 'plan_outfit_set']
+
+test('all four composition tools expose user_weather and weather_estimate in their real STYLIST_TOOLS schema', () => {
+  for (const name of COMPOSITION_TOOL_NAMES) {
+    const tool = STYLIST_TOOLS.find(t => t.name === name)
+    assert.ok(tool, `${name} must exist in STYLIST_TOOLS`)
+    // plan_outfit_set carries the fields at both the plan level and each slot's own schema
+    // (spec §6.3: a slot can override the plan's weather for its own location/date) — checked
+    // separately below; this loop covers the plan-level (or tool-level, for the other three) copy.
+    const props = tool.input_schema.properties
+    assert.ok(props.user_weather, `${name} must expose user_weather`)
+    assert.ok(props.weather_estimate, `${name} must expose weather_estimate`)
+    assert.equal(props.user_weather.type, 'object')
+    assert.equal(props.weather_estimate.type, 'object')
+    assert.deepEqual(props.weather_estimate.required, ['high_f', 'low_f'])
+  }
+  const planTool = STYLIST_TOOLS.find(t => t.name === 'plan_outfit_set')
+  const slotSchema = planTool.input_schema.properties.slots.items.properties
+  assert.ok(slotSchema.user_weather, 'plan_outfit_set slots must also expose user_weather')
+  assert.ok(slotSchema.weather_estimate, 'plan_outfit_set slots must also expose weather_estimate')
+})
+
+test('OpenAI and Gemini tool projections carry the identical user_weather/weather_estimate schema object for every composition tool — no per-provider copy to drift', () => {
+  for (const name of COMPOSITION_TOOL_NAMES) {
+    const tool = STYLIST_TOOLS.find(t => t.name === name)
+    const openAiTool = toOpenAiFunctionTool(tool)
+    const geminiTool = toGeminiFunctionDeclaration(tool)
+    // Same object reference as the source schema — not merely deepEqual — proving neither
+    // projection maintains an independent copy of the weather fields.
+    assert.equal(openAiTool.function.parameters, tool.input_schema)
+    assert.equal(geminiTool.parameters, tool.input_schema)
+    assert.equal(openAiTool.function.parameters.properties.user_weather, tool.input_schema.properties.user_weather)
+    assert.equal(geminiTool.parameters.properties.weather_estimate, tool.input_schema.properties.weather_estimate)
+  }
 })
 
 // Field names below are taken verbatim from a real Interactions API response captured in the

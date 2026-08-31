@@ -99,7 +99,14 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
     return { isHot: false, isCold: false }
   }
   const text = `${mood} ${season}`.toLowerCase()
-  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
+  // Excludes a number immediately followed by a hyphenated word (e.g.
+  // "10-piece", "24-piece") — found live: "Build a 10-piece summer capsule"
+  // matched "10" as a bare temperature reading (hasColdTemperature true from
+  // a piece count), which masqueraded as real cold and reached
+  // isCold/transitIsCold downstream. A genuine range's second number follows
+  // the dash directly ("80-90F"), so this only rejects a dash-then-LETTER,
+  // never a dash-then-digit — "80-90F"/"30F"/a bare "95 here" all still match.
+  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})(?!-[a-z])\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
     .map(match => Number(match[1]))
     .filter(n => Number.isFinite(n))
   const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
@@ -2785,6 +2792,19 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     const isBareBodyPiece = ['top', 'dress', 'bottom', 'outerwear'].includes(wardrobeCategoryGroup(piece))
     if (isBareBodyPiece && pieceBareness(piece) === 'high') {
       reasons.push('cold weather: bare/sleeveless')
+    }
+  }
+  // Spec docs/future-trip-weather-estimate-spec.md §6.4: cold-transit
+  // footwear. Structured fields only (shoe_type/toe_shape), never garment
+  // name matching — an open-toe sandal is unsafe in 45°F cold transit
+  // whether or not the word "sandal" appears in its name. Fires for
+  // ordinary outdoor cold (isCold) and for an indoor slot's preserved
+  // outdoor transit temperature (transitIsCold) alike — an indoor base may
+  // stay light, but its footwear still has to survive the walk there.
+  // Closed athletic sneakers are untouched by this rule.
+  if (weatherProfile.isCold || weatherProfile.transitIsCold) {
+    if (wardrobeCategoryGroup(piece) === 'shoes' && (piece.toe_shape === 'open_toe' || piece.shoe_type === 'sandal')) {
+      reasons.push('cold weather: open-toe/warm-weather footwear')
     }
   }
 

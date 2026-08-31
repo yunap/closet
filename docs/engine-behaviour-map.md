@@ -1133,6 +1133,212 @@ brief and visibly says the forecast could not be verified. Requests without a lo
 the existing text/calendar heuristic. This follows `thread_1787098654251`, where failed Berkeley
 weather became `summer; hot weather` and wrongly removed 79 weather-related candidates.
 
+**[structured weather contract, 2026-08-30] Weather for `plan_outfit_set` is now typed at the tool
+boundary, never parsed from prose.** `docs/future-trip-weather-estimate-spec.md` §1-6 implemented:
+the model translates language into typed `user_weather` (only when the current message explicitly
+states weather — a numeric range or a qualitative `hot|cold|mild` band, never both) and
+`weather_estimate` (the model's own conservative seasonal numeric guess, used only as a fallback)
+tool arguments; `styling-engine/weather.js` owns validation (`validateUserWeather`/
+`validateWeatherEstimate`), field-level resolution (`resolveWeatherContext`: each of
+temperature/precipitation/wind resolves independently as `stated_user` → `live` →
+`model_estimate` → `unavailable`, so a stated condition and a live temperature coexist rather than
+one erasing the other), and the async orchestrator every call resolves through before retrieval
+(`resolveWeatherForRequest`). `classifyTemperatureRange` reuses the same HOT_F/COLD_F thresholds as
+live weather and supports non-exclusive classification, so a genuinely wide range (a model estimate
+or a user-stated range spanning both extremes) registers as both hot and cold instead of silently
+collapsing to neutral via the single-day exclusivity `weatherProfileFromContext`'s own text branch
+still applies elsewhere. A named destination/date with no resolved temperature returns a typed
+`weather_context_required` stop before any roster/pendingPlan is built — checked via each slot's
+actual `resolvedWeatherContext.status`, and via `.some()` so a mixed plan (one resolved slot, one
+not) still stops rather than proceeding partially gated. Cold-transit footwear
+(`wholeWardrobePieceTrustDecision`, `styling-engine/rules.js`) now hard-rejects open-toe/sandal
+shoes (structured `shoe_type`/`toe_shape` fields, never garment names) whenever
+`weatherProfile.isCold` or the indoor-transit-preserved `weatherProfile.transitIsCold` is true.
+Corrected root-cause note (`thread_1788147143882`, a Vienna VA October trip): the live incident was
+never a `propose_outfit`-vs-`plan_outfit_set` routing failure or a missing gate — both providers
+called `plan_outfit_set` correctly, and the hard cold-bareness gate already existed. The actual
+defect was that arbitrary model prose in `slot.weather` (e.g. "crisp outdoor walking weather")
+became authoritative physical weather ahead of the live forecast, and a failed future-date forecast
+read as neutral with no structured fallback. `environment` (indoor/outdoor/beach_coastal) is now
+the sole model-facing setting field; the free-text `weather` field is removed from the tool schema
+entirely.
+
+**[single-outfit parity, 2026-08-31] `search_wardrobe`/`propose_outfit`/`generate_outfits` resolve
+weather through the same structured contract as `plan_outfit_set`.** `stylingContext.js`'s shared
+`resolveWeather` — used by every direct/non-chat generation caller too — gains
+`resolveNamedDestinationWeather`. Explicit structured `user_weather`/`weather_estimate` resolves
+first; a direct already-resolved `weatherProfile` or direct explicit stated-weather input remains
+authoritative; named destination/date resolution then precedes lower-authority artifact/state prose
+or snapshots. Live lookup remains gated by the same `isCurrentSeason` check the legacy branch used
+(an explicit hypothetical season still bypasses live resolution). It triggers on a fresh
+`location`+`date` or a bare structured `user_weather`/`weather_estimate` with no destination at all;
+reuses the injectable
+`weatherResolver` seam (not a separate fetch mechanism) so existing test mocks intercept it
+transparently. `toolContext.resolvedWeatherContext` caches the result — a matching second call
+(`propose_outfit` after `search_wardrobe`, no location/date of its own) reuses the cache instead of
+re-resolving. Deliberately does not fall back to `toolContext.location` (the route-level
+home-location default) as a trigger, so an ordinary "what should I wear today" request is
+unaffected. `search_wardrobe`'s free-text `weather` field is removed from its schema; `propose_outfit`
+keeps its unrelated `season:'indoor'` convention as-is (a separate, pre-existing mechanism, not
+weather prose about temperature).
+
+**[typed unresolved stop, 2026-08-31]** `search_wardrobe`, `propose_outfit`, and `generate_outfits`
+now stop with the same typed `weather_context_required` response `plan_outfit_set` already returns
+(`weatherContextRequiredStop` in `styling-engine/tools.js`, called right after
+`resolveToolStylingContext` in each of the three tools, before any retrieval/scoring). It only fires
+when `resolvedWeatherContext.location` is non-empty — a genuine named destination/date that stayed
+unresolved — never for a bare structured claim with no place attached (e.g. "it's raining" with no
+destination), which legitimately carries `status: 'unavailable'` on temperature alone while still
+resolving precipitation/wind, and must proceed as an ordinary local turn rather than stop. The
+system prompt's Destination & Weather Clarification bullet now teaches this for all three tools, not
+just `plan_outfit_set`.
+
+**[§7 continuity persistence, 2026-08-31]** Every accepted card now carries `weatherUsed` (the
+truthful display label, `truthfulWeatherLabel` in `outfitSetPlanner.js`, exported for reuse) and a
+serialized `resolvedWeatherContext` alongside it — attached in `validateSubmittedPlanOutfits` for
+plan/capsule cards (from the slot's own already-resolved `weatherProfile`), and via a shared
+`weatherCardFields(stylingContext)` helper in `tools.js` for `propose_outfit` and `generate_outfits`.
+No-op when nothing was structurally resolved (an ordinary at-home heuristic call). Both current-set
+projections read these per-outfit fields as `weather_used`/`resolved_weather_context`:
+`boundedConversationStateFromToolContext` (`routes/ai.js`, the router's direct-routing path) and the
+`outfitSetFromBody` closure inside `buildStylistConversationPayload` (`styling-engine/core.js`, the
+full-stylist tool-loop path) — this is per-outfit specifically because a multi-slot trip can have
+different weather per slot, which the single shared `weather_profile`/`weatherProfile` field already
+on both projections cannot represent. `freeform_generation_runs.weather_source` now reads
+`resolvedWeatherContext.overallSource` (mixed-aware — e.g. user-stated rain + live temperature) when
+the structured resolver ran, falling back to the old plain per-field source otherwise;
+`plan_outfit_set` sets it from its own per-slot precheck (the shared source when every slot agrees,
+`'mixed'` when slots differ).
+
+**[§9 item 1, provider-schema parity, 2026-08-31]** Anthropic reads `STYLIST_TOOLS`' `input_schema`
+with no projection of its own; Gemini (`toGeminiFunctionDeclaration`) and the newly-extracted OpenAI
+equivalent (`toOpenAiFunctionTool`, `styling-engine/provider.js` — previously an inline map at the
+`callOpenAiTurn` call site, now the same shape as the pre-existing Gemini helper) both wrap that
+exact `input_schema` object unchanged rather than holding an independent copy, so `user_weather`/
+`weather_estimate` parity across all three providers is structural, not merely tested — a test in
+`test/gemini_tool_loop_adapter.test.js` asserts both the object-reference reuse and that every one
+of the four composition tools (plus `plan_outfit_set`'s own per-slot schema) actually carries both
+fields.
+
+**[§9 checklist audit, 2026-08-31]** Cross-referenced all 31 acceptance items against the test suite.
+Items 2-12, 14, 18, 20-22, 24, 27, 29 were already covered by earlier phases (`test/weather.test.js`,
+`test/plan_outfit_set.test.js`, `test/freeform_observability.test.js`). This pass closed the remaining
+gaps: item 13 (a different-location slot does not inherit the plan's `weather_estimate` —
+`normalizePlanSlots`' `locationMatchesPlan`/`inheritsPlanWeather` binding, not previously tested
+directly), item 15/17 (a single test feeding every prose phrase from the spec's own anti-regression
+list — dates, counts, Celsius, styling adjectives — through both `requestText` and malformed
+`user_weather`/`weather_estimate` shapes, proving none of it can create or alter resolved weather),
+item 16 (an undeclared `weather` HTTP arg is silently ignored by `search_wardrobe`, proven end to
+end via `executeTool`), item 19 (a submitted card with no outerwear/heavy main piece is rejected once
+`weather_estimate` establishes cold — `validateSlotOutfitConstraints`'s pre-existing "no warm layer"
+gate, now proven against the new resolver), item 23 (a shared coat repeats across two cold-weather
+slots under `reuse:'maximize'` with no `no_repeat` set — the default, unrestricted case), item 25 (the
+exact Vienna 65/45 request reaches `plan_outfit_set` once and `submit_plan_outfits` once, zero
+retries, via `replayStylistToolScript`), item 26 (the same provider-free replay stands in for
+per-provider fixtures: `executeTool` has zero `AI_PROVIDER`-conditional branching anywhere in the
+weather-resolution/gating path — confirmed by grep — so behavior cannot diverge by provider; only the
+wire-format adapters differ, and those are proven identical elsewhere), and item 28 (a mismatched
+location on a second `resolveToolStylingContext` call re-resolves rather than reusing the cache — the
+negative case of item 27's existing test). Item 30 (a follow-up states the exact range and calls it a
+seasonal estimate) is covered at the data layer only — the persisted `weatherUsed` label already reads
+`"65°F high / 45°F low — seasonal estimate, not a live forecast"` verbatim (spec §7's persistence
+work) — the model's actual follow-up prose is live behavior an offline test cannot exercise. Item 31
+is the full suite staying green, checked after every commit in this arc.
+
+**[external review before §10 verification, 2026-08-31] Five confirmed P1 correctness gaps found and
+fixed before any live call was made — the audit above was thorough but incomplete; these were real,
+reproducible, and would have let the original bug class recur.**
+
+1. `validateSlotOutfitConstraints`'s cold-layer check read only `weatherProfile.isCold` — an indoor
+   slot deliberately zeroes that (its base may stay light) and carries the outside cold as
+   `transitIsCold` instead, so the "museum T-shirt with no layer" bug was untouched by any of this
+   arc's work. Fixed: the check now also fires on `transitIsCold`, requiring an actual layer piece
+   (not a heavy top/dress — those aren't removable indoors).
+2. `propose_outfit`/`generate_outfits` still funneled their own `season` argument into legacy
+   `statedWeather` whenever it wasn't a recognized calendar-season word (`extractSeasonRequest`
+   returns `''` for e.g. "hot weather") — and `resolveWeather` checks `statedWeatherCandidate` BEFORE
+   any structured resolution runs, so an arbitrary model-invented season string silently outranked a
+   genuine `weather_estimate` for a named destination. Reproduced: Vienna 65/45 estimate + `season:
+   'hot weather'` resolved as `isHot:true` from `stated`, no `resolvedWeatherContext` at all. Fixed:
+   both tools now pass `statedWeather` only for the literal `'indoor'` sentinel (`propose_outfit`'s own
+   documented convention); every other season string no longer reaches it.
+3. An unresolved named destination fell back to whatever `toolContext.weatherProfile` already held
+   from an earlier call this turn (or a stale established-state snapshot) instead of surfacing as
+   unresolved — that snapshot carries no `resolvedWeatherContext`, so `weatherContextRequiredStop`
+   could never fire. Fixed: `resolveWeather`'s named-destination branch no longer falls back to
+   `savedSnapshot`; an unavailable destination always returns its own `'unavailable'` resolved context.
+4. The full-stylist tool loop's post-turn save only wrote `recently_discussed_piece_ids` —
+   `buildStylistConversationPayload`'s own save runs BEFORE the tool loop and only persists cards the
+   browser already echoed from the PREVIOUS turn, so a freshly accepted `plan_outfit_set` result
+   depended entirely on the browser echoing it back next turn to survive at all (the exact gap spec §7
+   prohibits). Fixed: the post-loop save now also writes `current_outfit_set`/`weather_profile` from
+   `toolContext.generatedOutfits` via `boundedConversationStateFromToolContext`, whenever the loop
+   produced fresh cards.
+5. Cache reuse in `resolveNamedDestinationWeather` returned the cached context for ANY call with no
+   fresh destination/date, before ever checking whether a NAMED location on this call actually matched
+   the cache's — a location-only follow-up naming a different place with no date of its own silently
+   inherited the wrong destination's weather. A second leak existed one layer up: even after fixing
+   that, `resolveToolStylingContext`'s `establishedState.weatherProfile` carryover (a separate flat
+   field, unconditionally threaded forward) still leaked the same stale profile across a mismatched
+   location. Fixed both: the cache function now refuses to reuse across a location mismatch even
+   without a date, and the establishedState carryover is now gated the same way.
+
+Also fixed while reproducing: `validateWeatherEstimate`/`validateUserWeather` coerced their inputs
+with `Number(...)` before range-checking, so `{high_f:null,low_f:null}` silently validated as 0°F/0°F
+and a model-hallucinated string `"65"` passed as a real number; `resolveConditionField` treated a
+user-stated `'unknown'` as a truthy, authoritative value that overrode a real lower-precedence
+value — both now require an actual `typeof === 'number'` and treat `'unknown'` as "not stated." And a
+genuinely pre-existing, unrelated bug surfaced while testing fix 1: `weatherProfileFromContext`'s
+temperature regex matched a bare "10" in "Build a 10-piece capsule" as a 10°F reading (`hasColdTemperature`
+true from a piece count) — real production phrasing, not just test noise. Fixed with a negative
+lookahead excluding a number immediately followed by a hyphenated word.
+
+**[closure pass, 2026-08-31] The remaining review findings are implemented, not deferred.**
+`resolveWeather` now gives explicit structured user/model evidence first authority, preserves an
+already-resolved explicit profile or direct explicit stated-weather input, and resolves a named
+destination/date before any lower-authority artifact/state prose or snapshot. Consequently,
+`resolveToolStylingContext` no longer gives blended `toolContext.weather` executable authority.
+An unbound flat snapshot cannot cross into a newly named location. Cache reuse and plan inheritance
+share `normalizedWeatherLocationIdentity`, so punctuation/case and US state-name variants such as
+"Vienna VA" / "Vienna, Virginia" match while different places do not. Planner automatic-use
+evaluation now receives `shared_anchor_ids`, using the existing explicit-anchor bypass without
+erasing the underlying cold-footwear finding. Indoor cold-transit slots state the removable,
+sleeve-bearing layer requirement before composition, and submission validation checks it. The
+representative Vienna acceptance replay now includes city sightseeing, a museum day, and a nature
+walk; all three cards pass the first submission from one `plan_outfit_set` call with the 65/45
+estimate. The documentation warning ratchet remains 54; it was repaired with a real status header
+rather than raised.
+
+**[independent-review closure, 2026-08-31]** Cache identity now checks both normalized location and
+date range: a date-only follow-up binds to the cached named destination and resolves the new date.
+`season:'indoor'` is treated as an environment projection, so a matching cached destination keeps
+its structured source and outdoor temperature under `transit*` fields instead of becoming neutral
+prose weather. In compose mode, `search_wardrobe` consumes the automatic-use hard verdict before
+returning a roster; cold-open footwear and other engine validity failures no longer reach the model
+for later repair, while `intent:'explain'` remains inspectable. The architecture fixture replaces
+legacy weather prose with structured ranges and preserves its reviewed candidate outputs; only the
+truthful structured weather labels change.
+
+**[independent-review follow-up, 2026-08-31]** Reusing a matching resolved destination is now
+independent of permission to perform a live lookup: an offline/disabled-live indoor follow-up still
+projects cached cold physics into `transitIsCold`. A fresh partial `user_weather` update with no
+repeated location/date inherits the cached identity and resolves field by field, so newly stated
+rain augments rather than erases the cached temperature and its source. Search relaxation carries
+sets of excluded piece IDs across internal rungs and increments `gateExcludedTotal` only after the
+terminal pass; one model-visible search therefore counts each hard-gated piece once, matching the
+returned exclusion note rather than the number of implementation retries.
+
+**[field-authority correction, 2026-08-31]** A matching cached field participates at its retained
+authority, not as an unavailable-only fallback. `resolveWeatherContext` compares fresh and cached
+sources independently for temperature, precipitation, and wind under
+`stated_user → live → model_estimate → heuristic → unavailable`; a fresh field wins ties. Thus a
+partial rain update cannot demote cached user-stated 50/40°F to a newly fetched live 82/70°F, while
+a genuinely fresh live temperature still replaces a cached model estimate.
+
+**Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
+owner's explicit confirmation before running, per the spec's own rule; not something to do
+unilaterally.
+
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source
 precedence, normalization, occasion/activity profile construction, comfort constraints, and weather

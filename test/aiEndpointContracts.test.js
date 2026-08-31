@@ -3673,14 +3673,21 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   const bottoms = await executeTool('search_wardrobe', {
     category: 'bottom',
     occasion: 'city',
-    weather: 'highs 80-90F'
+    weather_estimate: { high_f: 90, low_f: 80 }
   })
   assert.ok(Array.isArray(bottoms))
   const linen = bottoms.find(p => p.id === seeded.bottom)
-  const denim = bottoms.find(p => p.id === seeded.jeans)
   assert.equal(linen.weatherFit, 'lightweight - good for heat')
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
-  assert.ok(bottoms.findIndex(p => p.id === seeded.bottom) < bottoms.findIndex(p => p.id === seeded.jeans))
+  assert.equal(bottoms.some(p => p.id === seeded.jeans), false, 'compose mode excludes the hard hot-weather failure')
+
+  const explainedBottoms = await executeTool('search_wardrobe', {
+    category: 'bottom',
+    occasion: 'city',
+    weather_estimate: { high_f: 90, low_f: 80 },
+    intent: 'explain',
+  })
+  const denim = explainedBottoms.find(p => p.id === seeded.jeans)
+  assert.equal(denim.weatherFit, 'heavy - too warm for the heat', 'explain mode preserves the rejected piece and annotation')
 
   const hikingShoes = await executeTool('search_wardrobe', {
     category: 'shoes',
@@ -3706,7 +3713,7 @@ test('executeTool search_wardrobe excludes prohibited pieces in compose mode and
     // compose (default): a high heel is prohibited for hiking → filtered out entirely.
     const composed = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking' })
     assert.ok(!composed.some(p => p.id === heelId), 'prohibited high heel should be filtered out of compose-mode results')
-    assert.ok(composed.some(p => (p.note || '').includes('filtered out as prohibited')), 'a gate-exclusion note should be present')
+    assert.ok(composed.some(p => (p.note || '').includes('filtered out by hard occasion/activity/weather gates')), 'a gate-exclusion note should be present')
     assert.ok(composed.some(p => p.id && p.ruleFit && p.ruleFit !== 'prohibited'), 'wearable shoes still remain (filter is selective)')
 
     // explain: the same prohibited piece IS returned, with its reasoning label.
@@ -3723,7 +3730,7 @@ test('executeTool search_wardrobe excludes prohibited pieces in compose mode and
 test('executeTool search_wardrobe relies on structured occasion instead of dinner query normalization', async () => {
   const dinnerSearch = await executeTool('search_wardrobe', {
     occasion: 'evening',
-    weather: '81f',
+    weather_estimate: { high_f: 72, low_f: 58 },
     visual: true,
   })
   assert.ok(Array.isArray(dinnerSearch))
@@ -3734,7 +3741,7 @@ test('executeTool search_wardrobe relies on structured occasion instead of dinne
   const flexibleEveningTops = await executeTool('search_wardrobe', {
     category: 'top',
     occasion: 'evening',
-    weather: '81f',
+    weather_estimate: { high_f: 72, low_f: 58 },
   })
   assert.ok(flexibleEveningTops.some(item => item.id === seeded.top))
   assert.ok(flexibleEveningTops.some(item => /No active pieces are explicitly tagged for "evening"/.test(item.note || '')))
@@ -3759,15 +3766,17 @@ test('executeTool search_wardrobe treats occasion-only queries canonically', asy
   assert.ok(!weddingSearch.some(item => item.id === decoy), 'wedding should not be treated as literal garment-note text')
 })
 
-test('executeTool search_wardrobe uses toolContext weather when model omits weather arg', async () => {
+test('executeTool search_wardrobe uses a structured toolContext weather profile when the model omits weather args', async () => {
   db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('linen', 'light', seeded.bottom)
   db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('denim', 'heavy', seeded.jeans)
 
   const bottoms = await executeTool('search_wardrobe', {
     category: 'bottom',
-    occasion: 'city'
+    occasion: 'city',
+    intent: 'explain',
   }, {
-    weather: 'hot weather'
+    weather: 'cold weather',
+    weatherProfile: { isHot: true, isCold: false, highF: 90, lowF: 80, weatherSource: 'live' },
   })
 
   const linen = bottoms.find(p => p.id === seeded.bottom)
@@ -6310,6 +6319,93 @@ test('the question being asked is not sent twice', async () => {
   assert.equal(keeps.messages.length, 3, 'an earlier identical question is left in place')
   assert.equal(keeps.messages[0].role, 'user')
   assert.equal(keeps.messages[1].role, 'assistant')
+})
+
+// Spec §7: outfitSetFromBody (inside buildStylistConversationPayload) persists a
+// per-outfit weather disclosure and its serialized structured context onto
+// current_outfit_set, mirroring the matching addition in
+// boundedConversationStateFromToolContext (routes/ai.js) — the other writer of
+// this same projection, for the router's direct-routing path.
+test('buildStylistConversationPayload persists per-outfit weatherUsed/resolvedWeatherContext onto current_outfit_set', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const payload = await buildStylistConversationPayload({
+    question: 'What weather were you planning for the coast day?',
+    conversationMode: 'new_request',
+    sessionId: 'weather-persist-payload',
+    generatedOutfits: [{
+      label: 'Coast Day',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      weatherUsed: '65°F high / 45°F low — live forecast, Cambria, CA',
+      resolvedWeatherContext: {
+        status: 'resolved',
+        location: 'Cambria, CA',
+        date_range: { start: '2026-10-14', end: '2026-10-14' },
+        temperature: { high_f: 65, low_f: 45, is_hot: false, is_cold: true, is_extreme_heat: false, source: 'live' },
+        overall_source: 'live',
+      }
+    }],
+  })
+  assert.equal(payload.threadState.current_outfit_set[0].weather_used, '65°F high / 45°F low — live forecast, Cambria, CA')
+  assert.equal(payload.threadState.current_outfit_set[0].resolved_weather_context.overall_source, 'live')
+  assert.match(String(payload.system), /Cambria, CA/)
+})
+
+// Spec §7 continuity, the gap found by external review: buildStylistConversationPayload's OWN save
+// (inside it, before the model/tool call) can only persist cards the browser already echoed back
+// from the PREVIOUS turn — it has no way to know about cards THIS turn's tool loop is about to
+// produce. Without routes/ai.js's persistFullStylistTurnState (called once, right after
+// askStylistWithTools returns), a freshly accepted plan_outfit_set/propose_outfit/generate_outfits
+// result depended entirely on the browser echoing toolContext.generatedOutfits back on the NEXT
+// request to survive server-side at all.
+//
+// This proves the fix at the real boundary that matters — the actual persisted-state round trip a
+// browser omitting its echo would exercise — using the exact functions and call sequence
+// routes/ai.js's /ask handler uses. It stops short of driving a real tool call through the live HTTP
+// route: askStylistWithTools's NODE_ENV=test shortcut (styling-engine/provider.js) returns a canned
+// final-answer STRING directly and structurally cannot execute a tool, a pre-existing test-harness
+// limitation already documented in test/bounded_multi_context_continuity_e2e.test.js's file header.
+// Simulating toolContext.generatedOutfits as "the tool loop just produced this" is the same
+// documented workaround that file uses for the analogous bounded_multi case.
+test('persistFullStylistTurnState: a fresh plan_outfit_set result survives to the next turn even when the browser never echoes it back', async () => {
+  const { persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState, saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `full-stylist-persist-${Date.now()}`
+
+  // Turn 1: askStylistWithTools has just returned. toolContext.generatedOutfits holds what the tool
+  // loop actually produced this turn (here, standing in for a real plan_outfit_set/propose_outfit
+  // result — see the harness-limitation note above for why this can't come from a live tool call).
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Vienna Evening',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      weatherUsed: '65°F high / 45°F low — seasonal estimate, not a live forecast',
+    }],
+  }
+  persistFullStylistTurnState({ toolContext, answer: 'Here is your Vienna evening look.', freeformTurnToken: 'tok-1', sessionId })
+
+  const afterTurnOne = getStylistConversationState(sessionId)
+  assert.equal(afterTurnOne.current_outfit_set?.[0]?.label, 'Vienna Evening', 'the tool loop\'s own cards must be persisted without the browser echoing anything')
+  assert.equal(afterTurnOne.current_outfit_set[0].weather_used, '65°F high / 45°F low — seasonal estimate, not a live forecast')
+
+  // Turn 2: a genuine follow-up, exactly as buildStylistConversationPayload sees it when the browser
+  // sends no generatedOutfits of its own (real behavior — the browser only echoes what it was given,
+  // and this is the first time turn 2 has ever been rendered client-side).
+  const payload = await buildStylistConversationPayload({
+    question: 'what weather were you planning for that?',
+    conversationMode: 'followup',
+    sessionId,
+    // generatedOutfits intentionally omitted — this is the browser-echo-omitted case.
+  })
+  assert.equal(payload.threadState.current_outfit_set?.[0]?.label, 'Vienna Evening', 'turn 2 must read the card back from SERVER state, not depend on a browser echo that never happened')
+  assert.equal(payload.threadState.current_outfit_set[0].weather_used, '65°F high / 45°F low — seasonal estimate, not a live forecast')
+
+  // A prose-only turn with no fresh cards must not clear the prior set (the "layers onto" merge
+  // philosophy already documented on persistFullStylistTurnState).
+  const proseOnlyContext = { generatedOutfits: [] }
+  persistFullStylistTurnState({ toolContext: proseOnlyContext, answer: 'Just a quick note.', freeformTurnToken: 'tok-2', sessionId })
+  const afterProseOnlyTurn = getStylistConversationState(sessionId)
+  assert.equal(afterProseOnlyTurn.current_outfit_set?.[0]?.label, 'Vienna Evening', 'a turn with no fresh cards must leave the prior set untouched, not clear it')
 })
 
 test('freeform current-season prompts receive applicable calendar-season lessons', async () => {

@@ -240,6 +240,10 @@ db.prepare(`
 const pieceById = new Map(wardrobe.map(item => [Number(item.id), item]))
 const ids = values => (Array.isArray(values) ? values : []).map(value => Number(value?.piece?.id ?? value?.id ?? value)).filter(Number.isFinite)
 const sortedObject = value => Object.fromEntries(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)))
+// Physical weather uses the same normalized structured slot field production
+// workbenches consume. The old fixture used arbitrary statedWeather prose;
+// deleting it without an equivalent structured replacement changed the
+// scenario rather than merely migrating its representation.
 const scenarioDefinitions = [
   {
     id: 'casual_neutral',
@@ -258,7 +262,7 @@ const scenarioDefinitions = [
       activity: 'none',
       environment: 'mixed',
       register: '',
-      statedWeather: 'mild weather',
+      weatherEstimate: { highF: 72, lowF: 56, precipitation: null, wind: null },
       season: 'current season',
       targetOutfits: 1,
     },
@@ -281,7 +285,7 @@ const scenarioDefinitions = [
       activity: 'hiking',
       environment: 'outdoor',
       register: '',
-      statedWeather: 'hot weather',
+      weatherEstimate: { highF: 92, lowF: 78, precipitation: null, wind: null },
       season: 'summer',
       targetOutfits: 1,
     },
@@ -304,7 +308,7 @@ const scenarioDefinitions = [
       activity: 'none',
       environment: 'mixed',
       register: '',
-      statedWeather: 'mild weather',
+      weatherEstimate: { highF: 68, lowF: 52, precipitation: null, wind: null },
       season: 'spring',
       targetOutfits: 1,
     },
@@ -419,6 +423,17 @@ async function captureCandidateStages(definition) {
     context: options,
   })
   const slots = [structuredClone(definition.slot)]
+  // The architecture corpus begins after intent normalization. Give every
+  // downstream candidate stage the same already-resolved structured physics
+  // instead of making capsule selection re-derive temperature from season
+  // prose. buildPlanSlotWorkbench independently proves the estimate path.
+  slots[0].stylingContext = {
+    // The legacy fixture's weather prose did not assert a calendar season.
+    // Preserve that no-season applicability explicitly rather than letting
+    // today's calendar silently turn the neutral scenario into summer.
+    season: 'year-round',
+    weatherProfile: structuredClone(definition.request.weatherProfile),
+  }
   const workbench = await buildPlanSlotWorkbench(slots, {
     constraints: { reuse: 'maximize', piece_budget: capsuleBudget },
     allPieces: wardrobe,
@@ -434,17 +449,17 @@ async function captureCandidateStages(definition) {
     isSummer: definition.capsule.isSummer,
     isWinter: definition.capsule.isWinter,
     occasions: [definition.slot.occasion],
-    slots: [structuredClone(definition.slot)],
+    slots,
   })
   const capsuleBench = buildCapsuleBench(wardrobe, {
     budget: capsuleBudget,
     isSummer: definition.capsule.isSummer,
     isWinter: definition.capsule.isWinter,
-    slots: [structuredClone(definition.slot)],
+    slots,
     benchSize: capsuleBenchSize,
   })
   const capsuleValidation = validateCapsuleRoster(capsuleRoster, {
-    slots: [structuredClone(definition.slot)],
+    slots,
     budget: capsuleBudget,
     isSummer: definition.capsule.isSummer,
     isWinterCapsule: definition.capsule.isWinter,

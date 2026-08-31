@@ -795,6 +795,49 @@ plan_outfit_set({
   a coastal town). User-stated weather still wins when given for a slot; the
   forecast fills the gaps and catches microclimates. The plan lines should
   state the per-slot weather used, so the user can correct it conversationally.
+  **[structured weather contract, 2026-08-30]** "User-stated weather" above
+  now means only a typed `user_weather` argument the model fills in from an
+  explicit CURRENT-message claim — never free-text `slot.weather` prose
+  (removed from the schema) and never a regex re-parse of the question.
+  `plan_outfit_set` resolves `user_weather` → live → `weather_estimate` (the
+  model's own numeric seasonal guess, provided proactively for a future
+  destination outside live coverage) in precedence order per field
+  (`styling-engine/weather.js`'s `resolveWeatherContext`), and returns
+  `weather_context_required` before composing if a named destination/date's
+  temperature stays unresolved. See
+  `docs/future-trip-weather-estimate-spec.md`; the earlier regex-based
+  `currentTurnStatedWeather` repair this replaced is deleted, not kept
+  alongside it. **[single-outfit parity, 2026-08-31]** Extended to
+  `search_wardrobe`/`propose_outfit`/`generate_outfits`: the shared
+  `resolveWeather` in `stylingContext.js` gained `resolveNamedDestinationWeather`,
+  with explicit structured weather first, direct explicit resolved/stated
+  inputs preserved, and named destination/date resolution ahead of lower-authority
+  artifact/state prose and snapshots (live lookup keeps the hypothetical-season gate),
+  triggering on a fresh `location`+`date` or a bare `user_weather`/`weather_estimate`
+  and caching onto `toolContext.resolvedWeatherContext` so a later call in the same
+  turn reuses it. **[typed unresolved stop, 2026-08-31]** The typed
+  `weather_context_required` stop (spec §6.2) now covers these three tools too
+  (`weatherContextRequiredStop`, called right after weather resolution in each),
+  gated on `resolvedWeatherContext.location` being non-empty so a bare structured
+  weather claim with no named destination proceeds instead of stopping.
+  **[§7 continuity persistence, 2026-08-31]** Accepted cards now carry `weatherUsed`
+  (truthful label) + a serialized `resolvedWeatherContext`; both current-set writers
+  (`boundedConversationStateFromToolContext`, `outfitSetFromBody`) project them
+  per-outfit as `weather_used`/`resolved_weather_context`, so a follow-up about one
+  slot's weather in a multi-slot trip reads that slot's own resolution back.
+  **[independent-review closure, 2026-08-31]** A date-only follow-up re-resolves the
+  cached destination for the new date; `season:'indoor'` projects cached weather
+  into outdoor-transit fields instead of erasing it; and compose-mode wardrobe
+  search removes automatic-use hard failures before returning the model roster.
+  **[independent-review follow-up, 2026-08-31]** Cache consumption does not require
+  live-network permission. Partial structured weather on a later tool call inherits
+  the matching cached location/date and replaces only the fields the user supplied.
+  Internal search-relaxation rungs carry unique exclusion IDs, so diagnostics and the
+  returned hard-gate note count affected garments once per model-visible search.
+  **[field-authority correction, 2026-08-31]** Each inherited field keeps its
+  original authority during that merge: cached `stated_user` temperature outranks
+  a fresh live reading when the follow-up states only rain; fresh evidence wins at
+  equal authority, and live still outranks a cached model estimate.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning
@@ -897,3 +940,11 @@ new-request pre-routes, `planFreeformUseCases`, and `composeOutfitSet` itself
 (the engine composer both pre-routes and the legacy `WARDROBE_PLAN_COMPOSE=engine`
 tool branch called). See "Layer 1" above and the handoff doc's spec 14 entry —
 this whole caveat and the build-log above it are now historical.
+
+**[structured-weather closure, 2026-08-31]** Composition tools now give explicit structured
+user/model weather first authority, preserve direct explicit weather inputs, resolve named
+destination/date weather before lower-authority artifact/state prose or snapshots, and never
+promote blended thread weather into a new action. Matching resolved context uses normalized location identity. For a cold trip, the plan
+workbench tells the model about indoor transit coverage before it composes; explicit shared anchors
+flow through the common eligibility policy; and the first submitted multi-slot Vienna set is the
+offline acceptance boundary, not a later repair.

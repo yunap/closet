@@ -4364,6 +4364,11 @@ export async function buildStylistConversationPayload(body) {
     ...(o?.reason ? { reason: o.reason } : {}),
     ...(o?.stylingInstructions ? { styling_instructions: o.stylingInstructions } : {}),
     ...(o?.watchFor ? { watch_for: o.watchFor } : {}),
+    // Spec §7: per-outfit weather disclosure + its serialized structured
+    // context — see the matching addition in boundedConversationStateFromToolContext
+    // (routes/ai.js), which projects the same two fields for the other current_outfit_set path.
+    ...(o?.weatherUsed ? { weather_used: o.weatherUsed } : {}),
+    ...(o?.resolvedWeatherContext ? { resolved_weather_context: o.resolvedWeatherContext } : {}),
     piece_ids: (Array.isArray(o?.pieceIds) && o.pieceIds.length
       ? o.pieceIds
       : (Array.isArray(o?.pieces) ? o.pieces.map(piece => piece?.id) : [])
