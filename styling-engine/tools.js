@@ -452,6 +452,27 @@ export async function resolveToolStylingContext({
   return context
 }
 
+// Spec §6.2, extended to search_wardrobe/propose_outfit/generate_outfits by §6.5.
+// A named destination/date whose temperature stayed unresolved (no live coverage,
+// no user_weather, no weather_estimate) must stop before retrieval/scoring — not
+// silently fall through to a heuristic. Gated on resolved.location: a bare
+// structured weather claim with no named destination (e.g. "it's raining" with no
+// place attached) legitimately resolves to status 'unavailable' on temperature
+// alone (nothing supplied one) while still carrying real precipitation/wind data —
+// that is an ordinary local conversation, not spec §6.2's "named destination/date"
+// case, and must proceed rather than stop.
+function weatherContextRequiredStop(stylingContext, { verb }) {
+  const resolved = stylingContext?.weatherProfile?.resolvedWeatherContext
+  if (!resolved || resolved.status !== 'unavailable' || !resolved.location) return null
+  return {
+    status: "weather_context_required",
+    location: resolved.location || '',
+    date_range: resolved.dateRange || null,
+    missing: ["temperature"],
+    message: `Live weather does not cover these dates${resolved.location ? ` for "${resolved.location}"` : ''}. Re-call this tool with weather_estimate.high_f and weather_estimate.low_f before ${verb}.`
+  }
+}
+
 function automaticUseContextFromStylingContext(stylingContext = {}, extras = {}) {
   const applicability = projectStylingApplicabilityContext(stylingContext, {
     weatherText: extras.weatherText,
@@ -1189,6 +1210,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           inferred: { requestText },
           policy: { requireOccasion: false },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'searching' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'searchWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedOccasion = stylingContext.occasion
         const resolvedActivity = stylingContext.activity
         const resolvedWeather = stylingContext.weatherProfile
@@ -1715,6 +1741,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           inferred: { requestText: requestTextForProposal },
           policy: { mode: 'freeform_action' },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'proposing this outfit' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'proposeWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedOccasion = stylingContext.occasion
         const resolvedSeason = stylingContext.season
         const resolvedActivity = stylingContext.activity
@@ -3004,6 +3035,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           inferred: { requestText: toolContext.question || '' },
           policy: { mode: 'freeform_action', allowLiveWeather: boundedMultiLook },
         })
+        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'composing outfits' })
+        if (weatherStop) {
+          bumpFreeformDiagnostic(toolContext, 'generateWeatherContextRequired')
+          return weatherStop
+        }
         const resolvedActivity = stylingContext.activity
         let resolvedSeason = stylingContext.season
         if (boundedMultiLook) {

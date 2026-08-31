@@ -2627,6 +2627,94 @@ test('resolveToolStylingContext: a matching second call reuses the cached resolv
   assert.equal(reused.weatherProfile.isCold, true)
 })
 
+// Spec §6.2, extended to search_wardrobe/propose_outfit/generate_outfits by §6.5:
+// a named destination/date with no resolved temperature (no live coverage under
+// NODE_ENV=test's network skip, no weather_estimate, no user_weather) must stop
+// with a typed weather_context_required response before retrieval/scoring, the
+// same as plan_outfit_set already does.
+test('executeTool search_wardrobe stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [] }
+  const result = await executeTool('search_wardrobe', {
+    occasion: 'city',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+  }, toolContext)
+  assert.equal(result.status, 'weather_context_required')
+  assert.equal(result.location, 'Vienna, Virginia')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.deepEqual(result.missing, ['temperature'])
+  assert.match(result.message, /weather_estimate/)
+})
+
+test('executeTool search_wardrobe proceeds normally for a bare structured weather claim with no named destination', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city' }
+  const result = await executeTool('search_wardrobe', {
+    occasion: 'city',
+    user_weather: { precipitation: 'rain' },
+  }, toolContext)
+  assert.ok(Array.isArray(result), 'no destination named — precipitation-only input must not stop the search')
+  assert.equal(toolContext.weatherProfile?.isHot, false)
+})
+
+test('executeTool propose_outfit stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-stop top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('weather-stop bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('weather-stop shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Vienna Evening',
+      why_it_works: 'a simple city outfit',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+    }, toolContext)
+    assert.equal(result.status, 'weather_context_required')
+    assert.equal(result.location, 'Vienna, Virginia')
+    assert.equal(result.date_range.start, '2026-10-12')
+    assert.deepEqual(result.missing, ['temperature'])
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+test('executeTool generate_outfits stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    turnMode: 'new_request',
+  }
+  const result = await executeTool('generate_outfits', {
+    occasion: 'city',
+    season: 'current season',
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+    limit: 2,
+  }, toolContext)
+  assert.equal(result.status, 'weather_context_required')
+  assert.equal(result.location, 'Vienna, Virginia')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.deepEqual(result.missing, ['temperature'])
+})
+
 test('executeTool: search_wardrobe then propose_outfit share the same resolved weather context', async () => {
   const toolContext = {
     declaredIntent: { want: 'cards' },

@@ -814,9 +814,11 @@ plan_outfit_set({
   pre-resolved-profile precedence, behind the same hypothetical-season gate),
   triggering on a fresh `location`+`date` or a bare `user_weather`/`weather_estimate`
   and caching onto `toolContext.resolvedWeatherContext` so a later call in the same
-  turn reuses it. The typed `weather_context_required` stop (spec §6.2) is still
-  `plan_outfit_set`-only — the other three tools resolve to `unavailable` and
-  proceed, unchanged from before this step.
+  turn reuses it. **[typed unresolved stop, 2026-08-31]** The typed
+  `weather_context_required` stop (spec §6.2) now covers these three tools too
+  (`weatherContextRequiredStop`, called right after weather resolution in each),
+  gated on `resolvedWeatherContext.location` being non-empty so a bare structured
+  weather claim with no named destination proceeds instead of stopping.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning

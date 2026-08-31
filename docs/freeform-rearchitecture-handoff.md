@@ -2024,9 +2024,19 @@ a `needs_base` garment remains a separate hard contract.
   (e.g. `propose_outfit` after `search_wardrobe`, with no destination of its own)
   reuses the cache instead of re-resolving. `search_wardrobe`'s free-text `weather`
   field is removed from its schema; `propose_outfit`'s unrelated `season:'indoor'`
-  convention is untouched. **Not done:** the typed `weather_context_required` stop
-  (spec §6.2) for these three tools — only `plan_outfit_set` has it; the others
-  still resolve to `unavailable` and proceed, the same soft degradation as before
-  this work. Accepted plan cards and `current_outfit_set` also do not yet persist
-  the resolved structured context/provenance for follow-up questions (spec §7, not
-  done).
+  convention is untouched.
+
+  **[typed unresolved stop, 2026-08-31]** `search_wardrobe`, `propose_outfit`, and
+  `generate_outfits` now stop with the same typed `weather_context_required`
+  response `plan_outfit_set` already had (spec §6.2) — `weatherContextRequiredStop`
+  in `styling-engine/tools.js`, called right after `resolveToolStylingContext` in
+  each tool, before any retrieval/scoring. It fires only when
+  `resolvedWeatherContext.location` is non-empty (a genuine named destination/date
+  that stayed unresolved); a bare structured claim with no place attached (e.g. "expect
+  rain" alone) legitimately resolves `status: 'unavailable'` on temperature while
+  still carrying real precipitation/wind data, and must proceed as an ordinary local
+  turn rather than stop. The system prompt's Destination & Weather Clarification
+  bullet now teaches this for all three tools.
+
+  Accepted plan cards and `current_outfit_set` still do not persist the resolved
+  structured context/provenance for follow-up questions (spec §7, not done).

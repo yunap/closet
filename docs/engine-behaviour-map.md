@@ -1181,11 +1181,19 @@ unaffected. `search_wardrobe`'s free-text `weather` field is removed from its sc
 keeps its unrelated `season:'indoor'` convention as-is (a separate, pre-existing mechanism, not
 weather prose about temperature).
 
-**Not yet done:** the typed `weather_context_required` stop for these three tools (only
-`plan_outfit_set` has it; the others resolve to `unavailable` and proceed — the same soft
-degradation as before this work, not a new regression) and §7's continuity persistence (accepted
-cards and `current_outfit_set` do not yet retain the resolved structured context/provenance for
-follow-up questions).
+**[typed unresolved stop, 2026-08-31]** `search_wardrobe`, `propose_outfit`, and `generate_outfits`
+now stop with the same typed `weather_context_required` response `plan_outfit_set` already returns
+(`weatherContextRequiredStop` in `styling-engine/tools.js`, called right after
+`resolveToolStylingContext` in each of the three tools, before any retrieval/scoring). It only fires
+when `resolvedWeatherContext.location` is non-empty — a genuine named destination/date that stayed
+unresolved — never for a bare structured claim with no place attached (e.g. "it's raining" with no
+destination), which legitimately carries `status: 'unavailable'` on temperature alone while still
+resolving precipitation/wind, and must proceed as an ordinary local turn rather than stop. The
+system prompt's Destination & Weather Clarification bullet now teaches this for all three tools, not
+just `plan_outfit_set`.
+
+**Not yet done:** §7's continuity persistence (accepted cards and `current_outfit_set` do not yet
+retain the resolved structured context/provenance for follow-up questions).
 
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source
