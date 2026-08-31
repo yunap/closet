@@ -1565,6 +1565,15 @@ export function toGeminiFunctionDeclaration(tool) {
   return { type: 'function', name: tool.name, description: tool.description, parameters: tool.input_schema }
 }
 
+// Spec §9 item 1 (docs/future-trip-weather-estimate-spec.md): every provider must expose the
+// identical user_weather/weather_estimate fields on all four composition tools. Anthropic passes
+// STYLIST_TOOLS' input_schema straight through with no projection of its own; this is OpenAI's
+// analogue to toGeminiFunctionDeclaration above — both wrap the SAME tool.input_schema object
+// unchanged, so there is no separate per-provider schema to drift.
+export function toOpenAiFunctionTool(tool) {
+  return { type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }
+}
+
 export function canonicalToolResultBlocksForAnthropic(entry) {
   const contentBlocks = [{ type: 'text', text: entry.text }]
   if (entry.images?.length) {
@@ -1696,7 +1705,7 @@ async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens
     max_tokens: maxTokens,
     messages: [{ role: 'system', content: plainSystem }, ...canonicalHistoryToOpenAiMessages(canonicalMessages)],
     ...(tools.length ? {
-      tools: tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }))
+      tools: tools.map(toOpenAiFunctionTool)
     } : {})
   }
   captureWireProviderInput({ provider: 'openai', model: OPENAI_MODEL, subflow: 'stylist_tool_loop', request: openAiRequest })

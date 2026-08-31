@@ -1207,9 +1207,20 @@ on both projections cannot represent. `freeform_generation_runs.weather_source` 
 `resolvedWeatherContext.overallSource` (mixed-aware — e.g. user-stated rain + live temperature) when
 the structured resolver ran, falling back to the old plain per-field source otherwise;
 `plan_outfit_set` sets it from its own per-slot precheck (the shared source when every slot agrees,
-`'mixed'` when slots differ). **Not yet done:** §9's provider-schema-parity tests and the rest of the
-31-item acceptance checklist beyond what has been covered ad hoc; §10's live paid Vienna VA
-verification.
+`'mixed'` when slots differ).
+
+**[§9 item 1, provider-schema parity, 2026-08-31]** Anthropic reads `STYLIST_TOOLS`' `input_schema`
+with no projection of its own; Gemini (`toGeminiFunctionDeclaration`) and the newly-extracted OpenAI
+equivalent (`toOpenAiFunctionTool`, `styling-engine/provider.js` — previously an inline map at the
+`callOpenAiTurn` call site, now the same shape as the pre-existing Gemini helper) both wrap that
+exact `input_schema` object unchanged rather than holding an independent copy, so `user_weather`/
+`weather_estimate` parity across all three providers is structural, not merely tested — a test in
+`test/gemini_tool_loop_adapter.test.js` asserts both the object-reference reuse and that every one
+of the four composition tools (plus `plan_outfit_set`'s own per-slot schema) actually carries both
+fields.
+
+**Not yet done:** the rest of spec §9's 31-item acceptance checklist beyond what has been covered ad
+hoc; §10's live paid Vienna VA verification.
 
 **[context-ownership consolidation, 2026-08-24] Selected-piece and whole-wardrobe generation now
 resolve the same evidence through one authority.** `resolveStylingContext` owns per-field source

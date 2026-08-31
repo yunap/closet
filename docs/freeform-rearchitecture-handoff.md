@@ -2049,6 +2049,17 @@ a `needs_base` garment remains a separate hard contract.
   because a multi-slot trip can have different weather per slot, unlike the single
   shared `weather_profile` field already on both projections.
   `freeform_generation_runs.weather_source` now reads `overallSource` (mixed-aware)
-  when the structured resolver ran. Still open: spec §9's provider-schema-parity
-  tests and the rest of the 31-item acceptance checklist; §10's live paid Vienna VA
-  verification.
+  when the structured resolver ran.
+
+  **[§9 item 1, provider-schema parity, 2026-08-31]** Extracted `toOpenAiFunctionTool`
+  (`styling-engine/provider.js`) as the OpenAI analogue of the pre-existing
+  `toGeminiFunctionDeclaration` — both now wrap `STYLIST_TOOLS`' `input_schema`
+  object unchanged rather than each holding its own copy, so `user_weather`/
+  `weather_estimate` parity across Anthropic (no projection at all), OpenAI, and
+  Gemini is structural. `test/gemini_tool_loop_adapter.test.js` asserts the
+  object-reference reuse and that all four composition tools (`search_wardrobe`,
+  `propose_outfit`, `generate_outfits`, `plan_outfit_set` at both plan and slot
+  level) carry both fields.
+
+  Still open: the rest of spec §9's 31-item acceptance checklist; §10's live paid
+  Vienna VA verification.
