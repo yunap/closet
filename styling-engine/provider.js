@@ -548,6 +548,23 @@ export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flas
 // run against it).
 const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
 
+// The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
+// generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
+// model call, across every feature (stylist chat, the direct visual-composer routes, editorial,
+// capsule, evaluation, comparison, etc.), must be configurable through this one setting rather than
+// silently defaulting to Anthropic because its particular call site never learned about the
+// experimental routing flag. This was previously defined only inside routes/ai.js (as
+// stylistProviderOverride, still exported there for backward compatibility) and consulted by
+// exactly one route (/ask) — every other feature's call sites simply never had it in scope. Piece
+// tagging is deliberately NOT covered by this constant — it has its own, separately-configured
+// TAGGER_PROVIDER_OVERRIDE (routes/ai.js), a real, independent product decision (tagging currently
+// stays on Haiku even when this is set), not an oversight to fold in here.
+const STYLIST_PROVIDER_OVERRIDE = process.env.STYLIST_PROVIDER_OVERRIDE || ''
+const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5-flash-lite'
+export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
+  ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
+  : null
+
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
 // experimental slice before real key management existed for this provider. Re-exported for
@@ -1286,7 +1303,11 @@ export async function askStylistStructuredWithUsage({
         // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent
         // simplification: if a real schema fails here, that is Stage C's problem to diagnose and
         // is intentionally NOT worked around in this experimental slice (plan: don't widen scope).
-        response_format: { type: 'json_object', name, description, schema },
+        // type: 'object' (not 'json_object', the OpenAI convention this was copy-pasted from) — a
+        // live call caught this returning a 400 ("Supported values: ... 'object' ..."). Previously
+        // invisible because every caller of this function was itself defaulting to Anthropic before
+        // the provider-propagation fixes above actually started reaching this branch.
+        response_format: { type: 'object', name, description, schema },
       })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {

@@ -19,6 +19,7 @@ import {
   askStylistWithTools,
   routeFreeformExecutionProfile,
   resolveAiTarget,
+  stylistProviderOverride,
   boundedAtomicMultiLookResponse,
   stripPieceIdCitations,
   recordToolLoopUsage,
@@ -394,15 +395,14 @@ const taggerProviderOverride = TAGGER_PROVIDER_OVERRIDE
   ? { provider: TAGGER_PROVIDER_OVERRIDE, model: TAGGER_MODEL_OVERRIDE }
   : null
 
-// Same shape for the stylist chat turn (/ask). Unset by default — Sonnet stays the immediate
-// fallback with zero code change. gemini-3.5-flash-lite is the tier this session's stylist
-// comparison actually quality-tested; gemini-3.7-flash (GEMINI_MODEL's own default) stays excluded
-// here — its latency pathology (4/17 calls at 8-11.5min) was never confirmed resolved.
-const STYLIST_PROVIDER_OVERRIDE = process.env.STYLIST_PROVIDER_OVERRIDE || ''
-const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5-flash-lite'
-const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
-  ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
-  : null
+// Same shape for the stylist chat turn (/ask) — and now (owner ruling 2026-08-30) every other
+// non-image-generation feature too. Unset by default — Sonnet stays the immediate fallback with
+// zero code change. gemini-3.5-flash-lite is the tier this session's stylist comparison actually
+// quality-tested; gemini-3.7-flash (GEMINI_MODEL's own default) stays excluded here — its latency
+// pathology (4/17 calls at 8-11.5min) was never confirmed resolved. Canonical definition now lives
+// in styling-engine/provider.js (imported above as `stylistProviderOverride`) so every module can
+// share it without a circular import back through this file; this local alias is kept only so the
+// many existing references below this line don't all need renaming.
 
 // docs/tagger-cost-spec.md §6b/§6c: standard tagging (add/edit/retag) defaults to the cheaper
 // tagger tier — screened cold-start and warm-anchored, no material regression found. Callers that
@@ -1076,9 +1076,10 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   comfortConstraint = null,
   occasionProfile = null,
   activityProfile = null,
-  // Same gap and fix as generateWholeWardrobeOutfitsVisualInternal (see its own providerOverride
-  // comment) -- absent by default, only forwarded by the freeform-chat selected-piece path.
-  providerOverride = null
+  // Owner ruling 2026-08-30: defaults to the shared app-wide config (stylistProviderOverride) so
+  // every caller — the direct /generate-outfits-for-piece route included, not just freeform chat —
+  // gets it automatically without having to remember to pass it explicitly.
+  providerOverride = stylistProviderOverride
 }) {
   const routeStartedAt = Date.now()
   const selectedId = Number(selectedPiece.id)
@@ -1445,6 +1446,9 @@ router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
     const raw = await askStylist({
       system: EXTRACT_PIECES_SYSTEM,
       maxTokens: 3000,
+      // Vision garment extraction — same job as tagPieceWithProvider, just multi-piece from one
+      // photo, so it uses the tagger's own config rather than the general stylist one.
+      providerOverride: taggerProviderOverride,
       messages: [{
         role: 'user',
         content: [
@@ -1679,10 +1683,12 @@ router.post('/evaluate-piece', async (req, res) => {
         messages: [
           ...(history || []).map(h => ({ role: h.role, content: h.content })),
           { role: 'user', content }
-        ]
+        ],
+        providerOverride: stylistProviderOverride
       })
       const answer = await criticPassForSelectedItem({ selectedPiece: parsedPiece, draft, userQuestion: question })
-      return res.json({ feedback: answer, provider: AI_PROVIDER, mode: 'STYLE_SELECTED_ITEM' })
+      const resolvedTarget = resolveAiTarget(stylistProviderOverride)
+      return res.json({ feedback: answer, provider: resolvedTarget.provider, model: resolvedTarget.model, mode: 'STYLE_SELECTED_ITEM' })
     }
 
     content.push({ type: 'text', text: [
@@ -1705,9 +1711,11 @@ router.post('/evaluate-piece', async (req, res) => {
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
         { role: 'user', content }
-      ]
+      ],
+      providerOverride: stylistProviderOverride
     })
-    res.json({ feedback: answer, provider: AI_PROVIDER, mode: 'evaluate_piece' })
+    const resolvedTarget = resolveAiTarget(stylistProviderOverride)
+    res.json({ feedback: answer, provider: resolvedTarget.provider, model: resolvedTarget.model, mode: 'evaluate_piece' })
   } catch (err) {
     console.error('Evaluate piece error:', err)
     res.status(500).json({ error: err.message })
@@ -1731,9 +1739,10 @@ export async function generateOutfitsForPieceInternal({
   currentDate = null,
   statedWeather = '',
   resolvedWeatherProfile = null,
-  // Same gap and fix as generateWholeWardrobeOutfitsVisualInternal (see its own providerOverride
-  // comment) -- absent by default, only forwarded by the freeform-chat selected-piece path.
-  providerOverride = null
+  // Owner ruling 2026-08-30: defaults to the shared app-wide config so the direct
+  // /generate-outfits-for-piece route (which passes req.body straight through, no providerOverride
+  // key) picks it up automatically, same as the freeform-chat selected-piece path.
+  providerOverride = stylistProviderOverride
 }) {
   console.log(`\n[0] 🧥 generateOutfitsForPieceInternal called:`)
   console.log(`    - pieceId: ${pieceId}`)
@@ -1946,11 +1955,13 @@ export async function generateOutfitsForPieceInternal({
     saveableLearning: composed.saveableLearning
   })
 
+  const resolvedTarget = resolveAiTarget(providerOverride)
   return {
     feedback: answer,
     structuredOutfits,
     rejectedOutfits: composed.rejected || [],
-    provider: AI_PROVIDER,
+    provider: resolvedTarget.provider,
+    model: resolvedTarget.model,
     mode: idealOnlyMode ? 'ideal_new_ideas_only' : idealMode ? 'ideal_styling_directions' : 'generate_outfit_ideas',
     pipeline: idealOnlyMode
       ? 'composer_evaluator_renderer_handoff'
@@ -2072,14 +2083,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   currentDate = null,
   adaptiveVisualDetail = false,
   comparisonSetGuidance = true,
-  // Absent by default so the two production HTTP routes that call this function directly
-  // (/generate-wardrobe-outfits-visual, saved-outfit variants) are unaffected and keep using the
-  // default provider — only the freeform-chat tool case (styling-engine/tools.js's generate_outfits)
-  // passes toolContext.providerOverride through. Found live: a freeform turn running under
-  // STYLIST_PROVIDER_OVERRIDE=gemini still made its nested whole-wardrobe composer call on
-  // Anthropic ($0.12 of that turn's $0.15, unrelated to and larger than the visible Gemini calls),
-  // because this function's own askStylistWithUsage call never accepted or forwarded an override.
-  providerOverride = null
+  // Was previously absent-by-default so the two direct HTTP routes (/generate-wardrobe-outfits-
+  // visual, saved-outfit variants) never saw the experimental Gemini routing flag — found live: a
+  // freeform turn running under STYLIST_PROVIDER_OVERRIDE=gemini still made this nested composer
+  // call on Anthropic ($0.12 of that turn's $0.15), because this function's own askStylistWithUsage
+  // call never accepted or forwarded an override at all. Owner ruling 2026-08-30 reversed the
+  // original exclusion: only actual image-generation calls stay hardcoded to OpenAI — every other
+  // feature, including these two direct routes, now defaults to the shared app-wide config.
+  providerOverride = stylistProviderOverride
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
@@ -2291,7 +2302,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       return {
         feedback: `**No complete wardrobe outfit is available**\n\n${responseCoverageNote}`,
         structuredOutfits: [],
-        provider: AI_PROVIDER,
+        provider: resolveAiTarget(providerOverride).provider,
         mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
         pipeline: savedVariantMode ? 'saved_outfit_wardrobe_variant_composer' : 'full_wardrobe_visual_composer',
         savedOutfitVariantMode: savedVariantMode,
@@ -2592,7 +2603,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
           occasion,
           season,
           mood,
-          memoryText: wholeWardrobeFeedbackText
+          memoryText: wholeWardrobeFeedbackText,
+          providerOverride
         }), 20000, 'Whole-wardrobe clash critic')
         if (clashReview?.flaggedByOutfit?.size) {
           clashFlaggedByOutfit = clashReview.flaggedByOutfit
@@ -2974,7 +2986,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     return {
       feedback,
       structuredOutfits,
-      provider: AI_PROVIDER,
+      provider: resolveAiTarget(providerOverride).provider,
+      model: resolveAiTarget(providerOverride).model,
       mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
       pipeline: savedVariantMode ? 'saved_outfit_wardrobe_variant_composer' : 'full_wardrobe_visual_composer',
       savedOutfitVariantMode: savedVariantMode,
@@ -3118,7 +3131,8 @@ router.post('/generate-outfit-boards', async (req, res) => {
       const rawPlan = await askStylist({
         system: `${prompts.OUTFIT_BOARD_PLANNER_SYSTEM}[[PROMPT_CACHE_BREAKPOINT]]`,
         maxTokens: 1000,
-        messages: [{ role: 'user', content }]
+        messages: [{ role: 'user', content }],
+        providerOverride: stylistProviderOverride
       })
       const parsed = parseModelJson(rawPlan, { context: 'outfit board planner', maxTokens: 1000 })
       boardPlans = parsed.boards || []
@@ -3552,7 +3566,8 @@ router.post('/editorial-directions-preview', async (req, res) => {
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
         { role: 'user', content }
-      ]
+      ],
+      providerOverride: stylistProviderOverride
     })
 
     let directions = []
@@ -3591,7 +3606,8 @@ router.post('/editorial-directions-preview', async (req, res) => {
       pieceId,
       occasion,
       season,
-      provider: AI_PROVIDER,
+      provider: resolveAiTarget(stylistProviderOverride).provider,
+      model: resolveAiTarget(stylistProviderOverride).model,
       mode: 'editorial_directions_preview',
       usedFallback
     })
@@ -3684,10 +3700,12 @@ router.post('/compare-outfits', async (req, res) => {
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
         { role: 'user', content }
-      ]
+      ],
+      providerOverride: stylistProviderOverride
     })
 
-    res.json({ feedback: answer, provider: AI_PROVIDER, mode: 'compare_outfits' })
+    const resolvedTarget = resolveAiTarget(stylistProviderOverride)
+    res.json({ feedback: answer, provider: resolvedTarget.provider, model: resolvedTarget.model, mode: 'compare_outfits' })
   } catch (err) {
     console.error('Compare outfits error:', err)
     res.status(500).json({ error: err.message })
@@ -4324,7 +4342,8 @@ ${catalog}`
       schema: CAPSULE_EXPANSION_SCHEMA,
       name: 'capsule_expansion',
       description: 'Select exactly one additional outfit from the supplied capsule roster.',
-      maxTokens: 400
+      maxTokens: 400,
+      providerOverride: stylistProviderOverride
     })
     const submission = {
       slot_id: contextSlot.id,
