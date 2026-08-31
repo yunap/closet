@@ -834,6 +834,10 @@ plan_outfit_set({
   the matching cached location/date and replaces only the fields the user supplied.
   Internal search-relaxation rungs carry unique exclusion IDs, so diagnostics and the
   returned hard-gate note count affected garments once per model-visible search.
+  **[field-authority correction, 2026-08-31]** Each inherited field keeps its
+  original authority during that merge: cached `stated_user` temperature outranks
+  a fresh live reading when the follow-up states only rain; fresh evidence wins at
+  equal authority, and live still outranks a cached model estimate.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning

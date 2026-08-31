@@ -2127,5 +2127,10 @@ a `needs_base` garment remains a separate hard contract.
   cache; and relaxation diagnostics deduplicate excluded piece IDs across internal
   retries before incrementing `gateExcludedTotal`.
 
+  **[field-authority correction, 2026-08-31]** The cached field is compared at its
+  retained source rank rather than used only when the fresh field is unavailable.
+  This preserves cached `stated_user` temperature through a precipitation-only
+  follow-up even when the default live-enabled path fetches a conflicting reading.
+
   Still open: §10's live paid Vienna VA verification — needs printed cost and
   the owner's explicit confirmation first, per the spec's own rule.

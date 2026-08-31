@@ -243,6 +243,42 @@ test('resolveWeatherContext: user precipitation plus live temperature produces m
   assert.equal(context.overallSource, 'mixed')
 })
 
+test('resolveWeatherContext: a stronger cached field survives a lower-authority fresh candidate', () => {
+  const context = resolveWeatherContext({
+    userWeather: { temperature: null, precipitation: 'rain', wind: null },
+    liveWeather: { weatherSource: 'live', highF: 82, lowF: 70, isHot: true, isCold: false },
+    fallbackContext: {
+      temperature: {
+        highF: 50, lowF: 40, band: null,
+        isHot: false, isCold: true, isExtremeHeat: false,
+        source: 'stated_user',
+      },
+      precipitation: { value: 'unknown', source: 'unavailable' },
+      wind: { value: 'unknown', source: 'unavailable' },
+    },
+  })
+  assert.equal(context.temperature.source, 'stated_user')
+  assert.equal(context.temperature.highF, 50)
+  assert.equal(context.temperature.isCold, true)
+  assert.deepEqual(context.precipitation, { value: 'rain', source: 'stated_user' })
+})
+
+test('resolveWeatherContext: a fresh live field still replaces a lower-authority cached estimate', () => {
+  const context = resolveWeatherContext({
+    liveWeather: { weatherSource: 'live', highF: 82, lowF: 70, isHot: true, isCold: false },
+    fallbackContext: {
+      temperature: {
+        highF: 50, lowF: 40, band: null,
+        isHot: false, isCold: true, isExtremeHeat: false,
+        source: 'model_estimate',
+      },
+    },
+  })
+  assert.equal(context.temperature.source, 'live')
+  assert.equal(context.temperature.highF, 82)
+  assert.equal(context.temperature.isHot, true)
+})
+
 // Regression: 'unknown' is a valid PRECIPITATION_VALUES/WIND_VALUES enum
 // member and is a truthy string, so a naive `if (userValue)` check let a
 // user_weather field explicitly set to 'unknown' win the field-level

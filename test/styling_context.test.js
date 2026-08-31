@@ -211,6 +211,42 @@ test('a partial user-weather follow-up augments its cached destination instead o
   assert.equal(rainy.weatherProfile.isRainy, true)
 })
 
+test('a partial user-weather follow-up cannot demote cached user temperature to a fresh live reading', async () => {
+  const calls = []
+  const toolContext = {}
+  const resolveStylingContext = createStylingContextResolver({
+    weatherResolver: async ({ date, location }) => {
+      calls.push({ date, location })
+      return { isHot: true, isCold: false, highF: 82, lowF: 70, weatherSource: 'live' }
+    },
+  })
+  const before = await resolveStylingContext({
+    explicitRequest: {
+      season: 'current season',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      userWeather: { high_f: 50, low_f: 40 },
+    },
+    toolContext,
+  })
+  const after = await resolveStylingContext({
+    explicitRequest: { season: 'current season', userWeather: { precipitation: 'rain' } },
+    toolContext,
+  })
+
+  assert.equal(calls.length, 2, 'the regression must exercise the default live-enabled path')
+  assert.equal(before.weatherProfile.resolvedWeatherContext.temperature.source, 'stated_user')
+  assert.equal(after.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
+  assert.deepEqual(after.weatherProfile.resolvedWeatherContext.dateRange, { start: '2026-10-12', end: '2026-10-12' })
+  assert.equal(after.weatherProfile.resolvedWeatherContext.temperature.highF, 50)
+  assert.equal(after.weatherProfile.resolvedWeatherContext.temperature.lowF, 40)
+  assert.equal(after.weatherProfile.resolvedWeatherContext.temperature.source, 'stated_user')
+  assert.equal(after.weatherProfile.resolvedWeatherContext.precipitation.value, 'rain')
+  assert.equal(after.weatherProfile.resolvedWeatherContext.precipitation.source, 'stated_user')
+  assert.equal(after.weatherProfile.isCold, true)
+  assert.equal(after.weatherProfile.isHot, false)
+})
+
 test('live weather refreshes an older artifact snapshot for current season', async () => {
   const live = { isHot: false, isCold: true, highF: 51, lowF: 42, weatherSource: 'live' }
   const resolveStylingContext = createStylingContextResolver({ weatherResolver: async () => live })

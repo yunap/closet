@@ -1328,6 +1328,13 @@ sets of excluded piece IDs across internal rungs and increments `gateExcludedTot
 terminal pass; one model-visible search therefore counts each hard-gated piece once, matching the
 returned exclusion note rather than the number of implementation retries.
 
+**[field-authority correction, 2026-08-31]** A matching cached field participates at its retained
+authority, not as an unavailable-only fallback. `resolveWeatherContext` compares fresh and cached
+sources independently for temperature, precipitation, and wind under
+`stated_user → live → model_estimate → heuristic → unavailable`; a fresh field wins ties. Thus a
+partial rain update cannot demote cached user-stated 50/40°F to a newly fetched live 82/70°F, while
+a genuinely fresh live temperature still replaces a cached model estimate.
+
 **Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
 owner's explicit confirmation before running, per the spec's own rule; not something to do
 unilaterally.
