@@ -1,8 +1,9 @@
 # Structured weather context for outfit planning
 
-**Status:** Ratified implementation specification, 2026-08-30. The current branch is a partial,
-non-conforming implementation and must not merge until every requirement in this document is
-implemented. There is no deferred second phase.
+**Status:** Ratified implementation specification, 2026-08-30. Offline implementation and exact
+acceptance coverage completed on `fix/structured-weather-context`, 2026-08-31; independent diff
+review and the explicitly authorized paid live verification remain release checks. There is no
+deferred implementation phase.
 
 **Scope:** Every `/ask` outfit-composition path: `plan_outfit_set`, `search_wardrobe`,
 `propose_outfit`, and `generate_outfits`, including roster construction, submission validation,

@@ -91,6 +91,30 @@ test('explicit stated weather wins without calling live weather', async () => {
   assert.equal(context.provenanceByField.weatherProfile.source, 'explicit_request.stated_weather')
 })
 
+test('explicit structured weather remains executable when live lookup is disabled', async () => {
+  let calls = 0
+  const resolveStylingContext = createStylingContextResolver({
+    weatherResolver: async () => {
+      calls += 1
+      return { isHot: true, isCold: false, weatherSource: 'live' }
+    },
+  })
+  const context = await resolveStylingContext({
+    explicitRequest: {
+      season: 'current season',
+      location: 'Vienna, Virginia',
+      dateRange: { start: '2026-10-12', end: '2026-10-18' },
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    policy: { allowLiveWeather: false },
+  })
+
+  assert.equal(calls, 0)
+  assert.equal(context.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(context.weatherProfile.isCold, true)
+  assert.equal(context.provenanceByField.weatherProfile.source, 'named_destination.model_estimate')
+})
+
 test('live weather refreshes an older artifact snapshot for current season', async () => {
   const live = { isHot: false, isCold: true, highF: 51, lowF: 42, weatherSource: 'live' }
   const resolveStylingContext = createStylingContextResolver({ weatherResolver: async () => live })

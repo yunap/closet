@@ -777,18 +777,27 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
 // proof for this flow. The acceptance criterion is the FIRST submitted set —
 // tripPlanLines/tool_sequence below confirm plan_outfit_set and
 // submit_plan_outfits each ran exactly once.
-test('the exact Vienna VA request reaches plan_outfit_set once with a 65/45 estimate and submits a cold-valid card with zero retries (spec §9 items 25/26)', async () => {
+test('the representative Vienna VA week reaches one plan call and submits sightseeing, museum, and nature-walk cards cold-valid on the first attempt', async () => {
   db.prepare('DELETE FROM pieces').run()
-  const layeredTop = insertPiece({ category: 'top', name: 'long sleeve knit top', occasions: ['evening'], formality: 'everyday', sleeve_length: 'long' })
-  const bareTank = insertPiece({ category: 'top', name: 'sleeveless tank', occasions: ['evening'], formality: 'everyday', sleeve_length: 'sleeveless' })
-  const pants = insertPiece({ category: 'bottom', name: 'evening trousers', occasions: ['evening'], formality: 'everyday' })
-  const coat = insertPiece({ category: 'outerwear', name: 'wool coat', occasions: ['evening'], formality: 'everyday' })
-  const closedFlats = insertPiece({ category: 'shoes', name: 'closed leather flats', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'flat' })
-  const openSandal = insertPiece({ category: 'shoes', name: 'open platform sandals', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+  const occasions = ['city', 'casual', 'outdoor']
+  const tops = [
+    insertPiece({ category: 'top', name: 'sightseeing knit top', occasions, formality: 'everyday', sleeve_length: 'long' }),
+    insertPiece({ category: 'top', name: 'museum knit top', occasions, formality: 'everyday', sleeve_length: 'long' }),
+    insertPiece({ category: 'top', name: 'nature walk knit top', occasions, formality: 'everyday', sleeve_length: 'long' }),
+  ]
+  const bottoms = [
+    insertPiece({ category: 'bottom', name: 'sightseeing trousers', occasions, formality: 'everyday' }),
+    insertPiece({ category: 'bottom', name: 'museum trousers', occasions, formality: 'everyday' }),
+    insertPiece({ category: 'bottom', name: 'nature walk trousers', occasions, formality: 'everyday' }),
+  ]
+  const bareTank = insertPiece({ category: 'top', name: 'sleeveless tank', occasions, formality: 'everyday', sleeve_length: 'sleeveless' })
+  const coat = insertPiece({ category: 'outerwear', name: 'sleeved wool coat', occasions, formality: 'everyday', sleeve_length: 'long' })
+  const closedSneakers = insertPiece({ category: 'shoes', name: 'closed walking sneakers', occasions, formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'sneaker' })
+  const openSandal = insertPiece({ category: 'shoes', name: 'open platform sandals', occasions, formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
 
   const toolContext = {
     generatedOutfits: [],
-    question: 'a week in Vienna, Virginia in October',
+    question: 'Plan a week in Vienna, Virginia starting October 12 with city sightseeing, museum days, and a nature walk.',
     location: 'Vienna, Virginia',
     weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
   }
@@ -803,28 +812,31 @@ test('the exact Vienna VA request reaches plan_outfit_set once with a 65/45 esti
           location: 'Vienna, Virginia',
           date_range: { start: '2026-10-12', end: '2026-10-18' },
           weather_estimate: { high_f: 65, low_f: 45 },
-          slots: [{ label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 }]
+          constraints: { reuse: 'maximize' },
+          slots: [
+            { label: 'City Sightseeing', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 1 },
+            { label: 'Museum Day', occasion: 'city', activity: 'none', environment: 'indoor', count: 1 },
+            { label: 'Nature Walk', occasion: 'casual', activity: 'hiking', environment: 'outdoor', count: 1 },
+          ]
         }
       },
       {
         tool: 'submit_plan_outfits',
         args: ({ results }) => {
           const workbench = results.find(step => step.name === 'plan_outfit_set')?.result
-          const slot = workbench.slots[0]
-          const allowed = new Set(slot.allowed_piece_ids.map(Number))
-          // Both the bare tank and the open sandal must already be excluded from
-          // the roster by item 18/21 — asserted below — so composing only from
-          // allowed_piece_ids cannot accidentally include either.
           return {
-            outfits: [{
-              slot_id: slot.id,
-              piece_ids: [layeredTop, pants, coat, closedFlats].filter(id => allowed.has(id)),
-              reason: 'A warm layered evening look for a 65/45 October night.'
-            }]
+            outfits: workbench.slots.map((slot, index) => {
+              const allowed = new Set(slot.allowed_piece_ids.map(Number))
+              return {
+                slot_id: slot.id,
+                piece_ids: [tops[index], bottoms[index], coat, closedSneakers].filter(id => allowed.has(Number(id))),
+                reason: `A cold-valid layered ${slot.label.toLowerCase()} look for a 65/45 October day.`,
+              }
+            })
           }
         }
       },
-      { final: 'Vienna evening plan complete.' }
+      { final: 'Vienna week plan complete.' }
     ]
   })
 
@@ -835,15 +847,24 @@ test('the exact Vienna VA request reaches plan_outfit_set once with a 65/45 esti
   const planResult = replay.results.find(step => step.name === 'plan_outfit_set').result
   const submitResult = replay.results.find(step => step.name === 'submit_plan_outfits').result
   assert.equal(planResult.status, 'slot_rosters')
-  const rosterIds = new Set(planResult.slots[0].allowed_piece_ids.map(Number))
-  assert.equal(rosterIds.has(bareTank), false, 'cold-prohibited bare top excluded from the roster before composition')
-  assert.equal(rosterIds.has(openSandal), false, 'cold-prohibited open sandal excluded from the roster before composition')
+  assert.equal(planResult.slots.length, 3)
+  for (const slot of planResult.slots) {
+    const rosterIds = new Set(slot.allowed_piece_ids.map(Number))
+    if (slot.environment !== 'indoor') {
+      assert.equal(rosterIds.has(Number(bareTank)), false, `${slot.label}: cold-prohibited bare top excluded before composition`)
+    }
+    assert.equal(rosterIds.has(Number(openSandal)), false, `${slot.label}: cold-prohibited open sandal excluded before composition`)
+  }
+  const museumSlot = planResult.slots.find(slot => slot.id === 'museum_day')
+  assert.match(museumSlot.submission_requirements.join(' '), /first submitted outfit must already include the transit layer/)
 
   assert.equal(submitResult.status, 'success', `first submission must be accepted outright, got: ${JSON.stringify(submitResult)}`)
-  assert.equal(toolContext.generatedOutfits.length, 1)
-  const card = toolContext.generatedOutfits[0]
-  assert.match(card.weatherUsed, /65°F high \/ 45°F low — seasonal estimate, not a live forecast/)
-  assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+  assert.equal(toolContext.generatedOutfits.length, 3)
+  assert.ok(toolContext.generatedOutfits.every(card => card.pieceIds.includes(Number(coat))), 'every first-pass card includes the shared cold/transit layer')
+  for (const card of toolContext.generatedOutfits) {
+    assert.match(card.weatherUsed, /65°F high \/ 45°F low — seasonal estimate, not a live forecast/)
+    assert.equal(card.resolvedWeatherContext.overall_source, 'model_estimate')
+  }
 })
 
 // Spec §9 item 23: "A shared valid layer may repeat under reuse:'maximize'."
@@ -901,6 +922,7 @@ test('plan_outfit_set: cold-transit footwear rejection also fires for an indoor 
   const lightBottom = insertPiece({ category: 'bottom', name: 'museum pants', occasions: ['city'], formality: 'everyday' })
   const openSandal = insertPiece({ category: 'shoes', name: 'strappy sandal', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
   const closedSneaker = insertPiece({ category: 'shoes', name: 'white sneaker', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'sneaker' })
+  insertPiece({ category: 'outerwear', name: 'sleeved museum jacket', occasions: ['city'], formality: 'everyday', sleeve_length: 'long' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
 
   const slots = normalizePlanSlots([
@@ -913,6 +935,26 @@ test('plan_outfit_set: cold-transit footwear rejection also fires for an indoor 
   assert.ok(allowed.has(lightBottom))
   assert.equal(allowed.has(openSandal), false, 'an open sandal must be rejected for cold transit even though the indoor base is permissive')
   assert.ok(allowed.has(closedSneaker), 'closed athletic sneakers remain valid')
+  assert.match(workbench.slots[0].submission_requirements.join(' '), /first submitted outfit must already include the transit layer/)
+})
+
+test('plan_outfit_set: an explicitly shared anchor may preserve open footwear in cold transit while an unanchored sandal stays excluded', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'museum pants', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'outerwear', name: 'museum coat', occasions: ['city'], formality: 'everyday', sleeve_length: 'long' })
+  const anchoredSandal = insertPiece({ category: 'shoes', name: 'anchored platform sandal', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+  const ordinarySandal = insertPiece({ category: 'shoes', name: 'ordinary platform sandal', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Museum Visit', occasion: 'city', activity: 'none', environment: 'indoor', count: 1, weather_estimate: { high_f: 55, low_f: 40 } }])
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'museum visit built around my platform sandals',
+    constraints: { shared_anchor_ids: [anchoredSandal] },
+  })
+  const allowed = new Set(workbench.slots[0].allowed_piece_ids.map(Number))
+  assert.ok(allowed.has(Number(anchoredSandal)), 'the explicit user anchor must bypass the automatic cold-footwear gate')
+  assert.equal(allowed.has(Number(ordinarySandal)), false, 'the same footwear remains excluded without an explicit anchor')
 })
 
 test('plan_outfit_set stops with weather_context_required (typed) when live weather is unavailable and no estimate was supplied', async () => {
@@ -1043,6 +1085,19 @@ test('normalizePlanSlots: a slot at a different location does not inherit the pl
   assert.equal(coastSlot.weatherEstimate, null, 'a slot at a different location must not silently inherit weather stated about the main destination')
 })
 
+test('normalizePlanSlots: equivalent normalized location spellings inherit plan weather, while a different place does not', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Museum', occasion: 'city', activity: 'none', location: 'Vienna VA', count: 1 },
+    { label: 'Detour', occasion: 'casual', activity: 'walking', location: 'Cambria, CA', count: 1 },
+  ], {
+    fallbackLocation: 'Vienna, Virginia',
+    fallbackWeatherEstimate: { high_f: 65, low_f: 45 },
+    dateRange: { start: '2026-10-12', end: '2026-10-18' },
+  })
+  assert.deepEqual(slots[0].weatherEstimate, { highF: 65, lowF: 45, precipitation: null, wind: null })
+  assert.equal(slots[1].weatherEstimate, null)
+})
+
 // Spec §9 item 28: "A mismatched location/date prevents context reuse." The
 // positive case (a matching second call reuses the cache) is proven above;
 // this is the negative case for the same resolveToolStylingContext cache.
@@ -1074,6 +1129,30 @@ test('resolveToolStylingContext: a mismatched location prevents cache reuse and 
   assert.equal(differentLocation.weatherProfile.resolvedWeatherContext.location, 'Cambria, CA')
 })
 
+test('resolveToolStylingContext: equivalent normalized location spellings reuse the same resolved context', async () => {
+  let resolverCalls = 0
+  const toolContext = {}
+  const weatherResolver = async () => {
+    resolverCalls += 1
+    return { weatherSource: 'live', isHot: false, isCold: true, highF: 65, lowF: 45 }
+  }
+  await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-10-12' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  const reused = await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna VA', date: '2026-10-12' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver,
+  })
+  assert.equal(resolverCalls, 1)
+  assert.equal(reused.weatherProfile.isCold, true)
+  assert.equal(reused.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
+})
+
 // Regression: a location named this call but with NO date of its own (so
 // resolveNamedDestinationWeather's own hasFreshDestination stays false and it
 // falls to its "reuse cache or return null" branch) must not fall through to
@@ -1098,6 +1177,36 @@ test('resolveToolStylingContext: a different location with no date of its own do
   })
   assert.notEqual(second.weatherProfile.weatherSource, 'model_estimate', 'must not silently inherit Vienna\'s estimate for a different, unrelated place')
   assert.equal(second.weatherProfile.highF, undefined)
+})
+
+test('resolveToolStylingContext: legacy weather prose cannot override a structured destination estimate', async () => {
+  const context = await resolveToolStylingContext({
+    explicitRequest: {
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+      season: 'current season',
+    },
+    toolContext: { weather: 'hot weather' },
+    policy: { allowLiveWeather: true },
+    weatherResolver: async () => ({ weatherSource: 'unavailable' }),
+  })
+  assert.equal(context.weatherProfile.isCold, true)
+  assert.equal(context.weatherProfile.isHot, false)
+  assert.equal(context.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(context.provenanceByField.weatherProfile.source, 'named_destination.model_estimate')
+})
+
+test('resolveToolStylingContext: an unbound flat legacy snapshot cannot cross into a newly named location', async () => {
+  const context = await resolveToolStylingContext({
+    explicitRequest: { location: 'Cambria, CA', season: 'current season' },
+    toolContext: { weatherProfile: { weatherSource: 'live', isHot: true, isCold: false, highF: 95, lowF: 80 } },
+    policy: { allowLiveWeather: true },
+    weatherResolver: async () => ({ weatherSource: 'unavailable' }),
+  })
+  assert.notEqual(context.provenanceByField.weatherProfile.source, 'established_state.weather_profile')
+  assert.equal(context.weatherProfile.highF, undefined)
+  assert.notEqual(context.weatherProfile.isHot, true)
 })
 
 test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed plan with only SOME slots unresolved', async () => {

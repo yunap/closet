@@ -2102,9 +2102,17 @@ a `needs_base` garment remains a separate hard contract.
   unrelated pre-existing bug where `weatherProfileFromContext`'s regex read "10" in "Build a 10-piece
   capsule" as a 10°F temperature (real production phrasing, not test noise).
 
-  **Deferred (P2):** the cold-footwear gate has no anchor-piece exception (spec §6.4 says one should
-  exist); plan-level weather inheritance compares raw location strings, not a normalized/geocoded
-  identity. The tool descriptions' backwards-stated precedence order was corrected.
+  **[closure pass, 2026-08-31]** No weather-contract implementation item remains deferred.
+  Explicit structured user/model evidence has first authority; direct explicit weather inputs stay
+  authoritative; and named destination/date resolution precedes lower-authority artifact/state
+  prose or snapshots. Blended `toolContext.weather` is no longer an executable established-state
+  input, and unbound flat snapshots cannot cross into a newly named location.
+  `normalizedWeatherLocationIdentity` is shared by cache
+  matching and plan-slot inheritance. Planner eligibility receives `shared_anchor_ids`, so the
+  existing explicit-anchor bypass covers cold footwear while preserving the underlying finding.
+  Cold indoor-transit workbenches tell the model to include removable sleeve-bearing coverage on
+  the first submission, and the representative Vienna replay now covers sightseeing, museum, and
+  nature-walk slots in one plan/submit sequence with no repair.
 
   Still open: §10's live paid Vienna VA verification — needs printed cost and
   the owner's explicit confirmation first, per the spec's own rule.

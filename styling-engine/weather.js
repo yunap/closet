@@ -14,6 +14,39 @@ const EXTREME_HEAT_F = 100
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
 const FETCH_TIMEOUT_MS = 4000
 
+// Weather context binds to a place identity, not a display spelling. This is
+// deterministic/offline; geocoding still owns forecast lookup.
+const US_STATE_NAMES = {
+  alabama: 'al', alaska: 'ak', arizona: 'az', arkansas: 'ar', california: 'ca', colorado: 'co',
+  connecticut: 'ct', delaware: 'de', florida: 'fl', georgia: 'ga', hawaii: 'hi', idaho: 'id',
+  illinois: 'il', indiana: 'in', iowa: 'ia', kansas: 'ks', kentucky: 'ky', louisiana: 'la',
+  maine: 'me', maryland: 'md', massachusetts: 'ma', michigan: 'mi', minnesota: 'mn',
+  mississippi: 'ms', missouri: 'mo', montana: 'mt', nebraska: 'ne', nevada: 'nv',
+  'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm', 'new york': 'ny',
+  'north carolina': 'nc', 'north dakota': 'nd', ohio: 'oh', oklahoma: 'ok', oregon: 'or',
+  pennsylvania: 'pa', 'rhode island': 'ri', 'south carolina': 'sc', 'south dakota': 'sd',
+  tennessee: 'tn', texas: 'tx', utah: 'ut', vermont: 'vt', virginia: 'va', washington: 'wa',
+  'west virginia': 'wv', wisconsin: 'wi', wyoming: 'wy', 'district of columbia': 'dc',
+}
+
+export function normalizedWeatherLocationIdentity(value = '') {
+  let normalized = String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+  for (const [stateName, abbreviation] of Object.entries(US_STATE_NAMES)) {
+    if (normalized === stateName) return abbreviation
+    if (normalized.endsWith(` ${stateName}`)) {
+      normalized = `${normalized.slice(0, -(stateName.length + 1))} ${abbreviation}`
+      break
+    }
+  }
+  return normalized
+}
+
 const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
 const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
 

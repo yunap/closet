@@ -926,3 +926,11 @@ new-request pre-routes, `planFreeformUseCases`, and `composeOutfitSet` itself
 (the engine composer both pre-routes and the legacy `WARDROBE_PLAN_COMPOSE=engine`
 tool branch called). See "Layer 1" above and the handoff doc's spec 14 entry —
 this whole caveat and the build-log above it are now historical.
+
+**[structured-weather closure, 2026-08-31]** Composition tools now give explicit structured
+user/model weather first authority, preserve direct explicit weather inputs, resolve named
+destination/date weather before lower-authority artifact/state prose or snapshots, and never
+promote blended thread weather into a new action. Matching resolved context uses normalized location identity. For a cold trip, the plan
+workbench tells the model about indoor transit coverage before it composes; explicit shared anchors
+flow through the common eligibility policy; and the first submitted multi-slot Vienna set is the
+offline acceptance boundary, not a later repair.

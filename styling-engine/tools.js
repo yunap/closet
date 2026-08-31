@@ -19,7 +19,8 @@ import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
-  serializeResolvedWeatherContext, TEMPERATURE_BAND_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+  serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
+  TEMPERATURE_BAND_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -422,16 +423,19 @@ export async function resolveToolStylingContext({
   // fallback and was reachable even when that cache correctly refused to
   // reuse itself). Carry it forward only when no location was named this
   // call, or it matches the destination that produced it.
-  const carryForwardWeatherProfile = !safeExplicitLocation ||
-    !toolContext.resolvedWeatherContext?.location ||
-    toolContext.resolvedWeatherContext.location === safeExplicitLocation
+  const carryForwardWeatherProfile = !safeExplicitLocation
     ? toolContext.weatherProfile
-    : null
+    : toolContext.resolvedWeatherContext?.location &&
+      normalizedWeatherLocationIdentity(toolContext.resolvedWeatherContext.location) === normalizedWeatherLocationIdentity(safeExplicitLocation)
+      ? toolContext.weatherProfile
+      : null
   const establishedState = {
     occasion: toolContext.occasion,
     activity: toolContext.activity,
     season: toolContext.season,
-    statedWeather: toolContext.weather,
+    // Blended legacy prose is display/history context only, never executable
+    // weather authority for a new composition action.
+    statedWeather: '',
     weatherProfile: carryForwardWeatherProfile,
     mission: toolContext.mission,
     mood: toolContext.mood,

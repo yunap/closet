@@ -2,7 +2,7 @@ import { resolveActivityProfile, resolveComfortFootwearConstraint } from './foot
 import { resolveOccasionProfile } from './occasions.js'
 import { weatherProfileFromContext } from './rules.js'
 import { normalizeActivity, normalizeOccasion } from './stylingIntent.js'
-import { getCurrentWeatherProfile, resolveWeatherContext, validateUserWeather, validateWeatherEstimate } from './weather.js'
+import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, resolveWeatherContext, validateUserWeather, validateWeatherEstimate } from './weather.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 const SOURCE_ORDER = [
@@ -162,7 +162,7 @@ function statedWeatherProfile({ statedWeather, mood, requestText, date }) {
 // context") — a second call with the same location+date identity and no
 // NEW structured weather input reuses the cached result instead of
 // re-resolving (re-geocoding, re-fetching).
-async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContext = {}, weatherResolver, mood = '', season = '' }) {
+async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContext = {}, weatherResolver, mood = '', season = '', allowLiveLookup = true }) {
   // Deliberately NOT falling back to toolContext.location: that field is the
   // route-level home-location default (routes/ai.js: req.body.location ||
   // getHomeLocation()), set once at turn start and never a signal that THIS
@@ -217,7 +217,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   // structured weather input, is not enough to override that existing,
   // documented behavior. A structured user_weather/weather_estimate is a
   // stronger, independent signal and triggers regardless of season text.
-  const hasFreshDestination = Boolean(explicitLocation && dateRange?.start && isCurrentSeason(season))
+  const hasFreshDestination = Boolean(allowLiveLookup && explicitLocation && dateRange?.start && isCurrentSeason(season))
   const hasFreshStructuredWeather = Boolean(userWeather || modelEstimate)
   if (!hasFreshDestination && !hasFreshStructuredWeather) {
     // A location was named this call but does not match the cached
@@ -227,14 +227,14 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
     // no location was named this call, or it matches the cached one; a
     // mismatch falls through to null so the caller reaches the legacy
     // live-for-today/heuristic branch instead of a stale destination's cache.
-    if (cached && explicitLocation && (cached.location || '') !== explicitLocation) return null
+    if (cached && explicitLocation && normalizedWeatherLocationIdentity(cached.location) !== normalizedWeatherLocationIdentity(explicitLocation)) return null
     return cached || null
   }
 
   const cachedEnd = cached?.dateRange?.end || cached?.dateRange?.start
   const requestedEnd = dateRange ? (dateRange.end || dateRange.start) : null
   const identityMatches = cached &&
-    (cached.location || '') === explicitLocation &&
+    normalizedWeatherLocationIdentity(cached.location) === normalizedWeatherLocationIdentity(explicitLocation) &&
     (cached.dateRange?.start || null) === (dateRange?.start || null) &&
     cachedEnd === requestedEnd
   if (identityMatches && !userWeather && !modelEstimate) return cached
@@ -253,7 +253,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   // for my October Vienna trip") must go straight to the estimate, never
   // attempt a live lookup that would silently override the stated
   // hypothetical.
-  if (explicitLocation && dateRange?.start && isCurrentSeason(season)) {
+  if (allowLiveLookup && explicitLocation && dateRange?.start && isCurrentSeason(season)) {
     try {
       const live = await weatherResolver({ date: dateRange.start, location: explicitLocation, mood, season })
       if (live?.weatherSource === 'live') liveWeather = live
@@ -291,26 +291,63 @@ async function resolveWeather({
   weatherResolver,
   toolContext,
 }) {
-  // Spec docs/future-trip-weather-estimate-spec.md §6.5: structured
-  // resolution slots in exactly where the legacy live-weather branch used to
-  // sit — AFTER an explicit prose statedWeather or an already-resolved
-  // weatherProfile object, both of which represent a caller (or an earlier
-  // stage of the SAME turn, e.g. plan_outfit_set threading its own already-
-  // resolved weather through for occasion/activity purposes only) that has
-  // already settled the question and must not be silently re-resolved.
-  const stated = statedWeatherCandidate(evidence)
-  if (stated) {
-    return {
-      profile: statedWeatherProfile({ statedWeather: stated.value, mood, requestText, date }),
-      provenance: { source: `${stated.source}.stated_weather` },
+  const explicitRequest = evidence.explicitRequest || {}
+  const hasExplicitStructuredWeather = Boolean(
+    validateUserWeather(explicitRequest.userWeather) ||
+    validateWeatherEstimate(explicitRequest.weatherEstimate),
+  )
+
+  // Explicit structured user/model weather owns the request even when an
+  // older profile or prose snapshot is also present.
+  if (hasExplicitStructuredWeather) {
+    const namedDestination = await resolveNamedDestinationWeather({ explicitRequest, toolContext, weatherResolver, mood, season, allowLiveLookup: allowLiveWeather })
+    if (namedDestination) {
+      return {
+        profile: profileFromResolvedWeatherContext(namedDestination),
+        provenance: { source: `named_destination.${namedDestination.temperature.source}` },
+      }
     }
   }
 
+  // A caller-supplied executable profile is already resolved evidence. Do
+  // not replace it with another live lookup merely because the same request
+  // also names its location and date.
   const explicitProfile = profileCandidate(evidence, 'explicitRequest')
   if (explicitProfile) {
     return {
       profile: explicitProfile,
       provenance: { source: 'explicit_request.weather_profile' },
+    }
+  }
+
+  // Keep the legacy explicit stated-weather contract for direct callers
+  // (including the indoor sentinel), but never let lower-authority blended
+  // toolContext prose reach this branch ahead of destination resolution.
+  const explicitStatedWeather = text(explicitRequest.statedWeather)
+  if (explicitStatedWeather) {
+    return {
+      profile: statedWeatherProfile({ statedWeather: explicitStatedWeather, mood, requestText, date }),
+      provenance: { source: 'explicit_request.stated_weather' },
+    }
+  }
+
+  // Spec §6.1/§6.5: a named destination/date resolves before every
+  // lower-authority artifact/state prose or snapshot fallback.
+  if (allowLiveWeather) {
+    const namedDestination = await resolveNamedDestinationWeather({ explicitRequest, toolContext, weatherResolver, mood, season })
+    if (namedDestination) {
+      return {
+        profile: profileFromResolvedWeatherContext(namedDestination),
+        provenance: { source: `named_destination.${namedDestination.temperature.source}` },
+      }
+    }
+  }
+
+  const stated = statedWeatherCandidate(evidence)
+  if (stated) {
+    return {
+      profile: statedWeatherProfile({ statedWeather: stated.value, mood, requestText, date }),
+      provenance: { source: `${stated.source}.stated_weather` },
     }
   }
 
@@ -325,22 +362,6 @@ async function resolveWeather({
       : inferredProfile
         ? 'inference.weather_profile'
         : ''
-
-  if (allowLiveWeather) {
-    const namedDestination = await resolveNamedDestinationWeather({ explicitRequest: evidence.explicitRequest || {}, toolContext, weatherResolver, mood, season })
-    if (namedDestination) {
-      // Spec §6.2: an unresolved named destination/date must stop, never
-      // silently reuse an older snapshot (a different location/date, or an
-      // earlier turn's stale weather) — that snapshot has no
-      // resolvedWeatherContext attached, so weatherContextRequiredStop could
-      // never fire downstream if this fell back to it. Always return the
-      // 'unavailable' resolved context itself so the typed stop sees it.
-      return {
-        profile: profileFromResolvedWeatherContext(namedDestination),
-        provenance: { source: `named_destination.${namedDestination.temperature.source}` },
-      }
-    }
-  }
 
   if (allowLiveWeather && isCurrentSeason(season) && hasText(location)) {
     const live = await weatherResolver({

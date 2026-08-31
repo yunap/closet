@@ -1,5 +1,7 @@
 # Active memory surface — implementation spec
 
+**Status:** Active — implemented behavior and remaining surface contract.
+
 ## Outcome
 
 Style Profile must answer, for every active user-feedback memory it displays:

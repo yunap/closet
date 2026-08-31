@@ -1,7 +1,7 @@
 {
-  "warningCount": 55,
+  "warningCount": 54,
   "recordedAt": "2026-08-31",
-  "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in. Bumped 54->55 on 2026-08-31: confirmed via an isolated `git worktree add` checkout of unmodified main (0d8cdce) that main itself already reports 55 against the recorded 54 — a pre-existing drift unrelated to any weather-contract work on this branch, not something introduced or masked here. The extra warning is inside the script's own truncated \"...and 15 more\" tail, so it isn't independently identifiable by name; whoever picks up the missing-Status-header backlog next should re-run the script without a caller's truncation to find and fix it, then lower this number again.",
+  "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in. Restored to 54 on 2026-08-31 by adding the missing status header to docs/active-memory-surface-spec.md; the ratchet was repaired rather than weakened.",
   "composition": {
     "missingStatusHeader": "~40 — docs predate the Status/Last-verified convention. Backfilling them is the planned next commit; each one that gets a header lowers this number.",
     "staleFunctionCitations": "~9 — docs citing `someFunction()` that no longer exists in tracked source (e.g. rehydrateOutfitPieces, tripScopeClarificationEnabled, followupPrerouteEnabled). Each is either a rename to chase or a genuinely dead reference to fix.",

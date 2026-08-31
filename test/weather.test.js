@@ -5,13 +5,20 @@ import assert from 'node:assert/strict'
 import {
   getCurrentWeatherProfile, getWeatherProfileForPlan, _clearWeatherCachesForTests, serializeWeatherProfile, restoreWeatherProfile,
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
-  serializeResolvedWeatherContext, restoreResolvedWeatherContext,
+  serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
 } from '../styling-engine/weather.js'
 
 test('resolved weather physics round-trips independently from display season text', () => {
   const stored = serializeWeatherProfile({ weatherSource: 'live', highF: 78, lowF: 56, isHot: false, isCold: false, isExtremeHeat: false })
   assert.deepEqual(stored, { source: 'live', high_f: 78, low_f: 56, is_hot: false, is_cold: false, is_extreme_heat: false })
   assert.deepEqual(restoreWeatherProfile(stored), { weatherSource: 'live', highF: 78, lowF: 56, isHot: false, isCold: false, isExtremeHeat: false })
+})
+
+test('weather location identity normalizes punctuation, case, and US state names without conflating different places', () => {
+  assert.equal(normalizedWeatherLocationIdentity('Vienna VA'), 'vienna va')
+  assert.equal(normalizedWeatherLocationIdentity('Vienna, Virginia'), 'vienna va')
+  assert.equal(normalizedWeatherLocationIdentity('VIENNA, VA'), 'vienna va')
+  assert.notEqual(normalizedWeatherLocationIdentity('Vienna, Virginia'), normalizedWeatherLocationIdentity('Cambria, CA'))
 })
 import { profileRuleFit } from '../styling-engine/rules.js'
 

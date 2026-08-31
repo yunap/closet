@@ -1292,15 +1292,21 @@ temperature regex matched a bare "10" in "Build a 10-piece capsule" as a 10°F r
 true from a piece count) — real production phrasing, not just test noise. Fixed with a negative
 lookahead excluding a number immediately followed by a hyphenated word.
 
-**Deferred (P2, lower severity, real but not fixed this pass):** the cold-footwear gate has no
-`shared_anchor_ids`/`anchor:true` awareness — spec §6.4 says the rejection should be bypassed when the
-user explicitly anchored that piece, but implementing it requires threading anchor context through
-`evaluateAutomaticUsePiecePool`'s multi-file call chain, which was judged too large a change to rush
-under this review. Plan-level weather inheritance still compares raw location strings
-(`location === fallbackLocation`) rather than a normalized/geocoded identity — "Vienna VA" and
-"Vienna, Virginia" don't inherit each other's weather. The tool descriptions' stated precedence order
-("live forecast, then weather_estimate, then user_weather" — backwards from the actual
-user → live → estimate order) has been corrected.
+**[closure pass, 2026-08-31] The remaining review findings are implemented, not deferred.**
+`resolveWeather` now gives explicit structured user/model evidence first authority, preserves an
+already-resolved explicit profile or direct explicit stated-weather input, and resolves a named
+destination/date before any lower-authority artifact/state prose or snapshot. Consequently,
+`resolveToolStylingContext` no longer gives blended `toolContext.weather` executable authority.
+An unbound flat snapshot cannot cross into a newly named location. Cache reuse and plan inheritance
+share `normalizedWeatherLocationIdentity`, so punctuation/case and US state-name variants such as
+"Vienna VA" / "Vienna, Virginia" match while different places do not. Planner automatic-use
+evaluation now receives `shared_anchor_ids`, using the existing explicit-anchor bypass without
+erasing the underlying cold-footwear finding. Indoor cold-transit slots state the removable,
+sleeve-bearing layer requirement before composition, and submission validation checks it. The
+representative Vienna acceptance replay now includes city sightseeing, a museum day, and a nature
+walk; all three cards pass the first submission from one `plan_outfit_set` call with the 65/45
+estimate. The documentation warning ratchet remains 54; it was repaired with a real status header
+rather than raised.
 
 **Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
 owner's explicit confirmation before running, per the spec's own rule; not something to do

@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -1343,11 +1343,11 @@ function strictestRegisterCeilingRank(occasions = []) {
   return ranks.length ? Math.min(...ranks) : null
 }
 
-function evaluatePlannerAutomaticUsePool(pieces = [], context = {}) {
+function evaluatePlannerAutomaticUsePool(pieces = [], context = {}, { anchorIds = new Set() } = {}) {
   return evaluateAutomaticUsePiecePool({
     pieces,
     context,
-    policy: { hotOuterwearCap: 3 },
+    policy: { hotOuterwearCap: 3, anchorPieceIds: [...anchorIds] },
   })
 }
 
@@ -3446,7 +3446,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       activity: slot.stylingContext.activity,
       request: slotRequestText,
       ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
-    })
+    }, { anchorIds })
     const allowedPieces = gateResult.eligiblePieces
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
@@ -3640,6 +3640,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     }
     if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
       requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')
+    }
+    if (pendingSlot?.weatherProfile?.transitIsCold) {
+      requirements.push('This is a climate-controlled destination reached through cold weather: include adequate removable, sleeve-bearing outerwear for arrival and departure. The indoor base may stay light, but the first submitted outfit must already include the transit layer.')
     }
     if (pendingSlot?.weatherProfile?.isExtremeHeat) {
       requirements.push('Extreme-heat fit is advisory unless marked prohibited: lead with pieces rated preferred, use workable pieces only when they better serve another stated need, and avoid discouraged pieces when a preferred or workable option can do the same job. For full-length light pants, “light” describes fabric mass, not guaranteed comfort in triple-digit heat.')
@@ -3950,7 +3953,7 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
     // outside. A heavy indoor top/dress does not satisfy this — it isn't
     // removable once indoors — so only an actual layer piece counts here,
     // unlike the outdoor isCold branch above which also accepts a heavy main.
-    if (!layer) reasons.push('no warm layer for cold-weather transit (the indoor base may stay light, but a removable layer is still required for getting there and back)')
+    if (!layer || hasSleevelessConstruction(layer)) reasons.push('no adequate sleeve-bearing layer for cold-weather transit (the indoor base may stay light, but removable coverage is required for getting there and back)')
   }
   if (weatherProfile?.isHot) {
     for (const piece of mainPieces) {
@@ -4610,7 +4613,8 @@ export function normalizePlanSlots(rawSlots = [], {
       // date — a different-location detour, or a slot date outside the plan
       // range, must supply its own weather rather than silently inheriting
       // weather stated about the main destination/window.
-      const locationMatchesPlan = !location || location === fallbackLocation
+      const locationMatchesPlan = !location ||
+        normalizedWeatherLocationIdentity(location) === normalizedWeatherLocationIdentity(fallbackLocation)
       const dateCompatibleWithPlan = planSlotDateCompatibleWithRange(slotDate, dateRange)
       const inheritsPlanWeather = locationMatchesPlan && dateCompatibleWithPlan
       const slotUserWeather = validateUserWeather(slot?.user_weather)
