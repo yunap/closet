@@ -175,8 +175,15 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // office day toward sleeveless/beachy pieces (live finding: office week
   // composed for the outdoor Walnut Creek heat).
   assert.ok(STYLIST_SYSTEM.includes('INDOOR slots are climate-controlled'))
-  assert.ok(STYLIST_SYSTEM.includes("pass \`weather:'indoor'\` so the slot is NOT composed for outdoor heat or cold"))
+  // docs/future-trip-weather-estimate-spec.md §3.2/§4.3: environment is now
+  // the sole model-facing indoor/outdoor/beach_coastal signal; weather is
+  // always structured (user_weather/weather_estimate), never free text.
+  assert.ok(STYLIST_SYSTEM.includes("set \`environment:'indoor'\` — the ONLY field for indoor/outdoor/beach_coastal"))
   assert.ok(STYLIST_SYSTEM.includes('Reserve the live per-slot forecast for slots actually spent OUTDOORS'))
+  assert.ok(STYLIST_SYSTEM.includes('pass a conservative numeric \`weather_estimate\`'))
+  assert.ok(STYLIST_SYSTEM.includes('risks a \`weather_context_required\` stop'))
+  assert.ok(STYLIST_SYSTEM.includes('translate only what they actually said into \`user_weather\`'))
+  assert.ok(STYLIST_SYSTEM.includes('convert a stated Celsius value to Fahrenheit yourself'))
   // Register escalation for event weekends (live finding: the wedding ceremony
   // came out in denim + a leather zip, not the dressiest slot).
   assert.ok(STYLIST_SYSTEM.includes("set each slot's \`register\` so the peak reads dressiest"))
