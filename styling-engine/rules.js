@@ -2787,6 +2787,19 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
       reasons.push('cold weather: bare/sleeveless')
     }
   }
+  // Spec docs/future-trip-weather-estimate-spec.md §6.4: cold-transit
+  // footwear. Structured fields only (shoe_type/toe_shape), never garment
+  // name matching — an open-toe sandal is unsafe in 45°F cold transit
+  // whether or not the word "sandal" appears in its name. Fires for
+  // ordinary outdoor cold (isCold) and for an indoor slot's preserved
+  // outdoor transit temperature (transitIsCold) alike — an indoor base may
+  // stay light, but its footwear still has to survive the walk there.
+  // Closed athletic sneakers are untouched by this rule.
+  if (weatherProfile.isCold || weatherProfile.transitIsCold) {
+    if (wardrobeCategoryGroup(piece) === 'shoes' && (piece.toe_shape === 'open_toe' || piece.shoe_type === 'sandal')) {
+      reasons.push('cold weather: open-toe/warm-weather footwear')
+    }
+  }
 
   if (weatherProfile.isWetExposure && pieceHasWetSensitiveFootwearMaterial(piece)) {
     reasons.push('wet exposure: absorbent footwear material')

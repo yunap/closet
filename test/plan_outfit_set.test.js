@@ -737,7 +737,8 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   const bareTank = insertPiece({ category: 'top', name: 'metallic stripe scoop tank', occasions: ['evening'], formality: 'everyday', sleeve_length: 'sleeveless' })
   const layeredTop = insertPiece({ category: 'top', name: 'long sleeve knit top', occasions: ['evening'], formality: 'everyday', sleeve_length: 'long' })
   insertPiece({ category: 'bottom', name: 'oatmeal elastic-waist pants', occasions: ['evening'], formality: 'everyday' })
-  insertPiece({ category: 'shoes', name: 'closed leather flats', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const openSandal = insertPiece({ category: 'shoes', name: 'brown suede platform sandals', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+  const closedFlats = insertPiece({ category: 'shoes', name: 'closed leather flats', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'flat' })
 
   const toolContext = {
     declaredIntent: { want: 'cards' },
@@ -759,6 +760,30 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   const allowed = new Set(result.slots[0].allowed_piece_ids)
   assert.equal(allowed.has(bareTank), false, 'a sleeveless top must be excluded once the estimate establishes cold')
   assert.ok(allowed.has(layeredTop))
+  // spec §6.4/§9 acceptance item 21: an open platform sandal is rejected for
+  // 45°F cold transit — structured shoe_type/toe_shape, not garment names.
+  assert.equal(allowed.has(openSandal), false, 'an open-toe sandal must be excluded for a 45F low')
+  assert.ok(allowed.has(closedFlats), 'closed footwear remains allowed')
+})
+
+test('plan_outfit_set: cold-transit footwear rejection also fires for an indoor slot\'s preserved outdoor temperature, and spares closed sneakers', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const lightTop = insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })
+  const lightBottom = insertPiece({ category: 'bottom', name: 'museum pants', occasions: ['city'], formality: 'everyday' })
+  const openSandal = insertPiece({ category: 'shoes', name: 'strappy sandal', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'open_toe', shoe_type: 'sandal' })
+  const closedSneaker = insertPiece({ category: 'shoes', name: 'white sneaker', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', toe_shape: 'round', shoe_type: 'sneaker' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+
+  const slots = normalizePlanSlots([
+    { label: 'Museum Visit', occasion: 'city', activity: 'none', environment: 'indoor', count: 1, weather_estimate: { high_f: 55, low_f: 40 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'museum visit' })
+  const allowed = new Set(workbench.slots[0].allowed_piece_ids)
+  assert.match(workbench.slots[0].weather_used, /55°F high \/ 40°F low — seasonal estimate, not a live forecast/)
+  assert.ok(allowed.has(lightTop), 'the indoor base may stay light')
+  assert.ok(allowed.has(lightBottom))
+  assert.equal(allowed.has(openSandal), false, 'an open sandal must be rejected for cold transit even though the indoor base is permissive')
+  assert.ok(allowed.has(closedSneaker), 'closed athletic sneakers remain valid')
 })
 
 test('plan_outfit_set stops with weather_context_required (typed) when live weather is unavailable and no estimate was supplied', async () => {
@@ -3018,6 +3043,8 @@ function insertPiece(overrides = {}) {
     length_hits_at: '',
     heel_height: null,
     walk_support: null,
+    toe_shape: null,
+    shoe_type: null,
     style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
     ...overrides,
   }
@@ -3027,13 +3054,13 @@ function insertPiece(overrides = {}) {
       recommendation_status, fit_confidence, role_permission, occasion_permissions,
       engine_notes, photo, worn_photo, pattern_type, pattern_scale,
       pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content,
-      formality, sleeve_length, length_hits_at, heel_height, walk_support, style_profile_json
+      formality, sleeve_length, length_hits_at, heel_height, walk_support, toe_shape, shoe_type, style_profile_json
     ) VALUES (
       @name, @category, @colors, @occasions, @season, @notes, @status,
       @recommendation_status, @fit_confidence, @role_permission, @occasion_permissions,
       @engine_notes, @photo, @worn_photo, @pattern_type, @pattern_scale,
       @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight, @fiber_content,
-      @formality, @sleeve_length, @length_hits_at, @heel_height, @walk_support, @style_profile_json
+      @formality, @sleeve_length, @length_hits_at, @heel_height, @walk_support, @toe_shape, @shoe_type, @style_profile_json
     )
   `).run({
     ...piece,
