@@ -2114,5 +2114,13 @@ a `needs_base` garment remains a separate hard contract.
   the first submission, and the representative Vienna replay now covers sightseeing, museum, and
   nature-walk slots in one plan/submit sequence with no repair.
 
+  **[independent-review closure, 2026-08-31]** Cache reuse now validates an
+  explicitly changed date even when a follow-up omits the already-discovered
+  location. The single-outfit `season:'indoor'` convention preserves matching
+  structured destination weather as transit physics, and compose-mode
+  `search_wardrobe` filters the shared automatic-use hard verdict before the
+  roster reaches the model. The cross-flow fixture now replaces legacy weather
+  prose with structured ranges while preserving its reviewed candidate outputs.
+
   Still open: §10's live paid Vienna VA verification — needs printed cost and
   the owner's explicit confirmation first, per the spec's own rule.

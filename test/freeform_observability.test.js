@@ -2519,6 +2519,74 @@ test('executeTool search_wardrobe records weatherSource onto toolContext.freefor
   assert.equal(toolContext.freeformDiagnostics.weatherSource, 'model_estimate')
 })
 
+test('executeTool search_wardrobe excludes ordinary open sandals from a cold compose roster', async () => {
+  const insert = db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES (?, 'shoes', 'active', '["city"]', 'everyday', ?, ?, 'flat', 'high')
+  `)
+  const sandalId = Number(insert.run('cold search open sandal', 'sandal', 'open_toe').lastInsertRowid)
+  const sneakerId = Number(insert.run('cold search closed sneaker', 'sneaker', 'round').lastInsertRowid)
+  try {
+    const toolContext = { freeformDiagnostics: {} }
+    const results = await executeTool('search_wardrobe', {
+      category: 'shoes',
+      occasion: 'city',
+      weather_estimate: { high_f: 65, low_f: 45 },
+    }, toolContext)
+    const ids = new Set(results.filter(item => item?.id).map(item => Number(item.id)))
+    assert.equal(ids.has(sandalId), false)
+    assert.equal(ids.has(sneakerId), true)
+    assert.ok(toolContext.freeformDiagnostics.gateExcludedTotal >= 1)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(sandalId, sneakerId)
+  }
+})
+
+test('executeTool propose_outfit preserves cached cold transit when season is indoor', async () => {
+  const insert = db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, occasions, formality, fabric_category, fabric_weight, sleeve_length, shoe_type, toe_shape, heel_height, walk_support)
+    VALUES (?, ?, 'active', '["city"]', 'everyday', ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const topId = Number(insert.run('indoor transit long sleeve top', 'top', 'cotton', 'light', 'long', null, null, null, null).lastInsertRowid)
+  const bottomId = Number(insert.run('indoor transit trousers', 'bottom', 'cotton', 'medium', null, null, null, null, null).lastInsertRowid)
+  const sandalId = Number(insert.run('indoor transit open sandal', 'shoes', 'leather', 'light', null, 'sandal', 'open_toe', 'flat', 'high').lastInsertRowid)
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], freeformDiagnostics: {} }
+    await executeTool('search_wardrobe', {
+      occasion: 'city',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 65, low_f: 45 },
+    }, toolContext)
+    await executeTool('search_wardrobe', {
+      query: 'indoor transit open sandal',
+      occasion: 'city',
+      intent: 'explain',
+    }, toolContext)
+
+    const result = await executeTool('propose_outfit', {
+      label: 'Cold museum transit',
+      season: 'indoor',
+      occasion: 'city',
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: sandalId, role: 'shoes' },
+      ],
+    }, toolContext)
+
+    assert.equal(toolContext.weatherProfile.isIndoor, true)
+    assert.equal(toolContext.weatherProfile.transitIsCold, true)
+    assert.equal(toolContext.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
+    assert.equal(result.status, 'validation_error')
+    assert.match(result.message, /cold weather.*(open-toe|sandal)/i)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, sandalId)
+  }
+})
+
 // With no weather arg of its own and no location, resolution falls all the way through to the text
 // heuristic (NODE_ENV=test with no location never hits the network).
 test('executeTool search_wardrobe falls back to the heuristic weatherSource without a stated weather arg', async () => {
@@ -3005,7 +3073,7 @@ test('executeTool propose_outfit accepts cold/rainy-appropriate pieces after a s
   }
 })
 
-test('executeTool propose_outfit rejects hot-weather gated pieces using weather resolved by prior search', async () => {
+test('search excludes hot-weather hard failures before composition and propose_outfit still enforces the gate', async () => {
   const woolTopId = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
     VALUES ('obs green brown wool tunic', 'top', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'wool tunic', '', 'wool', 'medium', '["wool"]', 'everyday', '', '{}')
@@ -3021,9 +3089,24 @@ test('executeTool propose_outfit rejects hot-weather gated pieces using weather 
 
   try {
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
-    await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot' }, toolContext)
+    const composeSearch = await executeTool('search_wardrobe', {
+      occasion: 'city',
+      activity: 'walking',
+      weather_estimate: { high_f: 92, low_f: 78 },
+    }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
     assert.equal(toolContext.activity, 'walking')
+    assert.equal(composeSearch.some(item => Number(item?.id) === Number(woolTopId)), false,
+      'the insulating top must not enter the model composition roster')
+
+    // Explain mode intentionally makes the rejected garment inspectable. Once
+    // verified, the proposal boundary must still enforce the same hard gate.
+    await executeTool('search_wardrobe', {
+      query: 'obs green brown wool tunic',
+      occasion: 'city',
+      activity: 'walking',
+      intent: 'explain',
+    }, toolContext)
 
     const result = await executeTool('propose_outfit', {
       label: 'City Day Stroll',

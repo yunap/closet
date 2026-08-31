@@ -799,9 +799,9 @@ plan_outfit_set({
   now means only a typed `user_weather` argument the model fills in from an
   explicit CURRENT-message claim — never free-text `slot.weather` prose
   (removed from the schema) and never a regex re-parse of the question.
-  `plan_outfit_set` resolves live → `weather_estimate` (model's own numeric
-  seasonal guess, provided proactively for a future destination outside
-  live coverage) → `user_weather` in override order per field
+  `plan_outfit_set` resolves `user_weather` → live → `weather_estimate` (the
+  model's own numeric seasonal guess, provided proactively for a future
+  destination outside live coverage) in precedence order per field
   (`styling-engine/weather.js`'s `resolveWeatherContext`), and returns
   `weather_context_required` before composing if a named destination/date's
   temperature stays unresolved. See
@@ -810,8 +810,9 @@ plan_outfit_set({
   alongside it. **[single-outfit parity, 2026-08-31]** Extended to
   `search_wardrobe`/`propose_outfit`/`generate_outfits`: the shared
   `resolveWeather` in `stylingContext.js` gained `resolveNamedDestinationWeather`,
-  slotted where the legacy live-weather branch sat (after stated-prose and
-  pre-resolved-profile precedence, behind the same hypothetical-season gate),
+  with explicit structured weather first, direct explicit resolved/stated
+  inputs preserved, and named destination/date resolution ahead of lower-authority
+  artifact/state prose and snapshots (live lookup keeps the hypothetical-season gate),
   triggering on a fresh `location`+`date` or a bare `user_weather`/`weather_estimate`
   and caching onto `toolContext.resolvedWeatherContext` so a later call in the same
   turn reuses it. **[typed unresolved stop, 2026-08-31]** The typed
@@ -824,6 +825,10 @@ plan_outfit_set({
   (`boundedConversationStateFromToolContext`, `outfitSetFromBody`) project them
   per-outfit as `weather_used`/`resolved_weather_context`, so a follow-up about one
   slot's weather in a multi-slot trip reads that slot's own resolution back.
+  **[independent-review closure, 2026-08-31]** A date-only follow-up re-resolves the
+  cached destination for the new date; `season:'indoor'` projects cached weather
+  into outdoor-transit fields instead of erasing it; and compose-mode wardrobe
+  search removes automatic-use hard failures before returning the model roster.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning

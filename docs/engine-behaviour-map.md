@@ -1166,12 +1166,13 @@ entirely.
 **[single-outfit parity, 2026-08-31] `search_wardrobe`/`propose_outfit`/`generate_outfits` resolve
 weather through the same structured contract as `plan_outfit_set`.** `stylingContext.js`'s shared
 `resolveWeather` — used by every direct/non-chat generation caller too — gains
-`resolveNamedDestinationWeather`, slotted exactly where the legacy live-weather branch used to sit:
-after the existing prose-`statedWeather` and pre-resolved-`weatherProfile`-object precedence tiers
-(which still win outright when present — an already-settled resolution must never be silently
-re-resolved), gated by the same `isCurrentSeason` check the legacy branch used (an explicit
-hypothetical season still bypasses live resolution). Triggers on a fresh `location`+`date` or a bare
-structured `user_weather`/`weather_estimate` with no destination at all; reuses the injectable
+`resolveNamedDestinationWeather`. Explicit structured `user_weather`/`weather_estimate` resolves
+first; a direct already-resolved `weatherProfile` or direct explicit stated-weather input remains
+authoritative; named destination/date resolution then precedes lower-authority artifact/state prose
+or snapshots. Live lookup remains gated by the same `isCurrentSeason` check the legacy branch used
+(an explicit hypothetical season still bypasses live resolution). It triggers on a fresh
+`location`+`date` or a bare structured `user_weather`/`weather_estimate` with no destination at all;
+reuses the injectable
 `weatherResolver` seam (not a separate fetch mechanism) so existing test mocks intercept it
 transparently. `toolContext.resolvedWeatherContext` caches the result — a matching second call
 (`propose_outfit` after `search_wardrobe`, no location/date of its own) reuses the cache instead of
@@ -1281,7 +1282,7 @@ reproducible, and would have let the original bug class recur.**
    field, unconditionally threaded forward) still leaked the same stale profile across a mismatched
    location. Fixed both: the cache function now refuses to reuse across a location mismatch even
    without a date, and the establishedState carryover is now gated the same way.
-   
+
 Also fixed while reproducing: `validateWeatherEstimate`/`validateUserWeather` coerced their inputs
 with `Number(...)` before range-checking, so `{high_f:null,low_f:null}` silently validated as 0°F/0°F
 and a model-hallucinated string `"65"` passed as a real number; `resolveConditionField` treated a
@@ -1307,6 +1308,16 @@ representative Vienna acceptance replay now includes city sightseeing, a museum 
 walk; all three cards pass the first submission from one `plan_outfit_set` call with the 65/45
 estimate. The documentation warning ratchet remains 54; it was repaired with a real status header
 rather than raised.
+
+**[independent-review closure, 2026-08-31]** Cache identity now checks both normalized location and
+date range: a date-only follow-up binds to the cached named destination and resolves the new date.
+`season:'indoor'` is treated as an environment projection, so a matching cached destination keeps
+its structured source and outdoor temperature under `transit*` fields instead of becoming neutral
+prose weather. In compose mode, `search_wardrobe` consumes the automatic-use hard verdict before
+returning a roster; cold-open footwear and other engine validity failures no longer reach the model
+for later repair, while `intent:'explain'` remains inspectable. The architecture fixture replaces
+legacy weather prose with structured ranges and preserves its reviewed candidate outputs; only the
+truthful structured weather labels change.
 
 **Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
 owner's explicit confirmation before running, per the spec's own rule; not something to do

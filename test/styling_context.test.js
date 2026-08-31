@@ -115,6 +115,67 @@ test('explicit structured weather remains executable when live lookup is disable
   assert.equal(context.provenanceByField.weatherProfile.source, 'named_destination.model_estimate')
 })
 
+test('a date-only follow-up re-resolves the cached destination for the new date', async () => {
+  const calls = []
+  const toolContext = {}
+  const resolveStylingContext = createStylingContextResolver({
+    weatherResolver: async ({ date, location }) => {
+      calls.push({ date, location })
+      if (date === '2026-10-13') {
+        return { isHot: true, isCold: false, highF: 88, lowF: 72, weatherSource: 'live' }
+      }
+      return { isHot: false, isCold: false, weatherSource: 'unavailable' }
+    },
+  })
+
+  const first = await resolveStylingContext({
+    explicitRequest: {
+      season: 'current season',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    toolContext,
+  })
+  const second = await resolveStylingContext({
+    explicitRequest: { season: 'current season', date: '2026-10-13' },
+    toolContext,
+  })
+
+  assert.equal(first.weatherProfile.isCold, true)
+  assert.deepEqual(calls.at(-1), { date: '2026-10-13', location: 'Vienna, Virginia' })
+  assert.equal(second.weatherProfile.weatherSource, 'live')
+  assert.equal(second.weatherProfile.isHot, true)
+  assert.equal(second.weatherProfile.resolvedWeatherContext.dateRange.start, '2026-10-13')
+})
+
+test('indoor projects cached destination weather into transit constraints instead of erasing it', async () => {
+  const toolContext = {}
+  const resolveStylingContext = createStylingContextResolver({
+    weatherResolver: async () => ({ isHot: false, isCold: false, weatherSource: 'unavailable' }),
+  })
+  await resolveStylingContext({
+    explicitRequest: {
+      season: 'current season',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weatherEstimate: { high_f: 65, low_f: 45 },
+    },
+    toolContext,
+  })
+  const indoor = await resolveStylingContext({
+    explicitRequest: { statedWeather: 'indoor' },
+    toolContext,
+  })
+
+  assert.equal(indoor.weatherProfile.isIndoor, true)
+  assert.equal(indoor.weatherProfile.isCold, false, 'the climate-controlled base remains permissive')
+  assert.equal(indoor.weatherProfile.transitIsCold, true, 'outdoor cold remains enforceable for transit')
+  assert.equal(indoor.weatherProfile.weatherSource, 'model_estimate')
+  assert.equal(indoor.weatherProfile.resolvedWeatherContext.location, 'Vienna, Virginia')
+  assert.equal(indoor.provenanceByField.weatherProfile.source, 'named_destination.model_estimate')
+})
+
 test('live weather refreshes an older artifact snapshot for current season', async () => {
   const live = { isHot: false, isCold: true, highF: 51, lowF: 42, weatherSource: 'live' }
   const resolveStylingContext = createStylingContextResolver({ weatherResolver: async () => live })

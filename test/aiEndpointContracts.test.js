@@ -3673,14 +3673,21 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   const bottoms = await executeTool('search_wardrobe', {
     category: 'bottom',
     occasion: 'city',
-    weather: 'highs 80-90F'
+    weather_estimate: { high_f: 90, low_f: 80 }
   })
   assert.ok(Array.isArray(bottoms))
   const linen = bottoms.find(p => p.id === seeded.bottom)
-  const denim = bottoms.find(p => p.id === seeded.jeans)
   assert.equal(linen.weatherFit, 'lightweight - good for heat')
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
-  assert.ok(bottoms.findIndex(p => p.id === seeded.bottom) < bottoms.findIndex(p => p.id === seeded.jeans))
+  assert.equal(bottoms.some(p => p.id === seeded.jeans), false, 'compose mode excludes the hard hot-weather failure')
+
+  const explainedBottoms = await executeTool('search_wardrobe', {
+    category: 'bottom',
+    occasion: 'city',
+    weather_estimate: { high_f: 90, low_f: 80 },
+    intent: 'explain',
+  })
+  const denim = explainedBottoms.find(p => p.id === seeded.jeans)
+  assert.equal(denim.weatherFit, 'heavy - too warm for the heat', 'explain mode preserves the rejected piece and annotation')
 
   const hikingShoes = await executeTool('search_wardrobe', {
     category: 'shoes',
@@ -3706,7 +3713,7 @@ test('executeTool search_wardrobe excludes prohibited pieces in compose mode and
     // compose (default): a high heel is prohibited for hiking → filtered out entirely.
     const composed = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking' })
     assert.ok(!composed.some(p => p.id === heelId), 'prohibited high heel should be filtered out of compose-mode results')
-    assert.ok(composed.some(p => (p.note || '').includes('filtered out as prohibited')), 'a gate-exclusion note should be present')
+    assert.ok(composed.some(p => (p.note || '').includes('filtered out by hard occasion/activity/weather gates')), 'a gate-exclusion note should be present')
     assert.ok(composed.some(p => p.id && p.ruleFit && p.ruleFit !== 'prohibited'), 'wearable shoes still remain (filter is selective)')
 
     // explain: the same prohibited piece IS returned, with its reasoning label.
@@ -3723,7 +3730,7 @@ test('executeTool search_wardrobe excludes prohibited pieces in compose mode and
 test('executeTool search_wardrobe relies on structured occasion instead of dinner query normalization', async () => {
   const dinnerSearch = await executeTool('search_wardrobe', {
     occasion: 'evening',
-    weather: '81f',
+    weather_estimate: { high_f: 72, low_f: 58 },
     visual: true,
   })
   assert.ok(Array.isArray(dinnerSearch))
@@ -3734,7 +3741,7 @@ test('executeTool search_wardrobe relies on structured occasion instead of dinne
   const flexibleEveningTops = await executeTool('search_wardrobe', {
     category: 'top',
     occasion: 'evening',
-    weather: '81f',
+    weather_estimate: { high_f: 72, low_f: 58 },
   })
   assert.ok(flexibleEveningTops.some(item => item.id === seeded.top))
   assert.ok(flexibleEveningTops.some(item => /No active pieces are explicitly tagged for "evening"/.test(item.note || '')))
@@ -3759,15 +3766,17 @@ test('executeTool search_wardrobe treats occasion-only queries canonically', asy
   assert.ok(!weddingSearch.some(item => item.id === decoy), 'wedding should not be treated as literal garment-note text')
 })
 
-test('executeTool search_wardrobe uses toolContext weather when model omits weather arg', async () => {
+test('executeTool search_wardrobe uses a structured toolContext weather profile when the model omits weather args', async () => {
   db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('linen', 'light', seeded.bottom)
   db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('denim', 'heavy', seeded.jeans)
 
   const bottoms = await executeTool('search_wardrobe', {
     category: 'bottom',
-    occasion: 'city'
+    occasion: 'city',
+    intent: 'explain',
   }, {
-    weather: 'hot weather'
+    weather: 'cold weather',
+    weatherProfile: { isHot: true, isCold: false, highF: 90, lowF: 80, weatherSource: 'live' },
   })
 
   const linen = bottoms.find(p => p.id === seeded.bottom)

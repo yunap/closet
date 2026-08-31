@@ -394,10 +394,10 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
   toolContext.freeformDiagnostics.capsuleCompositionFailureCode = code
 }
 
-// Stated weather (this tool call's own weather/season text) wins outright over a
-// live location lookup — mirrors outfitSetPlanner.js's resolveSlotWeather
-// precedent ("user-stated per-slot weather wins outright... otherwise the
-// slot's own live forecast"). Without this, a followup that states NEW weather
+// Direct explicit weather remains authoritative, while typed user/model fields
+// resolve through the shared field-level contract. `indoor` is an environment
+// projection: it may neutralize the room's base without erasing cached outdoor
+// transit physics. Without the direct explicit tier, a followup that states NEW weather
 // ("add a rainy-day option") on a thread whose home location resolves to
 // different live conditions gets silently overridden: live-tested 2026-07-14 —
 // search_wardrobe's own weather:"rainy weather" arg was discarded because
@@ -1047,7 +1047,7 @@ export const STYLIST_TOOLS = [
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
-        season: { type: "string", description: "Season/weather context. Optional. For indoor occasions (office, restaurant, meeting, gallery), pass season:'indoor' — the live forecast applies only to time spent outdoors." },
+        season: { type: "string", description: "Season/environment context. Optional. For an indoor occasion (office, restaurant, meeting, gallery), pass season:'indoor'. The indoor base is climate-controlled, but matching resolved destination weather still governs arrival/departure: when transit is cold, include removable sleeve-bearing coverage and cold-appropriate footwear." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." },
         location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
         date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
@@ -1224,6 +1224,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const relaxationPass = Number(args.__relaxationPass) || 0
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, activity, visual, intent, location, date } = args
+        const hadEstablishedWeatherContext = relaxationPass > 0
+          ? args.__automaticGateContext === true
+          : Boolean(toolContext.resolvedWeatherContext || toolContext.weatherProfile)
         const requestText = [
           toolContext.request,
           toolContext.question,
@@ -1296,34 +1299,53 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         let fallbackNote = ''
         let gateSupplyFallbackNote = ''
+        let automaticGateExcludedCount = 0
+        // A plain inventory/fact search with no composition context remains a
+        // no-op for suitability. Once this call (or an earlier call in the
+        // same turn) establishes occasion/activity/weather, the shared hard
+        // verdict becomes the roster boundary even if `occasion` itself was
+        // omitted.
+        const hasAutomaticGateContext = Boolean(
+          occasion || activity || location || date || args?.season ||
+          args?.user_weather || args?.weather_estimate || hadEstablishedWeatherContext
+        )
+        const searchEligibility = hasAutomaticGateContext
+          ? evaluateAutomaticUsePiecePool({
+              pieces: filtered,
+              context: automaticUseContextFromStylingContext(stylingContext),
+            })
+          : null
+        let automaticGatePool = filtered
         if (occasion) {
           const beforeOccasionFilter = filtered
-          const searchEligibility = evaluateAutomaticUsePiecePool({
-            pieces: filtered,
-            context: automaticUseContextFromStylingContext(stylingContext),
-          })
-          const occasionFiltered = filtered.filter(p => {
-            if (!pieceOccasionCompatible(p, occasion)) return false
-            // docs/activity-and-roster-spec.md §5.4. This passed `occasion` alone, so an
-            // owner_constraints row scoped to an activity, season or weather could never apply to
-            // the roster the model composes from — only to the proposal afterwards. Both stored
-            // constraints in the development wardrobe are activity- or season-scoped.
-            const decision = searchEligibility.decisionsById.get(Number(p.id))
-            if (decision?.underlyingAllowed) return true
-            // Reject HERE only for the owner's own standing decisions. Passing activity/season above
-            // also makes this call evaluate the full profile gate, and letting that reject at this
-            // stage would move profile exclusions ahead of the ruleFit pass that counts them, annotates
-            // them, and hands them back under intent:'explain' — the piece would vanish with no
-            // number, no label and no way to ask why. Profile fit is judged once, below.
-            return !decision?.findings.some(finding => finding.authority === 'owner')
-          })
-          if (occasionFiltered.length) {
-            filtered = occasionFiltered
-          } else {
-            filtered = beforeOccasionFilter
+          const explicitlyOccasionCompatible = filtered.filter(p => pieceOccasionCompatible(p, occasion))
+          automaticGatePool = explicitlyOccasionCompatible.length
+            ? explicitlyOccasionCompatible
+            : beforeOccasionFilter
+          if (!explicitlyOccasionCompatible.length) {
             fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
           }
         }
+        const automaticGateFiltered = !searchEligibility ? automaticGatePool : automaticGatePool.filter(p => {
+          // docs/activity-and-roster-spec.md §5.4. Evaluating the complete
+          // context here means activity-, season-, and weather-scoped validity
+          // applies even when no occasion filter was supplied.
+          const decision = searchEligibility.decisionsById.get(Number(p.id))
+          if (decision?.underlyingAllowed) return true
+          // Explain mode keeps engine findings visible for discussion but
+          // still honors the owner's standing decisions. Compose mode must
+          // consume the automatic-use verdict as a hard roster boundary;
+          // otherwise invalid pieces reach the model and rely on a later
+          // proposal rejection to repair the search roster.
+          if (intent === 'explain') return !decision?.findings.some(finding => finding.authority === 'owner')
+          return decision?.underlyingAllowed !== false
+        })
+        automaticGateExcludedCount = automaticGatePool.length - automaticGateFiltered.length
+        // Hard validity findings do not degrade to an annotated fallback in
+        // compose mode: that would put the exact weather/activity-invalid
+        // pieces back into the roster the model composes from. Explain mode
+        // remains inspectable, while owner constraints stay authoritative.
+        filtered = automaticGateFiltered
         if (query) {
           const qLower = query.toLowerCase()
           const queryOccasion = isOccasionOnlySearchQuery(query) ? canonicalOccasionFromQuery(query) : ''
@@ -1345,7 +1367,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         let excludedCount = 0
-        let gateExcludedCount = 0
+        let gateExcludedCount = automaticGateExcludedCount
         let requestExcludedCount = 0
         if (toolContext && toolContext.allowedPieceIds) {
           const allowedSet = toolContext.allowedPieceIds instanceof Set 
@@ -1425,7 +1447,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // Count what the gate found either way: the diagnostic is about what the gate judged,
             // not about what survived, and a fallback that silently reports zero exclusions would
             // hide exactly the case worth knowing about.
-            gateExcludedCount = beforeGate - kept.length
+            gateExcludedCount += beforeGate - kept.length
             if (!kept.length && beforeGate > 0) {
               gateSupplyFallbackNote = `No active pieces fully satisfy ${activityProfile?.label || 'this activity'}${occasion ? ` for ${occasion}` : ''}; showing the closest available pieces instead, annotated with ruleFit so you can judge and say what is missing.`
             } else {
@@ -1568,7 +1590,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
 
         if (gateExcludedCount > 0) {
           resultList.push({
-            note: `(${gateExcludedCount} piece(s) filtered out as prohibited for this occasion/activity; re-query with intent:'explain' to see and discuss them)`
+            note: `(${gateExcludedCount} piece(s) filtered out by hard occasion/activity/weather gates; re-query with intent:'explain' to see and discuss them)`
           })
         }
 
@@ -1610,7 +1632,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (shortfalls.length && nextRung) {
           // Climb a rung. If this rung has nothing to drop, keep climbing — an empty rung must not
           // silently end broadening while filters remain that could still be relaxed.
-          const relaxedArgs = { ...args, __relaxationPass: relaxationPass + 1, __relaxedFilters: [...relaxedSoFar, ...relaxable] }
+          const relaxedArgs = {
+            ...args,
+            __relaxationPass: relaxationPass + 1,
+            __relaxedFilters: [...relaxedSoFar, ...relaxable],
+            __automaticGateContext: hasAutomaticGateContext,
+          }
           for (const name of relaxable) delete relaxedArgs[name]
           return executeToolInternal('search_wardrobe', relaxedArgs, toolContext)
         }
