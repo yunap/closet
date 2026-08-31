@@ -1074,6 +1074,32 @@ test('resolveToolStylingContext: a mismatched location prevents cache reuse and 
   assert.equal(differentLocation.weatherProfile.resolvedWeatherContext.location, 'Cambria, CA')
 })
 
+// Regression: a location named this call but with NO date of its own (so
+// resolveNamedDestinationWeather's own hasFreshDestination stays false and it
+// falls to its "reuse cache or return null" branch) must not fall through to
+// the SEPARATE establishedState.weatherProfile carryover either — that flat
+// profile persists across calls independent of the structured cache, and
+// previously leaked a stale different-location profile through it even after
+// the structured cache correctly refused to reuse itself.
+test('resolveToolStylingContext: a different location with no date of its own does not inherit the prior stale weatherProfile', async () => {
+  const toolContext = {}
+  await resolveToolStylingContext({
+    explicitRequest: { location: 'Vienna, Virginia', date: '2026-10-12', weatherEstimate: { high_f: 65, low_f: 45 } },
+    toolContext,
+    policy: { allowLiveWeather: true },
+  })
+  assert.equal(toolContext.weatherProfile.isCold, true)
+
+  const second = await resolveToolStylingContext({
+    explicitRequest: { location: 'Cambria, CA' },
+    toolContext,
+    policy: { allowLiveWeather: true },
+    weatherResolver: async () => ({ weatherSource: 'unavailable' }),
+  })
+  assert.notEqual(second.weatherProfile.weatherSource, 'model_estimate', 'must not silently inherit Vienna\'s estimate for a different, unrelated place')
+  assert.equal(second.weatherProfile.highF, undefined)
+})
+
 test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed plan with only SOME slots unresolved', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })
@@ -7271,6 +7297,24 @@ test('a winter capsule keeps its cold profile', () => {
   const profile = weatherProfileFromContext({ mood: 'I want a winter capsule', season: '', seasonIsCalendarOnly: true })
   assert.equal(profile.isCold, true)
   assert.equal(profile.isHot, false)
+})
+
+// Regression: found live via the atomic-capsule composition-attempt test —
+// "Build a 10-piece summer capsule" matched "10" as a bare 10°F temperature
+// reading under the old always-optional-unit regex, so hasColdTemperature
+// went true from a PIECE COUNT and the outfit was rejected as genuinely cold.
+// "10-piece capsule" is an extremely common real phrasing in this app's own
+// domain, so this was a live-production-reachable bug, not just test noise.
+test('a piece-count number ("10-piece", "24-piece") is never read as a temperature', () => {
+  for (const mood of ['Build a 10-piece summer capsule for casual days', 'a 24-piece capsule for work']) {
+    const profile = weatherProfileFromContext({ mood, season: 'warm', seasonIsCalendarOnly: true })
+    assert.equal(profile.isCold, false, `"${mood}" must not read the piece count as a cold temperature`)
+  }
+  // A genuine range or single stated temperature must still work.
+  const ranged = weatherProfileFromContext({ season: 'highs 80-90F', seasonIsCalendarOnly: true })
+  assert.equal(ranged.isHot, true)
+  const stated = weatherProfileFromContext({ mood: 'it is 95 here', seasonIsCalendarOnly: true })
+  assert.equal(stated.isHot, true)
 })
 
 // Owner ruling 2026-07-30: evening is dressier than a restaurant; an ordinary

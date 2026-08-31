@@ -3943,6 +3943,14 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   if (weatherProfile?.isCold) {
     const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
     if (!hasWarmLayer) reasons.push('no warm layer for cold weather')
+  } else if (weatherProfile?.transitIsCold) {
+    // Spec §6.4: an indoor slot's base may stay light (isCold is deliberately
+    // neutralized for it), but the card must still carry "adequate removable,
+    // sleeve-bearing coverage" for arrival/departure transit through the cold
+    // outside. A heavy indoor top/dress does not satisfy this — it isn't
+    // removable once indoors — so only an actual layer piece counts here,
+    // unlike the outdoor isCold branch above which also accepts a heavy main.
+    if (!layer) reasons.push('no warm layer for cold-weather transit (the indoor base may stay light, but a removable layer is still required for getting there and back)')
   }
   if (weatherProfile?.isHot) {
     for (const piece of mainPieces) {

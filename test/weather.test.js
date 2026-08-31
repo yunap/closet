@@ -166,6 +166,13 @@ test('validateWeatherEstimate: 65/45 validates; invalid shapes are rejected', ()
   assert.equal(validateWeatherEstimate({ high_f: 'warm', low_f: 45 }), null, 'non-finite')
   assert.equal(validateWeatherEstimate({ high_f: 500, low_f: 400 }), null, 'out of range')
   assert.equal(validateWeatherEstimate({ high_f: -200, low_f: -250 }), null, 'out of range, cold side')
+  // Regression: Number(null) is 0 and Number("65") is 65 — a coercing check
+  // silently accepted {high_f:null, low_f:null} as a real 0°F/0°F reading,
+  // and a model-hallucinated string "65" as a real number. The tool schema
+  // types these fields as JSON `number`; the executor must actually enforce
+  // it, not just declare it.
+  assert.equal(validateWeatherEstimate({ high_f: null, low_f: null }), null, 'null must not coerce to 0°F')
+  assert.equal(validateWeatherEstimate({ high_f: '65', low_f: '45' }), null, 'a numeric string is not a number')
   assert.deepEqual(validateWeatherEstimate({ high_f: 65, low_f: 45, precipitation: 'rain', wind: 'windy' }), { highF: 65, lowF: 45, precipitation: 'rain', wind: 'windy' })
   assert.equal(validateWeatherEstimate({ high_f: 65, low_f: 45, precipitation: 'sunny' }), null, 'invalid enum')
 })
@@ -185,6 +192,8 @@ test('validateUserWeather rejects range+band together, incomplete ranges, empty 
   assert.equal(validateUserWeather({ temperature_band: 'freezing' }), null, 'invalid band enum')
   assert.equal(validateUserWeather({ precipitation: 'sunny' }), null, 'invalid precipitation enum')
   assert.equal(validateUserWeather({ wind: 'gale' }), null, 'invalid wind enum')
+  assert.equal(validateUserWeather({ high_f: null, low_f: null }), null, 'null must not coerce to 0°F')
+  assert.equal(validateUserWeather({ high_f: '65', low_f: '45' }), null, 'a numeric string is not a number')
 })
 
 test('Celsius has no execution-boundary representation: the validators only ever accept Fahrenheit fields', () => {
@@ -225,6 +234,21 @@ test('resolveWeatherContext: user precipitation plus live temperature produces m
   assert.equal(context.precipitation.source, 'stated_user')
   assert.equal(context.precipitation.value, 'rain')
   assert.equal(context.overallSource, 'mixed')
+})
+
+// Regression: 'unknown' is a valid PRECIPITATION_VALUES/WIND_VALUES enum
+// member and is a truthy string, so a naive `if (userValue)` check let a
+// user_weather field explicitly set to 'unknown' win the field-level
+// precedence outright — silently erasing a real, known value from a
+// lower-precedence source. 'unknown' means "this field wasn't actually
+// stated," and must fall through instead.
+test('resolveWeatherContext: a user precipitation of "unknown" does not override a real model_estimate value', () => {
+  const context = resolveWeatherContext({
+    userWeather: { temperature: null, precipitation: 'unknown', wind: null },
+    modelEstimate: { highF: 65, lowF: 45, precipitation: 'rain', wind: null },
+  })
+  assert.equal(context.precipitation.value, 'rain', '"unknown" must fall through to the real model_estimate value')
+  assert.equal(context.precipitation.source, 'model_estimate')
 })
 
 test('resolveWeatherContext: live temperature overrides the model estimate', () => {

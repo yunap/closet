@@ -11,6 +11,15 @@
       "port": 3001
     },
     {
+      "name": "wardrobe-api-default-provider",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "node server.js"
+      ],
+      "port": 3001
+    },
+    {
       "name": "wardrobe-web",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite"],

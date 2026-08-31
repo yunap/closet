@@ -1244,6 +1244,64 @@ seasonal estimate) is covered at the data layer only — the persisted `weatherU
 work) — the model's actual follow-up prose is live behavior an offline test cannot exercise. Item 31
 is the full suite staying green, checked after every commit in this arc.
 
+**[external review before §10 verification, 2026-08-31] Five confirmed P1 correctness gaps found and
+fixed before any live call was made — the audit above was thorough but incomplete; these were real,
+reproducible, and would have let the original bug class recur.**
+
+1. `validateSlotOutfitConstraints`'s cold-layer check read only `weatherProfile.isCold` — an indoor
+   slot deliberately zeroes that (its base may stay light) and carries the outside cold as
+   `transitIsCold` instead, so the "museum T-shirt with no layer" bug was untouched by any of this
+   arc's work. Fixed: the check now also fires on `transitIsCold`, requiring an actual layer piece
+   (not a heavy top/dress — those aren't removable indoors).
+2. `propose_outfit`/`generate_outfits` still funneled their own `season` argument into legacy
+   `statedWeather` whenever it wasn't a recognized calendar-season word (`extractSeasonRequest`
+   returns `''` for e.g. "hot weather") — and `resolveWeather` checks `statedWeatherCandidate` BEFORE
+   any structured resolution runs, so an arbitrary model-invented season string silently outranked a
+   genuine `weather_estimate` for a named destination. Reproduced: Vienna 65/45 estimate + `season:
+   'hot weather'` resolved as `isHot:true` from `stated`, no `resolvedWeatherContext` at all. Fixed:
+   both tools now pass `statedWeather` only for the literal `'indoor'` sentinel (`propose_outfit`'s own
+   documented convention); every other season string no longer reaches it.
+3. An unresolved named destination fell back to whatever `toolContext.weatherProfile` already held
+   from an earlier call this turn (or a stale established-state snapshot) instead of surfacing as
+   unresolved — that snapshot carries no `resolvedWeatherContext`, so `weatherContextRequiredStop`
+   could never fire. Fixed: `resolveWeather`'s named-destination branch no longer falls back to
+   `savedSnapshot`; an unavailable destination always returns its own `'unavailable'` resolved context.
+4. The full-stylist tool loop's post-turn save only wrote `recently_discussed_piece_ids` —
+   `buildStylistConversationPayload`'s own save runs BEFORE the tool loop and only persists cards the
+   browser already echoed from the PREVIOUS turn, so a freshly accepted `plan_outfit_set` result
+   depended entirely on the browser echoing it back next turn to survive at all (the exact gap spec §7
+   prohibits). Fixed: the post-loop save now also writes `current_outfit_set`/`weather_profile` from
+   `toolContext.generatedOutfits` via `boundedConversationStateFromToolContext`, whenever the loop
+   produced fresh cards.
+5. Cache reuse in `resolveNamedDestinationWeather` returned the cached context for ANY call with no
+   fresh destination/date, before ever checking whether a NAMED location on this call actually matched
+   the cache's — a location-only follow-up naming a different place with no date of its own silently
+   inherited the wrong destination's weather. A second leak existed one layer up: even after fixing
+   that, `resolveToolStylingContext`'s `establishedState.weatherProfile` carryover (a separate flat
+   field, unconditionally threaded forward) still leaked the same stale profile across a mismatched
+   location. Fixed both: the cache function now refuses to reuse across a location mismatch even
+   without a date, and the establishedState carryover is now gated the same way.
+   
+Also fixed while reproducing: `validateWeatherEstimate`/`validateUserWeather` coerced their inputs
+with `Number(...)` before range-checking, so `{high_f:null,low_f:null}` silently validated as 0°F/0°F
+and a model-hallucinated string `"65"` passed as a real number; `resolveConditionField` treated a
+user-stated `'unknown'` as a truthy, authoritative value that overrode a real lower-precedence
+value — both now require an actual `typeof === 'number'` and treat `'unknown'` as "not stated." And a
+genuinely pre-existing, unrelated bug surfaced while testing fix 1: `weatherProfileFromContext`'s
+temperature regex matched a bare "10" in "Build a 10-piece capsule" as a 10°F reading (`hasColdTemperature`
+true from a piece count) — real production phrasing, not just test noise. Fixed with a negative
+lookahead excluding a number immediately followed by a hyphenated word.
+
+**Deferred (P2, lower severity, real but not fixed this pass):** the cold-footwear gate has no
+`shared_anchor_ids`/`anchor:true` awareness — spec §6.4 says the rejection should be bypassed when the
+user explicitly anchored that piece, but implementing it requires threading anchor context through
+`evaluateAutomaticUsePiecePool`'s multi-file call chain, which was judged too large a change to rush
+under this review. Plan-level weather inheritance still compares raw location strings
+(`location === fallbackLocation`) rather than a normalized/geocoded identity — "Vienna VA" and
+"Vienna, Virginia" don't inherit each other's weather. The tool descriptions' stated precedence order
+("live forecast, then weather_estimate, then user_weather" — backwards from the actual
+user → live → estimate order) has been corrected.
+
 **Not yet done:** §10's live paid Vienna VA verification — requires printing estimated cost and the
 owner's explicit confirmation before running, per the spec's own rule; not something to do
 unilaterally.

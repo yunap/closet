@@ -2824,6 +2824,97 @@ test('executeTool propose_outfit persists weatherUsed/resolvedWeatherContext ont
   }
 })
 
+// Regression: propose_outfit/generate_outfits used to funnel their own
+// `season` argument into legacy `statedWeather` whenever it wasn't a
+// recognized calendar-season word (extractSeasonRequest returns '' for
+// "hot weather") — and resolveWeather checks statedWeatherCandidate BEFORE
+// any structured resolution ever runs, so a model-invented free-text season
+// like "hot weather" silently outranked a genuine structured
+// weather_estimate for a named destination. This defeated the entire "one
+// structured authority" architecture on both single-outfit tools.
+test('executeTool propose_outfit: a genuine weather_estimate is not overridden by an arbitrary free-text season string', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('prose-bypass top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('prose-bypass bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('prose-bypass shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Prose Bypass Test',
+      why_it_works: 'test',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+      weather_estimate: { high_f: 65, low_f: 45 },
+      season: 'hot weather',
+    }, toolContext)
+    assert.equal(result.status, 'success')
+    assert.equal(toolContext.weatherProfile.isCold, true, 'the structured 65/45 estimate must win, not the "hot weather" prose')
+    assert.equal(toolContext.weatherProfile.weatherSource, 'model_estimate')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Regression: an unresolved named destination used to fall back to whatever
+// toolContext.weatherProfile already held from an EARLIER call this turn
+// (a different location, or a prior turn's snapshot) instead of surfacing as
+// genuinely unresolved. Because that stale snapshot carries no
+// resolvedWeatherContext, weatherContextRequiredStop could never fire — the
+// typed stop was silently bypassed whenever any prior weather happened to be
+// cached, which is common (search_wardrobe runs before most propose_outfit
+// calls).
+test('executeTool propose_outfit: an unresolved named destination stops even when a stale weatherProfile from an earlier call this turn exists', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('stale-snapshot top', 'top', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('stale-snapshot bottom', 'bottom', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'bottom', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('stale-snapshot shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+      // A stale snapshot from an earlier call this turn (e.g. an at-home
+      // search before the user mentioned a trip).
+      weatherProfile: { weatherSource: 'live', isHot: true, isCold: false, highF: 95, lowF: 75 },
+    }
+    const result = await executeTool('propose_outfit', {
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' },
+      ],
+      label: 'Stale Snapshot Test',
+      why_it_works: 'test',
+      location: 'Vienna, Virginia',
+      date: '2026-10-12',
+    }, toolContext)
+    assert.equal(result.status, 'weather_context_required', `an unresolved Vienna destination must stop, not silently reuse the stale hot snapshot, got: ${JSON.stringify(result)}`)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
 test('executeTool generate_outfits stops with weather_context_required for a named destination/date with no resolved temperature', async () => {
   const toolContext = {
     declaredIntent: { want: 'cards' },

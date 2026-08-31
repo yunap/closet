@@ -414,12 +414,25 @@ export async function resolveToolStylingContext({
   const safeExplicitLocation = looksLikeTimezoneIdentifier(explicitRequest.location)
     ? ''
     : (explicitRequest.location || '')
+  // A mismatched location must not inherit a stale weatherProfile from an
+  // earlier call this turn (spec §9 item 28's mismatch case, at the
+  // establishedState layer — resolveNamedDestinationWeather's own
+  // toolContext.resolvedWeatherContext cache already guards its own reuse,
+  // but this SEPARATE flat-profile carryover is resolveWeather's last-resort
+  // fallback and was reachable even when that cache correctly refused to
+  // reuse itself). Carry it forward only when no location was named this
+  // call, or it matches the destination that produced it.
+  const carryForwardWeatherProfile = !safeExplicitLocation ||
+    !toolContext.resolvedWeatherContext?.location ||
+    toolContext.resolvedWeatherContext.location === safeExplicitLocation
+    ? toolContext.weatherProfile
+    : null
   const establishedState = {
     occasion: toolContext.occasion,
     activity: toolContext.activity,
     season: toolContext.season,
     statedWeather: toolContext.weather,
-    weatherProfile: toolContext.weatherProfile,
+    weatherProfile: carryForwardWeatherProfile,
     mission: toolContext.mission,
     mood: toolContext.mood,
     requestText: toolContext.request || toolContext.question,
@@ -721,7 +734,7 @@ export const STYLIST_TOOLS = [
         fabric_weight: { type: "string", description: "Filter by fabric weight, e.g. ultralight, light, medium, heavy" },
         fabric_category: { type: "string", description: "Filter by fabric category, e.g. jersey, knit, linen, silk, satin, cotton, wool, cashmere, viscose, denim, twill, canvas, corduroy, tweed, velvet, leather, suede, ponte, synthetic, fleece, other" },
         neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" },
-        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set alongside `date`, weather resolves through the structured contract (live forecast, then weather_estimate, then user_weather) instead of the text-heuristic fallback — pass it whenever a concrete future destination is relevant, not the user's home city." },
+        location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set alongside `date`, weather resolves through the structured contract (user_weather wins if you supplied it, else the live forecast, else weather_estimate) instead of the text-heuristic fallback — pass it whenever a concrete future destination is relevant, not the user's home city." },
         date: { type: "string", description: "YYYY-MM-DD for the destination day, when known. Pairs with `location` to resolve real weather for that place/date; without a date, `location` alone still improves ranking but the forecast defaults to today." },
         user_weather: USER_WEATHER_SCHEMA,
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -883,7 +896,7 @@ export const STYLIST_TOOLS = [
         occasion: { type: "string", enum: OCCASION_VALUES, description: "The occasion. Pick the closest allowed value; do not invent. casual/gallery/concert/travel are intentionally permissive." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
-        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it (with `date`) so the bounded composer uses live weather, then weather_estimate, then user_weather, rather than a seasonal guess." },
+        location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it (with `date`) so the bounded composer uses user_weather if you supplied it, else the live forecast, else weather_estimate, rather than a seasonal guess." },
         date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it. Pairs with `location`." },
         user_weather: USER_WEATHER_SCHEMA,
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -1749,7 +1762,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion,
             activity,
             season: extractSeasonRequest(season),
-            statedWeather: extractSeasonRequest(season) ? '' : season,
+            // Spec §3.1: free-text weather must not exist as an authority on any
+            // tool. 'indoor' is the sole documented exception on this schema (its
+            // own field description teaches it) — any other season text (e.g. a
+            // model-invented "hot weather") must NOT reach statedWeather, or it
+            // silently outranks a genuine weather_estimate/user_weather for a
+            // named destination (resolveWeather checks statedWeatherCandidate
+            // before structured resolution ever runs).
+            statedWeather: season === 'indoor' ? 'indoor' : '',
             location: proposeLocation,
             date: proposeDate,
             dateRange: proposeDate ? { start: proposeDate, end: proposeDate } : null,
@@ -3047,7 +3067,15 @@ async function executeToolInternal(name, args, toolContext = {}) {
             season: extractSeasonRequest(season),
             mission,
             mood,
-            statedWeather: toolContext.weather || (extractSeasonRequest(season) ? '' : season),
+            // Spec §3.1: no free-text weather authority on any tool.
+            // generate_outfits' own schema has no documented 'indoor' sentinel
+            // (unlike propose_outfit's), and `toolContext.weather` here was only
+            // ever set by this same statedWeather wiring on an earlier call this
+            // turn (a self-perpetuating loop) — dropping both closes the path
+            // that let arbitrary model-invented season text (e.g. "hot weather")
+            // outrank a genuine weather_estimate/user_weather for a named
+            // destination.
+            statedWeather: '',
             location,
             // `date` here defaults all the way to today (`new Date()`) for the
             // legacy season/date field below — deliberately NOT reused as the

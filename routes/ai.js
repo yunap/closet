@@ -5049,8 +5049,26 @@ router.post('/ask', async (req, res) => {
     // store has no partial merge, so overwriting from scratch here would silently drop those.
     {
       const priorConversationState = getStylistConversationState(req.body.sessionId || 'default') || {}
+      // Spec §7 continuity: buildStylistConversationPayload's own save (above,
+      // BEFORE the tool loop ran) only persists cards the BROWSER already
+      // echoed back from the PREVIOUS turn — it cannot know about cards THIS
+      // turn's tool loop is about to produce. Without this, a freshly accepted
+      // plan_outfit_set/propose_outfit/generate_outfits result server-side
+      // depended entirely on the browser echoing toolContext.generatedOutfits
+      // back on the NEXT request to survive at all — exactly the continuity
+      // gap spec §7 requires not to exist. Reuses
+      // boundedConversationStateFromToolContext's own current_outfit_set/
+      // weather_profile projection (the same one the bounded_multi router
+      // path already uses) so both paths persist identically shaped state.
+      // Only overwrites current_outfit_set when this turn actually produced
+      // fresh cards — an ordinary prose-only turn leaves the prior set alone,
+      // consistent with the "layers onto" merge philosophy above.
+      const hasFreshCards = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
+      const freshState = hasFreshCards ? boundedConversationStateFromToolContext(toolContext) : null
       saveStylistConversationState({
         ...priorConversationState,
+        ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
+        ...(freshState?.weather_profile ? { weather_profile: freshState.weather_profile } : {}),
         recently_discussed_piece_ids: {
           piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
           turn_token: freeformTurnToken

@@ -2081,5 +2081,30 @@ a `needs_base` garment remains a separate hard contract.
   follow-up prose is live behavior, not offline-testable. Item 31 is the full
   suite staying green after every commit.
 
+  **[external review before §10 verification, 2026-08-31]** An external review, run before any live
+  call, found and this pass fixed five confirmed P1 correctness gaps the audit above had missed — full
+  writeup in `docs/engine-behaviour-map.md`'s matching dated entry. Summary: (1)
+  `validateSlotOutfitConstraints`'s cold-layer check never read `transitIsCold`, so the original
+  "museum T-shirt with no layer" bug was still fully reproducible; (2) `propose_outfit`/
+  `generate_outfits` still funneled arbitrary `season` prose into legacy `statedWeather`, which
+  `resolveWeather` checks BEFORE any structured resolution — a model-invented "hot weather" silently
+  outranked a genuine Vienna 65/45 `weather_estimate`; (3) an unresolved named destination fell back
+  to a stale `toolContext.weatherProfile` snapshot instead of surfacing as unresolved, so
+  `weatherContextRequiredStop` could be silently bypassed; (4) the full-stylist tool loop's post-turn
+  save never wrote fresh `toolContext.generatedOutfits` into `current_outfit_set` — only
+  `buildStylistConversationPayload`'s PRE-tool-loop save did, using whatever the browser echoed from
+  the PREVIOUS turn, so a new `plan_outfit_set` result depended on browser echo to survive at all; (5)
+  cache reuse (both `resolveNamedDestinationWeather`'s own cache and the separate
+  `establishedState.weatherProfile` carryover) returned stale weather for a location-only follow-up
+  naming a genuinely different place. Also fixed: validator inputs were coerced with `Number(...)`
+  before range-checking (`{high_f:null}` passed as 0°F, a string `"65"` passed as numeric); a
+  user-stated `'unknown'` precipitation/wind wrongly overrode a real lower-precedence value; and an
+  unrelated pre-existing bug where `weatherProfileFromContext`'s regex read "10" in "Build a 10-piece
+  capsule" as a 10°F temperature (real production phrasing, not test noise).
+
+  **Deferred (P2):** the cold-footwear gate has no anchor-piece exception (spec §6.4 says one should
+  exist); plan-level weather inheritance compares raw location strings, not a normalized/geocoded
+  identity. The tool descriptions' backwards-stated precedence order was corrected.
+
   Still open: §10's live paid Vienna VA verification — needs printed cost and
   the owner's explicit confirmation first, per the spec's own rule.

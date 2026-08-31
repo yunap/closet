@@ -220,6 +220,14 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   const hasFreshDestination = Boolean(explicitLocation && dateRange?.start && isCurrentSeason(season))
   const hasFreshStructuredWeather = Boolean(userWeather || modelEstimate)
   if (!hasFreshDestination && !hasFreshStructuredWeather) {
+    // A location was named this call but does not match the cached
+    // destination (e.g. a follow-up naming a different place with no date of
+    // its own, so hasFreshDestination stays false) — reusing the cache here
+    // would silently apply the wrong destination's weather. Only reuse when
+    // no location was named this call, or it matches the cached one; a
+    // mismatch falls through to null so the caller reaches the legacy
+    // live-for-today/heuristic branch instead of a stale destination's cache.
+    if (cached && explicitLocation && (cached.location || '') !== explicitLocation) return null
     return cached || null
   }
 
@@ -321,12 +329,12 @@ async function resolveWeather({
   if (allowLiveWeather) {
     const namedDestination = await resolveNamedDestinationWeather({ explicitRequest: evidence.explicitRequest || {}, toolContext, weatherResolver, mood, season })
     if (namedDestination) {
-      if (namedDestination.temperature.source === 'unavailable' && savedSnapshot) {
-        return {
-          profile: savedSnapshot,
-          provenance: { source: savedSnapshotSource, fallbackFrom: 'named_destination_unavailable' },
-        }
-      }
+      // Spec §6.2: an unresolved named destination/date must stop, never
+      // silently reuse an older snapshot (a different location/date, or an
+      // earlier turn's stale weather) — that snapshot has no
+      // resolvedWeatherContext attached, so weatherContextRequiredStop could
+      // never fire downstream if this fell back to it. Always return the
+      // 'unavailable' resolved context itself so the typed stop sees it.
       return {
         profile: profileFromResolvedWeatherContext(namedDestination),
         provenance: { source: `named_destination.${namedDestination.temperature.source}` },

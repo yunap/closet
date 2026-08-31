@@ -200,8 +200,14 @@ export const PRECIPITATION_VALUES = ['none', 'rain', 'snow', 'mixed', 'unknown']
 export const WIND_VALUES = ['calm', 'breezy', 'windy', 'unknown']
 export const TEMPERATURE_BAND_VALUES = ['hot', 'cold', 'mild']
 
+// Requires an ACTUAL number, not merely a coercible value: `Number(null)`
+// is 0 and `Number("65")` is 65, so a coercing check would silently accept
+// {high_f:null, low_f:null} as 0°F/0°F, or a model-hallucinated string
+// "65" as a real number — both slipped through when call sites coerced
+// with Number(...) before this check ever ran. The tool schema types these
+// fields as JSON `number`; the executor validator now actually enforces it.
 function isFiniteTemp(n) {
-  return Number.isFinite(n) && n >= TEMP_MIN_F && n <= TEMP_MAX_F
+  return typeof n === 'number' && Number.isFinite(n) && n >= TEMP_MIN_F && n <= TEMP_MAX_F
 }
 
 // Spec §5.3: same thresholds/constants as live weather, reused everywhere —
@@ -231,8 +237,8 @@ export function validateUserWeather(input) {
 
   let temperature = null
   if (hasRange) {
-    const highF = Number(input.high_f)
-    const lowF = Number(input.low_f)
+    const highF = input.high_f
+    const lowF = input.low_f
     if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
     temperature = { highF, lowF, band: null }
   } else if (hasBand) {
@@ -261,8 +267,8 @@ export function validateUserWeather(input) {
 // qualitative guess) and never carries free-text `conditions`.
 export function validateWeatherEstimate(input) {
   if (!input || typeof input !== 'object') return null
-  const highF = Number(input.high_f)
-  const lowF = Number(input.low_f)
+  const highF = input.high_f
+  const lowF = input.low_f
   if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
 
   let precipitation = null
@@ -324,10 +330,14 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
 
 function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimate }) {
   const userValue = userWeather?.[fieldName]
-  if (userValue) return { value: userValue, source: 'stated_user' }
+  // 'unknown' means the user didn't actually say anything about this field —
+  // it must fall through to the next tier, not win the field-level precedence
+  // outright. Spec explicitly calls this out: 'unknown' must not override a
+  // known lower-precedence value (e.g. a real model_estimate 'rain').
+  if (userValue && userValue !== 'unknown') return { value: userValue, source: 'stated_user' }
   if (liveValue) return { value: liveValue, source: 'live' }
   const estimateValue = modelEstimate?.[fieldName]
-  if (estimateValue) return { value: estimateValue, source: 'model_estimate' }
+  if (estimateValue && estimateValue !== 'unknown') return { value: estimateValue, source: 'model_estimate' }
   return { value: 'unknown', source: 'unavailable' }
 }
 

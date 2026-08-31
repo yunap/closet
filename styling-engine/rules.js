@@ -99,7 +99,14 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
     return { isHot: false, isCold: false }
   }
   const text = `${mood} ${season}`.toLowerCase()
-  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
+  // Excludes a number immediately followed by a hyphenated word (e.g.
+  // "10-piece", "24-piece") — found live: "Build a 10-piece summer capsule"
+  // matched "10" as a bare temperature reading (hasColdTemperature true from
+  // a piece count), which masqueraded as real cold and reached
+  // isCold/transitIsCold downstream. A genuine range's second number follows
+  // the dash directly ("80-90F"), so this only rejects a dash-then-LETTER,
+  // never a dash-then-digit — "80-90F"/"30F"/a bare "95 here" all still match.
+  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})(?!-[a-z])\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
     .map(match => Number(match[1]))
     .filter(n => Number.isFinite(n))
   const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
