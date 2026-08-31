@@ -183,3 +183,298 @@ export function _clearWeatherCachesForTests() {
   geocodeCache.clear()
   weatherCache.clear()
 }
+
+// ============================================================================
+// Structured weather context (docs/future-trip-weather-estimate-spec.md)
+// ============================================================================
+//
+// Owner ruling 2026-08-30: the model translates natural language into typed
+// tool arguments; code never parses arbitrary prose into gate-driving
+// physical weather. This section is the ENTIRE authority for that — no
+// consumer of ResolvedWeatherContext re-parses numbers or condition words
+// from text anywhere else.
+
+const TEMP_MIN_F = -100
+const TEMP_MAX_F = 140
+export const PRECIPITATION_VALUES = ['none', 'rain', 'snow', 'mixed', 'unknown']
+export const WIND_VALUES = ['calm', 'breezy', 'windy', 'unknown']
+export const TEMPERATURE_BAND_VALUES = ['hot', 'cold', 'mild']
+
+function isFiniteTemp(n) {
+  return Number.isFinite(n) && n >= TEMP_MIN_F && n <= TEMP_MAX_F
+}
+
+// Spec §5.3: same thresholds/constants as live weather, reused everywhere —
+// a model estimate, a user-stated range, and a live forecast all trigger
+// identical downstream gates. `exclusive` mirrors classify() above: a
+// single reading is mutually exclusive hot/cold, but a stated or estimated
+// RANGE (a whole trip, not one instant) can genuinely be both — a 90°F/40°F
+// range must not silently collapse to neither.
+export function classifyTemperatureRange({ highF, lowF } = {}, { exclusive = true } = {}) {
+  if (!Number.isFinite(highF) || !Number.isFinite(lowF)) return { isHot: false, isCold: false }
+  const isHot = highF >= HOT_F
+  const isCold = lowF <= COLD_F
+  const extreme = highF >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
+  if (!exclusive) return { isHot, isCold, ...extreme }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme }
+}
+
+// Spec §4.1: a real user_weather object carries EITHER a numeric range OR a
+// qualitative band, never both — they have different confidence and the
+// model must not blend them. At least one of temperature/precipitation/wind
+// must be present, or this is not really "the user stated weather" at all.
+export function validateUserWeather(input) {
+  if (!input || typeof input !== 'object') return null
+  const hasRange = input.high_f !== undefined || input.low_f !== undefined
+  const hasBand = input.temperature_band !== undefined && input.temperature_band !== null
+  if (hasRange && hasBand) return null
+
+  let temperature = null
+  if (hasRange) {
+    const highF = Number(input.high_f)
+    const lowF = Number(input.low_f)
+    if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
+    temperature = { highF, lowF, band: null }
+  } else if (hasBand) {
+    if (!TEMPERATURE_BAND_VALUES.includes(input.temperature_band)) return null
+    temperature = { highF: null, lowF: null, band: input.temperature_band }
+  }
+
+  let precipitation = null
+  if (input.precipitation !== undefined && input.precipitation !== null) {
+    if (!PRECIPITATION_VALUES.includes(input.precipitation)) return null
+    precipitation = input.precipitation
+  }
+
+  let wind = null
+  if (input.wind !== undefined && input.wind !== null) {
+    if (!WIND_VALUES.includes(input.wind)) return null
+    wind = input.wind
+  }
+
+  if (!temperature && !precipitation && !wind) return null
+  return { temperature, precipitation, wind }
+}
+
+// Spec §4.1: a model estimate is ALWAYS numeric (no temperature_band — an
+// estimate used for a hard gate must commit to a real range, not a vague
+// qualitative guess) and never carries free-text `conditions`.
+export function validateWeatherEstimate(input) {
+  if (!input || typeof input !== 'object') return null
+  const highF = Number(input.high_f)
+  const lowF = Number(input.low_f)
+  if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
+
+  let precipitation = null
+  if (input.precipitation !== undefined && input.precipitation !== null) {
+    if (!PRECIPITATION_VALUES.includes(input.precipitation)) return null
+    precipitation = input.precipitation
+  }
+
+  let wind = null
+  if (input.wind !== undefined && input.wind !== null) {
+    if (!WIND_VALUES.includes(input.wind)) return null
+    wind = input.wind
+  }
+
+  return { highF, lowF, precipitation, wind }
+}
+
+const BAND_FLAGS = {
+  hot: { isHot: true, isCold: false },
+  cold: { isHot: false, isCold: true },
+  mild: { isHot: false, isCold: false },
+}
+
+function resolveTemperatureField({ userTemperature, liveTemperature, estimateTemperature }) {
+  if (userTemperature) {
+    if (userTemperature.band) {
+      return {
+        highF: null, lowF: null, band: userTemperature.band,
+        ...BAND_FLAGS[userTemperature.band],
+        isExtremeHeat: false,
+        source: 'stated_user',
+      }
+    }
+    const classified = classifyTemperatureRange(userTemperature, { exclusive: false })
+    return {
+      highF: userTemperature.highF, lowF: userTemperature.lowF, band: null,
+      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      source: 'stated_user',
+    }
+  }
+  if (liveTemperature && Number.isFinite(liveTemperature.highF) && Number.isFinite(liveTemperature.lowF)) {
+    return {
+      highF: liveTemperature.highF, lowF: liveTemperature.lowF, band: null,
+      isHot: Boolean(liveTemperature.isHot), isCold: Boolean(liveTemperature.isCold),
+      isExtremeHeat: Boolean(liveTemperature.isExtremeHeat),
+      source: 'live',
+    }
+  }
+  if (estimateTemperature) {
+    const classified = classifyTemperatureRange(estimateTemperature, { exclusive: false })
+    return {
+      highF: estimateTemperature.highF, lowF: estimateTemperature.lowF, band: null,
+      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      source: 'model_estimate',
+    }
+  }
+  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isExtremeHeat: false, source: 'unavailable' }
+}
+
+function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimate }) {
+  const userValue = userWeather?.[fieldName]
+  if (userValue) return { value: userValue, source: 'stated_user' }
+  if (liveValue) return { value: liveValue, source: 'live' }
+  const estimateValue = modelEstimate?.[fieldName]
+  if (estimateValue) return { value: estimateValue, source: 'model_estimate' }
+  return { value: 'unknown', source: 'unavailable' }
+}
+
+// Spec §5.1-§5.2: the ONE resolved shape every downstream consumer (roster
+// construction, workbench copy, validator, cards, thread state) reads.
+// Pure and synchronous — callers resolve live weather (an async network
+// call) separately and pass the result in; this function only combines
+// already-validated/already-fetched pieces under the field-level precedence
+// each dimension resolves independently: explicit structured user field →
+// matching live field → matching structured model-estimate field →
+// unavailable. A user-stated PRECIPITATION does not block LIVE temperature
+// from winning, and vice versa — "the user said rainy, live says 65/45"
+// keeps both facts instead of one erasing the other.
+export function resolveWeatherContext({ userWeather = null, liveWeather = null, modelEstimate = null, location = '', dateRange = null } = {}) {
+  const liveTemperature = liveWeather && liveWeather.weatherSource === 'live'
+    ? { highF: liveWeather.highF, lowF: liveWeather.lowF, isHot: liveWeather.isHot, isCold: liveWeather.isCold, isExtremeHeat: liveWeather.isExtremeHeat }
+    : null
+
+  const temperature = resolveTemperatureField({
+    userTemperature: userWeather?.temperature || null,
+    liveTemperature,
+    estimateTemperature: modelEstimate ? { highF: modelEstimate.highF, lowF: modelEstimate.lowF } : null,
+  })
+  // Live weather currently carries no precipitation/wind data (Open-Meteo
+  // call only fetches temperature_2m_max/min) — those dimensions fall
+  // through past 'live' to a model estimate or stay unavailable. No
+  // existing hard rule requires them to be more than that (spec §5.2).
+  const precipitation = resolveConditionField('precipitation', { userWeather, liveValue: null, modelEstimate })
+  const wind = resolveConditionField('wind', { userWeather, liveValue: null, modelEstimate })
+
+  const sources = new Set([temperature.source, precipitation.source, wind.source].filter(s => s !== 'unavailable'))
+  const overallSource = sources.size === 0 ? 'unavailable' : sources.size === 1 ? [...sources][0] : 'mixed'
+
+  return {
+    status: temperature.source === 'unavailable' ? 'unavailable' : 'resolved',
+    location: String(location || ''),
+    dateRange: dateRange || null,
+    temperature,
+    precipitation,
+    wind,
+    overallSource,
+  }
+}
+
+// Spec §6.1: the one entry point every composition tool calls before
+// retrieval. Fetches live weather itself (reusing the same geocode/forecast
+// plumbing as getWeatherProfileForPlan) and combines it with already-
+// validated userWeather/modelEstimate via resolveWeatherContext above.
+//
+// With no location/date, there is no destination to resolve live weather
+// against — this is the "at-home/current-season" case, and it deliberately
+// falls back to the existing calendar/mood heuristic (weatherProfileFromContext)
+// exactly as before this spec (spec §6.1: "a deliberate no-op"). That
+// heuristic result is tagged weatherSource 'heuristic' and never treated as
+// resolved for a named destination/date.
+export async function resolveWeatherForRequest({
+  location = '',
+  dateRange = null,
+  userWeather = null,
+  modelEstimate = null,
+  mood = '',
+  season = '',
+  fetchImpl = defaultFetch,
+  seasonIsCalendarOnly = false,
+} = {}) {
+  const start = dateRange?.start || null
+  const hasDestination = Boolean(location) && Boolean(start)
+
+  if (!hasDestination) {
+    // A user-stated or estimated temperature still wins even without a live
+    // lookup being attempted (an at-home request can still carry a stated
+    // band, e.g. "it's cold today") — only the LIVE branch is skipped.
+    const resolved = resolveWeatherContext({ userWeather, liveWeather: null, modelEstimate, location, dateRange })
+    if (resolved.status === 'resolved') return resolved
+    const heuristicProfile = heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
+    return {
+      status: 'resolved',
+      location: String(location || ''),
+      dateRange: dateRange || null,
+      temperature: {
+        highF: Number.isFinite(heuristicProfile.highF) ? heuristicProfile.highF : null,
+        lowF: Number.isFinite(heuristicProfile.lowF) ? heuristicProfile.lowF : null,
+        band: null,
+        isHot: Boolean(heuristicProfile.isHot),
+        isCold: Boolean(heuristicProfile.isCold),
+        isExtremeHeat: Boolean(heuristicProfile.isExtremeHeat),
+        source: 'heuristic',
+      },
+      precipitation: { value: heuristicProfile.isRainy ? 'rain' : 'unknown', source: heuristicProfile.isRainy ? 'heuristic' : 'unavailable' },
+      wind: { value: 'unknown', source: 'unavailable' },
+      overallSource: 'heuristic',
+    }
+  }
+
+  let liveWeather = null
+  try {
+    liveWeather = await resolveLive({ startDate: start, endDate: dateRange?.end || start, location, fetchImpl, exclusive: false })
+  } catch {
+    liveWeather = null
+  }
+
+  return resolveWeatherContext({ userWeather, liveWeather, modelEstimate, location, dateRange })
+}
+
+// Spec §5.1, §7: persistence shape for cards / current_outfit_set / thread
+// state. Serializes the full field-level provenance, not just the flat
+// isHot/isCold pair serializeWeatherProfile above preserves for the legacy
+// shape.
+export function serializeResolvedWeatherContext(context = null) {
+  if (!context || typeof context !== 'object') return null
+  return {
+    status: context.status,
+    location: context.location || '',
+    date_range: context.dateRange || null,
+    temperature: {
+      high_f: Number.isFinite(context.temperature?.highF) ? context.temperature.highF : null,
+      low_f: Number.isFinite(context.temperature?.lowF) ? context.temperature.lowF : null,
+      band: context.temperature?.band || null,
+      is_hot: Boolean(context.temperature?.isHot),
+      is_cold: Boolean(context.temperature?.isCold),
+      is_extreme_heat: Boolean(context.temperature?.isExtremeHeat),
+      source: context.temperature?.source || 'unavailable',
+    },
+    precipitation: { value: context.precipitation?.value || 'unknown', source: context.precipitation?.source || 'unavailable' },
+    wind: { value: context.wind?.value || 'unknown', source: context.wind?.source || 'unavailable' },
+    overall_source: context.overallSource || 'unavailable',
+  }
+}
+
+export function restoreResolvedWeatherContext(stored = null) {
+  if (!stored || typeof stored !== 'object') return null
+  const t = stored.temperature || {}
+  return {
+    status: stored.status || 'unavailable',
+    location: stored.location || '',
+    dateRange: stored.date_range || null,
+    temperature: {
+      highF: Number.isFinite(t.high_f) ? t.high_f : null,
+      lowF: Number.isFinite(t.low_f) ? t.low_f : null,
+      band: t.band || null,
+      isHot: Boolean(t.is_hot),
+      isCold: Boolean(t.is_cold),
+      isExtremeHeat: Boolean(t.is_extreme_heat),
+      source: t.source || 'unavailable',
+    },
+    precipitation: { value: stored.precipitation?.value || 'unknown', source: stored.precipitation?.source || 'unavailable' },
+    wind: { value: stored.wind?.value || 'unknown', source: stored.wind?.source || 'unavailable' },
+    overallSource: stored.overall_source || 'unavailable',
+  }
+}
