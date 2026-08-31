@@ -18,10 +18,15 @@ import { createStylingContextResolver, projectStylingApplicabilityContext, resol
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
+  resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
+  serializeResolvedWeatherContext, TEMPERATURE_BAND_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+} from './weather.js'
+import {
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
   capsuleTotalOutfitCap,
   buildPlanSlotWorkbench,
+  resolveSlotWeather,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
   buildRejectedCapsuleCards,
@@ -617,6 +622,34 @@ function pieceHasStructuredColor(piece = {}, requestedColor = '') {
     .some(value => colorPattern.test(String(value || '').toLowerCase().trim()))
 }
 
+// Spec docs/future-trip-weather-estimate-spec.md §4.1: shared, provider-portable
+// weather schemas reused verbatim across every composition tool (plan_outfit_set,
+// search_wardrobe, propose_outfit, generate_outfits). The model translates
+// language into these typed fields; the executor never parses prose into
+// physical weather (styling-engine/weather.js owns that validation/resolution).
+const USER_WEATHER_SCHEMA = {
+  type: "object",
+  description: "Structured translation of weather the CURRENT user message explicitly stated — include it ONLY when the user actually said it this turn, never your own seasonal knowledge (use weather_estimate for that instead). Carries a numeric range OR a qualitative band, never both. Convert a user-stated Celsius value to Fahrenheit yourself before setting high_f/low_f — never pass Celsius through.",
+  properties: {
+    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature, set high_f and low_f to the same value." },
+    low_f: { type: "number", description: "The user's stated low, Fahrenheit." },
+    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot') when the user gave no number. Never set this alongside high_f/low_f." },
+    precipitation: { type: "string", enum: PRECIPITATION_VALUES, description: "Only when the user stated it this turn." },
+    wind: { type: "string", enum: WIND_VALUES, description: "Only when the user stated it this turn." }
+  }
+}
+const WEATHER_ESTIMATE_SCHEMA = {
+  type: "object",
+  description: "Your own conservative seasonal estimate for this location and date range, used ONLY as a fallback when the live forecast does not cover these dates (e.g. a trip more than ~2 weeks out). The executor always tries live weather first and ignores this estimate whenever live weather succeeds. Provide it on every future named-destination call so composition is not blocked. Never call it a forecast or imply the user stated it — it is your own seasonal judgment, numeric only (no qualitative band).",
+  properties: {
+    high_f: { type: "number", description: "Typical daily high, Fahrenheit." },
+    low_f: { type: "number", description: "Typical daily low, Fahrenheit — use the cooler end for evening/early-morning transit." },
+    precipitation: { type: "string", enum: PRECIPITATION_VALUES },
+    wind: { type: "string", enum: WIND_VALUES }
+  },
+  required: ["high_f", "low_f"]
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -845,9 +878,10 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting. Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling and overrides contradictory weather:'indoor'. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries). Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
-              weather: { type: "string", description: "This slot's known weather/context. Use `indoor` for climate-controlled destinations such as offices, restaurants, and galleries; the plan/location weather still governs the base outfit needed for transit, while indoor comfort may add a light optional layer. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
+              user_weather: USER_WEATHER_SCHEMA,
+              weather_estimate: WEATHER_ESTIMATE_SCHEMA,
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
               // Live thread_1785380251549: the plan's lifestyle answer listed
@@ -883,7 +917,8 @@ export const STYLIST_TOOLS = [
             piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
           }
         },
-        weather: { type: "string", description: "Plan-level known weather/context used as the fallback for slots that omit their own weather. Use this for user-stated conditions such as 'warm summer weather'. Slot-level weather still wins for indoor or special-case slots." },
+        user_weather: { ...USER_WEATHER_SCHEMA, description: `${USER_WEATHER_SCHEMA.description} Applies to every slot sharing the plan's own location/date_range; a slot at a different location or a date outside date_range needs its own user_weather.` },
+        weather_estimate: { ...WEATHER_ESTIMATE_SCHEMA, description: `${WEATHER_ESTIMATE_SCHEMA.description} Applies to every slot sharing the plan's own location/date_range; a slot at a different location or a date outside date_range needs its own weather_estimate.` },
         location: { type: "string", description: "The plan's overall location/destination (e.g. 'Paso Robles, CA'), geocoded for the per-slot live forecast. Slots inherit it unless they set their own `location`. Omit for at-home plans with no travel." },
         date_range: {
           type: "object",
@@ -2418,7 +2453,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )
-        const planWeather = String(args?.weather || '').trim()
+        // Spec future-trip-weather-estimate-spec.md §3.1: the free-text `weather`
+        // field is removed from this schema entirely — a non-conforming caller's
+        // args.weather is never read here, for gating or anything else.
+        // toolContext.weather (established display/season text, not physical
+        // weather) still seeds the heuristic no-location fallback below.
+        const planWeather = toolContext.weather || ''
         const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '')
         // Capsule safety net: "N-piece capsule" states an explicit budget. The
         // model routinely forgets to set piece_budget (live: a "14-piece capsule"
@@ -2443,10 +2483,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ? capsuleTotalOutfitCap(planConstraints.piece_budget)
           : planTotalOutfitCapForBudget(planConstraints.piece_budget)
         const planSlots = normalizePlanSlots(sanitizedSlots, {
-          fallbackWeather: planWeather || toolContext.weather || '',
+          fallbackWeather: planWeather,
           fallbackOccasion: toolContext.occasion || 'city',
           fallbackActivity: toolContext.activity || 'none',
           fallbackLocation,
+          fallbackUserWeather: args?.user_weather || null,
+          fallbackWeatherEstimate: args?.weather_estimate || null,
+          dateRange: planDateRange,
           maxSlots: planTotalOutfitCap,
           maxTotalOutfits: planTotalOutfitCap,
           tripSummary,
@@ -2456,6 +2499,37 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "validation_error",
             message: "plan_outfit_set needs at least one slot with a label. Decompose the request into use-case slots (label + occasion + activity + count) and call again."
+          }
+        }
+        const weatherFetchImpl = typeof toolContext.weatherFetchImpl === 'function' ? toolContext.weatherFetchImpl : undefined
+        // Spec §6.1/§6.2: resolve weather for every slot through the ONE
+        // structured contract BEFORE any roster, pendingPlan, or workbench is
+        // built. A named destination/date slot with no resolved temperature
+        // (no live coverage, no user_weather, no weather_estimate) stops the
+        // whole call here — checked via each slot's actual
+        // resolvedWeatherContext.status, not string-matching a display label,
+        // and via .some() so a mixed plan (one resolved slot, one not) still
+        // stops rather than proceeding partially gated.
+        const weatherPreCheckSlots = await Promise.all(planSlots.map(async slot => {
+          const { profile } = await resolveSlotWeather(slot, {
+            mood: toolContext.mood || '',
+            question: toolContext.planQuestion || toolContext.question || '',
+            dateRange: planDateRange,
+            location: toolContext.location || '',
+            fetchImpl: weatherFetchImpl,
+            seasonIsCalendarOnly: planKind === 'seasonal_capsule',
+          })
+          return { label: slot.label, status: profile?.resolvedWeatherContext?.status || 'unavailable' }
+        }))
+        const unresolvedSlot = weatherPreCheckSlots.find(slot => slot.status === 'unavailable')
+        if (unresolvedSlot) {
+          bumpFreeformDiagnostic(toolContext, 'planWeatherContextRequired')
+          return {
+            status: "weather_context_required",
+            location: fallbackLocation,
+            date_range: planDateRange,
+            missing: ["temperature"],
+            message: `Live weather does not cover these dates for "${unresolvedSlot.label}". Re-call this tool with weather_estimate.high_f and weather_estimate.low_f (on the plan or on each affected slot) before selecting garments.`
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
@@ -2469,8 +2543,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion: slot.occasion,
             activity: slot.activity,
             season: slot.season || planConstraints.season || '',
-            weather: slot.weather || planWeather || '',
-            weatherText: slot.weather || planWeather || '',
+            weather: slot.season || planWeather || '',
+            weatherText: slot.season || planWeather || '',
             requestText: [slot.label, slot.occasion, slot.activity].filter(Boolean).join(' '),
           })),
           // Before the plan roster exists, only context/universal guidance can enter roster
@@ -2484,6 +2558,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           mood: toolContext.mood || '',
           question: toolContext.planQuestion || toolContext.question || '',
           location: toolContext.location || '',
+          // Test-only injection point (mirrors the fetchImpl convention already
+          // used throughout weather.js/outfitSetPlanner.js) — absent in
+          // production, so plan_outfit_set always resolves real live weather.
+          ...(weatherFetchImpl ? { fetchImpl: weatherFetchImpl } : {}),
           ownerRules,
           planKind,
           // Injected only when the route wired one (flag on). Absent, the

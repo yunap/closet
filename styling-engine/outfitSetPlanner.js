@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { getWeatherProfileForPlan } from './weather.js'
+import { resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate } from './weather.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -866,27 +866,11 @@ function normalizeRegisterLevel(value = '') {
   return normalized in REGISTER_LEVELS ? normalized : ''
 }
 
-function beachCoastalStatedWeather(explicitWeather = '', { environment = '' } = {}) {
-  const weather = String(explicitWeather || '').trim()
-  if (!weather) return ''
-  // Models sometimes mark a beach slot as `weather:"indoor"` because they are
-  // thinking "trip day" rather than physical environment. For a beach/coastal
-  // slot, that is contradictory; let the plan-level weather or live forecast
-  // drive the slot instead.
-  if (environment === 'beach_coastal' && /^indoor$/i.test(weather)) return ''
-  return weather
-}
-
 function describeWeatherProfile(profile = {}) {
   if (profile.isHot && profile.isCold) return 'hot days, cold nights'
   if (profile.isHot) return 'hot'
   if (profile.isCold) return 'cold'
   return 'mild'
-}
-
-function isGenericSeason(season = '') {
-  const value = String(season || '').trim().toLowerCase()
-  return !value || value === 'current season' || value === 'current' || value === 'year-round'
 }
 
 function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
@@ -946,67 +930,104 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // location/date is available. A failed named-location fetch remains explicitly
 // unavailable rather than becoming a seasonal estimate. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
-async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
-  const moodText = mood || question
-  // A weather the person or the model STATED for this slot is a claim about
-  // this slot's conditions, so it keeps its full meaning even for a capsule.
-  // Only the inferred, plan-wide season word is demoted.
-  if (slot.statedWeather && slot.statedWeather !== 'indoor') {
-    return {
-      profile: { ...weatherProfileFromContext({ mood: moodText, season: slot.statedWeather }), weatherSource: 'stated' },
-      label: slot.statedWeather
-    }
+// Spec §6.3: weatherUsed is generated from structured data and truthful
+// provenance — never an echo of model prose. Shared across outdoor and
+// indoor-transit labels so the wording stays consistent everywhere a slot's
+// weather is disclosed back to the user.
+// `heuristicText` (the slot's own season/transitSeason word) is echoed only
+// for the heuristic (no-location) branch — spec §6.1 preserves that branch
+// unchanged as a deliberate no-op, and the pre-existing behavior there
+// prefers the model's own descriptive season text over the coarse hot/cold/
+// mild bucket when one was given. Every other source is fully structured,
+// so there is nothing to echo.
+function truthfulWeatherLabel(temperature, { location = '', heuristicText = '' } = {}) {
+  const where = location ? `, ${location}` : ''
+  const range = Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
+    ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
+    : temperature.band
+      ? temperature.band
+      : describeWeatherProfile(temperature)
+  switch (temperature.source) {
+    case 'live': return `${range} — live forecast${where}`
+    case 'stated_user': return `${range} — you said so`
+    case 'model_estimate': return `${range} — seasonal estimate, not a live forecast`
+    case 'heuristic': return `${isGenericSeasonText(heuristicText) ? range : heuristicText} (estimated)`
+    default: return `forecast unavailable${where ? ` for ${location}` : ''}; temperature unknown`
   }
-  // Fall back to `undefined` (not '') when no date is known: getWeatherProfileForPlan
+}
+
+function isGenericSeasonText(season = '') {
+  const value = String(season || '').trim().toLowerCase()
+  return !value || value === 'current season' || value === 'current' || value === 'year-round'
+}
+
+// Per-slot weather resolution (spec §6.1/§6.3): resolves through the ONE
+// structured contract (resolveWeatherForRequest) — precedence stated_user
+// -> live -> model_estimate -> unavailable, resolved once, before any
+// roster is built. No prose (slot.season, mood, question, labels) ever
+// becomes physical weather here; `season`/`mood` only feed the at-home
+// no-location heuristic fallback, which resolveWeatherForRequest itself
+// keeps as a deliberate, unchanged no-op (spec §6.1).
+export async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
+  const moodText = mood || question
+  // Fall back to `undefined` (not '') when no date is known: resolveWeatherForRequest
   // threads the start date into the heuristic as currentDate, and only `undefined`
   // lets weatherProfileFromContext default to today for its "current season"
   // calendar guess — an empty string reads as a provided-but-invalid Date and
   // silently disables it, which would regress the keyword pre-route's weather.
   const day = slot.date || undefined
   const targetLocation = slot.location || location || ''
-  const profile = await getWeatherProfileForPlan({
-    dateRange: { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined },
+  const resolvedDateRange = { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
+  const context = await resolveWeatherForRequest({
     location: targetLocation,
-    season: slot.statedWeather === 'indoor' ? (slot.transitSeason || '') : slot.season,
+    dateRange: resolvedDateRange,
+    userWeather: slot.userWeather || null,
+    modelEstimate: slot.weatherEstimate || null,
     mood: moodText,
+    season: slot.statedWeather === 'indoor' ? (slot.transitSeason || '') : slot.season,
     seasonIsCalendarOnly,
     ...(fetchImpl ? { fetchImpl } : {})
   })
-  const descriptor = describeWeatherProfile(profile)
+  const t = context.temperature
+
+  // Spec §6.4: indoor transit projects BOTH facts instead of erasing one —
+  // an indoor base may stay light/permissive, but the outside temperature
+  // that governs arrival/departure and cold-transit coverage/footwear
+  // requirements is preserved under transit*, never discarded. Spec §5.1:
+  // provenance never encodes environment — weatherSource stays the plain,
+  // truthful source (live/stated_user/model_estimate/unavailable); `isIndoor`
+  // alone communicates the setting, and status is read from
+  // resolvedWeatherContext, not from a synthesized indoor_transit_* string.
   if (slot.statedWeather === 'indoor') {
-    const transitLabel = profile.weatherSource === 'live'
-      ? `${descriptor} (live forecast${slot.location ? `, ${slot.location}` : ''})`
-      : profile.weatherSource === 'unavailable'
-        ? `forecast unavailable${targetLocation ? ` for ${targetLocation}` : ''}; temperature unknown`
-      : `${isGenericSeason(slot.transitSeason) ? descriptor : (slot.transitSeason || descriptor)} (estimated)`
+    const transitLabel = truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.transitSeason })
     return {
-      // Extreme heat must constrain the base because a heavy main cannot be
-      // removed during transit. Cold remains handled by the established
-      // indoor-base + reusable transition-layer rules; applying the ordinary
-      // cold main gate here would suppress valid indoor bases before those
-      // layer requirements can do their job.
-      profile: { ...profile, isCold: false, isIndoor: true, weatherSource: 'indoor_transit' },
+      profile: {
+        // Extreme heat must still constrain the base because a heavy main
+        // cannot be removed during transit — isHot/isExtremeHeat carry over
+        // from the transit temperature. Cold is neutralized here: it's
+        // handled by the established indoor-base + reusable transition-layer
+        // rules (transitIsCold below), and applying the ordinary cold gate
+        // to the base itself would suppress valid indoor bases before those
+        // layer requirements get a chance to run.
+        isHot: t.isHot, isCold: false, isExtremeHeat: t.isExtremeHeat,
+        isIndoor: true,
+        transitIsHot: t.isHot, transitIsCold: t.isCold, transitHighF: t.highF, transitLowF: t.lowF,
+        weatherSource: t.source,
+        resolvedWeatherContext: context,
+      },
       label: `indoor; transit: ${transitLabel}`
     }
   }
-  if (profile.weatherSource === 'live') {
-    const where = slot.location ? `, ${slot.location}` : ''
-    return { profile, label: `${descriptor} (live forecast${where})` }
+
+  return {
+    profile: {
+      isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,
+      highF: t.highF, lowF: t.lowF,
+      weatherSource: t.source,
+      resolvedWeatherContext: context,
+    },
+    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season })
   }
-  if (profile.weatherSource === 'unavailable') {
-    return {
-      profile,
-      label: `forecast unavailable${targetLocation ? ` for ${targetLocation}` : ''}; temperature unknown`
-    }
-  }
-  // Heuristic: prefer the user's own weather phrasing when they gave one, since
-  // it is more informative than the coarse hot/cold/mild descriptor. Either way
-  // mark it as an estimate — this label previously looked exactly as
-  // authoritative as the live-forecast label above even though nothing here
-  // came from a real forecast, so the owner had no way to tell a live lookup
-  // from the model's own guess.
-  const heuristicLabel = isGenericSeason(slot.season) ? descriptor : slot.season
-  return { profile, label: `${heuristicLabel} (estimated)` }
 }
 
 const REUSE_MODES = new Set(['maximize', 'diversify', 'none'])
@@ -4481,16 +4502,32 @@ function mergeEquivalentOrdinalPlanSlots(slots = [], onDiagnostic = null) {
   return merged
 }
 
+// Spec §4.2: a slot-specific date inside the plan's date_range is
+// compatible with plan-level weather; a date outside that range is not.
+// ISO YYYY-MM-DD strings compare correctly lexically. No slot date, or no
+// plan range, means nothing to conflict with.
+function planSlotDateCompatibleWithRange(slotDate = '', dateRange = null) {
+  if (!slotDate) return true
+  if (!dateRange?.start) return true
+  const end = dateRange.end || dateRange.start
+  return slotDate >= dateRange.start && slotDate <= end
+}
+
 export function normalizePlanSlots(rawSlots = [], {
   fallbackWeather = '',
   fallbackOccasion = 'city',
   fallbackActivity = 'none',
   fallbackLocation = '',
+  fallbackUserWeather = null,
+  fallbackWeatherEstimate = null,
+  dateRange = null,
   maxSlots = PLAN_TOTAL_OUTFIT_CAP,
   maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
   tripSummary = null,
   onDiagnostic = null
 } = {}) {
+  const validPlanUserWeather = validateUserWeather(fallbackUserWeather)
+  const validPlanEstimate = validateWeatherEstimate(fallbackWeatherEstimate)
   const allRawSlots = Array.isArray(rawSlots) ? rawSlots : []
   // A separate slot-count cap keeps the model from opening more use cases than
   // the set can render. Default it to the same 8 as PLAN_TOTAL_OUTFIT_CAP so an
@@ -4509,11 +4546,14 @@ export function normalizePlanSlots(rawSlots = [], {
         ? inferPlanSlotActivity(slot, fallbackActivity)
         : (proseActivity || inferPlanSlotActivity(slot, fallbackActivity))
       if (!declaredActivity && proseActivity && typeof onDiagnostic === 'function') onDiagnostic('planSlotActivityInferred')
-      const rawExplicitWeather = String(slot?.weather || slot?.stated_weather || '').trim()
-      const weatherAsEnvironment = normalizePlanEnvironment(rawExplicitWeather)
+      // Spec future-trip-weather-estimate-spec.md §3.2: `environment` is the
+      // ONLY model-facing setting field. There is no more free-text `weather`
+      // fallback to infer it from — that field is removed from the tool
+      // schema entirely (§3.1); a model that wants indoor/outdoor/coastal
+      // sets `environment` directly.
       const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
       const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
-      const declaredDeclaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      const declaredDeclaredEnvironment = explicitEnvironment
       // Owner ruling 2026-07-30: the slot's own label wins over a declared
       // `outdoor`. Live thread_1785380251549 declared `outdoor` for both
       // "Restaurants / Social Events" and "City Outings / Museums" — the engine
@@ -4536,37 +4576,53 @@ export function normalizePlanSlots(rawSlots = [], {
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
       const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
       const eligibilityOccasion = planSlotEligibilityOccasion(occasion, { label, bestFor, coverage, planNote })
-      // statedWeather is ONLY the model's explicit per-slot weather — it wins
-      // over the live forecast. The trip-level fallbackWeather is not "stated"
-      // for this purpose: it feeds season/heuristic but must let a slot's own
-      // forecast override it (that is the coastal-microclimate case).
-      const normalizedExplicitWeather = rawExplicitWeather.toLowerCase().replace(/\s+/g, ' ')
-      const normalizedFallbackWeather = String(fallbackWeather || '').trim().toLowerCase().replace(/\s+/g, ' ')
-      const explicitWeather = normalizedExplicitWeather && !weatherAsEnvironment && normalizedExplicitWeather !== normalizedFallbackWeather
-        ? rawExplicitWeather
-        : ''
-      const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) || (
-        environment === 'indoor'
-          ? 'indoor'
-          : environment === 'beach_coastal'
-            ? ''
-            : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
-      )
+      // statedWeather is environment-driven ONLY (spec §3.2/§4.2) — it marks
+      // a slot as climate-controlled so live/estimated/stated OUTDOOR weather
+      // governs transit rather than the indoor base. Physical temperature
+      // itself now comes exclusively from userWeather/weatherEstimate/live
+      // below, never from this field or any other prose.
+      const statedWeather = environment === 'indoor'
+        ? 'indoor'
+        : environment === 'beach_coastal'
+          ? ''
+          : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
+      const slotDate = String(slot?.date || '').trim()
+      // Spec §4.2: structured weather binds to the containing location/date
+      // identity. A slot's OWN explicit field always wins; inheriting the
+      // PLAN-level field requires both a matching location and a compatible
+      // date — a different-location detour, or a slot date outside the plan
+      // range, must supply its own weather rather than silently inheriting
+      // weather stated about the main destination/window.
+      const locationMatchesPlan = !location || location === fallbackLocation
+      const dateCompatibleWithPlan = planSlotDateCompatibleWithRange(slotDate, dateRange)
+      const inheritsPlanWeather = locationMatchesPlan && dateCompatibleWithPlan
+      const slotUserWeather = validateUserWeather(slot?.user_weather)
+      const userWeather = slotUserWeather || (inheritsPlanWeather ? validPlanUserWeather : null)
+      const slotWeatherEstimate = validateWeatherEstimate(slot?.weather_estimate)
+      const weatherEstimate = slotWeatherEstimate || (inheritsPlanWeather ? validPlanEstimate : null)
       return {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,
         occasion,
         eligibilityOccasion,
         activity,
+        // statedWeather ('indoor' or '') seeds season ahead of the real
+        // season word on purpose: it signals indoor-ness to downstream season
+        // consumers without treating a physical season as the executable one
+        // for an indoor slot. requestedSeason (below) preserves the real
+        // value separately for seasonal-applicability purposes. Safe now that
+        // statedWeather can never carry prose — only 'indoor' or ''.
         season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
         requestedSeason: requestedSeasonForApplicability(slot?.season, fallbackWeather),
         statedWeather,
+        userWeather,
+        weatherEstimate,
         transitSeason: environment === 'indoor'
           ? String(slot?.season || fallbackWeather || '').trim()
           : '',
         location,
         environment,
-        date: String(slot?.date || '').trim(),
+        date: slotDate,
         bestFor,
         coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),

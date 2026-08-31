@@ -240,6 +240,13 @@ db.prepare(`
 const pieceById = new Map(wardrobe.map(item => [Number(item.id), item]))
 const ids = values => (Array.isArray(values) ? values : []).map(value => Number(value?.piece?.id ?? value?.id ?? value)).filter(Number.isFinite)
 const sortedObject = value => Object.fromEntries(Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)))
+// slot.statedWeather previously carried hand-set prose here ('mild weather',
+// 'hot weather') to simulate an already-normalized plan slot. Removed:
+// docs/future-trip-weather-estimate-spec.md narrowed statedWeather to be
+// environment-derived only ('indoor' or '') — resolveSlotWeather no longer
+// honors arbitrary prose there, so a fixture setting it was simulating input
+// shape normalizePlanSlots can no longer produce. Each slot's `season` field
+// still drives the heuristic label.
 const scenarioDefinitions = [
   {
     id: 'casual_neutral',
@@ -258,7 +265,6 @@ const scenarioDefinitions = [
       activity: 'none',
       environment: 'mixed',
       register: '',
-      statedWeather: 'mild weather',
       season: 'current season',
       targetOutfits: 1,
     },
@@ -281,7 +287,6 @@ const scenarioDefinitions = [
       activity: 'hiking',
       environment: 'outdoor',
       register: '',
-      statedWeather: 'hot weather',
       season: 'summer',
       targetOutfits: 1,
     },
@@ -304,7 +309,6 @@ const scenarioDefinitions = [
       activity: 'none',
       environment: 'mixed',
       register: '',
-      statedWeather: 'mild weather',
       season: 'spring',
       targetOutfits: 1,
     },

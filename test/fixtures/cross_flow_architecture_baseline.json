@@ -326,14 +326,13 @@
               "owner constraint 1: prohibited for season summer"
             ]
           },
-          "weatherUsed": "mild weather"
+          "weatherUsed": "mild (estimated)"
         },
         "capsule": {
           "requestedBudget": 10,
           "requestedBenchSize": 10,
           "rosterIds": [
             101,
-            102,
             104,
             201,
             202,
@@ -345,7 +344,6 @@
           "postConditionGaps": [],
           "benchIds": [
             101,
-            102,
             104,
             201,
             202,
@@ -353,16 +351,9 @@
             401,
             501,
             502,
-            503
+            504
           ],
-          "benchUnmetTargets": [
-            {
-              "group": "shoes",
-              "target": 4,
-              "actual": 3,
-              "eligible": 4
-            }
-          ],
+          "benchUnmetTargets": [],
           "validation": {
             "ok": true,
             "failures": []
@@ -667,7 +658,7 @@
               "owner constraint 1: prohibited for season summer"
             ]
           },
-          "weatherUsed": "hot weather"
+          "weatherUsed": "summer (estimated)"
         },
         "capsule": {
           "requestedBudget": 10,
@@ -995,7 +986,7 @@
               "register: dressy exceeds everyday ceiling"
             ]
           },
-          "weatherUsed": "mild weather"
+          "weatherUsed": "spring (estimated)"
         },
         "capsule": {
           "requestedBudget": 6,

@@ -689,7 +689,7 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
     dateRange: { start: '2026-08-01', end: '2026-08-01' },
     fetchImpl: makePlanFetch()
   })
-  assert.match(liveWorkbench.slots[0].weather_used, /\(live forecast, Cambria, CA\)$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
+  assert.match(liveWorkbench.slots[0].weather_used, /— live forecast, Cambria, CA$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
   assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
 })
 
@@ -709,6 +709,166 @@ test('plan slot weather discloses a failed named-location forecast instead of la
   })
   assert.equal(workbench.slots[0].weather_used, 'forecast unavailable for Reykjavik, Iceland; temperature unknown')
   assert.doesNotMatch(workbench.slots[0].weather_used, /winter|estimated/)
+})
+
+// ============================================================================
+// docs/future-trip-weather-estimate-spec.md — structured weather contract
+// ============================================================================
+
+test('plan_outfit_set schema exposes user_weather/weather_estimate and no longer exposes free-text weather', () => {
+  const planTool = STYLIST_TOOLS.find(t => t.name === 'plan_outfit_set')
+  assert.ok(planTool.input_schema.properties.user_weather, 'plan-level user_weather must exist')
+  assert.ok(planTool.input_schema.properties.weather_estimate, 'plan-level weather_estimate must exist')
+  assert.equal(planTool.input_schema.properties.weather, undefined, 'free-text weather is removed from the schema per spec §3.1')
+  const slotSchema = planTool.input_schema.properties.slots.items.properties
+  assert.ok(slotSchema.user_weather, 'slot-level user_weather must exist')
+  assert.ok(slotSchema.weather_estimate, 'slot-level weather_estimate must exist')
+  assert.equal(slotSchema.weather, undefined, 'slot-level free-text weather is removed')
+  assert.deepEqual(planTool.input_schema.properties.weather_estimate.required, ['high_f', 'low_f'])
+})
+
+// The exact Vienna VA repro from the live incident (thread_1788147143882),
+// now via the structured contract: the model supplies weather_estimate on
+// the first call, the executor resolves it before roster construction, and
+// the roster excludes cold-prohibited bare pieces before composition —
+// spec §9 acceptance item 18/25.
+test('plan_outfit_set: a future named-destination trip with weather_estimate excludes cold-prohibited bare pieces before composition', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const bareTank = insertPiece({ category: 'top', name: 'metallic stripe scoop tank', occasions: ['evening'], formality: 'everyday', sleeve_length: 'sleeveless' })
+  const layeredTop = insertPiece({ category: 'top', name: 'long sleeve knit top', occasions: ['evening'], formality: 'everyday', sleeve_length: 'long' })
+  insertPiece({ category: 'bottom', name: 'oatmeal elastic-waist pants', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'closed leather flats', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    weather_estimate: { high_f: 65, low_f: 45 },
+    slots: [{ label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.match(result.slots[0].weather_used, /65°F high \/ 45°F low — seasonal estimate, not a live forecast/)
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.equal(allowed.has(bareTank), false, 'a sleeveless top must be excluded once the estimate establishes cold')
+  assert.ok(allowed.has(layeredTop))
+})
+
+test('plan_outfit_set stops with weather_context_required (typed) when live weather is unavailable and no estimate was supplied', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'evening top', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'evening pants', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'evening shoes', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'trip to Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    slots: [{ label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  assert.equal(result.status, 'weather_context_required')
+  assert.equal(result.location, 'Vienna, Virginia')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.deepEqual(result.missing, ['temperature'])
+  assert.match(result.message, /weather_estimate/)
+  assert.equal(toolContext.pendingPlan, undefined, 'no pendingPlan may exist before weather context is resolved')
+})
+
+test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed plan with only SOME slots unresolved', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'museum top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'museum pants', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'museum shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const indoorToolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'trip to Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const indoorResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    slots: [{ label: 'Museum Day', occasion: 'city', activity: 'none', environment: 'indoor', count: 1 }]
+  }, indoorToolContext)
+  assert.equal(indoorResult.status, 'weather_context_required')
+
+  const mixedToolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'trip to Vienna, Virginia in October',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async (url) => {
+      if (url.includes('geocoding-api')) {
+        if (url.toLowerCase().includes('nowhereville')) return { ok: true, json: async () => ({ results: [] }) }
+        return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+      }
+      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [65], temperature_2m_min: [45] } }) }
+    }
+  }
+  const mixedResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    slots: [
+      { label: 'City Day', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'Coast Detour', occasion: 'casual', activity: 'walking', location: 'Nowhereville', count: 1 },
+    ]
+  }, mixedToolContext)
+  assert.equal(mixedResult.status, 'weather_context_required', 'one resolved slot must not let an unresolved sibling slot through')
+  assert.match(mixedResult.message, /Coast Detour/)
+})
+
+test('plan_outfit_set: user_weather (stated_user) outranks an unresolved live forecast, and binds to location like weather_estimate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const bareTank = insertPiece({ category: 'top', name: 'bare tank', occasions: ['evening'], formality: 'everyday', sleeve_length: 'sleeveless' })
+  const layeredTop = insertPiece({ category: 'top', name: 'long sleeve top', occasions: ['evening'], formality: 'everyday', sleeve_length: 'long' })
+  insertPiece({ category: 'bottom', name: 'evening pants', occasions: ['evening'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'evening shoes', occasions: ['evening'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'trip to Vienna, Virginia; it will be cold',
+    location: 'Vienna, Virginia',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-18' },
+    user_weather: { temperature_band: 'cold' },
+    slots: [
+      { label: 'Evening Out', occasion: 'evening', activity: 'none', count: 1 },
+      { label: 'Coastal Detour', occasion: 'casual', activity: 'walking', location: 'Cambria, CA', weather_estimate: { high_f: 60, low_f: 50 }, count: 1 },
+    ]
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.match(result.slots[0].weather_used, /cold — you said so/)
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.equal(allowed.has(bareTank), false, 'stated_user cold must gate a bare piece just like live or estimated cold')
+  assert.ok(allowed.has(layeredTop))
+  // The coastal detour has its own location and its own weather_estimate —
+  // the plan-level cold band must not leak into it.
+  assert.doesNotMatch(result.slots[1].weather_used, /you said so/)
 })
 
 test('an indoor slot in extreme heat keeps transit heat and permits only light AC coverage', async () => {
@@ -2913,16 +3073,19 @@ function seedWardrobe() {
 }
 
 test('normalizePlanSlots maps tool args to engine slots and caps the set size', () => {
+  // Spec future-trip-weather-estimate-spec.md §3.1: free-text `weather` is
+  // removed from the schema entirely — it is no longer read here at all, so
+  // every slot's `season` falls back to fallbackWeather.
   const slots = normalizePlanSlots([
-    { label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking', count: 3, weather: 'hot, highs 85F' },
+    { label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking', count: 3 },
     { label: 'Dinner Out', occasion: 'evening', count: 2 },
-    { label: 'Coastal Day', occasion: 'casual', activity: 'walking', count: 3, weather: 'cool, around 60F', plan_note: 'bring a layer' },
+    { label: 'Coastal Day', occasion: 'casual', activity: 'walking', count: 3, plan_note: 'bring a layer' },
     { label: 'Hike', occasion: 'casual', activity: 'hiking', count: 2 },
   ], { fallbackWeather: 'warm', tripSummary: { durationText: '5 days', dayBreakdown: '3 winery days, dinners out' } })
 
   assert.equal(slots.length, 4)
   assert.equal(slots[0].id, 'winery_days')
-  assert.equal(slots[0].season, 'hot, highs 85F')
+  assert.equal(slots[0].season, 'warm')
   assert.equal(slots[1].season, 'warm', 'slot without weather inherits the fallback')
   assert.equal(slots[2].planNote, 'bring a layer')
   assert.equal(slots[0].tripSummary.durationText, '5 days')
@@ -3073,37 +3236,39 @@ test('plan_outfit_set is blocked until cards intent is declared', async () => {
 
 // --- Build step 3: per-slot live weather -----------------------------------
 
-test('normalizePlanSlots carries location, date, and stated weather, inheriting the plan location', () => {
+test('normalizePlanSlots carries location and date; free-text weather no longer exists to parse', () => {
+  // Spec future-trip-weather-estimate-spec.md §3.1: the `weather` field is
+  // removed from the schema entirely — it is not read here anymore.
   const slots = normalizePlanSlots([
-    { label: 'Client Day', occasion: 'work', date: '2026-07-23', weather: 'cool AM, warm PM' },
+    { label: 'Client Day', occasion: 'work', date: '2026-07-23' },
     { label: 'Coast Escape', occasion: 'casual', location: 'Cambria, CA' },
   ], { fallbackLocation: 'Portland, OR' })
 
   assert.equal(slots[0].date, '2026-07-23')
-  assert.equal(slots[0].statedWeather, 'cool AM, warm PM')
-  assert.equal(slots[0].season, 'cool AM, warm PM', 'stated weather also seeds the season text')
+  // "work" reads as indoor by label alone, independent of any weather field.
+  assert.equal(slots[0].statedWeather, 'indoor')
   assert.equal(slots[0].location, 'Portland, OR', 'a slot without a location inherits the plan location')
   assert.equal(slots[1].location, 'Cambria, CA', 'a slot location overrides the plan location')
-  assert.equal(slots[1].statedWeather, '', 'no stated weather when none is given')
+  assert.equal(slots[1].statedWeather, '', 'no stated weather when the slot does not read as indoor')
 })
 
-test('normalizePlanSlots does not treat echoed fallback weather as slot-stated weather', () => {
+test('normalizePlanSlots: environment is the only setting field now', () => {
   const slots = normalizePlanSlots([
-    { label: 'Coast Walk', occasion: 'city', activity: 'walking', location: 'Cambria, CA', weather: ' warm ' },
-    { label: 'Indoor Dinner', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', weather: 'indoor' },
-    { label: 'Cool Patio', occasion: 'city', activity: 'none', location: 'Cambria, CA', weather: 'cool and breezy' },
+    { label: 'Coast Walk', occasion: 'city', activity: 'walking', location: 'Cambria, CA' },
+    { label: 'Indoor Dinner', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', environment: 'indoor' },
+    { label: 'Cool Patio', occasion: 'city', activity: 'none', location: 'Cambria, CA' },
   ], { fallbackWeather: 'warm', fallbackLocation: 'Paso Robles, CA' })
 
-  assert.equal(slots[0].statedWeather, '', 'fallback echo should still allow live slot forecast to win')
+  assert.equal(slots[0].statedWeather, '')
   assert.equal(slots[0].season, 'warm', 'fallback still seeds heuristic season text')
-  assert.equal(slots[1].statedWeather, 'indoor', 'different explicit indoor weather should still win')
-  assert.equal(slots[2].statedWeather, 'cool and breezy', 'different explicit slot weather should still win')
+  assert.equal(slots[1].statedWeather, 'indoor', 'explicit environment:indoor still wins')
+  assert.equal(slots[2].statedWeather, '', '"patio" reads outdoor by label, so this stays ungated')
 })
 
-test('normalizePlanSlots treats environment enum in weather as a declared environment', () => {
+test('normalizePlanSlots: environment:beach_coastal', () => {
   const diagnostics = {}
   const slots = normalizePlanSlots([
-    { label: 'Coastal Day', occasion: 'outdoor_daytime_social', activity: 'none', location: 'Cambria, CA', weather: 'beach_coastal' },
+    { label: 'Coastal Day', occasion: 'outdoor_daytime_social', activity: 'none', location: 'Cambria, CA', environment: 'beach_coastal' },
   ], {
     fallbackWeather: 'warm',
     onDiagnostic: key => { diagnostics[key] = (diagnostics[key] || 0) + 1 }
@@ -3111,14 +3276,14 @@ test('normalizePlanSlots treats environment enum in weather as a declared enviro
 
   assert.equal(slots[0].environment, 'beach_coastal')
   assert.equal(slots[0].occasion, 'casual')
-  assert.equal(slots[0].statedWeather, '', 'environment enum in weather must not block live forecast as stated weather')
+  assert.equal(slots[0].statedWeather, '')
   assert.equal(slots[0].season, 'warm')
-  assert.equal(diagnostics.planSlotEnvironmentInferred || 0, 0, 'weather enum should count as a declaration, not prose inference')
+  assert.equal(diagnostics.planSlotEnvironmentInferred || 0, 0, 'an explicit environment is a declaration, not inference')
 })
 
-test('normalizePlanSlots keeps indoor weather when it was supplied as a weather enum', () => {
+test('normalizePlanSlots keeps indoor weather when environment:indoor is declared', () => {
   const slots = normalizePlanSlots([
-    { label: 'Nice Restaurants', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', weather: 'indoor' },
+    { label: 'Nice Restaurants', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', environment: 'indoor' },
   ], { fallbackWeather: 'hot weather' })
 
   assert.equal(slots[0].environment, 'indoor')
@@ -3128,7 +3293,7 @@ test('normalizePlanSlots keeps indoor weather when it was supplied as a weather 
 
 test('normalizePlanSlots lets explicit indoor environment imply indoor weather', () => {
   const slots = normalizePlanSlots([
-    { label: 'Smart Casual Brunch', occasion: 'smart casual', activity: 'none', environment: 'indoor', weather: 'indoor' },
+    { label: 'Smart Casual Brunch', occasion: 'smart casual', activity: 'none', environment: 'indoor' },
     { label: 'Gallery Visit', occasion: 'gallery / art event', activity: 'none', environment: 'indoor' },
   ], { fallbackWeather: 'hot weather' })
 
@@ -3138,18 +3303,6 @@ test('normalizePlanSlots lets explicit indoor environment imply indoor weather',
   assert.equal(slots[1].environment, 'indoor')
   assert.equal(slots[1].statedWeather, 'indoor')
   assert.equal(slots[1].season, 'indoor')
-})
-
-test('normalizePlanSlots preserves beach-coastal contradiction handling for indoor weather', () => {
-  const slots = normalizePlanSlots([
-    { label: 'Beach Day', occasion: 'casual', activity: 'none', environment: 'beach_coastal', weather: 'indoor' },
-    { label: 'Coastal Walk', occasion: 'casual', activity: 'none', location: 'Cambria, CA', weather: 'indoor' },
-  ], { fallbackWeather: 'warm' })
-
-  assert.equal(slots[0].environment, 'beach_coastal')
-  assert.equal(slots[0].statedWeather, '')
-  assert.equal(slots[1].environment, 'beach_coastal')
-  assert.equal(slots[1].statedWeather, '')
 })
 
 // Was: "normalizePlanSlots lets explicit outdoor environment beat indoor text
@@ -3171,7 +3324,7 @@ test('an outdoor declaration wins except where the label unambiguously reads ind
   // outdoor under any rule — kept as the original fixture, now with a sibling
   // that isolates the actual property.
   const [named] = normalizePlanSlots([
-    { label: 'Outdoor Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
+    { label: 'Outdoor Office Picnic', occasion: 'city', activity: 'none', environment: 'outdoor' },
   ], { fallbackWeather: 'mild' })
   assert.equal(named.environment, 'outdoor')
   assert.equal(named.statedWeather, '')
@@ -3180,14 +3333,14 @@ test('an outdoor declaration wins except where the label unambiguously reads ind
   // Same declaration, label no longer self-identifying as outdoor. Owner ruling
   // 2026-07-30: the label wins here. Under spec 17 this asserted 'outdoor'.
   const [office] = normalizePlanSlots([
-    { label: 'Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
+    { label: 'Office Picnic', occasion: 'city', activity: 'none', environment: 'outdoor' },
   ], { fallbackWeather: 'mild' })
   assert.equal(office.environment, 'indoor')
   assert.equal(office.statedWeather, 'indoor')
 
   // A declaration still wins over a label that says nothing either way.
   const [neutral] = normalizePlanSlots([
-    { label: 'Day Two', occasion: 'city', activity: 'none', weather: 'outdoor' },
+    { label: 'Day Two', occasion: 'city', activity: 'none', environment: 'outdoor' },
   ], { fallbackWeather: 'mild' })
   assert.equal(neutral.environment, 'outdoor')
   assert.equal(neutral.statedWeather, '')
