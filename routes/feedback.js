@@ -3,11 +3,11 @@ import fs from 'fs'
 import path from 'path'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import {
-  ACTIVE_STYLIST_MODEL,
-  AI_PROVIDER,
   askStylistStructuredWithUsage,
   estimateAiUsageCost,
   prepareWardrobeThumb,
+  resolveAiTarget,
+  stylistProviderOverride,
 } from '../styling-engine/provider.js'
 import { pieceVisualDetailPolicy, visuallyPrioritizedPieces } from '../styling-engine/attributes.js'
 import {
@@ -113,6 +113,10 @@ function uploadsFilePath(relativeOrFilename) {
 // an image belongs to. Every block carries `_tokenEstimate` for structuredRequestInputTokenUpperBound
 // — see feedbackSynthesis.js for why that can't be derived from the block's own (base64) size.
 async function imageBlocksForEvidence(evidenceList, rawRowById) {
+  // Must agree with previewFor's own resolveAiTarget(stylistProviderOverride) call — this feeds
+  // estimateImagePixelTokens, which needs to know which provider's (very different) image-token
+  // formula applies to price the authorization preview accurately.
+  const estimateProvider = resolveAiTarget(stylistProviderOverride).provider
   const referencedPieceIds = [...new Set(evidenceList.flatMap(item => [
     Number(item?.subject?.id),
     ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : []),
@@ -133,7 +137,7 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
     if (boardFilePath) {
       const thumb = await prepareWardrobeThumb(boardFilePath, `synthesis-board:${item.evidenceId}`, { maxPx: BOARD_IMAGE_MAX_PX })
       blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — the generated outfit image the owner reacted to:` })
-      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(BOARD_IMAGE_MAX_PX) })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(BOARD_IMAGE_MAX_PX, estimateProvider) })
     }
 
     const itemPieceIds = [Number(item?.subject?.id), ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : [])]
@@ -147,7 +151,7 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
       const { maxPx } = pieceVisualDetailPolicy(piece)
       const thumb = await prepareWardrobeThumb(filePath, `synthesis-piece:${item.evidenceId}:${piece.id}`, { maxPx })
       blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — garment ${piece.id}:` })
-      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(maxPx) })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(maxPx, estimateProvider) })
     }
   }
   return blocks
@@ -156,16 +160,20 @@ async function imageBlocksForEvidence(evidenceList, rawRowById) {
 async function previewFor(ids) {
   const rows = feedbackRows(ids)
   const rawRowById = new Map(rows.map(row => [Number(row.id), row]))
+  // The preview and the actual authorized call (below) must agree on provider/model — this used
+  // to hardcode AI_PROVIDER/ACTIVE_STYLIST_MODEL regardless of stylistProviderOverride, so a
+  // Gemini-routed deployment would preview and price an Anthropic call it never actually made.
+  const resolvedTarget = resolveAiTarget(stylistProviderOverride)
   const preview = await buildFeedbackSynthesisPreview(rows, {
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
+    provider: resolvedTarget.provider,
+    model: resolvedTarget.model,
     maxItems: MAX_BATCH,
     hydratePiece: pieceAttributeHydrator(),
     buildImageBlocks: evidence => imageBlocksForEvidence(evidence, rawRowById),
   })
   const cost = estimateAiUsageCost({
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
+    provider: resolvedTarget.provider,
+    model: resolvedTarget.model,
     inputTokens: preview.estimatedInputTokens,
     outputTokens: preview.estimatedOutputTokens,
     cacheReadInputTokens: 0,
@@ -227,9 +235,10 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
 
   try {
     db.prepare("UPDATE feedback_synthesis_batches SET status = 'processing' WHERE id = ?").run(batchId)
-    const { value, usage } = await askStylistStructuredWithUsage(
-      feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap, preview.imageBlocks)
-    )
+    const { value, usage } = await askStylistStructuredWithUsage({
+      ...feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap, preview.imageBlocks),
+      providerOverride: stylistProviderOverride,
+    })
     const allowedIds = new Set(preview.feedbackIds)
     const evidenceById = new Map(preview.evidence.map(item => [Number(item.evidenceId), item]))
     const coveredIds = new Set()

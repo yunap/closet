@@ -100,9 +100,13 @@ test('provider entry points fail closed under NODE_ENV=test unless a commissione
   const packageJson = fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')
   assert.doesNotMatch(packageJson, /WARDROBE_ALLOW_TEST_PROVIDER_NETWORK=true/,
     'the ordinary npm test command must never opt into provider network calls')
+  // readdirSync's order is filesystem-dependent, not alphabetical by contract — sort before
+  // comparing so this assertion doesn't flake on directory-entry ordering.
   const optIns = fs.readdirSync(path.join(process.cwd(), 'test'))
     .filter(file => file.endsWith('.test.js'))
     .filter(file => file !== 'hermeticity_guard.test.js')
     .filter(file => fs.readFileSync(path.join(process.cwd(), 'test', file), 'utf8').includes("process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK = 'true'"))
-  assert.deepStrictEqual(optIns, ['api_keys.test.js'], 'only the dedicated direct key-resolution contract may use the test provider escape hatch')
+    .sort()
+  assert.deepStrictEqual(optIns, ['api_keys.test.js', 'gemini_call_turn.test.js'],
+    'only a dedicated direct-provider contract test may use the test provider escape hatch, and only when it stubs the real SDK client (gemini_call_turn.test.js patches GoogleGenAI.prototype.interactions — no real network call is ever made)')
 })

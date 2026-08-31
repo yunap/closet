@@ -82,6 +82,7 @@ import {
   estimateAiUsageCost,
   mockAiEnabled,
   parseModelJson,
+  stylistProviderOverride,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
@@ -104,8 +105,6 @@ import {
   wholeWardrobeMoodProfile,
   pieceTextBlob,
   selectDiverseWholeWardrobeCandidates,
-  wholeWardrobeCandidateAxes,
-  wholeWardrobeCandidateText,
   optionalLayerCoherenceIssue,
   buildOutfitGenerationCandidateText,
   getStylistFeedbackMemory,
@@ -412,38 +411,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 }
 
 // ── Critic Passes ────────────────────────────────────────────────────────────
-export async function criticPassForGeneratedOutfits({ selectedPiece, draft, userQuestion }) {
-  if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
-
-  const criticSystem = `You are a strict editor for ${prompts.PROFILE_NAME}'s generated outfit ideas.
-Return ONLY the corrected final answer.
-
-Hard checks:
-- Every outfit idea must include the selected garment.
-- Do not replace the selected garment.
-- Remove invented saved wardrobe items unless clearly labeled as missing-piece idea.
-- Prune weak ideas. Surface only 2-3 recommendations unless more are genuinely strong. Never keep five just for variety.
-- Do not present a risky outfit as recommended if it contradicts the Avoid section. Either remove it or label it "usable but weaker" and explain why.
-- Remove generic filler like "harmony", "balance", "draws attention upward", "confidence to pull off", or "proper tuck" unless tied to a real garment-specific reason.
-- Do not recommend tucking unless garment truth supports it.
-- Avoid section must be contextual and must not contradict the recommended outfits.
-- Keep the required output format: Signature / strongest direction, Usable variation, optional Experimental direction, optional I would skip, Saveable learning.
-- Use ${prompts.PROFILE_NAME}'s language: visual column, relaxed structure, grounded texture, compact top, stable bottom, controlled softness, signature direction.`
-
-  const checked = await askStylist({
-    system: criticSystem,
-    maxTokens: 1200,
-    messages: [{ role: 'user', content: [
-      `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
-      categoryConstraintForSelectedPiece(selectedPiece),
-      `User request: ${userQuestion || 'Generate outfit ideas'}`,
-      `Draft answer to audit and correct:\n${draft}`
-    ].join('\n\n') }]
-  })
-  return checked || draft
-}
-
-export async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion }) {
+export async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion, providerOverride = stylistProviderOverride }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
 
   const criticSystem = `You are a strict editor for ${prompts.PROFILE_NAME}'s wardrobe stylist app.
@@ -465,7 +433,8 @@ Hard checks:
       categoryConstraintForSelectedPiece(selectedPiece),
       `User question: ${userQuestion || 'How should I style this piece?'}`,
       `Draft answer to audit and correct:\n${draft}`
-    ].join('\n\n') }]
+    ].join('\n\n') }],
+    providerOverride
   })
   return checked || draft
 }
@@ -1053,7 +1022,7 @@ export function anchorRegisterFootwearComputedChecks({ selectedPiece, occasion, 
 // providerOverride: same gap and fix as generateWholeWardrobeOutfitsVisualInternal/
 // composeSelectedPieceVisualWardrobeOutfits (routes/ai.js) -- absent by default, only forwarded
 // from the freeform-chat idealMode/idealOnlyMode path via generateOutfitsForPieceInternal.
-export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [], activity = '', occasionProfile = null, activityProfile = null, providerOverride = null }) {
+export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [], activity = '', occasionProfile = null, activityProfile = null, providerOverride = stylistProviderOverride }) {
   const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
   const candidateText = buildOutfitGenerationCandidateText(rankedCandidates)
   const userPayload = [
@@ -1199,13 +1168,6 @@ export async function makeGarmentTile(piece, width = 190, height = 230) {
   return sharp(Buffer.from(tileSvg)).composite([{ input: image, left: 10, top: 12 }]).png().toBuffer()
 }
 
-export function fullPiecesForCandidate(candidate = {}, candidatePieces = []) {
-  const byId = new Map(candidatePieces.map(piece => [Number(piece.id), piece]))
-  return (candidate.pieceIds || candidate.pieces?.map(piece => piece.id) || [])
-    .map(id => byId.get(Number(id)))
-    .filter(Boolean)
-}
-
 export function hydrateGeneratedOutfitPiece(piece = {}, byId = new Map()) {
   const saved = piece?.id ? byId.get(Number(piece.id)) : null
   return {
@@ -1286,42 +1248,6 @@ export async function makeGeneratedOutfitReferenceSheet(generatedOutfits = [], w
   return { base64: buffer.toString('base64'), mime: 'image/jpeg' }
 }
 
-export async function makeWholeWardrobeCandidateContactSheet(candidates = [], candidatePieces = [], maxCandidates = 12) {
-  const shown = candidates.slice(0, maxCandidates)
-  const width = 1120
-  const rowHeight = 196
-  const headerHeight = 76
-  const height = headerHeight + shown.length * rowHeight + 28
-  const composites = []
-  const rowSvgs = []
-
-  for (const [index, candidate] of shown.entries()) {
-    const y = headerHeight + index * rowHeight
-    const pieces = fullPiecesForCandidate(candidate, candidatePieces).slice(0, 5)
-    const title = `${candidate.candidateId}: ${pieces.map(piece => piece.name).join(' + ')}`
-    const formula = wholeWardrobeCandidateAxes(candidate).formula
-    rowSvgs.push(`
-      <rect x="24" y="${y}" width="${width - 48}" height="${rowHeight - 14}" rx="18" fill="#fffaf7" stroke="#ddd1c6"/>
-      <text x="44" y="${y + 30}" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#3f352e">${escapeSvgText(title)}</text>
-      <text x="44" y="${y + 54}" font-family="Arial, sans-serif" font-size="12" fill="#81756b">formula: ${escapeSvgText(formula)}${candidate.localReasons?.length ? ` · ${escapeSvgText(candidate.localReasons.join('; '))}` : ''}</text>
-    `)
-    composites.push(...await Promise.all(pieces.map(async (piece, pieceIndex) => ({
-      input: await makeGarmentTile(piece, 150, 132),
-      left: 44 + pieceIndex * 166,
-      top: y + 62
-    }))))
-  }
-
-  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="#f4efe8"/>
-    <text x="32" y="38" font-family="Georgia, serif" font-size="30" fill="#2f2924">Whole wardrobe candidate sheet</text>
-    <text x="32" y="62" font-family="Arial, sans-serif" font-size="14" fill="#786d63">Choose visually coherent outfits by candidate ID. Use the garment photos, not just the labels.</text>
-    ${rowSvgs.join('')}
-  </svg>`
-  const buffer = await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 84 }).toBuffer()
-  return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCandidateIds: shown.map(candidate => candidate.candidateId) }
-}
-
 export async function makeSelectedPieceCandidateContactSheet(selectedPiece, rankedCandidates = [], maxCandidates = 18) {
   const shown = rankedCandidates.slice(0, maxCandidates)
   const width = 1120
@@ -1371,7 +1297,7 @@ export async function makeSelectedPieceCandidateContactSheet(selectedPiece, rank
 
 // providerOverride: same gap and fix as composeStructuredOutfitsForPiece above -- absent by
 // default, only forwarded from the freeform-chat idealMode/idealOnlyMode path.
-export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '', providerOverride = null }) {
+export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '', providerOverride = stylistProviderOverride }) {
   const candidatesWithPhotos = rankedCandidates.filter(r => r?.piece && (r.piece.photo || r.piece.worn_photo))
   const reviewCandidates = (candidatesWithPhotos.length >= 8 ? candidatesWithPhotos : rankedCandidates).slice(0, 18)
   if (!selectedPiece || !reviewCandidates.length || !(selectedPiece.photo || selectedPiece.worn_photo || reviewCandidates.some(r => r.piece?.photo || r.piece?.worn_photo))) return null
@@ -1447,61 +1373,6 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
   }
 }
 
-export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidatePieces = [], occasion, season, mood, memoryText = '', limit = 5 }) {
-  const candidatesWithPhotos = candidates.filter(candidate =>
-    fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
-  )
-  const reviewSource = candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates
-  const testReviewLimit = process.env.NODE_ENV === 'test'
-    ? Math.max(0, Number(process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES) || 0)
-    : 0
-  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, testReviewLimit || 18, { occasion })
-  if (!reviewCandidates.length) return null
-
-  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
-  const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
-  const moodProfile = wholeWardrobeMoodProfile(mood)
-  const raw = await askStylist({
-    system: prompts.VISUAL_WARDROBE_CRITIC_SYSTEM,
-    maxTokens: 900,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: sheet.mime, data: sheet.base64 } },
-        { type: 'text', text: [
-          `Occasion: ${occasion || 'casual'}`,
-          `Season: ${season || 'current season'}`,
-          mood ? `Mood: ${mood}` : '',
-          moodProfile ? `Mood interpretation:\n${moodProfile.guidance}` : '',
-          memoryText ? `Taste memory:\n${memoryText}` : '',
-          `Candidate truth:\n${candidateTruth}`,
-          '',
-          `Return JSON exactly like:
-{
-  "rankedCandidateIds": ["cand-1", "cand-7"],
-  "rejectedCandidateIds": [{"candidateId": "cand-3", "reason": "visual reason"}],
-  "visualLearning": "one concise observation"
-}`,
-          `Rank up to ${Math.max(limit, 5)} candidates. Prefer visual coherence, good fit/trust, garment rotation, and actual outfit appeal over safe repeated formulas.`
-        ].filter(Boolean).join('\n\n') }
-      ]
-    }]
-  })
-  const parsed = parseModelJson(raw, { context: 'visual wardrobe critic', maxTokens: 900 })
-  const rankedIds = Array.isArray(parsed.rankedCandidateIds) ? parsed.rankedCandidateIds.filter(id => sheet.shownCandidateIds.includes(id)) : []
-  if (!rankedIds.length) return null
-  const byId = new Map(candidates.map(candidate => [candidate.candidateId, candidate]))
-  const ranked = rankedIds.map(id => byId.get(id)).filter(Boolean)
-  const rest = candidates.filter(candidate => !rankedIds.includes(candidate.candidateId))
-  return {
-    candidates: [...ranked, ...rest],
-    visualRejected: parsed.rejectedCandidateIds || [],
-    visualLearning: parsed.visualLearning || '',
-    reviewedCandidateIds: sheet.shownCandidateIds,
-    rankedCandidateIds: rankedIds
-  }
-}
-
 // The composer above proposes outfits from ISOLATED per-garment photos — it never sees two
 // pieces together, so its own written "reason" can rationalize a pairing (shared color-family
 // words, "one loud piece grounded by support") that the actual photos, side by side, show
@@ -1541,14 +1412,18 @@ export async function makeComposedOutfitClashContactSheet(outfits = [], maxOutfi
   return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCount: shown.length }
 }
 
-export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '' } = {}) {
+export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '', providerOverride = stylistProviderOverride } = {}) {
   const reviewable = outfits.filter(outfit => (outfit.pieces || []).some(piece => piece.photo || piece.worn_photo))
   if (reviewable.length < 1) return null
 
   const sheet = await makeComposedOutfitClashContactSheet(reviewable, 12)
-  const raw = await askStylist({
+  // askStylistWithUsage, not askStylist (which discards usage entirely) — this call's spend was
+  // previously invisible to the parent turn's cost totals, undercounting real spend whenever the
+  // critic fired.
+  const { text: raw, usage } = await askStylistWithUsage({
     system: prompts.WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM,
     maxTokens: 700,
+    providerOverride,
     messages: [{
       role: 'user',
       content: [
@@ -1570,7 +1445,7 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
     if (!Number.isInteger(index) || index < 0 || index >= reviewable.length) continue
     flaggedByOutfit.set(reviewable[index], String(item?.reason || 'visual critic flagged a clash in the photos').trim())
   }
-  return { flaggedByOutfit, reviewedCount: reviewable.length }
+  return { flaggedByOutfit, reviewedCount: reviewable.length, usage }
 }
 
 export function getOpenAIImageModel() {
@@ -3102,7 +2977,8 @@ export async function evaluateOutfitThroughSharedPipeline({
   routeMode = 'evaluate_wardrobe_outfit',
   uploadedPhotoPath = '',
   allowPhotoOnly = false,
-  extraContextText = ''
+  extraContextText = '',
+  providerOverride = stylistProviderOverride
 } = {}) {
   const startedAt = Date.now()
   const { pieces } = resolveOutfitEvaluationPieces({ outfit, pieceIds })
@@ -3285,6 +3161,7 @@ export async function evaluateOutfitThroughSharedPipeline({
         request: question,
         retrievedPieceIds: new Set(pieces.map(piece => Number(piece.id)).filter(Boolean)),
         visuallySeenPieceIds: new Set(imageRefs.filter(Boolean).map(ref => Number(ref.piece.id)).filter(Boolean)),
+        providerOverride,
       }
       const followupResult = await withTimeout(askStylistWithTools({
         system,
@@ -3306,8 +3183,11 @@ export async function evaluateOutfitThroughSharedPipeline({
       const diagnostics = toolContext.freeformDiagnostics || {}
       providerCalls = Math.max(1, Number(diagnostics.providerIterations) || 0)
       usage = {
-        provider: AI_PROVIDER,
-        model: ACTIVE_STYLIST_MODEL,
+        // toolContext.resolvedProviderTarget is set by askStylistWithTools itself from the same
+        // providerOverride passed in above — reading it back here instead of the static AI_PROVIDER
+        // constant keeps this label honest once providerOverride can actually resolve to Gemini.
+        provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+        model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
         inputTokens: Number(diagnostics.providerInputTokens) || 0,
         outputTokens: Number(diagnostics.providerOutputTokens) || 0,
         cacheReadInputTokens: Number(diagnostics.providerCacheReadInputTokens) || 0,
@@ -3323,6 +3203,7 @@ export async function evaluateOutfitThroughSharedPipeline({
         system,
         maxTokens,
         messages,
+        providerOverride,
       }), 90000, 'Whole-wardrobe outfit evaluator')
       usage = evaluationResult.usage
       parsed = parseModelJson(evaluationResult.text, { context: 'whole-wardrobe outfit evaluator', maxTokens, stopReason: usage?.stopReason })
@@ -3330,8 +3211,10 @@ export async function evaluateOutfitThroughSharedPipeline({
     const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
     const result = {
       ...formatted,
-      provider: AI_PROVIDER,
-      model: ACTIVE_STYLIST_MODEL,
+      // usage.provider/model (normalizeAiUsage already carries the real resolved target) — not the
+      // static AI_PROVIDER/ACTIVE_STYLIST_MODEL constants, same fix as the /ask response envelope.
+      provider: usage?.provider || AI_PROVIDER,
+      model: usage?.model || ACTIVE_STYLIST_MODEL,
       mode: routeMode,
       pipeline: 'whole_wardrobe_outfit_evaluator',
       evidenceMode,

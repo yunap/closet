@@ -4308,14 +4308,6 @@ export function wholeWardrobeCandidateFormulaCounts(candidates = []) {
   }, {})
 }
 
-export function wholeWardrobeCandidateText(candidates = []) {
-  return candidates.map((candidate, index) => [
-    `${index + 1}. ${candidate.candidateId} | formula family ${wholeWardrobeCandidateAxes(candidate).formula}`,
-    `Pieces: ${candidate.pieces.map(p => `${p.id}:${p.name} (${p.category})`).join(' + ')}`,
-    candidate.localReasons?.length ? `Local reasons: ${candidate.localReasons.join('; ')}` : '',
-  ].filter(Boolean).join('\n')).join('\n\n')
-}
-
 function isWholeWardrobeLayerableTop(piece = {}) {
   if (wardrobeCategoryGroup(piece) !== 'top') return false
   const text = [

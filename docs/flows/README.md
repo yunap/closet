@@ -10,9 +10,27 @@ the app's own code, hexagons are model calls (`LLM ·` = text model, `Image ·` 
 image model), diamonds are decisions.** A model is only touched at the hexagons.
 Full convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow).
 
-**Model usage:** text, vision, and composition flows call Claude
-(`askStylist*`). Image-rendering flows call a separate image model
-(GPT-4o). The stylist chat brain (`/ask`) is the only tool-using flow.
+**Model usage:** text, vision, and composition flows call the stylist model via
+`askStylist*` — by default Claude (Anthropic), but the actual provider is
+per-call, not fixed. Owner ruling 2026-08-30 reversed an earlier decision:
+*every* non-image-generation call must be configurable through one shared
+setting, `stylistProviderOverride` (`styling-engine/provider.js`, backed by
+the `STYLIST_PROVIDER_OVERRIDE` env var) — this now covers families A–E's
+direct HTTP routes as well as family F, not just `/ask`. Each of those
+routes' own composer/critic/evaluator functions defaults its own
+`providerOverride` parameter to this shared config, so a route handler that
+never explicitly mentions it still picks it up automatically. Family F
+(`/ask`) additionally supports a manual per-turn "Retry with Sonnet" override
+(`{provider: 'anthropic'}`, wins over the shared config for that one turn)
+and threads its resolved override through every call attributable to that
+turn — the execution router, a compact answer, the tool loop, and
+capsule-from-chat composition — so a turn can't silently mix providers.
+Piece tagging (family A) and the multi-piece `/extract-pieces` vision
+extraction have their own independent, currently-unset
+`TAGGER_PROVIDER_OVERRIDE` — deliberately not folded into the shared stylist
+config. Image-rendering flows call a separate image model (GPT-4o/OpenAI),
+untouched by either override per the ruling. The stylist chat brain (`/ask`)
+remains the only tool-using flow.
 
 Status: `done` · `next` · `todo`
 

@@ -15,7 +15,7 @@ import sharp from 'sharp'
 import AdmZip from 'adm-zip'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { tagPieceWithProvider } from './ai.js'
-import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, ANTHROPIC_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
+import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, ANTHROPIC_MODEL, AI_PROVIDER, stylistProviderOverride } from '../styling-engine/provider.js'
 import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM, IMPORT_RELOCATE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
@@ -260,7 +260,11 @@ async function askCheapJson({ sessionId, system, content, maxTokens, context }) 
       system,
       messages: [{ role: 'user', content }],
       maxTokens: cap,
-      model: IMPORT_CHEAP_MODEL
+      // model only takes effect on the implicit Anthropic fallback branch inside
+      // askStylistWithUsage — providerOverride resolving to gemini/openai ignores it entirely and
+      // uses that provider's own target.model instead, so passing both together is safe.
+      model: IMPORT_CHEAP_MODEL,
+      providerOverride: stylistProviderOverride
     })
     addSpend(sessionId, usage)
     try {

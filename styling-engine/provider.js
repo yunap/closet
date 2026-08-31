@@ -548,6 +548,23 @@ export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flas
 // run against it).
 const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
 
+// The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
+// generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
+// model call, across every feature (stylist chat, the direct visual-composer routes, editorial,
+// capsule, evaluation, comparison, etc.), must be configurable through this one setting rather than
+// silently defaulting to Anthropic because its particular call site never learned about the
+// experimental routing flag. This was previously defined only inside routes/ai.js (as
+// stylistProviderOverride, still exported there for backward compatibility) and consulted by
+// exactly one route (/ask) — every other feature's call sites simply never had it in scope. Piece
+// tagging is deliberately NOT covered by this constant — it has its own, separately-configured
+// TAGGER_PROVIDER_OVERRIDE (routes/ai.js), a real, independent product decision (tagging currently
+// stays on Haiku even when this is set), not an oversight to fold in here.
+const STYLIST_PROVIDER_OVERRIDE = process.env.STYLIST_PROVIDER_OVERRIDE || ''
+const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5-flash-lite'
+export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
+  ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
+  : null
+
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
 // experimental slice before real key management existed for this provider. Re-exported for
@@ -654,6 +671,42 @@ function normalizeStopReason(rawStopReason, provider) {
   // Stage C, and see the corresponding TODO in the adapter test.
   if (provider === 'gemini') return /max_tokens/i.test(String(rawStopReason)) ? 'max_tokens' : rawStopReason
   return rawStopReason
+}
+
+// Gemini's Interactions API has no per-response finish_reason field to read (unlike Anthropic's
+// stop_reason or OpenAI's finish_reason) — the platform's own completion signal lives on
+// Interaction.status instead ('incomplete'/'budget_exceeded' is Gemini's actual token-cap-hit
+// shape per @google/genai's InteractionStatus_2). This was previously hardcoded to null at every
+// Gemini call site, meaning a token-capped Gemini response could never be told apart from a
+// genuine complete answer — the same class of bug Anthropic's stop_reason === 'max_tokens' check
+// exists to catch (see the tool_use-truncation guard below).
+function geminiStopReasonFromStatus(status) {
+  return (status === 'incomplete' || status === 'budget_exceeded') ? 'MAX_TOKENS' : null
+}
+
+// 'failed'/'cancelled' mean the platform gave up on the interaction — any steps/output_text
+// present are not a real answer and must not be read as one. Without this check they fell
+// through to the normal success path (logAiCall(success: true) unconditionally) and could be
+// silently accepted as a legitimate blank or partial reply.
+function assertGeminiInteractionUsable(interaction, { model }) {
+  if (interaction.status === 'failed' || interaction.status === 'cancelled') {
+    const detail = (interaction.errors || []).map(e => e?.message).filter(Boolean).join('; ')
+    const err = new Error(`Gemini interaction ${interaction.status}${detail ? `: ${detail}` : ''} (model: ${model})`)
+    err.geminiStatus = interaction.status
+    throw err
+  }
+}
+
+// Each FunctionCallStep is typed as Required<{id, name, arguments}> by @google/genai, but that's
+// a contract, not a guarantee about what the network actually returned. A missing id/name was
+// previously swallowed silently (`fc.arguments || {}`), so a malformed call surfaced as a
+// confusing failure one iteration later — a `function_result` sent with `call_id: undefined` —
+// rather than where the bad data actually originated.
+// Returns the first malformed call (or undefined) rather than throwing directly — the caller
+// needs usage computed and a failure logAiCall row written before it raises, the same as every
+// other failure path in this file, so the throw happens at the call site instead.
+function firstMalformedGeminiFunctionCall(functionCalls) {
+  return functionCalls.find(fc => !fc?.id || typeof fc.id !== 'string' || !fc?.name)
 }
 
 export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL, stopReason = null } = {}) {
@@ -1168,6 +1221,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
         generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
       })
+      assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
       throw err
@@ -1177,7 +1231,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
       .filter(s => s.type === 'model_output')
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
-    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: null })
+    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
     return { text, usage }
   }
@@ -1249,8 +1303,17 @@ export async function askStylistStructuredWithUsage({
         // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent
         // simplification: if a real schema fails here, that is Stage C's problem to diagnose and
         // is intentionally NOT worked around in this experimental slice (plan: don't widen scope).
-        response_format: { type: 'json_object', name, description, schema },
+        // 2026-08-31 review correction: a live call showing a 400 for 'json_object' (the OpenAI
+        // convention this was copy-pasted from) was wrongly "fixed" by trying 'object' — that just
+        // stopped the 400 without confirming schema enforcement actually applied; the model's own
+        // prompt-embedded JSON instructions were doing the real work of producing parseable output.
+        // The installed @google/genai SDK's own TextResponseFormat_2 type (the actual shape this
+        // field is typed as) is { type: 'text', mime_type: 'application/json', schema } — 'name' and
+        // 'description' have no field on that type at all, also copy-pasted from OpenAI's
+        // json_schema wrapper shape and silently ignored rather than erroring.
+        response_format: { type: 'text', mime_type: 'application/json', schema },
       })
+      assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
       throw err
@@ -1260,7 +1323,7 @@ export async function askStylistStructuredWithUsage({
       .filter(s => s.type === 'model_output')
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
-    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: null })
+    const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
@@ -1683,7 +1746,12 @@ function describeGeminiInputShape(input, continuation, toolCount) {
   return { usedContinuation: Boolean(continuation), inputItemCount: input.length, inputItemsByType: byType, approxInputJsonChars: approxChars, toolDeclarationCount: toolCount }
 }
 
-async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
+// Exported for direct unit testing (test/gemini_call_turn.test.js) — this is the one Gemini-facing
+// function the tool loop actually calls per iteration, and it was previously exercised by no test
+// at all: askStylistWithTools short-circuits on takeTestAiResponse before ever reaching a provider
+// branch, so the ordinary mock path skips this function's own status/truncation/malformed-call
+// handling entirely.
+export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
   const input = canonicalHistoryToGeminiInput(unsyncedEntries)
   const callKind = tools.length ? 'tool_loop' : 'text'
@@ -1707,6 +1775,7 @@ async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tool
   captureWireProviderInput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', request: geminiRequest })
   try {
     interaction = await ai.interactions.create(geminiRequest)
+    assertGeminiInteractionUsable(interaction, { model })
   } catch (err) {
     await logAiCall({
       provider: 'gemini', model, callKind, success: false,
@@ -1725,10 +1794,22 @@ async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tool
     .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
     .join('\n\n')
     .trim() || String(interaction.output_text || '').trim()
-  // Gemini's truncation signal was never exercised by the Stage-0 spike (it never hit the token
-  // cap) — stopReason stays null here until a real truncated response is observed; see the TODO
-  // on normalizeStopReason's gemini branch and the corresponding adapter test.
-  const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model, stopReason: null })
+  const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model, stopReason: geminiStopReasonFromStatus(interaction.status) })
+  // Checked here, after usage is computed, rather than at the try/catch above: this call already
+  // succeeded and cost real usage, so a malformed function_call step must still produce a logAiCall
+  // row (success: false, with the usage this call actually spent) instead of vanishing from
+  // telemetry entirely — the earlier position threw before either log call could ever run.
+  const malformedCall = firstMalformedGeminiFunctionCall(functionCalls)
+  if (malformedCall) {
+    await logAiCall({
+      provider: 'gemini', model, callKind, usage, success: false,
+      errorMessage: `Gemini function_call step missing a usable id/name (name: ${malformedCall?.name || 'unknown'}, id: ${malformedCall?.id ?? 'missing'})`,
+      latencyMs, isMock: false,
+    })
+    const err = new Error(`Gemini returned a function_call step without a usable id/name (name: ${malformedCall?.name || 'unknown'}, id: ${malformedCall?.id ?? 'missing'}) — refusing to continue the tool loop with an unmatchable call.`)
+    err.usage = usage
+    throw err
+  }
   if (GEMINI_DEBUG) {
     // Full breakdown the SQL columns don't carry (item 4 of the latency diagnosis): thought vs
     // tool-use vs plain output tokens, and cache/input split by modality (text vs image) — the
@@ -1750,11 +1831,27 @@ async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tool
     toolNames: functionCalls.map(fc => fc.name).filter(Boolean).join(','),
     context: geminiModalityContext(interaction),
   })
+  // Restored to match the documented contract (2026-08-30 review correction): the earlier version
+  // of this line dropped the status check on the mistaken belief that 'requires_action' was
+  // deprecated. That deprecation belongs to a DIFFERENT, unrelated uppercase `InteractionStatus`
+  // enum (Live API sessions); the Interactions API's actual `Interaction.status` field is typed as
+  // the separate `InteractionStatus_2` string union, where 'requires_action' is the current,
+  // non-deprecated value Google's own function-call example returns. function_call steps under any
+  // other status (e.g. 'completed') would contradict that contract rather than represent a
+  // legitimate alternate shape, so gating on the status string here is correct, not a risk.
+  const hasToolCalls = interaction.status === 'requires_action' && functionCalls.length > 0
+  // No tool calls and no text: previously read through as a legitimate blank final answer (there
+  // was no Gemini equivalent of the OpenAI branch's `if (!message) ... noMessage: true` short
+  // circuit above). Mirror that behavior instead of letting an empty reply reach the citation/
+  // output-guard pipeline as if it were real prose.
+  if (!hasToolCalls && !text) {
+    return { text: '', toolCalls: [], usage, hasToolCalls: false, noMessage: true, continuation: interaction.id }
+  }
   return {
     text,
     toolCalls: functionCalls.map(fc => ({ id: fc.id, name: fc.name, args: fc.arguments || {} })),
     usage,
-    hasToolCalls: interaction.status === 'requires_action' && functionCalls.length > 0,
+    hasToolCalls,
     continuation: interaction.id,
   }
 }
@@ -1875,6 +1972,37 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         cacheReadInputTokens: turn.usage?.cacheReadInputTokens,
         cacheCreationInputTokens: turn.usage?.cacheCreationInputTokens
       })
+    }
+
+    // Checked BEFORE noMessage (2026-08-31 review correction): a truncated turn with no narration
+    // and a function_call step too incomplete to surface as a real tool call (Gemini's hasToolCalls
+    // requires status === 'requires_action', which a token-capped 'incomplete' status never is)
+    // previously matched `turn.noMessage` first and returned a blank answer, silently skipping this
+    // check entirely and burning the turn instead of retrying it. A token-capped turn can return
+    // partial prose or a tool call with truncated arguments — either would otherwise be treated as
+    // a normal, complete turn. This was previously unreachable for Gemini (stopReason was hardcoded
+    // null) and was already silently possible for every provider even when the signal was
+    // available, since nothing in this loop consulted it. One retry, same shape as
+    // applyFreeformOutputChecks's other clauses: discard the truncated turn without executing/
+    // shipping it and ask for a shorter, complete one.
+    if (turn.usage?.stopReason === 'max_tokens') {
+      if (!retriedChecks.has('providerTruncation')) {
+        retriedChecks.add('providerTruncation')
+        bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
+        toolContext._pendingFreeformRetryReason = 'providerTruncation'
+        currentMessages.push({
+          role: 'user',
+          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
+        })
+        continue
+      }
+      // 2026-08-31 review correction: the retry-exhausted case previously fell through to the
+      // ordinary branches below — a second truncation with no content matched `turn.noMessage` and
+      // returned a silent blank answer; a second truncation with partial prose or a tool call was
+      // shipped/executed as if it were a normal, complete turn. One retry is already spent, so
+      // stop here rather than risk shipping content that may be silently incomplete twice over.
+      bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterationsUnrecovered')
+      return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
     }
 
     if (turn.noMessage) return { answer: '', savedCorrections }
