@@ -2,8 +2,8 @@
 
 **Status:** Proposed — amended 2026-08-31 after independent review. Slice A and Slice A.1 are
 complete (Appendix A). Both blocking owner rulings were given 2026-08-31 and executed — the
-data-quality precondition **passes** (Appendix B). Slices B through E are implemented
-(Appendices C, D and E); **Slice F is next.**
+data-quality precondition **passes** (Appendix B). **all slices are implemented**
+(Appendices C-F). Two open items carried forward, recorded in Appendix F.
 **Route:** [docs/README.md](README.md).
 **Scope:** Architecture-remediation extension to the completed ownership-consolidation arc.
 **Predecessors, both ratified, neither reopened here:**
@@ -1379,3 +1379,87 @@ indoors", nothing that duplicates Contract B's judgment in prose the code does n
 * Slices A, A.1, B, C, D, E — complete.
 * Slice F (legacy/special-case cleanup, incl. the `[A6]` capsule cardigan question) — next.
 * Open migration finding: the three `tools.js` `evaluateWearableOutfit` call sites from D.4.
+
+---
+
+## Appendix F — Slice F results (2026-08-31)
+
+Legacy/special-case cleanup. **1672/1673 tests pass** (same single pre-existing failure).
+Verifier: `scratch/audit_indoor_layer_parity.mjs` (read-only, re-runnable).
+
+### Removed
+
+* The now-dead `layer` local in `validateSlotOutfitConstraints` — its only two readers were the
+  cold branches migrated in Slice D. `top`, `dress` and `mainPieces` remain in use by the hot-weather
+  and register branches and stay.
+
+### Retained, with the measurement that decided it
+
+§11 named the winter-capsule cardigan rule as a required audit case, and `[A6]` set the bar:
+delete only when the shared contract **demonstrably subsumes both meanings**. There are in fact two
+predicate pairs encoding the same two winter jobs — `isCapsuleIndoorKnitLayer` /
+`isCapsuleColdTransitionLayer` at module scope (used by `selectCapsuleRoster`'s reserve pass and
+`validateCapsuleRoster`), and the inline check in submitted-plan validation.
+
+Both substitutions were **measured over the real wardrobe, not assumed. Both failed.**
+
+```text
+job 1 — indoor knit layer      garmentKind==='cardigan' && medium/heavy
+        role-based substitute  role ∈ {indoor_layer, transition_layer} && thermal cold >= 6
+        OLD 9 pieces   NEW 22 pieces   15 of 31 diverge
+
+  admitted by the substitute, and wrong:
+    996759  cream trench coat with belt     role=transition_layer
+    996765  brown long leather coat         role=transition_layer
+    996760  plaid fleece coat               role=transition_layer
+
+job 2 — cold transition layer  ['coat','jacket'] && (heavy || insulating material)
+        role-based substitute  role === 'cold_weather_outerwear'
+        OLD 8 pieces   NEW 1 piece   7 diverge
+```
+
+Job 1's substitute admits actual coats as layers that "stay on indoors" — exactly what the rule's
+own prose forbids (*"a coat or puffer does not satisfy the indoor-layer requirement"*). Job 2's
+substitute would leave a winter capsule with a single possible cold layer.
+
+**The cause is structural, not a tagging gap.** `outerwear_role` answers *what outdoor job can this
+garment do*. The capsule rules ask *can you keep it on at dinner*. Those are different questions,
+and the tagger is right to file a substantial coat as `transition_layer` — a trench genuinely is a
+mild-weather outer layer. Re-tagging would not close this; the axis does not exist.
+
+Both predicates are therefore retained, annotated with the measurement, and pinned by
+`test/capsuleWinterLayerRetention.test.js` — a behavioural guard, not a comment, so a later
+consolidation that swaps `garmentKind` for the role enum fails a test instead of silently changing
+what a winter capsule can be built from.
+
+### Other §11 proxies, classified
+
+| Occurrence | Class | Action |
+|---|---|---|
+| `outfitSetPlanner.js` `isCapsuleIndoorKnitLayer` / `isCapsuleColdTransitionLayer` | capability interpretation, **not substitutable** | retained + pinned |
+| submitted-plan winter-indoor cardigan check | same rule, same conclusion | retained |
+| `attributes.js:735`, `tools.js:584` category→group mapping | canonical construction fact | out of scope |
+| `rules.js:1385` outerwear scoring bonus, `rules.js:2511` upper-body test | legitimate flow strategy | untouched |
+
+### Open ruling this surfaced (not taken here)
+
+**"Indoor-wearable" is a missing axis.** Neither `outerwear_role` nor `weather_protection`
+expresses whether a layer can stay on indoors, and three separate rules currently reconstruct it
+from `garmentKind === 'cardigan'`. Options, for a future slice and an owner ruling — deliberately
+**not** decided in this one, since §20 rules out new user-entered garment fields and this would need
+either a new tagged value or a derived reader:
+
+1. a fifth `outerwear_role` value, or a separate boolean, tagged like the rest;
+2. a derived reader over existing construction facts (open front, knit, no closure hardware);
+3. leave `garmentKind` as the proxy and accept it.
+
+Recording it here so the next reader finds the measurement rather than re-deriving it.
+
+### Status
+
+* Slices A, A.1, B, C, D, E, F — **complete**. The arc is done.
+* Open items carried forward: the three `tools.js` `evaluateWearableOutfit` call sites (D.4), the
+  indoor-wearable axis ruling (above), and Appendix B's three tagging watch items.
+* Acceptance criteria: all met except where explicitly recorded as retained-by-measurement (§21.10
+  is satisfied for weather suitability; the capsule indoor/cold-layer definitions remain local by
+  ruling `[A6]`, which §11 anticipated).

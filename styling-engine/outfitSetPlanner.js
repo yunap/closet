@@ -1607,6 +1607,26 @@ function ensureWinterIndoorTopBalance(roster = [], groups = {}, required = 0, sc
 // separate roles, not one jacket doing both). Named at module scope so
 // selectCapsuleRoster's reserve pass and validateCapsuleRoster's structural
 // check test the identical definition.
+// RETAINED DELIBERATELY — Slice F / [A6] of docs/outerwear-weather-consolidation-spec.md.
+//
+// These two look like duplicate capability interpretation that outerwear_role should replace, and
+// the substitution was measured over the real wardrobe rather than assumed
+// (scratch/audit_indoor_layer_parity.mjs, 2026-08-31). Both parities FAILED:
+//
+//   indoor knit layer:      role-based test admitted 22 pieces vs 9 — including a trench coat and a
+//                           long leather coat, because the tagger legitimately files substantial
+//                           coats as `transition_layer`. That is precisely what this rule's own
+//                           prose forbids: "a coat or puffer does not satisfy the indoor-layer
+//                           requirement."
+//   cold transition layer:  `cold_weather_outerwear` admitted 1 piece vs 8, which would leave a
+//                           winter capsule with a single possible cold layer.
+//
+// The reason is structural, not a tagging gap: outerwear_role answers "what outdoor job can this
+// do", and neither field expresses "can you keep it on indoors". That axis is genuinely missing
+// from the taxonomy — see Appendix F. Until it exists, garmentKind remains the honest proxy.
+// Exported under test-only aliases so the retention is pinned by behaviour, not by comment.
+export { isCapsuleIndoorKnitLayer as _isCapsuleIndoorKnitLayerForTests }
+export { isCapsuleColdTransitionLayer as _isCapsuleColdTransitionLayerForTests }
 function isCapsuleIndoorKnitLayer(piece = {}) {
   const everydayRank = formalityRank('everyday')
   return wardrobeCategoryGroup(piece) === 'outerwear' &&
@@ -3946,7 +3966,6 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const reasons = []
   const mainPieces = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
-  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
   for (let index = 0; index < pieces.length; index += 1) {
