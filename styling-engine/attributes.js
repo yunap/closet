@@ -505,7 +505,25 @@ export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
     String(p.fabric_category || '').toLowerCase().trim(),
     ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
   ].filter(Boolean))
-  return materials.has('canvas') || materials.has('suede') || materials.has('nubuck')
+  // 'mesh' added 2026-09-01 by owner ruling. outerwear-weather-capability-spec.md §8 deferred this
+  // pending "a separate evidence/ruling"; the evidence is a live freeform turn (42°F, raining, "I'll
+  // be walking a lot") that put grey/orange mesh athletic sneakers on. fabric_category was in the
+  // wardrobe manifest, so the model could see 'mesh' and chose it anyway — model judgment alone had
+  // been the de facto policy and did not hold.
+  return materials.has('canvas') || materials.has('suede') || materials.has('nubuck') || materials.has('mesh')
+}
+
+// Ventilated footwear construction — open weave built to move air, which is the opposite of what
+// severe cold calls for. Deliberately NARROWER than the wet-sensitive list above: canvas and suede
+// soak, but they do not vent, so they are not cold-inappropriate for that reason. Same structured
+// fields, same "no name matching" discipline as every other reader here.
+export function pieceHasVentilatedFootwearMaterial(p = {}) {
+  if (wardrobeCategoryGroup(p) !== 'shoes') return false
+  const materials = new Set([
+    String(p.fabric_category || '').toLowerCase().trim(),
+    ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
+  ].filter(Boolean))
+  return materials.has('mesh')
 }
 
 export function shoeCoverage(p) {

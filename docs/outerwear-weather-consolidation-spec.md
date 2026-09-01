@@ -384,6 +384,10 @@ gap. Do not let individual flows redefine what `weather_protection: rain` means.
 material handling and cold open-toe/sandal logic are not redesigned here. Do not add mesh to
 wet-sensitive materials without a separate evidence/ruling.
 
+> **Ruling taken 2026-09-01, after this slice shipped — see Appendix H.** The deferred mesh question
+> was decided on evidence from live freeform turns, in a follow-up PR. This section's boundary held
+> for the slice itself: nothing here redesigned footwear.
+
 ---
 
 ## 9. Missing wardrobe supply
@@ -1529,3 +1533,50 @@ they remain weather-valid and still measure their actual subject. Both are annot
 **Cost note:** in freeform a hard finding becomes a contract issue the model must fix, so cold-weather
 turns that compose an inadequate outfit will spend one extra tool iteration. Iteration count is the
 dominant `/ask` cost driver.
+
+
+---
+
+## Appendix H — the deferred mesh ruling, taken 2026-09-01
+
+§8 and §20 fenced footwear off from this slice and required *"a separate evidence/ruling"* before
+mesh could be classified. The evidence arrived from the live QA of this very work, and the ruling
+was taken in a follow-up PR rather than retro-fitted here.
+
+**Evidence.** Two freeform turns against the real wardrobe, run after the slice merged:
+
+```text
+"42°F and raining, I'll be walking a lot"              → grey/orange mesh athletic sneakers
+"38°F and I'm walking around the city all afternoon"   → the same mesh sneakers
+```
+
+The outerwear axis behaved correctly on both — the raincoat (`protective_shell` + rain) and the
+puffer (`cold_weather_outerwear`) were selected. Footwear was the untouched axis, and `mesh` sat
+outside both existing gates: the cold rule matches only `open_toe`/`sandal` (its own comment says
+*"Closed athletic sneakers are untouched by this rule"*), and the wet list was
+`canvas | suede | nubuck`.
+
+Decisively, `fabric_category` is carried in the wardrobe manifest, so the model **saw** `mesh` on
+both turns and chose it anyway. "Leave it to model judgment" was not a hypothesis to be tested; it
+was the standing policy, and these two turns are the test it failed.
+
+**Ruling.** Mesh is both wet-sensitive and cold-inappropriate, through **two** readers, because they
+answer different physical questions — canvas soaks but does not vent:
+
+```text
+pieceHasWetSensitiveFootwearMaterial   canvas | suede | nubuck | mesh
+pieceHasVentilatedFootwearMaterial     mesh
+```
+
+The cold rule is gated on `isColdSevere`/`transitIsColdSevere`, not on any `isCold` — the tier this
+slice's `[R1]` propagation made available. An open-toe sandal is unsafe at any cold, which is why
+that rule fires on `isCold`; mesh is merely suboptimal at 55°F and wrong at 38°F.
+
+**Measured supply consequence** (`scratch/audit_mesh_footwear_supply.mjs`): of 33 active shoes,
+severe cold now excludes 15 (4 newly, by mesh) and wet exposure 12. High walk-support survivors on a
+severe-cold day drop to **two**, so cold walking turns route to medium-support leather boots. That is
+the correct answer for this wardrobe, and the shortfall is disclosed rather than papered over.
+
+**Pre-existing bug surfaced, not fixed:** piece 289 "brown suede platform sandals" has `shoe_type`
+and `toe_shape` both NULL and therefore passes the existing cold open-toe gate. Tagging gap, not a
+rule gap.
