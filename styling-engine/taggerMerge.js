@@ -23,6 +23,22 @@ const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat
 const VALID_BOTTOM_SUBTYPE = new Set(['pants', 'shorts', 'skirt', 'culottes', 'overalls', 'other', 'unknown'])
 const VALID_JEWELRY_TYPE = new Set(['necklace', 'earrings', 'bracelet', 'ring', 'pin'])
 const VALID_NECKLACE_LENGTH = new Set(['choker', 'short', 'long'])
+// fabric_category's valid values depend on the piece's category, and until 2026-09-01 the field had
+// no normalizer at all — the only tagged enum in this file without one. An out-of-list value was
+// stored verbatim, which fails OPEN on every material rule at once: wet-sensitivity, ventilation and
+// insulating-material all ask "is this value in my set?" and a value on no list simply never matches.
+//
+// Found live: a newly added shoe was tagged `fabric_category: 'wool'` — a CLOTHING value the prompt
+// explicitly forbids for footwear ("Never use the clothing list for a shoe or accessory piece") — and
+// sailed through the wet gate on a 38°F rainy walking turn. Nothing surfaced; the gate was not
+// bypassed, it was never matched.
+//
+// Normalizing to null makes an unrecognized value read as UNKNOWN, which every consumer already
+// handles correctly, instead of as a silent pass.
+const VALID_FABRIC_CATEGORY_GARMENT = new Set(['jersey', 'knit', 'rib knit', 'ponte', 'sweatshirt fleece', 'fleece', 'cotton', 'poplin', 'linen', 'linen blend', 'rayon', 'viscose', 'modal', 'silk', 'satin', 'crepe', 'chiffon', 'organza', 'lace', 'crochet', 'jacquard', 'wool', 'cashmere', 'boucle', 'denim', 'twill', 'canvas', 'corduroy', 'tweed', 'velvet', 'leather', 'faux leather', 'suede', 'faux suede', 'mesh', 'technical/performance', 'synthetic', 'other'])
+const VALID_FABRIC_CATEGORY_SHOES = new Set(['leather', 'suede', 'nubuck', 'patent', 'canvas', 'mesh', 'knit', 'woven', 'synthetic', 'textile', 'rubber', 'other'])
+const VALID_FABRIC_CATEGORY_ACCESSORY = new Set(['leather', 'suede', 'metal', 'stone', 'straw', 'canvas', 'synthetic', 'textile', 'rubber', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'pearl', 'crystal', 'enamel', 'other'])
+
 const VALID_OUTERWEAR_ROLE = new Set(['indoor_layer', 'transition_layer', 'protective_shell', 'cold_weather_outerwear'])
 const VALID_WEATHER_PROTECTION = new Set(['rain', 'wind'])
 
@@ -112,6 +128,24 @@ export function normalizeJewelryType(value) {
 
 export function normalizeNecklaceLength(value) {
   return normalizeEnumValue(value, VALID_NECKLACE_LENGTH)
+}
+
+/**
+ * @param {*} value     the tagged fabric_category
+ * @param {*} category  the piece's category; when it is missing or unrecognized the value is checked
+ *                      against the UNION of the three lists rather than nulled outright. Guessing a
+ *                      category to validate against would be worse than accepting a value that is
+ *                      valid for some category — this normalizer exists to reject values that are on
+ *                      no list at all, not to police category/value agreement.
+ */
+export function normalizeFabricCategory(value, category) {
+  const group = String(category || '').toLowerCase().trim()
+  if (group === 'shoes') return normalizeEnumValue(value, VALID_FABRIC_CATEGORY_SHOES)
+  if (group === 'accessory') return normalizeEnumValue(value, VALID_FABRIC_CATEGORY_ACCESSORY)
+  if (['top', 'bottom', 'dress', 'outerwear'].includes(group)) return normalizeEnumValue(value, VALID_FABRIC_CATEGORY_GARMENT)
+  return normalizeEnumValue(value, new Set([
+    ...VALID_FABRIC_CATEGORY_GARMENT, ...VALID_FABRIC_CATEGORY_SHOES, ...VALID_FABRIC_CATEGORY_ACCESSORY,
+  ]))
 }
 
 export function normalizeOuterwearRole(value) {
@@ -322,6 +356,9 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const patch = { ...tags }
   delete patch.color_taxonomy_gaps
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
+  // Category-aware: a retag may change the category in the same patch, so validate against the
+  // incoming category when there is one and fall back to the stored one.
+  if ('fabric_category' in patch) patch.fabric_category = normalizeFabricCategory(patch.fabric_category, patch.category ?? existingPiece.category)
   if ('formality' in patch) patch.formality = normalizeFormality(patch.formality)
   if ('heel_height' in patch) patch.heel_height = normalizeHeelHeight(patch.heel_height)
   if ('walk_support' in patch) patch.walk_support = normalizeWalkSupport(patch.walk_support)

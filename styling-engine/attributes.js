@@ -503,10 +503,15 @@ const ABSORBENT_FOOTWEAR_MATERIALS = ['canvas', 'suede', 'nubuck', 'mesh', 'knit
 
 export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return false
-  const materials = new Set([
-    String(p.fabric_category || '').toLowerCase().trim(),
-    ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
-  ].filter(Boolean))
+  // UPPER ONLY — deliberately does NOT read fiber_content. As of 2026-09-01 fiber_content also
+  // carries footwear LININGS (the tagger records a shearling/fleece interior there, because
+  // fabric_weight is null for shoes and fabric_category describes the upper). Reading it here would
+  // mean a shearling-lined leather boot — the single best rain boot most wardrobes own — reads as
+  // "absorbent" because of a lining the weather never touches. Latent today, since no absorbent
+  // FIBER is in the list; removed before the next widening arms it. Verified against the reference
+  // wardrobe: every shoe caught via fiber_content is also caught via fabric_category, so this
+  // changes no existing verdict.
+  const material = String(p.fabric_category || '').toLowerCase().trim()
   // Absorbent = a permeable FIBRE upper, which soaks in sustained wet. This is a claim about garment
   // physics, true in any wardrobe — deliberately NOT calibrated on how many shoes a particular user
   // would lose, which is a supply question the disclosed-shortfall path owns instead.
@@ -522,7 +527,7 @@ export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
   //   synthetic — genuinely ambiguous. It covers both a coated waterproof PU upper and a soft
   //     textile one, so treating it as absorbent would reject shoes that are fine in rain.
   //   other / unset — unknown is not inadequacy (consolidation spec acceptance criterion 8).
-  return ABSORBENT_FOOTWEAR_MATERIALS.some(material => materials.has(material))
+  return ABSORBENT_FOOTWEAR_MATERIALS.includes(material)
 }
 
 // Ventilated footwear construction — a permeable upper built to move air, which is the opposite of
@@ -538,11 +543,9 @@ export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
 // absorbent rule above either way, so the gap only affects dry severe cold.
 export function pieceHasVentilatedFootwearMaterial(p = {}) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return false
-  const materials = new Set([
-    String(p.fabric_category || '').toLowerCase().trim(),
-    ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
-  ].filter(Boolean))
-  return materials.has('mesh') || materials.has('knit')
+  // Upper only, for the same lining reason as the absorbent reader above.
+  const material = String(p.fabric_category || '').toLowerCase().trim()
+  return material === 'mesh' || material === 'knit'
 }
 
 export function shoeCoverage(p) {

@@ -4,6 +4,7 @@ process.env.WARDROBE_DB_PATH = process.env.WARDROBE_DB_PATH || `/tmp/mesh-footwe
 import test from 'node:test'
 import assert from 'node:assert'
 import {
+  pieceHasInsulatingMaterial,
   pieceHasVentilatedFootwearMaterial,
   pieceHasWetSensitiveFootwearMaterial,
 } from '../styling-engine/attributes.js'
@@ -70,8 +71,16 @@ test('both readers are category-gated — a mesh TOP is not footwear', () => {
   assert.equal(pieceHasVentilatedFootwearMaterial(MESH_TOP), false)
 })
 
-test('mesh is read from fiber_content as well as fabric_category', () => {
-  assert.equal(pieceHasVentilatedFootwearMaterial(MESH_BY_FIBER), true)
+test('the upper material is read from fabric_category ONLY, not fiber_content', () => {
+  // Reversed 2026-09-01. This originally asserted fiber_content was also consulted — written before
+  // fiber_content began carrying footwear LININGS, which made that a trap: a shearling-lined leather
+  // boot would read as absorbent because of an interior the weather never touches. `mesh` was never
+  // a valid fiber_content value anyway, so the case this pinned could not occur in real data.
+  // The fixture is `fabric_category: 'textile'` with `fiber_content: ['mesh']`. Ventilation is
+  // decided by the upper alone, so the stray fiber value is ignored — while the textile UPPER still
+  // makes it absorbent. One fixture, both halves of the rule.
+  assert.equal(pieceHasVentilatedFootwearMaterial(MESH_BY_FIBER), false)
+  assert.equal(pieceHasWetSensitiveFootwearMaterial(MESH_BY_FIBER), true)
 })
 
 // --- the cold rule is gated on SEVERITY, not on any cold ------------------------------------------
@@ -138,4 +147,34 @@ test('a recorded lining does not make a shoe cold- or wet-inappropriate', () => 
   const lined = { id: 1, category: 'shoes', shoe_type: 'boot', fabric_category: 'leather', fiber_content: ['leather', 'wool'] }
   assert.deepEqual(reasons(lined, { isCold: true, isColdSevere: true }), [])
   assert.deepEqual(reasons(lined, { isWetExposure: true }), [])
+})
+
+// --- upper vs lining (2026-09-01) ---------------------------------------------------------------
+
+test('a lining never makes a boot absorbent or ventilated — those readers see the UPPER only', () => {
+  // fiber_content now carries footwear linings as well as upper material, so a reader that consults
+  // it would call a shearling-lined leather boot "absorbent" because of an interior the weather
+  // never touches — excluding the single best rain boot most wardrobes own. Latent when written
+  // (no absorbent FIBER is in the list), removed before the next widening arms it.
+  const linedLeather = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather', 'wool'] }
+  const linedFleece = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather', 'fleece'] }
+  for (const boot of [linedLeather, linedFleece]) {
+    assert.equal(pieceHasWetSensitiveFootwearMaterial(boot), false, 'lining must not imply an absorbent upper')
+    assert.equal(pieceHasVentilatedFootwearMaterial(boot), false, 'lining must not imply a ventilated upper')
+  }
+})
+
+test('the insulating reader DOES read fiber_content — that is where linings live', () => {
+  const lined = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather', 'wool'] }
+  assert.equal(pieceHasInsulatingMaterial(lined), true)
+  const unlined = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather'] }
+  assert.equal(pieceHasInsulatingMaterial(unlined), false)
+})
+
+test('a wool-upper sneaker is absorbent via its construction tag, not its fiber', () => {
+  // fabric_category for shoes is a CONSTRUCTION class, not a fiber — there is no `wool` value. A
+  // wool-upper sneaker is `textile` or `knit`, with the fiber recorded in fiber_content. Both routes
+  // to the correct verdict go through the construction tag.
+  assert.equal(pieceHasWetSensitiveFootwearMaterial({ category: 'shoes', fabric_category: 'textile', fiber_content: ['wool'] }), true)
+  assert.equal(pieceHasWetSensitiveFootwearMaterial({ category: 'shoes', fabric_category: 'knit', fiber_content: ['wool'] }), true)
 })

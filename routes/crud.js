@@ -12,6 +12,7 @@ import {
   mergeWithManualOverrides,
   normalizeAccessorySubtype,
   normalizeBottomSubtype,
+  normalizeFabricCategory,
   normalizeFormality,
   normalizeHeelHeight,
   normalizeJewelryType,
@@ -314,7 +315,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
+    normalizeFabricCategory(fabric_category, category), fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     tag_provider||'', tag_model||'',
     finalTagState, JSON.stringify(finalManualOverrides))
@@ -378,7 +379,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
+    normalizeFabricCategory(fabric_category, category), fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, final_tag_provider||'', final_tag_model||'', finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)
