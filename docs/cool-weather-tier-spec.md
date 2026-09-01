@@ -326,3 +326,53 @@ one that did not exist. Both look complete from inside the diff and are inert in
 
 Tests: 8 in `test/outfitEnvironmentalAdequacy.test.js`, including the warm-base control, the
 disjointness check, and resolution/persistence round-trip against the real resolver.
+
+
+---
+
+## 10. Two corrections from the first live run (2026-09-01)
+
+### 10.1 The tier reintroduced `Boolean(layer)`
+
+Its first test was `!layers.length` — presence, not adequacy. That is exactly the shortcut §7 of
+[outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) deletes from the
+cold branch, reintroduced one tier up **in the same change that cites that spec**.
+
+Live consequence: two cards satisfied *"you need something to put on"* with a `semi_sheer` shrug.
+
+The bar is now **see-through-ness**, and the reasoning for choosing that over a thermal bar is worth
+recording, because a thermal bar was the obvious move and it is wrong:
+
+```text
+sheer shrug             cold  -8
+light unlined jacket    cold  -2
+sleeveless vest         cold   0
+knit cardigan           cold  12
+```
+
+Any cutoff that excludes the shrug also excludes the light jacket, which is perfectly good
+cool-evening outerwear — and picking a number between -2 and -8 would be precisely the arbitrary
+threshold this arc keeps having to walk back. `opacity` is an existing tagged field whose definition
+("sheer: clearly see-through") is the actual reason a shrug does not help. Unset opacity counts as
+adequate, per criterion 8.
+
+### 10.2 The footwear exclusion had a cost, and it has been paid
+
+§7 listed "not a footwear rule at this tier" as a non-goal. One run later a card put open-toe
+chunky-heel sandals on a 65°F/48°F October evening, because the open-toe rule fires only at `isCold`
+(≤45°F) — so the 46-55°F band had no footwear rule at all.
+
+The open-toe/sandal exclusion now also fires on `needsRemovableCoolLayer` /
+`transitNeedsRemovableCoolLayer`. **Blast radius: 12 of 40 active shoes in the reference wardrobe are
+open-toe or sandals, and all 12 leave the pool whenever the low is ≤55°F.** That is a large share and
+is recorded plainly; the counter-argument is that bare toes are the one footwear property "it gets
+cool later" makes unambiguously the wearer's problem.
+
+The mesh/ventilated rule deliberately does **not** move down. Mesh at 50°F is fine; bare toes at 50°F
+are not.
+
+### 10.3 The pattern, for the next reader
+
+Both corrections, plus §9.1's transit gap, are the same failure: **a rule that checks whether
+something is present rather than whether it works.** `Boolean(layer)` for cold, `!layers.length` for
+cool, a propagated flag with no consumer. Each looked complete from inside the diff.

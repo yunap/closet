@@ -400,3 +400,50 @@ test('COOL TRANSIT: silent when the trip itself is warm', () => {
   })
   assert.deepEqual(codes(result), [])
 })
+
+test('COOL: a see-through layer does not satisfy the tier', () => {
+  // Live regression of my own making: `!layers.length` is Boolean(layer) — the exact shortcut §7 of
+  // the consolidation spec deletes from the cold branch, reintroduced one tier up. Two cards
+  // satisfied "you need something to put on" with a semi_sheer shrug scoring -8.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})
+
+test('COOL: a cardigan satisfies it, and so does a light opaque jacket', () => {
+  // The bar is see-through-ness, not a thermal cutoff. A light unlined jacket scores BELOW a sheer
+  // shrug is not true — it scores -2 against the shrug's -8 — and any threshold excluding the shrug
+  // would also exclude the jacket, which is reasonable cool-evening outerwear.
+  const lightJacket = { id: 32, category: 'outerwear', name: 'light cotton jacket', fabric_weight: 'light', opacity: 'opaque', fiber_content: ['cotton'], sleeve_length: 'long' }
+  const jacketResult = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), lightJacket], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(jacketResult), [])
+})
+
+test('COOL: a cardigan satisfies it', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL: a layer with UNSET opacity counts as adequate', () => {
+  // Criterion 8 again. Unknown is not inadequate, and treating it so is the mistake this arc has
+  // already made twice.
+  const untagged = { id: 31, category: 'outerwear', name: 'untagged jacket' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), untagged], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL TRANSIT: the adequacy bar applies there too', () => {
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})

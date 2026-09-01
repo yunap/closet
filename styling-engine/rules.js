@@ -2634,7 +2634,16 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   // outdoor transit temperature (transitIsCold) alike — an indoor base may
   // stay light, but its footwear still has to survive the walk there.
   // Closed athletic sneakers are untouched by this rule.
-  if (weatherProfile.isCold || weatherProfile.transitIsCold) {
+  // Extended 2026-09-01 to the cool band (docs/cool-weather-tier-spec.md). The rule previously fired
+  // only at isCold (lowF <= 45), leaving the 46-55F band with no footwear rule at all — a live
+  // October trip card put open-toe chunky-heel sandals on a 65F/48F evening. Open toes are the one
+  // footwear property where "it gets cool later" is unambiguously the wearer's problem, since unlike
+  // material they cannot be compensated for by anything else in the outfit.
+  //
+  // Deliberately NOT extended: the mesh/ventilated rule, which stays on severity. Mesh at 50F is
+  // fine; bare toes at 50F are not.
+  if (weatherProfile.isCold || weatherProfile.transitIsCold ||
+      weatherProfile.needsRemovableCoolLayer || weatherProfile.transitNeedsRemovableCoolLayer) {
     if (wardrobeCategoryGroup(piece) === 'shoes' && (piece.toe_shape === 'open_toe' || piece.shoe_type === 'sandal')) {
       reasons.push('cold weather: open-toe/warm-weather footwear')
     }

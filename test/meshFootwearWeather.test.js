@@ -178,3 +178,20 @@ test('a wool-upper sneaker is absorbent via its construction tag, not its fiber'
   assert.equal(pieceHasWetSensitiveFootwearMaterial({ category: 'shoes', fabric_category: 'textile', fiber_content: ['wool'] }), true)
   assert.equal(pieceHasWetSensitiveFootwearMaterial({ category: 'shoes', fabric_category: 'knit', fiber_content: ['wool'] }), true)
 })
+
+test('open-toe footwear is excluded across the cool band, not just at isCold', () => {
+  // Live: open-toe chunky-heel sandals on a 65F/48F October evening. The rule fired only at
+  // isCold (<=45F), leaving the 46-55F band with no footwear rule at all.
+  const sandal = { id: 40, category: 'shoes', name: 'strap sandals', shoe_type: 'sandal', toe_shape: 'open_toe', fabric_category: 'leather' }
+  for (const wp of [{ needsRemovableCoolLayer: true }, { transitNeedsRemovableCoolLayer: true }, { isCold: true }]) {
+    assert.deepEqual(reasons(sandal, wp), ['cold weather: open-toe/warm-weather footwear'], JSON.stringify(wp))
+  }
+  assert.deepEqual(reasons(sandal, { isHot: true }), [], 'and untouched on a warm day')
+})
+
+test('the cool band does NOT extend the mesh rule — bare toes and mesh are different problems', () => {
+  // Mesh at 50F is fine; bare toes at 50F are not. The ventilated rule stays on severity.
+  const mesh = { id: 41, category: 'shoes', name: 'mesh trainers', shoe_type: 'sneaker', toe_shape: 'almond', fabric_category: 'mesh' }
+  assert.deepEqual(reasons(mesh, { needsRemovableCoolLayer: true }), [])
+  assert.deepEqual(reasons(mesh, { isCold: true, isColdSevere: true }), ['severe cold: ventilated/mesh footwear'])
+})

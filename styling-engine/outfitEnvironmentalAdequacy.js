@@ -25,6 +25,7 @@ import { evaluateOuterwearCapability } from './outerwearCapability.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
+  COOL_LAYER_IS_SEE_THROUGH: 'outfit_cool_layer_is_see_through',
   NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
@@ -65,6 +66,27 @@ function systemColdScore(pieces) {
 // POSITIVE evidence of inadequacy — the same class as an indoor_layer-only outfit, which hard-fails.
 // A base with any unmeasured piece is absence of evidence, which acceptance criterion 8 says must
 // never become invalidity.
+// Does at least one layer plausibly DO something in cool conditions?
+//
+// The first cut of the cool tier tested `!layers.length` — which is `Boolean(layer)`, the exact
+// shortcut §7 of this arc's spec exists to delete from the cold branch, reintroduced one tier up.
+// It shipped live: two cards satisfied "you need something to put on" with a `semi_sheer` shrug.
+//
+// The bar is SEE-THROUGH-NESS, not a thermal threshold. A thermal bar was tried first and rejected:
+// measured `cold` scores put a sheer shrug at -8, a light unlined cotton jacket at -2, a sleeveless
+// vest at 0 and a knit cardigan at 12. Any cutoff that excludes the shrug also excludes the light
+// jacket, which is perfectly reasonable outerwear for a cool evening — and picking a number between
+// -2 and -8 would be exactly the arbitrary threshold this arc keeps having to walk back.
+//
+// `opacity` is an existing tagged field with a clear definition ("sheer: clearly see-through";
+// "semi_sheer: skin/light hints through") and it is the actual reason a shrug does not help. An
+// unset opacity counts as adequate, for the same criterion-8 reason unmeasured warmth does.
+const SEE_THROUGH_OPACITY = new Set(['sheer', 'semi_sheer'])
+
+function someLayerContributesWarmth(layers) {
+  return layers.some(piece => !SEE_THROUGH_OPACITY.has(String(piece?.opacity || '').toLowerCase().trim()))
+}
+
 function baseLayersAreFullyMeasured(pieces) {
   const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
   return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
@@ -144,6 +166,10 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
         'this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed',
         { evidence, remedy: true }))
+    } else if (!someLayerContributesWarmth(layers)) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
+        'the only layer here is see-through, so there is still nothing useful to put on when it cools',
+        { evidence, remedy: true }))
     }
   }
 
@@ -158,10 +184,16 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // isCold: that floor already owns transitIsCold, and it demands MORE — sleeve-bearing coverage.
   // The gradient is deliberate. Cool transit asks for something to put on; cold transit asks for
   // something that covers your arms.
-  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold && !layers.length) {
-    findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
-      'the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back',
-      { evidence, remedy: true }))
+  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
+    if (!layers.length) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
+        'the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back',
+        { evidence, remedy: true }))
+    } else if (!someLayerContributesWarmth(layers)) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
+        'the only layer here is see-through, so the walk to and from the indoor destination is still uncovered',
+        { evidence, remedy: true }))
+    }
   }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------
