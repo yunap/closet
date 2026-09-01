@@ -319,13 +319,32 @@ export function validateWeatherEstimate(input) {
   return { highF, lowF, precipitation, wind }
 }
 
-// [R1] of docs/outerwear-weather-consolidation-spec.md. isColdSevere tracks isCold exactly on this
-// path, and that is a derivation rather than a new threshold: COLD_F is 45, and
-// cold-severity-spec.md's own severe rule is "an actual temperature <= 45F" or a severe cold WORD.
-// The three bands here are hot/cold/mild — the mild-cool vocabulary that produces non-severe cold
-// ("chilly", "cool", "foggy") only ever reaches weatherProfileFromContext's prose path, never this
-// one. So on the structured path every cold reading is severe cold, and omitting the flag here is
-// what left it undefined by the time a slot profile reached the validator.
+// Severity on the structured path is decided by the DAYTIME HIGH, not by isCold.
+//
+// It briefly tracked isCold exactly (added 2026-09-01 with [R1] of
+// docs/outerwear-weather-consolidation-spec.md, justified as "identical thresholds: COLD_F is 45 and
+// the severe rule is <= 45F"). That holds for a single stated reading. It is wrong for a RANGE, and
+// it reproduced the very incident cold-severity-spec.md exists to prevent — this time through the
+// structured path rather than the prose one. A live 65F/45F week-long trip resolved as severe cold
+// because the LOW touched 45, which put the heavy-fabric +10 relevance bonus and Contract C's
+// outdoor-layer requirement behind a puffer coat in all five cards, including a 65F city walk. The
+// owner called it out twice in the same thread.
+//
+// The deeper reason, and why this keys on the high rather than on "high OR a deep low": the daily
+// LOW occurs before dawn, when nobody is dressed for it. Using it to decide outfit warmth dresses
+// the wearer for a temperature they experience asleep. The HIGH is the temperature they are actually
+// out in, so "the day never gets out of cold" is the honest test for "heavy is what you actually
+// want" — cold-severity-spec.md's own definition of the severe tier.
+//
+// isCold itself is deliberately UNCHANGED and still comes from the low: it is the minimum-warmth
+// floor, and a 45F morning genuinely needs a layer. Only the maximize-toward-winter tier moves.
+// Whether isCold should key on the low at all is a larger, open question — recorded in
+// cold-severity-spec.md rather than decided here.
+// A qualitative "cold" band carries no numbers to compare, so the band itself is the statement:
+// someone saying "it will be cold" means the day is cold, not that one pre-dawn hour is.
+const coldSevereForRange = ({ highF, lowF } = {}) =>
+  Number.isFinite(highF) ? highF <= COLD_F : Number.isFinite(lowF) ? lowF <= COLD_F : false
+
 const BAND_FLAGS = {
   hot: { isHot: true, isCold: false, isColdSevere: false },
   cold: { isHot: false, isCold: true, isColdSevere: true },
@@ -346,7 +365,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: userTemperature.highF, lowF: userTemperature.lowF, band: null,
       isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
-      isColdSevere: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isColdSevere: coldSevereForRange(userTemperature), isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'stated_user',
     }
   }
@@ -354,7 +373,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: liveTemperature.highF, lowF: liveTemperature.lowF, band: null,
       isHot: Boolean(liveTemperature.isHot), isCold: Boolean(liveTemperature.isCold),
-      isColdSevere: Boolean(liveTemperature.isCold),
+      isColdSevere: coldSevereForRange(liveTemperature),
       isExtremeHeat: Boolean(liveTemperature.isExtremeHeat),
       source: 'live',
     }
@@ -364,7 +383,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: estimateTemperature.highF, lowF: estimateTemperature.lowF, band: null,
       isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
-      isColdSevere: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isColdSevere: coldSevereForRange(estimateTemperature), isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'model_estimate',
     }
   }
