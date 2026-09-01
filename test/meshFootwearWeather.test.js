@@ -117,3 +117,25 @@ test('the open-toe rule still fires on ANY cold, mild included', () => {
   // ruling must not quietly narrow it to severe.
   assert.deepEqual(reasons(SANDAL, { isCold: true }), ['cold weather: open-toe/warm-weather footwear'])
 })
+
+// --- footwear lining (2026-09-01) ---------------------------------------------------------------
+
+test('a lined boot is excluded in hot weather once its lining is recorded', () => {
+  // No code change enabled this: hotWeatherInsulationReason reads pieceHasInsulatingMaterial BEFORE
+  // the shoe/accessory exemption, so the path has always been correct and simply never had data.
+  // The tagger now records footwear linings in fiber_content, which is the only field available —
+  // fabric_weight is null for shoes and fabric_category describes the upper.
+  const hot = { isHot: true }
+  const lined = { id: 1, category: 'shoes', name: 'shearling-lined boot', shoe_type: 'boot', fabric_category: 'leather', fiber_content: ['leather', 'wool'] }
+  const plain = { id: 2, category: 'shoes', name: 'leather ankle boot', shoe_type: 'boot', fabric_category: 'leather', fiber_content: ['leather'] }
+  assert.deepEqual(reasons(lined, hot), ['hot weather: insulating fiber'])
+  assert.deepEqual(reasons(plain, hot), [], 'an unlined boot is not hot-excluded for being a boot')
+})
+
+test('a recorded lining does not make a shoe cold- or wet-inappropriate', () => {
+  // Insulation is a separate axis from permeability. A shearling-lined leather boot is exactly what
+  // severe cold and rain want, and must not be caught by the absorbent or ventilated rules.
+  const lined = { id: 1, category: 'shoes', shoe_type: 'boot', fabric_category: 'leather', fiber_content: ['leather', 'wool'] }
+  assert.deepEqual(reasons(lined, { isCold: true, isColdSevere: true }), [])
+  assert.deepEqual(reasons(lined, { isWetExposure: true }), [])
+})

@@ -61,6 +61,17 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper — knit and mesh are both permeable, pick knit when the upper is a continuous knitted fabric rather than an open perforated mesh)|woven (use woven for raffia/straw/other woven shoe materials, NOT for a knitted upper)|synthetic|textile|rubber|other'
       )
     }
+    // 2026-09-01: footwear lining. `pieceHasInsulatingMaterial` is read BEFORE the shoe/accessory
+    // exemption in hotWeatherInsulationReason, so a boot whose lining is recorded is ALREADY excluded
+    // correctly in hot weather with no code change — but nothing ever recorded linings, so a
+    // shearling boot and a thin flat were identical to the engine. fabric_weight is null for shoes
+    // and fabric_category describes the upper, leaving fiber_content as the only available home.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept.",
+        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible — a shearling or fleece collar, a visibly fuzzy or quilted interior, a pile lining at the opening. Record it as 'wool' (shearling reads as wool here), 'fleece', or 'down' as appropriate. This is the only place a boot's warmth is recorded: fabric_weight is null for shoes and fabric_category describes the UPPER, so a lined winter boot and a thin flat are otherwise identical to the engine. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
+      )
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern
