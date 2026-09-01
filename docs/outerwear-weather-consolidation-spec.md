@@ -1698,3 +1698,73 @@ the mistake the mesh→knit sequence already demonstrated.
 **Currently 0 of 33.** Until that is non-zero a cold-side consumer would be inert, and the hot-side
 path cannot fire either. Same "is the data actually there" check Slice A.1 made mandatory — the one
 piece of process in this arc that has consistently paid.
+
+
+---
+
+## Appendix K — the severe-cold shortfall gets two tiers (2026-09-01)
+
+### The card
+
+A live trip plan produced *"Trail Tee, Pants & Puffer"*: a light warm-season tee and light
+warm-season track pants under a winter puffer, for a nature walk.
+
+```text
+990356  cream botanical print t-shirt    light  season warm   cold  -8
+990359  black drawstring pocketed pants  light  season warm   cold  -2
+214     black canvas sneakers                                 cold   0
+996775  Black puffer coat                heavy  season cool   cold  14
+                                              systemCold =    4    (floor 12)
+```
+
+**Contract C detected it exactly.** `outfit_thermal_capacity_insufficient_for_severe_cold` fired,
+with the right message — *"the outer layer is outdoor-capable but little insulation is recorded
+beneath it"*. It was `severity: 'advisory'`, so it never blocked and never rendered. The card shipped
+with `findings: []`.
+
+### Why it was advisory, and why that was wrong here
+
+That branch was downgraded during Slice D, after three plan fixtures caught the ladder converting
+*missing metadata* into hard invalidity. The correction was right for untagged pieces. But it
+collapsed two different situations into one tier:
+
+```text
+we could not measure the base   →  absence of evidence   →  advisory   (criterion 8)
+we measured the base and it is thin  →  evidence of inadequacy  →  should be HARD
+```
+
+The Trail card is emphatically the second. Both base pieces carry `fabric_weight: light`; nothing is
+unknown. It is the same class of positive evidence as an `indoor_layer`-only outfit, which already
+hard-fails.
+
+### The split
+
+`baseLayersAreFullyMeasured(pieces)` asks whether every top/bottom/dress in the outfit has thermal
+evidence (`pieceWeatherEvidence` returns `null` when a garment's warmth is unknown). If the base is
+fully measured and the total still falls below the severe-cold floor, the finding becomes **hard**
+and carries the supply escape hatch; otherwise it stays advisory.
+
+```text
+tagged-light base under a good coat   systemCold -18   [error]     ← the Trail card
+untagged base under a light shell     systemCold  -2   [advisory]
+tagged HEAVY base under a shell       clears floor     (no finding)
+```
+
+The third line matters: the split must not turn "fully tagged" into "suspicious".
+
+### Interaction with the cold-severity amendment
+
+After [cold-severity-spec.md](cold-severity-spec.md)'s 2026-09-01 amendment, the Trail card's own
+trip (65°F/45°F) is no longer severe cold, so this branch will not run for it — the puffer stops
+being pushed in the first place. That amendment fixes the wrong-coat problem and, on its own, would
+have removed the only signal about the mismatched base. The two changes are complementary: severity
+decides *whether* a heavy outer layer is wanted, this tier decides whether what is under it holds up.
+
+### Not fixed here
+
+Both base pieces are tagged **`season: warm`** and the coat `season: cool`. **No weather gate reads
+`piece.season` at all.** Whether it should is a separate question with its own document —
+[piece-season-as-weather-evidence.md](piece-season-as-weather-evidence.md) — because it is a
+wearer-INTENT signal rather than a physical one, and the precedent
+([outerwear-weather-capability-spec.md](outerwear-weather-capability-spec.md) §6.5) is against
+blending the two.

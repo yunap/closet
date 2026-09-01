@@ -55,6 +55,19 @@ function systemColdScore(pieces) {
   return pieces.reduce((total, piece) => total + (pieceWeatherScores(piece).cold || 0), 0)
 }
 
+// Are the layers UNDER the outerwear all thermally tagged?
+//
+// This is the line between "we measured a thin base" and "we could not measure the base", and it is
+// the whole reason the severe-cold shortfall has two tiers. pieceWeatherEvidence returns null when
+// nothing about a garment's warmth is known, so an all-tagged base whose total still falls short is
+// POSITIVE evidence of inadequacy — the same class as an indoor_layer-only outfit, which hard-fails.
+// A base with any unmeasured piece is absence of evidence, which acceptance criterion 8 says must
+// never become invalidity.
+function baseLayersAreFullyMeasured(pieces) {
+  const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
+  return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
+}
+
 // remedy is opt-in rather than automatic: the migrated minimum-warmth floor (below) keeps its
 // original wording verbatim so no existing consumer's behaviour or message changes, while the new
 // severe-cold and hazard findings — the ones a wardrobe can genuinely be unable to satisfy — carry
@@ -156,9 +169,22 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         'the outer layer has no tagged outerwear capability and little thermal evidence, so its adequacy for sustained cold cannot be judged from saved garment facts',
         { severity: 'advisory', evidence }))
     } else if (outdoorCapable.length && systemCold < SEVERE_COLD_SYSTEM_COLD_FLOOR) {
+      // Two tiers, split 2026-09-01 after a live "Trail Tee, Pants & Puffer" card put a light
+      // warm-season tee and light warm-season track pants under a winter puffer. The shortfall was
+      // detected (systemCold 4 against a floor of 12) and stayed advisory, so it never rendered and
+      // the card shipped.
+      //
+      // The original single advisory tier was a Slice D correction for untagged pieces, and it was
+      // right for those — but it collapsed "we could not measure the base" together with "we
+      // measured the base and it is thin". Only the first is absence of evidence. An all-tagged
+      // base that still falls short is a measurement, and it belongs in the same tier as the
+      // indoor_layer-only case rather than in a note nobody sees.
+      const measured = baseLayersAreFullyMeasured(list)
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_INSUFFICIENT,
-        'the outer layer is outdoor-capable but little insulation is recorded beneath it for sustained cold',
-        { severity: 'advisory', evidence }))
+        measured
+          ? 'the outer layer is outdoor-capable, but the layers under it are light enough that this outfit carries little insulation for sustained cold'
+          : 'the outer layer is outdoor-capable but little insulation is recorded beneath it for sustained cold',
+        { severity: measured ? 'error' : 'advisory', evidence, remedy: measured }))
     }
   }
 
