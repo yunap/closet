@@ -316,3 +316,80 @@ Three demonstrated requirements is a better starting point than seven inherited 
 
 **No numerical calibration in Slice 1.** Ownership, shape, and the scale question above — nothing
 else.
+
+---
+
+## 10. Slice 1 findings — measured, before any design
+
+Three questions §9 said Slice 1 must settle. Measured against the reference wardrobe (268 active
+pieces) rather than reasoned about.
+
+### 10.1 Can `pieceWeatherScores().cold` serve as the shared scale? **No — not without calibration.**
+
+```text
+garments with thermal evidence   210
+cold range                       -16 .. 17      median 0
+```
+
+Three properties disqualify it as a *demand unit*, while leaving it perfectly good as *evidence*:
+
+1. **No temperature anchor.** The score is a sum of independent weights — `mass 8`,
+   `insulatingMaterial 6`, `hemCoverage 6`, `neckline 3`, `sleeve 6`, `bare 8`. **No term references
+   a temperature.** There is no mapping from a score to a °F band in either direction, so
+   "contribution ≥ demand" is not a comparison the current numbers can express.
+2. **No meaningful zero.** Zero is the middle of the observed range, not an origin. "12" is not
+   "twice as warm" as "6"; the scale is ordinal-ish by construction and was tuned for *ranking
+   pieces against each other* inside the old system.
+3. **The range is narrow and centred**, which is fine for ranking and poor for expressing a
+   requirement — a demand model needs headroom above and below the observed garment spread.
+
+**Conclusion for Slice 1:** treat `pieceWeatherEvidence`'s structured terms as the reusable input and
+`cold` as a derived convenience. The new contract may reuse the *evidence*; it must not adopt the
+*scale* without calibrating it against something with a temperature meaning.
+
+### 10.2 Does naive aggregation double-count coverage? **Yes.**
+
+```text
+one long-sleeve wool mid-layer            cold = 12
+the same garment worn as an outer layer   cold = 12
+naive sum (arms covered ONCE in reality)  cold = 24
+```
+
+`systemColdScore` sums exactly this way. Sleeve, hem and neckline terms are per-garment, so layering
+two long-sleeved pieces counts the arms twice — and layering is the normal case in precisely the
+conditions this model is for. Any aggregation contract must decide whether overlapping coverage
+combines additively (it does not), by maximum, with diminishing returns, or by tracking covered
+regions directly. `pieceWeatherEvidence` already exposes `hemCoverage`, `longSleeves`, `warmNeckline`
+and `exposure` per piece, so the inputs for a region-aware answer exist.
+
+### 10.3 Unknown vs neutral — **a real mechanism, but not a live defect here. Correcting myself.**
+
+The mechanism is real:
+
+```text
+untagged garment   evidence = null      cold = 0
+tagged, neutral    evidence = present   cold = 0
+```
+
+`systemColdScore`'s `(… .cold || 0)` maps both to the same number, so a garment nobody has measured
+and a garment measured as neutral are indistinguishable once summed.
+
+**But the incidence claim I was about to make is false.** Measured: of 58 pieces with null evidence,
+**all 58 are shoes and accessories**, which `pieceWeatherEvidence` excludes deliberately.
+**Zero garments** in this wardrobe hit the collision.
+
+So this is a **latent** risk, not an observed one — worth designing against because the app is
+multiuser and a freshly added or lightly tagged garment lands there immediately, but it must not be
+presented as a bug currently producing bad cards. Recording the correction because overstating a
+theoretical failure as a live one is a habit this arc has had to correct more than once.
+
+### 10.4 What this implies for the contract's shape
+
+Two of §9.2's four questions now have measured answers, and they point at the same thing: **the
+aggregation cannot be a scalar sum of a scale with no origin.** The demonstrated requirements are
+placement (§9.2's A/B), coverage overlap (§10.2), and unknown-vs-neutral (§10.3) — three, from
+evidence, versus the seven bucket names §9.3 warns against reverse-engineering from.
+
+Still open for Slice 1, and deliberately not answered here: where aggregation lives, what the
+structured shape is, and what the demand side is measured *in* — which §10.1 shows is the question
+everything else waits on.
