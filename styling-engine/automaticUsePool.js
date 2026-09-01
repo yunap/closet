@@ -1,6 +1,7 @@
 import { db } from '../db.js'
 import { parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { pieceFabricWeight, wardrobeCategoryGroup } from './attributes.js'
+import { pieceOuterwearCapabilityFacts } from './outerwearCapability.js'
 
 function findingCode(reason = '') {
   return String(reason || 'excluded').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
@@ -52,6 +53,15 @@ export function evaluateAutomaticUsePiecePoolCore({
     return {
       piece,
       pieceId: Number(piece.id),
+      // Slice C of docs/outerwear-weather-consolidation-spec.md. Canonical outerwear capability
+      // facts ride along with every decision so search, selected generation, whole-wardrobe, plan
+      // and capsule read one interpretation of outerwear_role/weather_protection instead of each
+      // re-deriving it. Facts only: no verdict, no finding, and deliberately no effect on
+      // `allowed`. Per [A2] a capability shortfall is evidence, never a pool exclusion — a shell
+      // that under-insulates alone is still a legitimate candidate under a sweater, and only
+      // Contract C (outfit level) may hard-fail. Attaching this as a field rather than a finding
+      // makes that boundary structural: there is no code path here that could reject a piece.
+      capability: pieceOuterwearCapabilityFacts(piece),
       allowed: Boolean(verdict.allowed || bypassed),
       underlyingAllowed: Boolean(verdict.allowed),
       bypassed,

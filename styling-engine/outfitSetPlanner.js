@@ -1011,7 +1011,11 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         // layer requirements get a chance to run.
         isHot: t.isHot, isCold: false, isExtremeHeat: t.isExtremeHeat,
         isIndoor: true,
-        transitIsHot: t.isHot, transitIsCold: t.isCold, transitHighF: t.highF, transitLowF: t.lowF,
+        // [R1]: transitIsColdSevere is the transit-side counterpart the profile never had. Without
+        // it, Contract C's cold-transit branch reads undefined and silently never fires — the exact
+        // failure mode of a hand-built fixture passing while production does nothing.
+        transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
+        transitHighF: t.highF, transitLowF: t.lowF,
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
@@ -1021,7 +1025,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
 
   return {
     profile: {
-      isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,
+      isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
       weatherSource: t.source,
       resolvedWeatherContext: context,
@@ -3943,18 +3947,13 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
       }
     }
   }
-  if (weatherProfile?.isCold) {
-    const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
-    if (!hasWarmLayer) reasons.push('no warm layer for cold weather')
-  } else if (weatherProfile?.transitIsCold) {
-    // Spec §6.4: an indoor slot's base may stay light (isCold is deliberately
-    // neutralized for it), but the card must still carry "adequate removable,
-    // sleeve-bearing coverage" for arrival/departure transit through the cold
-    // outside. A heavy indoor top/dress does not satisfy this — it isn't
-    // removable once indoors — so only an actual layer piece counts here,
-    // unlike the outdoor isCold branch above which also accepts a heavy main.
-    if (!layer || hasSleevelessConstruction(layer)) reasons.push('no adequate sleeve-bearing layer for cold-weather transit (the indoor base may stay light, but removable coverage is required for getting there and back)')
-  }
+  // The cold and cold-transit branches that used to live here were migrated to Contract C
+  // (evaluateOutfitEnvironmentalAdequacy, reached through evaluateWearableOutfit above) in Slice D
+  // of docs/outerwear-weather-consolidation-spec.md. Both meanings moved intact — the
+  // minimum-warmth floor with its heavy-main allowance, and the removable sleeve-bearing transit
+  // requirement — and the shared owner adds the severity-aware outdoor-capability judgment neither
+  // of them could make. This specialization keeps everything else: slot register, activity, season
+  // and plan requirements remain local strategy.
   if (weatherProfile?.isHot) {
     for (const piece of mainPieces) {
       if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
@@ -4097,6 +4096,10 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         requireShoes: true,
         includeLayerDirections: true,
         seenPieceIds,
+        // [O2]/[R2]: the plan slot owns a resolved weather profile, so it passes it and the shared
+        // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
+        // validateSlotOutfitConstraints below.
+        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment },
       })
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {

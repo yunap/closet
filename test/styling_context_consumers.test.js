@@ -196,7 +196,14 @@ test('whole-wardrobe and submitted-plan gates consume the composed wearable verd
   const wholeEnd = rulesSource.indexOf('export function buildOutfitMechanicsReason', wholeStart)
   assert.ok(wholeStart >= 0 && wholeEnd > wholeStart, 'missing locallyGateWholeWardrobeOutfits source block')
   const whole = rulesSource.slice(wholeStart, wholeEnd)
-  assert.match(whole, /evaluateWearableOutfit\(pieces, \{ requireShoes \}\)/)
+  // Slice D of docs/outerwear-weather-consolidation-spec.md added a second argument here: the
+  // wrapper now feeds its resolved profile to the shared Contract C stage. The pinned contract is
+  // unchanged — this gate consumes the composed wearable verdict rather than a local structural
+  // check — so the shape assertion is widened to the options object, and the weatherContext hand-off
+  // is pinned alongside it.
+  assert.match(whole, /const validation = evaluateWearableOutfit\(pieces, \{[\s\S]*?requireShoes,/)
+  assert.match(whole, /weatherContext: weatherProfile \? \{ weatherProfile \} : null/,
+    'the whole-wardrobe wrapper must pass the SUPPLIED profile, never its prose-derived fallback')
   assert.doesNotMatch(whole, /isOutfitStructurallyValid\(/)
 
   const planStart = plannerSource.indexOf('export function validateSubmittedPlanOutfits')

@@ -319,10 +319,17 @@ export function validateWeatherEstimate(input) {
   return { highF, lowF, precipitation, wind }
 }
 
+// [R1] of docs/outerwear-weather-consolidation-spec.md. isColdSevere tracks isCold exactly on this
+// path, and that is a derivation rather than a new threshold: COLD_F is 45, and
+// cold-severity-spec.md's own severe rule is "an actual temperature <= 45F" or a severe cold WORD.
+// The three bands here are hot/cold/mild — the mild-cool vocabulary that produces non-severe cold
+// ("chilly", "cool", "foggy") only ever reaches weatherProfileFromContext's prose path, never this
+// one. So on the structured path every cold reading is severe cold, and omitting the flag here is
+// what left it undefined by the time a slot profile reached the validator.
 const BAND_FLAGS = {
-  hot: { isHot: true, isCold: false },
-  cold: { isHot: false, isCold: true },
-  mild: { isHot: false, isCold: false },
+  hot: { isHot: true, isCold: false, isColdSevere: false },
+  cold: { isHot: false, isCold: true, isColdSevere: true },
+  mild: { isHot: false, isCold: false, isColdSevere: false },
 }
 
 function resolveTemperatureField({ userTemperature, liveTemperature, estimateTemperature }) {
@@ -338,7 +345,8 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     const classified = classifyTemperatureRange(userTemperature, { exclusive: false })
     return {
       highF: userTemperature.highF, lowF: userTemperature.lowF, band: null,
-      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
+      isColdSevere: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'stated_user',
     }
   }
@@ -346,6 +354,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: liveTemperature.highF, lowF: liveTemperature.lowF, band: null,
       isHot: Boolean(liveTemperature.isHot), isCold: Boolean(liveTemperature.isCold),
+      isColdSevere: Boolean(liveTemperature.isCold),
       isExtremeHeat: Boolean(liveTemperature.isExtremeHeat),
       source: 'live',
     }
@@ -354,11 +363,12 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     const classified = classifyTemperatureRange(estimateTemperature, { exclusive: false })
     return {
       highF: estimateTemperature.highF, lowF: estimateTemperature.lowF, band: null,
-      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
+      isColdSevere: Boolean(classified.isCold), isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'model_estimate',
     }
   }
-  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isExtremeHeat: false, source: 'unavailable' }
+  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isColdSevere: false, isExtremeHeat: false, source: 'unavailable' }
 }
 
 function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimate }) {
@@ -513,6 +523,10 @@ export function serializeResolvedWeatherContext(context = null) {
       band: context.temperature?.band || null,
       is_hot: Boolean(context.temperature?.isHot),
       is_cold: Boolean(context.temperature?.isCold),
+      // [R1]: severity must survive persistence, not just resolution. A field that resolves but
+      // does not round-trip vanishes on the next turn's carry-forward — the same silent-loss shape
+      // that left isColdSevere undefined at the validator in the first place.
+      is_cold_severe: Boolean(context.temperature?.isColdSevere),
       is_extreme_heat: Boolean(context.temperature?.isExtremeHeat),
       source: context.temperature?.source || 'unavailable',
     },
@@ -535,6 +549,7 @@ export function restoreResolvedWeatherContext(stored = null) {
       band: t.band || null,
       isHot: Boolean(t.is_hot),
       isCold: Boolean(t.is_cold),
+      isColdSevere: Boolean(t.is_cold_severe),
       isExtremeHeat: Boolean(t.is_extreme_heat),
       source: t.source || 'unavailable',
     },
