@@ -49,6 +49,18 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
         )
       : snapshot[key]
+    // 2026-09-01: the shoes `fabric_category` enum had no `knit` value, so a knitted/flyknit upper
+    // was tagged inconsistently as `mesh` or `woven` depending on the photo — in one real wardrobe
+    // the word "knit" appears in four shoe names split across both. That made the wet/cold footwear
+    // gates fire by tagging luck rather than by construction. Adding the value is a schema fix for
+    // every user, not a prompt-tuning tweak, so it is recorded here as an accepted byte delta rather
+    // than by re-freezing the fixture.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        'shoes -> leather|suede|nubuck|patent|canvas|mesh|woven (use woven for raffia/straw/other woven shoe materials)|synthetic|textile|rubber|other',
+        'shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper — knit and mesh are both permeable, pick knit when the upper is a continuous knitted fabric rather than an open perforated mesh)|woven (use woven for raffia/straw/other woven shoe materials, NOT for a knitted upper)|synthetic|textile|rubber|other'
+      )
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern
