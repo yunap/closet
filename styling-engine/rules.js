@@ -35,6 +35,7 @@ import {
   pieceHasInsulatingMaterial,
   pieceFiberBreathability,
   pieceOcclusiveFitDegree,
+  pieceHasVentilatedFootwearMaterial,
   pieceHasWetSensitiveFootwearMaterial,
   pieceFormality,
   formalityRank,
@@ -2636,6 +2637,19 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   if (weatherProfile.isCold || weatherProfile.transitIsCold) {
     if (wardrobeCategoryGroup(piece) === 'shoes' && (piece.toe_shape === 'open_toe' || piece.shoe_type === 'sandal')) {
       reasons.push('cold weather: open-toe/warm-weather footwear')
+    }
+    // Ventilated footwear, gated on SEVERITY rather than any cold (owner ruling 2026-09-01).
+    // Evidence: a live freeform turn at 38°F, "walking around the city all afternoon", chose mesh
+    // athletic sneakers. Unlike an open-toe sandal — unsafe at any cold, hence the rule above —
+    // mesh is merely suboptimal on a chilly 55°F day and genuinely wrong at 38°F. isColdSevere is
+    // exactly the tier that distinction needs, so this uses it rather than widening the rule above
+    // and pulling four walkable shoes out of every mild-cool turn.
+    if (
+      (weatherProfile.isColdSevere || weatherProfile.transitIsColdSevere) &&
+      wardrobeCategoryGroup(piece) === 'shoes' &&
+      pieceHasVentilatedFootwearMaterial(piece)
+    ) {
+      reasons.push('severe cold: ventilated/mesh footwear')
     }
   }
 
