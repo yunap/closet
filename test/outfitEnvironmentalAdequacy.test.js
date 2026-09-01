@@ -212,16 +212,33 @@ test('evaluateWearableOutfit stays silent without weatherContext and composes wi
 test('isColdSevere survives resolveWeatherContext and its serialize/restore round trip', () => {
   // The [R1] failure mode is a flag that exists in a hand-built fixture and is undefined in
   // production. Assert the real resolver and the real persistence shape, not a literal.
+  // Fixture changed 2026-09-01: it was 55/40, asserted severe "because the 40F low is <= 45F". That
+  // rule was wrong for a range and has been replaced — severity now comes from the daytime HIGH,
+  // since the low occurs before dawn. This test's subject is PERSISTENCE, so it keeps a genuinely
+  // severe range and the round-trip assertion is unchanged.
   const context = resolveWeatherContext({
-    modelEstimate: { highF: 55, lowF: 40, precipitation: 'unknown', wind: 'unknown' },
+    modelEstimate: { highF: 42, lowF: 38, precipitation: 'unknown', wind: 'unknown' },
     location: 'Vienna, Virginia',
     dateRange: { start: '2026-10-12', end: '2026-10-18' },
   })
   assert.equal(context.temperature.isCold, true)
-  assert.equal(context.temperature.isColdSevere, true, '40F low is severe cold by the ratified <=45F rule')
+  assert.equal(context.temperature.isColdSevere, true, 'a 42F high never gets out of cold')
 
   const restored = restoreResolvedWeatherContext(serializeResolvedWeatherContext(context))
   assert.equal(restored.temperature.isColdSevere, true, 'severity must survive persistence, not just resolution')
+})
+
+test('a warm day with a cold pre-dawn low is NOT severe cold', () => {
+  // The live defect: a 65F/45F week-long trip resolved as severe cold because the LOW touched 45,
+  // which put a puffer coat in all five cards including a 65F city walk. The low happens while the
+  // wearer is asleep; the high is what they are dressed for.
+  const context = resolveWeatherContext({
+    modelEstimate: { highF: 65, lowF: 45, precipitation: 'unknown', wind: 'unknown' },
+    location: 'Vienna, Virginia',
+    dateRange: { start: '2026-10-12', end: '2026-10-19' },
+  })
+  assert.equal(context.temperature.isCold, true, 'the minimum-warmth floor still applies — a 45F morning wants a layer')
+  assert.equal(context.temperature.isColdSevere, false, 'but "heavy is what you actually want" must not fire')
 })
 
 test('a mild band does not manufacture severity', () => {
