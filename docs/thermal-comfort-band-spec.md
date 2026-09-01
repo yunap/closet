@@ -390,6 +390,157 @@ aggregation cannot be a scalar sum of a scale with no origin.** The demonstrated
 placement (§9.2's A/B), coverage overlap (§10.2), and unknown-vs-neutral (§10.3) — three, from
 evidence, versus the seven bucket names §9.3 warns against reverse-engineering from.
 
-Still open for Slice 1, and deliberately not answered here: where aggregation lives, what the
-structured shape is, and what the demand side is measured *in* — which §10.1 shows is the question
-everything else waits on.
+Still open at the time of writing: where aggregation lives, what the structured shape is, and what
+the demand side is measured *in* — which §10.1 shows is the question everything else waits on.
+
+**§11 answers the last of those** (a small ordinal scale calibrated against published insulation
+references, not `cold` points and not clo itself) and **simplifies the first** (§11.4: summation is a
+sanctioned approximation for the total, with placement carried as separate information rather than
+folded into it). §12 restates Slice 1 accordingly.
+
+---
+
+## 11. Established practice — what it validates, and what to refuse
+
+Sources and reading in this section are **owner-supplied research (2026-09-01)**, recorded with links
+so a later reader can check them. They have not been independently verified here; the value is that
+they establish precedent, not that this document re-derives them.
+
+### 11.1 The architecture in §2 is a known one
+
+**ISO 11079** defines **IREQ — required clothing insulation**: how much insulation a person needs,
+computed from climate *plus metabolic activity*, then compared against the insulation available from
+their clothing. That is the same shape §2 arrived at independently:
+
+```text
+weather + exposure/activity → demand        ⟷  IREQ
+clothing ensemble           → contribution  ⟷  available clothing insulation
+compare the two
+```
+
+**Do not implement IREQ.** Its domain is occupational cold-stress assessment, and reference
+implementations target ambient temperatures below +10 °C — the wrong end of the problem, since
+Closet's failures live at 10–20 °C. Its value here is that it retires the objection that this design
+is speculative.
+
+### 11.2 It argues for deleting the threshold, not tuning it
+
+**ASHRAE Standard 55** treats comfort as the interaction of environment **with clothing and
+activity**, and explicitly accounts for individual variation. Temperature alone is not the answer.
+
+That is a direct argument for §8's deletion step rather than a fifth threshold: the goal is retiring
+the authority of `temperature <= X → cold behaviour`, not finding a better `X`.
+
+### 11.3 Ensemble evaluation is mainstream
+
+**ISO 9920** is specifically about estimating the thermal insulation of a clothing **ensemble** from
+its garments, and ASHRAE publishes reference insulation values for individual garments and
+ensembles. So §2's move from per-piece rules to outfit-level thermal adequacy is ordinary practice.
+
+### 11.4 The most useful finding: summation is a sanctioned approximation, with a stated limit
+
+ASHRAE permits summing individual garment insulation values as a practical ensemble estimate. **ISO
+9920 states that the ensemble method does not address insulation distributed differently across body
+areas, nor discomfort from asymmetric insulation.**
+
+That is §9.2's A/B measurement and §10.2's double-counting arriving from the other direction, and it
+**resolves the open aggregation question in a simplifying way**:
+
+> Summation is an acceptable approximation for *total* insulation. Local coverage and layering
+> behaviour are **separate information**, not a defect in the sum.
+
+So Closet does not need a sophisticated region-aware aggregation algorithm to be legitimate. It needs
+a defensible total **plus** separate placement facts — which is exactly the split §9.2 was circling
+without being able to justify.
+
+### 11.5 Removability is a recognised separate axis
+
+Standard outdoor layering practice treats base / mid / outer as functional roles, with layers added
+and removed as conditions and exertion change, and notes that weather-only advice misses exertion and
+individual metabolism. §2.1's insistence that thermal amount and removability not be collapsed is
+consistent with that.
+
+### 11.6 Personal sensitivity is a legitimate input — later, and small
+
+There is published work recommending from a user's *own* wardrobe using weather plus individual
+thermal sensitivity. Not to be copied, but it supports a small future personalisation:
+
+```text
+runs warm  ·  neutral  ·  runs cold        (or learned from feedback)
+```
+
+**Not** a stored temperature range per garment — which
+[outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) §20 already rules
+out, and which §7 above independently concluded was unnecessary.
+
+### 11.7 Borrow the structure, refuse the apparatus
+
+Explicitly **not** to be modelled: radiant temperature, evaporative resistance, metabolic watts/m²,
+thermal-manikin corrections, wind-penetration coefficients, physiological strain, IREQ exposure-
+duration calculations. Those matter for workplace safety and are excessive for choosing between a
+cardigan and a puffer for a museum trip.
+
+### 11.8 `clo` is a calibration reference, not Closet's unit
+
+Reference insulation values are genuinely useful as **anchors** — a thin long-sleeve sweater sitting
+around 0.25 clo tells us something real. But Closet must not claim:
+
+> *"This outfit is 0.83 clo and your requirement is 0.71 clo."*
+
+That precision would be **fictitious** given the available garment metadata, and inventing a
+scientific-looking unit on top of `fabric_weight` and `fiber_content` would be worse than the
+arbitrary weights it replaces — it would look calibrated while being no better founded.
+
+Instead, published insulation data should calibrate a **small ordered warmth scale**. Illustrative,
+not a proposed taxonomy:
+
+```text
+very light · light · moderate · warm · very warm
+```
+
+The difference from today's `cold` score is not granularity — it is that the levels would be
+**anchored to known garment/ensemble insulation references** rather than to arbitrary `+8/+6`
+weights. This is the answer to §10.1's open question, "what is the demand side measured in": neither
+`cold` points nor clo, but a small ordinal scale that clo data is used to place garments into.
+
+Comparison stays continuous enough for ranking, with no cliff:
+
+```text
+demand ≈ moderate
+   light outfit      → undershoot
+   moderate outfit   → preferred
+   warm outfit       → acceptable / slight overshoot
+   very warm outfit  → significant overshoot
+```
+
+## 12. The revised Slice 1 task
+
+Research stops here. Slice 1 is now bounded to one investigation, still **no production code**:
+
+> Build a reference calibration table from established clothing-insulation data against Closet's
+> **actual** garment taxonomy. Do not implement IREQ, PMV, ASHRAE comfort calculations, or a new
+> scientific unit. Use the external data only to determine whether Closet's existing garment facts
+> can reliably place garments into a small ordered warmth representation. Separately identify the
+> **minimum** layer-placement information needed to distinguish base warmth from removable warmth.
+> Test that representation against the pinned cases below **before** choosing the demand mapping.
+
+### 12.1 The acceptance test is ordering, not accuracy
+
+Scientific accuracy is not the bar. Getting these orderings right is:
+
+| Conditions / use | Expected ordering |
+|---|---|
+| 65/45 museum day | cardigan / transition layer **>** puffer |
+| cool morning, mild afternoon | mild base + removable layer **>** permanently heavy base |
+| genuinely cold outdoor period | puffer **>** cardigan |
+| active cold walk | *less* insulation than sedentary exposure at the same temperature |
+| only a puffer available | puffer remains usable |
+| unknown garment evidence | **unknown**, never "neutral warmth" |
+
+Rows one and three are the puffer incident and its inverse — the representation must reverse the
+ordering between them on the strength of conditions alone. Row four is the activity input §11.1
+supplies and §9.1 requires. Row five is the supply constraint. Row six is §10.3's latent collision,
+which a new representation must not inherit.
+
+**Only after those orderings hold** does the demand mapping get chosen. That is the point at which
+this stops being "what Fahrenheit threshold fixes this card" and becomes a temperature model.
