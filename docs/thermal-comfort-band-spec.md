@@ -29,9 +29,31 @@ undershoot          appropriate          overshoot
 finding / rank        prefer              rank penalty
 ```
 
-One comparison, three outcomes, replacing a family of independent booleans. `pieceWeatherScores`
-already produces the graded contribution; what does not exist is the **required band** and the
-comparison against it.
+One comparison, three outcomes — for **thermal adequacy only**.
+
+### 2.1 What this model does NOT absorb
+
+An earlier draft said "replacing a family of independent booleans". That is too strong, and the
+audit below is itself the evidence: removable-layer need, transit sleeve coverage, outdoor-capability
+and footwear construction exist as separate contracts **because total warmth does not answer them**.
+The destination is a set of parallel axes, not one master object:
+
+```text
+              resolved conditions + exposure
+                          ↓
+        ┌──────── thermal comfort ────────┐
+        │  undershoot / fit / overshoot   │
+        └─────────────────────────────────┘
+        + removable-layer requirement
+        + environmental protection (rain/wind)
+        + outerwear capability (Contract B)
+        + footwear adequacy
+```
+
+Stated explicitly because the failure mode is predictable: a "thermal comfort band" is exactly the
+kind of abstraction that slowly absorbs every neighbouring question until it is the next
+`isCold` — one object carrying six meanings, which is the problem this document exists to end.
+**Thermal fit ≠ removability ≠ rain protection ≠ outdoor capability ≠ footwear construction.**
 
 ## 3. Consumer audit
 
@@ -144,11 +166,20 @@ A replacement is not acceptable unless all of these hold:
 **No replacement Fahrenheit thresholds.** The first question is which consumers genuinely need a
 discrete boundary and which should consume graded fit. Provisional reading from §3:
 
-* genuinely discrete: footwear exclusions (§3.6), the prompt-text switches (§3.7's last two), display
-  labels (§3.8)
-* genuinely graded: relevance scoring (§3.7), outfit adequacy (§3.1, §3.4)
-* unclear, needs its own analysis: the metadata-completeness gate (§3.2's `missingWeatherGateField`),
-  which uses cold as a proxy for "this field now matters"
+* **genuinely discrete:** footwear exclusions (§3.6). A shoe is open-toe or it is not.
+* **discrete projection, derived:** display labels (§3.8). These want a coarse word, but it should be
+  computed *from* the band, not from a parallel flag.
+* **genuinely graded:** relevance scoring (§3.7), outfit adequacy (§3.1, §3.4).
+* **probably continuous / availability-based, needs design:** the prompt-projection switches —
+  `search_wardrobe`'s `weatherFit` labels and `routes/ai.js:2508`'s decision to send weather text at
+  all. Reclassified 2026-09-01: an earlier draft called these "genuinely discrete", which is wrong.
+  **The binary point *is* one of the defects this audit found.** There is no good reason for the
+  model to go from hearing nothing about thermal conditions to hearing full weather guidance at a
+  threshold crossing; if the band says there is meaningful thermal evidence at 68/48, the model
+  should receive it. The projection can be concise without being conditional. This may remove another
+  threshold rather than replace it.
+* **unclear, needs its own analysis:** the metadata-completeness gate (§3.2's
+  `missingWeatherGateField`), which uses cold as a proxy for "this field now matters"
 
 Choosing numbers before that split is what produced four thresholds in one day.
 
@@ -167,20 +198,101 @@ Choosing numbers before that split is what produced four thresholds in one day.
 
 ## 8. Migration and deletion plan
 
-1. **Shared evaluator.** A `requiredThermalBand(resolvedContext)` producer and a
-   `compareOutfitToBand(pieces, band)` verdict returning `undershoot | appropriate | overshoot` with
-   graded distance. Pure, tested, consumed by nobody. Behaviour unchanged.
-2. **Ranking first** (§3.7). Highest value, lowest risk: a rank change cannot make an outfit invalid.
-   Retires the `+10`/`−10` pair and the `isCold` on/off switches, and delivers use case 2 and 3.
-3. **Outfit adequacy** (§3.1, §3.4, §3.5). Migrate Contract C's branches onto the band, preserving
-   the measured/unmeasured discipline and the transit split.
-4. **Footwear** (§3.6). Likely stays discrete; confirm against §6 rather than assume.
-5. **Display** (§3.8). Project a coarse label *from* the band, so the label is derived rather than
-   parallel.
+1. **Define both contracts** (§9), as pure functions with no consumers. Thermal demand *and* outfit
+   contribution, including exposure inputs and aggregation semantics. Behaviour unchanged.
+2. **Ranking / model evidence** (§3.7). Highest value, lowest risk — a rank change cannot make an
+   outfit invalid. Retires the `+10`/`−10` pair and, more importantly, removes `isCold` as the switch
+   deciding whether graded weather reasoning exists at all. Delivers use cases 2 and 3.
+3. **Outfit thermal adequacy** (§3.1, §3.4). Move actual undershoot/overshoot reasoning onto the
+   band, preserving the measured/unmeasured discipline.
+4. **Transit, removability and outdoor capability** (§3.2, §3.5). Decide **explicitly** which parts
+   consume thermal demand and which remain independent contracts per §2.1. This slice exists to stop
+   the thermal model swallowing non-thermal semantics by default.
+5. **Footwear and projections** (§3.6, §3.8). Footwear likely stays discrete; the display label
+   becomes derived *from* the band rather than parallel to it.
 6. **Delete the authority.** `isCold` / `transitIsCold` / `isColdSevere` /
-   `needsRemovableCoolLayer` survive only as derived labels for §3.8, or are removed entirely. The
-   arc's own standard: an engine carrying two overlapping cold models is the condition the
-   consolidation work exists to prevent.
+   `needsRemovableCoolLayer` survive only as derived labels, or are removed entirely. The arc's own
+   standard: an engine carrying two overlapping cold models is the condition the consolidation work
+   exists to prevent.
 
 Each slice ships independently and is reversible. No slice may add a new threshold without recording
 it here first.
+
+
+---
+
+## 9. The two contracts, before any code
+
+Slice 1 defines both. Naming them precisely now, because a function signature becomes architecture
+the moment it exists.
+
+### 9.1 Thermal demand — exposure is an explicit input, not an afterthought
+
+```text
+requiredThermalBand(weather, exposureContext)
+```
+
+**Not** `requiredThermalBand(resolvedContext)`. §2's own diagram says *"resolved weather **+
+wearing/exposure context**"*, and those are not the same object. The band for 50°F differs by
+exposure in ways weather alone cannot express:
+
+```text
+50F · walking outside 3 hours          demanding, sustained
+50F · five-minute restaurant transit   brief, removable coverage is enough
+50F · vigorous hike                    output heat changes the answer entirely
+50F · museum, outdoor transit only     two bands, one outfit
+```
+
+Passing a single blob and letting the function reach into it for exposure would repeat this arc's
+signature failure: a correct primitive fed the wrong inputs. Whether the two arrive as separate
+arguments or one canonical object, **exposure must be a named, required part of the contract** and
+absent exposure must be an explicit `unknown`, not silently "outdoors, all day".
+
+What exists today: nothing. `environment` (indoor/outdoor) and the transit split are the only
+exposure signals, and there is no daypart or duration anywhere (§7).
+
+### 9.2 Outfit thermal contribution — nothing owns it
+
+**Audit answer: no function owns outfit-level thermal contribution.** The only aggregation in the
+codebase is private to one module and one caller:
+
+```js
+// outfitEnvironmentalAdequacy.js — added in this arc's Slice D
+function systemColdScore(pieces) {
+  return pieces.reduce((total, piece) => total + (pieceWeatherScores(piece).cold || 0), 0)
+}
+```
+
+A naive sum, consumed once, with a hand-tuned floor of 12. It should not be promoted by default.
+
+**A scalar total is lossy in the specific way this model cannot afford.** Measured:
+
+```text
+A  heavy wool sweater + light shell + medium bottom    [ 20, -2, 0 ]   sum 18
+B  light tee + heavy puffer + medium bottom            [ -8, 14, 0 ]   sum  6
+```
+
+The totals differ, but that is not the interesting part. In **A** essentially none of the warmth is
+removable — take the shell off and the outfit is still warm. In **B** *all* of it is: remove the
+puffer and the base is thermally negative. A single number cannot express that difference, and the
+audit already proves the difference matters — removable-layer need (§3.2), transit sleeve coverage
+(§3.5) and outdoor-capability (§3.4) exist as separate contracts precisely because total warmth does
+not answer them.
+
+So the contract likely needs to **preserve dimensions rather than collapse immediately**. Shape to be
+designed, not asserted; something along the lines of:
+
+```text
+{ coreWarmth, legCoverage, armCoverage, removableWarmth, outerLayerWarmth }
+```
+
+Those field names are illustrative. What Slice 1 must actually settle, before any calibration:
+
+1. Does aggregation belong in `thermal.js` beside `pieceWeatherScores`, or in a new module?
+2. Scalar or structured — and if structured, which dimensions are load-bearing for the §3 buckets?
+3. How does overlapping coverage combine? Summing two full-coverage garments double-counts, and
+   `pieceWeatherEvidence` already exposes `hemCoverage`, `longSleeves` and `exposure` per piece.
+4. What is the `unknown` contribution of an untagged garment — zero, or absent? Criterion 8 says the
+   two must not be conflated, and `systemColdScore` currently conflates them.
+
+**No numerical calibration in Slice 1.** Ownership and shape only.
