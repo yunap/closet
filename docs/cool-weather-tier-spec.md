@@ -1,4 +1,4 @@
-# Spec — a `cool` tier between mild and cold
+# Spec — a removable-layer requirement for cool ends of the day
 
 **Status:** Proposed 2026-09-01, not implemented. **One owner ruling required: the threshold (§5).**
 **Route:** [docs/README.md](README.md). Amends
@@ -53,7 +53,8 @@ correctly and left the lower one untouched.
 
 ## 3. What the tier must require
 
-Deliberately modest. This is the *"a layer, not a coat"* tier:
+Deliberately modest. This is the *"a layer, not a coat"* tier — and specifically a **removable**
+layer, since the temperature it answers to is present for only part of the day:
 
 * **at least one of**: an outerwear layer of any role — `indoor_layer` counts — **or** a
   non-sleeveless base of medium weight or heavier.
@@ -92,20 +93,48 @@ Measured against real and pinned ranges. `already` means `isCold` covers it now.
 Reading:
 
 * **D (`highF<=60`) fails the actual bug** — 65/48 stays uncovered. Rejected.
-* **A (`lowF<=55`)** is the widest. It catches a 72°F/55°F day as cool, which is a warm day with a
-  cool evening — arguably right for an evening slot, likely wrong for a daytime one.
-* **B (`highF<=65`)** is consistent with the severity amendment's own logic: the **high** is the
-  temperature the wearer is actually out in. Catches the bug and the pinned coastal fixture, leaves
-  a 72°F day alone.
+* **A (`lowF<=55`)** is the widest. It catches a 72°F/55°F day — a warm day with a cool evening.
+  See the correction below: that is a feature, not a cost.
+* **B (`highF<=65`)** catches the bug and the pinned coastal fixture and leaves a 72°F day alone —
+  but calls a 65°F afternoon "cool", which it is not. **Rejected, see below.**
 * **C (`lowF<=50`)** catches the bug narrowly but misses the pinned `cool coastal summer` (58/55),
   which is a case the codebase already treats as cool on the prose path.
 
-**Recommendation: B, `highF <= 65`.** It is the same reasoning that fixed severity — dress for the
-temperature you are outdoors in — and it is the only candidate that covers both the live bug and the
-existing pinned fixture without reaching into genuinely warm days.
+### Correction, same day: B is wrong, and so was the reasoning behind it
 
-The number is a ruling, not a derivation. It is recorded here rather than chosen in code because
-this is the fourth threshold in this arc that consumers will treat as ratified once it ships.
+The first version of this section recommended **B (`highF <= 65`)**, arguing it reused the severity
+amendment's logic — *dress for the temperature you are outdoors in*.
+
+The owner rejected it: **65°F as a HIGH is a pleasant afternoon, not a cool day.** That is right, and
+the error underneath it is worth stating, because it is the same over-application that produced the
+puffer incident in reverse.
+
+**The two questions have different answers:**
+
+```text
+what should the BASE be made of?   → the HIGH   (when you are out; why #292 moved severity there)
+do you need something to put ON?   → the LOW    (mornings and evenings; a layer is the removable
+                                                 answer to a temperature that lasts part of a day)
+```
+
+A 65/48 day is **not a cool day**. It is a mild day with a cool evening, and the Sightseeing card's
+defect is that it carries no layer for the part of the day that is cold — not that its base is too
+light. Classifying the whole day is the wrong move; requiring a *removable* layer for the cold end
+is the right one.
+
+That also dissolves the objection to **A**. It was rejected above for catching a 72°F/55°F day —
+"arguably right for an evening slot, likely wrong for a daytime one". But the requirement is a
+removable layer, not a warm base: **carrying a light layer on a 72°F day that drops to 55°F in the
+evening is correct advice.** A was being measured against a base-warmth requirement this tier never
+imposes.
+
+**Recommendation: A, `lowF <= 55`.** It covers the live bug (65/48), the pinned `cool coastal
+summer` fixture (58/55), and the 72/55 evening case that A alone catches and that is genuinely a
+layer day.
+
+The number is still a ruling, not a derivation. It is recorded here rather than chosen in code
+because this is the fourth threshold in this arc that consumers will treat as ratified once it
+ships.
 
 ## 6. Blast radius
 
