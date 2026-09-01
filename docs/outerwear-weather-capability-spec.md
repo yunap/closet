@@ -206,6 +206,12 @@ These are the scope boundaries a coder should not cross without a new spec:
 
 ## 8. A known future consumer, explicitly out of scope here
 
+> **Update, 2026-08-31.** That follow-up is now specified in
+> [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md), which
+> honours this section's sequencing: its Slice A.1 is a mandatory real-wardrobe tagging audit
+> with a stop condition, and the truth-surface exposure deferred in §10 below lands there as
+> Slice E, alongside the first consumer.
+
 `styling-engine/outfitSetPlanner.js` already hand-writes prose that draws roughly the
 `outerwear_role` distinction, twice, without any structured backing:
 

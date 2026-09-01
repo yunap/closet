@@ -2580,6 +2580,10 @@ test('executeTool propose_outfit preserves cached cold transit when season is in
   const topId = Number(insert.run('indoor transit long sleeve top', 'top', 'cotton', 'light', 'long', null, null, null, null).lastInsertRowid)
   const bottomId = Number(insert.run('indoor transit trousers', 'bottom', 'cotton', 'medium', null, null, null, null, null).lastInsertRowid)
   const sandalId = Number(insert.run('indoor transit open sandal', 'shoes', 'leather', 'light', null, 'sandal', 'open_toe', 'flat', 'high').lastInsertRowid)
+  // Added 2026-09-01: freeform now runs the shared cold-transit floor, which this outfit failed
+  // before reaching the footwear rule this test is about. A sleeve-bearing removable layer clears
+  // that floor and leaves the open-toe assertion below testing what it was written to test.
+  const layerId = Number(insert.run('indoor transit sleeved jacket', 'outerwear', 'wool', 'medium', 'long', null, null, null, null).lastInsertRowid)
   try {
     const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], freeformDiagnostics: {} }
     await executeTool('search_wardrobe', {
@@ -2602,6 +2606,7 @@ test('executeTool propose_outfit preserves cached cold transit when season is in
         { id: topId, role: 'primary_top' },
         { id: bottomId, role: 'primary_bottom' },
         { id: sandalId, role: 'shoes' },
+        { id: layerId, role: 'layer_top' },
       ],
     }, toolContext)
 
@@ -2941,13 +2946,21 @@ test('executeTool propose_outfit: a genuine weather_estimate is not overridden b
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
     VALUES ('prose-bypass shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
   `).run().lastInsertRowid
+  // Added 2026-09-01: freeform now reaches the shared cold-warmth floor, and a 45°F low with no
+  // outer layer legitimately fails it. The layer keeps the outfit weather-valid so the assertions
+  // below still measure weather AUTHORITY — this test's actual subject — not outfit adequacy.
+  const layerId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, sleeve_length)
+    VALUES ('prose-bypass coat', 'outerwear', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'coat', '', 'wool', 'heavy', '["wool"]', 'everyday', '', '{}', 'long')
+  `).run().lastInsertRowid
   try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId, shoesId, layerId]) }
     const result = await executeTool('propose_outfit', {
       pieces: [
         { id: topId, role: 'primary_top' },
         { id: bottomId, role: 'primary_bottom' },
         { id: shoesId, role: 'shoes' },
+        { id: layerId, role: 'layer_top' },
       ],
       label: 'Prose Bypass Test',
       why_it_works: 'test',

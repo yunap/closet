@@ -1,3 +1,4 @@
+import { evaluateOutfitEnvironmentalAdequacy } from './outfitEnvironmentalAdequacy.js'
 import {
   pieceDressSupportsUnderlayer,
   pieceHasExplicitBaseLayerEvidence,
@@ -762,6 +763,7 @@ export function evaluateWearableOutfit(pieces = [], {
   includeRoles = roleAware,
   includeLayerDirections = false,
   seenPieceIds = [],
+  weatherContext = null,
 } = {}) {
   const normalizedPieces = Array.isArray(pieces) ? pieces : []
   const seenIds = seenPieceIds instanceof Set
@@ -787,6 +789,17 @@ export function evaluateWearableOutfit(pieces = [], {
     ? evaluateLayerPairConstruction(normalizedPieces, { roleAware })
     : null
   if (construction) stages.push({ stage: 'layer_construction', result: construction })
+
+  // Contract C (owner ruling [O2], docs/outerwear-weather-consolidation-spec.md). This function
+  // stays the canonical outfit-validity AGGREGATOR; the weather semantics live in
+  // evaluateOutfitEnvironmentalAdequacy and are composed here only when a caller supplies
+  // authoritative resolved context. Every existing context-free call site is therefore unchanged:
+  // no weatherContext, no stage, no findings. A caller must never manufacture a profile locally to
+  // switch this on — pass the one resolveStylingContext already resolved, or pass nothing.
+  const environment = weatherContext
+    ? evaluateOutfitEnvironmentalAdequacy(normalizedPieces, weatherContext)
+    : null
+  if (environment?.applicable) stages.push({ stage: 'environment', result: environment })
 
   const findings = stages.flatMap(({ result }) => result?.findings || [])
   const hardFindings = findings.filter(finding => finding.severity === 'error')

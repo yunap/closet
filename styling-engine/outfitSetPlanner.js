@@ -28,6 +28,7 @@
 // buildPlanReport).
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
+import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -1011,7 +1012,11 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         // layer requirements get a chance to run.
         isHot: t.isHot, isCold: false, isExtremeHeat: t.isExtremeHeat,
         isIndoor: true,
-        transitIsHot: t.isHot, transitIsCold: t.isCold, transitHighF: t.highF, transitLowF: t.lowF,
+        // [R1]: transitIsColdSevere is the transit-side counterpart the profile never had. Without
+        // it, Contract C's cold-transit branch reads undefined and silently never fires — the exact
+        // failure mode of a hand-built fixture passing while production does nothing.
+        transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
+        transitHighF: t.highF, transitLowF: t.lowF,
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
@@ -1021,7 +1026,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
 
   return {
     profile: {
-      isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,
+      isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
       weatherSource: t.source,
       resolvedWeatherContext: context,
@@ -1602,6 +1607,26 @@ function ensureWinterIndoorTopBalance(roster = [], groups = {}, required = 0, sc
 // separate roles, not one jacket doing both). Named at module scope so
 // selectCapsuleRoster's reserve pass and validateCapsuleRoster's structural
 // check test the identical definition.
+// RETAINED DELIBERATELY — Slice F / [A6] of docs/outerwear-weather-consolidation-spec.md.
+//
+// These two look like duplicate capability interpretation that outerwear_role should replace, and
+// the substitution was measured over the real wardrobe rather than assumed
+// (scratch/audit_indoor_layer_parity.mjs, 2026-08-31). Both parities FAILED:
+//
+//   indoor knit layer:      role-based test admitted 22 pieces vs 9 — including a trench coat and a
+//                           long leather coat, because the tagger legitimately files substantial
+//                           coats as `transition_layer`. That is precisely what this rule's own
+//                           prose forbids: "a coat or puffer does not satisfy the indoor-layer
+//                           requirement."
+//   cold transition layer:  `cold_weather_outerwear` admitted 1 piece vs 8, which would leave a
+//                           winter capsule with a single possible cold layer.
+//
+// The reason is structural, not a tagging gap: outerwear_role answers "what outdoor job can this
+// do", and neither field expresses "can you keep it on indoors". That axis is genuinely missing
+// from the taxonomy — see Appendix F. Until it exists, garmentKind remains the honest proxy.
+// Exported under test-only aliases so the retention is pinned by behaviour, not by comment.
+export { isCapsuleIndoorKnitLayer as _isCapsuleIndoorKnitLayerForTests }
+export { isCapsuleColdTransitionLayer as _isCapsuleColdTransitionLayerForTests }
 function isCapsuleIndoorKnitLayer(piece = {}) {
   const everydayRank = formalityRank('everyday')
   return wardrobeCategoryGroup(piece) === 'outerwear' &&
@@ -2475,12 +2500,16 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
   return [`[missing wardrobe gap: the shoe quota under this ${budget}-piece budget cannot cover both ${joined}]`]
 }
 
+// Exported under a test-only alias: the line itself is internal, but Slice E's cross-projection
+// parity fixture has to prove capability reaches THIS surface too, not just the shared truth text.
+export { planWorkbenchPieceLine as _planWorkbenchPieceLineForTests }
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
   const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
   const waistbandConstraint = piece.waistband_type
     ? `waistband:${piece.waistband_type}`
     : ''
+  const capability = outerwearCapabilityDisplay(piece)
   const bits = [
     `ID ${piece.id}`,
     piece.name || 'Garment',
@@ -2497,6 +2526,12 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.tuck_behavior ? `tuck:${piece.tuck_behavior}` : '',
     waistbandConstraint,
     piece.opacity && piece.opacity !== 'opaque' ? `opacity:${piece.opacity}` : '',
+    // Slice E: the plan workbench writes its own compact line rather than reusing
+    // buildWardrobePieceTruthText, so it needs the capability facts explicitly or the planner is
+    // the one model-facing surface that cannot see them. Values come from the shared display
+    // helper; only the `key:value` house style is local.
+    capability.role ? `outerwear_role:${capability.role.replace(/ /g, '_')}` : '',
+    capability.protection ? `weather_protection:${capability.protection}` : '',
     pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
@@ -3931,7 +3966,6 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const reasons = []
   const mainPieces = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
-  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
   for (let index = 0; index < pieces.length; index += 1) {
@@ -3943,18 +3977,13 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
       }
     }
   }
-  if (weatherProfile?.isCold) {
-    const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
-    if (!hasWarmLayer) reasons.push('no warm layer for cold weather')
-  } else if (weatherProfile?.transitIsCold) {
-    // Spec §6.4: an indoor slot's base may stay light (isCold is deliberately
-    // neutralized for it), but the card must still carry "adequate removable,
-    // sleeve-bearing coverage" for arrival/departure transit through the cold
-    // outside. A heavy indoor top/dress does not satisfy this — it isn't
-    // removable once indoors — so only an actual layer piece counts here,
-    // unlike the outdoor isCold branch above which also accepts a heavy main.
-    if (!layer || hasSleevelessConstruction(layer)) reasons.push('no adequate sleeve-bearing layer for cold-weather transit (the indoor base may stay light, but removable coverage is required for getting there and back)')
-  }
+  // The cold and cold-transit branches that used to live here were migrated to Contract C
+  // (evaluateOutfitEnvironmentalAdequacy, reached through evaluateWearableOutfit above) in Slice D
+  // of docs/outerwear-weather-consolidation-spec.md. Both meanings moved intact — the
+  // minimum-warmth floor with its heavy-main allowance, and the removable sleeve-bearing transit
+  // requirement — and the shared owner adds the severity-aware outdoor-capability judgment neither
+  // of them could make. This specialization keeps everything else: slot register, activity, season
+  // and plan requirements remain local strategy.
   if (weatherProfile?.isHot) {
     for (const piece of mainPieces) {
       if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
@@ -4097,6 +4126,10 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         requireShoes: true,
         includeLayerDirections: true,
         seenPieceIds,
+        // [O2]/[R2]: the plan slot owns a resolved weather profile, so it passes it and the shared
+        // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
+        // validateSlotOutfitConstraints below.
+        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment },
       })
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
