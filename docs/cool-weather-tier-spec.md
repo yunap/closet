@@ -1,6 +1,7 @@
-# Spec — a removable-layer requirement for cool ends of the day
+# Spec — `needsRemovableCoolLayer`
 
-**Status:** Proposed 2026-09-01, not implemented. **One owner ruling required: the threshold (§5).**
+**Status:** Proposed 2026-09-01, not implemented. Threshold ruled **A (`lowF <= 55`)** on 2026-09-01,
+with two tightenings required before coding (§3, §5.2) and a follow-up audit (§8).
 **Route:** [docs/README.md](README.md). Amends
 [cold-severity-spec.md](cold-severity-spec.md), which introduced the severe tier and whose
 2026-09-01 amendment surfaced this gap.
@@ -51,31 +52,71 @@ A sleeveless tank and no layer, for a day ending at 48°F. Nothing objects becau
 layer" and "needs a coat", with nothing in between. The severity amendment moved the upper boundary
 correctly and left the lower one untouched.
 
-## 3. What the tier must require
+## 3. What the tier requires — removability is structural
 
-Deliberately modest. This is the *"a layer, not a coat"* tier — and specifically a **removable**
-layer, since the temperature it answers to is present for only part of the day:
+The signal is named **`needsRemovableCoolLayer`**, not `isCool`, and the name carries the contract.
+This tier does not classify the weather. It answers one question: *does this outfit need something
+the wearer can put on and take off?*
 
-* **at least one of**: an outerwear layer of any role — `indoor_layer` counts — **or** a
-  non-sleeveless base of medium weight or heavier.
-* **not** an outdoor-capable layer. That is the severe tier's requirement and must not migrate down.
+**Satisfied only by an actual layer.** An outerwear piece of any role — `indoor_layer` counts, a
+cardigan counts — and nothing else.
+
+**Explicitly NOT satisfied by a warm base.** An earlier draft allowed "a non-sleeveless base of
+medium weight or heavier" as an alternative, and that was wrong in a way that inverts the tier's own
+purpose. On a 72°F/55°F day it would approve a warm long-sleeved top worn straight through a 72°F
+afternoon — the outfit is now uncomfortable for the part of the day the wearer is actually out in,
+and still has nothing to add when the evening cools. The whole point of a removable layer is that a
+*mild* base can stay mild.
+
+Also not at this tier:
+
+* **not** an outdoor-capable layer — that is the severe tier's requirement and must not migrate down.
 * **not** a footwear rule. Mesh at 50°F is fine; that gating stays on severity.
+* **not** a heavier base. See above; this tier must never push base warmth upward.
 
-A `cool` finding should be **hard** when the outfit has *no* layer and a *sleeveless or light* base
-— the Sightseeing card — and **advisory** otherwise, following the measured/unmeasured discipline
-already established in
+Severity: **hard** when the outfit has no layer at all, **advisory** otherwise, following the
+measured/unmeasured discipline in
 [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) Appendix K.
+
+### The resulting three-tier model
+
+| Question | Signal | Requirement |
+|---|---|---|
+| What do I wear through the pleasant part of the day? | high, plus graded thermal evidence | an appropriate base |
+| Might I get cool in the morning or evening? | low ≤ 55 *(see §5.2)* | a **removable** light/indoor/transition layer |
+| Is the day itself genuinely cold? | high ≤ 45 | heavier thermal behaviour, severe-cold protections |
+
+Each row asks a different question of a different signal. The current `isCold` cliff collapses rows
+two and three into one threshold read off the low, which is why it produces both failures in §2.
 
 ## 4. Where `piece.season` finally fits
 
 [piece-season-as-weather-evidence.md](piece-season-as-weather-evidence.md) left `season` unruled
-because the severe tier already had better physical evidence. The cool tier is its natural home: a
-base tagged **entirely `season: warm`** in resolved cool weather is exactly the corroboration role
-that document proposed — strengthening an existing shortfall, never creating one alone.
+because the severe tier already had better physical evidence. This tier is its natural home — with
+that document's narrowness preserved exactly: **`season` is wearer-intent evidence, never physical
+thermal evidence, and must never independently exclude a garment.**
 
-Both live incidents show the pattern. This trip's Nature Walks card pairs a `season: warm` tee and
-`season: warm` pants under a *light* `indoor_layer` hoodie for a 45°F morning; the earlier Trail card
-did the same under a puffer. Neither is caught today.
+It corroborates a shortfall the physical rule has already found. It never creates one:
+
+```text
+72/55 · warm-season lightweight base · + cardigan
+  → fine. No shortfall to corroborate.
+
+72/55 · warm-season lightweight base · no layer
+  → physical layer shortfall (no removable layer)
+     `season: warm` corroborates it — strengthens the finding, does not cause it
+
+72/55 · year-round lightweight base · no layer
+  → the SAME physical shortfall, no season corroboration
+     the finding still fires; it is simply not reinforced
+```
+
+The third case is the test that keeps the hierarchy honest: remove the season signal entirely and the
+rule still works. `season: warm` never becomes "this garment is thermally inadequate."
+
+Both live incidents show the pattern — this trip's Nature Walks card pairs a `season: warm` tee and
+`season: warm` pants under a light `indoor_layer` hoodie for a 45°F morning; the earlier Trail card
+did the same under a puffer.
 
 ## 5. The ruling: which threshold
 
@@ -136,6 +177,38 @@ The number is still a ruling, not a derivation. It is recorded here rather than 
 because this is the fourth threshold in this arc that consumers will treat as ratified once it
 ships.
 
+### 5.2 `lowF <= 55` is a fallback proxy, not an inherent truth about every slot
+
+Ruled 2026-09-01. The low answers layer necessity **only when the wearing period is unknown or spans
+the cold end of the day.** It is not an unconditional fact about every slot on that calendar date:
+
+```text
+72/55, all-day sightseeing   → layer, yes
+72/55, dinner / evening      → layer, yes
+72/55, 8am farmers' market   → layer, probably
+72/55, 1-4pm museum visit    → a layer mandated by the 5am low is not obviously right
+```
+
+This is the same caution [cold-severity-spec.md](cold-severity-spec.md) already records: the daily
+low tends to occur near dawn and can substantially overstate what the wearer actually experiences.
+The correct contract is therefore two-armed:
+
+```text
+if the relevant wearing period is known:
+    require a removable layer if THAT period reaches <= 55F
+else if only the daily range is known:
+    lowF <= 55  → require a removable layer, as conservative all-day coverage
+```
+
+**Only the second arm is in scope for v1.** The planner has no daypart or hourly weather: slots carry
+`environment` (indoor/outdoor) and a transit profile, but no wearing-period clock, and the resolved
+weather context is a daily high/low. Building the first arm means new weather infrastructure and is
+deliberately out of scope.
+
+What must be encoded now is the **framing**: `lowF <= 55` ships as a *range-level proxy for
+unspecified or full-day exposure*, not as a claim that the daily low governs every slot. A future
+daypart-aware arm should be able to narrow it without contradicting anything written here.
+
 ## 6. Blast radius
 
 This tier **adds** requirements where the engine previously had none, so it can produce findings on
@@ -153,3 +226,35 @@ severity gating does not move.
   cold-severity-spec.md's amendment stands separately, and a cool tier may well retire it.
 * Not a footwear rule at this tier.
 * Not a coat requirement at this tier.
+
+
+---
+
+## 8. Required follow-up: audit `isCold`'s consumers
+
+**This tier must not coexist indefinitely with the current `isCold` semantics.** With A shipped, the
+continuum reads:
+
+```text
+low 56  → nothing
+low 55  → removable layer required
+  ...
+low 46  → removable layer required
+low 45  → isCold fires: stronger base exclusions, bare-piece rules, footwear
+          consequences, the existing minimum-warmth floor — all at once, off one degree
+```
+
+That cliff is much harder to justify once a graded tier exists below it.
+[cold-severity-spec.md](cold-severity-spec.md)'s amendment already records that `isCold` deriving
+from the daily low is questionable. The honest reading is that **this tier is probably the conceptual
+replacement for part of what `isCold` currently does**, not merely another tier beneath it.
+
+Not expanded into this spec — the blast radius is genuinely larger, and `isCold` drives base
+exclusions, bare-piece rules, footwear gates and plan slot construction. But it is a required
+follow-up, not an optional one:
+
+> After A is implemented, audit every `isCold` consumer and classify it: does it genuinely need
+> `lowF <= 45`, or should it consume `needsRemovableCoolLayer` or `isColdSevere` instead?
+
+Without that audit the engine carries two overlapping cold models, which is the condition the
+consolidation arc exists to prevent.
