@@ -91,6 +91,9 @@ two and three into one threshold read off the low, which is why it produces both
 
 ## 4. Where `piece.season` finally fits
 
+> **Implemented 2026-09-01** exactly as described below — corroboration only, cool tier only. See
+> [piece-season-as-weather-evidence.md](piece-season-as-weather-evidence.md) §7.
+
 [piece-season-as-weather-evidence.md](piece-season-as-weather-evidence.md) left `season` unruled
 because the severe tier already had better physical evidence. This tier is its natural home — with
 that document's narrowness preserved exactly: **`season` is wearer-intent evidence, never physical

@@ -87,6 +87,20 @@ function someLayerContributesWarmth(layers) {
   return layers.some(piece => !SEE_THROUGH_OPACITY.has(String(piece?.opacity || '').toLowerCase().trim()))
 }
 
+// Is the whole base tagged as warm-season clothing?
+//
+// CORROBORATION ONLY. docs/piece-season-as-weather-evidence.md is explicit that `season` is
+// wearer-INTENT evidence, not physical thermal evidence, and must never independently exclude a
+// garment or create a finding. This function is therefore only ever consulted to enrich a shortfall
+// the physical rule has ALREADY found — never in a condition that decides one.
+//
+// The control that keeps the hierarchy honest: delete this function and every finding still fires,
+// with a shorter message. There is a test asserting exactly that.
+function baseIsWarmSeasonOnly(pieces) {
+  const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
+  return base.length > 0 && base.every(piece => String(piece?.season || '').toLowerCase().trim() === 'warm')
+}
+
 function baseLayersAreFullyMeasured(pieces) {
   const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
   return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
@@ -161,14 +175,22 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // floor below it, which accepts a heavy main and would otherwise produce two findings for one
   // outfit. §8 of the spec requires an audit of isCold's consumers now that a graded tier exists
   // beneath it; until then the two stay disjoint by construction.
+  // Corroboration text, appended to a cool-tier finding that has already fired on physical grounds.
+  // Never a condition, never a severity change — see baseIsWarmSeasonOnly.
+  const warmSeasonBase = baseIsWarmSeasonOnly(list)
+  const corroborate = (message) => warmSeasonBase
+    ? `${message}, and every piece under it is tagged as warm-season clothing`
+    : message
+  if (warmSeasonBase) evidence.baseIsWarmSeasonOnly = true
+
   if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
-        'this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed',
+        corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed'),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
-        'the only layer here is see-through, so there is still nothing useful to put on when it cools',
+        corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
         { evidence, remedy: true }))
     }
   }
@@ -187,11 +209,11 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
-        'the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back',
+        corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back'),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
-        'the only layer here is see-through, so the walk to and from the indoor destination is still uncovered',
+        corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
         { evidence, remedy: true }))
     }
   }

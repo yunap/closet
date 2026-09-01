@@ -447,3 +447,68 @@ test('COOL TRANSIT: the adequacy bar applies there too', () => {
   })
   assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
 })
+
+// --- piece.season corroboration (docs/piece-season-as-weather-evidence.md) -----------------------
+
+const warmTop = (id = 40) => ({ id, category: 'top', name: 'summer tee', fabric_weight: 'light', season: 'warm' })
+const warmBottom = (id = 41) => ({ id, category: 'bottom', name: 'linen pants', fabric_weight: 'light', season: 'warm' })
+const neutralTop = (id = 42) => ({ id, category: 'top', name: 'knit top', fabric_weight: 'light', season: 'year-round' })
+const neutralBottom = (id = 43) => ({ id, category: 'bottom', name: 'trousers', fabric_weight: 'light', season: 'year-round' })
+
+test('season NEVER creates a finding — a warm-season base with a real layer is fine', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(codes(result), [], 'no physical shortfall, so nothing for season to corroborate')
+})
+
+test('season corroborates a shortfall the physical rule already found', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+  assert.equal(result.evidence.baseIsWarmSeasonOnly, true)
+})
+
+test('THE CONTROL: the same shortfall fires without season corroboration', () => {
+  // This is what keeps the evidence hierarchy honest. Swap the season tags for `year-round` and the
+  // finding is identical in code and severity — only the explanatory clause disappears. Delete the
+  // corroboration entirely and every finding still fires.
+  const withSeason = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  const withoutSeason = evaluateOutfitEnvironmentalAdequacy([neutralTop(), neutralBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(withoutSeason), hardCodes(withSeason), 'same code')
+  assert.equal(withoutSeason.hardFindings[0].severity, withSeason.hardFindings[0].severity, 'same severity')
+  assert.doesNotMatch(withoutSeason.hardFindings[0].message, /warm-season/)
+  assert.ok(!withoutSeason.evidence.baseIsWarmSeasonOnly)
+})
+
+test('a MIXED base does not corroborate — every piece must be warm-season', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), neutralBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
+})
+
+test('season corroboration reaches the transit finding too', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+})
+
+test('season does not leak into the cold or severe tiers', () => {
+  // Those tiers have better physical evidence and were deliberately left alone; the corroboration
+  // is scoped to the cool tier only.
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
+  assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
+})

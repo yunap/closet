@@ -1,6 +1,7 @@
 # Question — should `piece.season` be weather evidence?
 
-**Status:** Open question, 2026-09-01. Not implemented. Needs an owner ruling.
+**Status:** Ruled and implemented 2026-09-01 — option 2, corroboration inside the cool tier only.
+See §7.
 **Route:** [docs/README.md](README.md). Raised by the tier split in
 [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) Appendix K.
 
@@ -78,3 +79,34 @@ That keeps the physical model untouched, and keeps `season` from ever excluding 
 Recorded now so the next person finds the reasoning rather than re-deriving it — this is the third
 time in one arc that a field which *looks* like weather evidence turned out to need its own
 decision, after `outerwear_role` and footwear lining.
+
+
+---
+
+## 7. Ruling and implementation (2026-09-01)
+
+**Option 2**, with the narrowness this document argued for kept intact: `season` corroborates a
+shortfall the physical rule has already found, in the **cool tier only**
+([cool-weather-tier-spec.md](cool-weather-tier-spec.md) §4). It never creates a finding, never
+changes a severity, and never reaches `pieceWeatherScores`.
+
+`baseIsWarmSeasonOnly(pieces)` is true when every top/bottom/dress carries `season: warm`. It is
+consulted **only to enrich a message**, never in a condition that decides one:
+
+```text
+72/55 · warm-season base · + cardigan       → no finding. Nothing to corroborate.
+72/55 · warm-season base · no layer         → NO_REMOVABLE_COOL_LAYER
+                                              "…and every piece under it is tagged as warm-season clothing"
+72/55 · year-round base  · no layer         → NO_REMOVABLE_COOL_LAYER, same code, same severity,
+                                              clause absent
+72/55 · MIXED base       · no layer         → same, no clause. Every piece must be warm-season.
+45F   · warm-season base · no layer         → the COLD tier fires; no clause. Season is scoped to cool.
+```
+
+**The control that keeps the hierarchy honest**, and the reason it is a test rather than a comment:
+swap the season tags for `year-round` and the finding is identical in code and severity — only the
+explanatory clause disappears. Delete the corroboration entirely and every finding still fires. If
+that test ever needs changing to accommodate a new use of `season`, the use is wrong.
+
+Deliberately out of scope, unchanged from §3's reasoning: the cold and severe tiers, which have
+better physical evidence and do not need an intent signal.
