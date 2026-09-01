@@ -365,3 +365,38 @@ test('a genuinely warm day does not manufacture a cool-layer requirement', () =>
   })
   assert.equal(context.temperature.needsRemovableCoolLayer, false)
 })
+
+test('COOL TRANSIT: an indoor destination excuses the base, never the trip there', () => {
+  // Live: `museum` and `gallery` classify as indoor, so the outdoor cool branch skips those slots.
+  // With nothing reading transitNeedsRemovableCoolLayer, two Museum Visits cards shipped as a bare
+  // dress plus shoes for a 48F walk to and from the building.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+})
+
+test('COOL TRANSIT: any layer satisfies it — including a sleeveless one', () => {
+  // The gradient is deliberate: cool transit asks for something to put on, cold transit asks for
+  // something that covers your arms. A vest is a legitimate answer to a 50F walk to dinner.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), SLEEVELESS_VEST], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL TRANSIT: does not double-fire with the cold-transit floor', () => {
+  // Below 45F the cold-transit floor already owns it AND demands more (sleeve-bearing), so the
+  // cool tier stands down rather than adding a second, weaker finding for the same outfit.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitIsCold: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_TRANSIT_LAYER_FOR_COLD])
+})
+
+test('COOL TRANSIT: silent when the trip itself is warm', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true }, environment: 'indoor',
+  })
+  assert.deepEqual(codes(result), [])
+})

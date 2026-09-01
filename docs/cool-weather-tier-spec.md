@@ -294,10 +294,35 @@ outfit. The tiers are therefore disjoint by construction, which is a deliberate 
 is what actually resolves the overlap. Recorded here so the disjointness is not mistaken for the
 final model.
 
-Not implemented: a transit consumer. `transitNeedsRemovableCoolLayer` is propagated and available,
-but no rule reads it yet — the existing transit floor still requires `transitIsCold` (≤45°F), so a
-cool-but-not-cold transit to an indoor destination has no removable-coverage requirement. Recorded
-as a gap rather than closed, since it wants the same daypart reasoning as §5.2.
+### 9.1 The transit consumer, added the same day after the gap bit
+
+The first pass propagated `transitNeedsRemovableCoolLayer` but left it unread, recording the gap
+rather than closing it. **A live plan then walked straight through it.**
+
+`museum` and `gallery` classify as indoor slots (`outfitSetPlanner.js`), so the outdoor branch skips
+them entirely. Two *Museum Visits* cards shipped as a bare dress plus shoes — no layer at all — for a
+65°F/48°F day. An indoor destination excuses the **base** from cold; it never excuses the trip there.
+
+```text
+museum card, cool transit                 [error] outfit_no_removable_layer_for_cool_transit
+same + Duster                             (none)
+museum card, COLD transit                 [error] outfit_no_sleeve_bearing_layer_for_cold_transit
+museum card, warm day                     (none)
+```
+
+Disjoint from the cold-transit floor for the same reason the outdoor tier is disjoint from `isCold`:
+that floor already owns `transitIsCold` and demands **more** — sleeve-bearing coverage. The gradient
+is deliberate:
+
+> **cool transit** asks for something to put on. **cold transit** asks for something that covers your
+> arms.
+
+So a sleeveless vest satisfies the cool tier and not the cold one, which is the right answer to a
+50°F walk to dinner.
+
+**Lesson recorded, because it is the second time in this arc:** a propagated-but-unread flag is not a
+safe place to stop. `[R1]` was a flag that never reached its consumer; this was a flag that reached
+one that did not exist. Both look complete from inside the diff and are inert in production.
 
 Tests: 8 in `test/outfitEnvironmentalAdequacy.test.js`, including the warm-base control, the
 disjointness check, and resolution/persistence round-trip against the real resolver.

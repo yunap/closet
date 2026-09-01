@@ -25,6 +25,7 @@ import { evaluateOuterwearCapability } from './outerwearCapability.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
+  NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
   NO_OUTDOOR_LAYER_FOR_SEVERE_COLD: 'outfit_no_outdoor_capable_layer_for_severe_cold',
@@ -118,6 +119,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     isCold: Boolean(weather.isCold),
     isColdSevere: Boolean(weather.isColdSevere),
     transitIsColdSevere: Boolean(weather.transitIsColdSevere),
+    transitNeedsRemovableCoolLayer: Boolean(weather.transitNeedsRemovableCoolLayer),
   }
 
   // --- removable layer for the cool end of the day (docs/cool-weather-tier-spec.md) --------------
@@ -143,6 +145,23 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         'this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed',
         { evidence, remedy: true }))
     }
+  }
+
+  // The transit half of the same tier, added 2026-09-01 after it was recorded as a known gap and
+  // then immediately caused two bad cards. `museum` and `gallery` classify as indoor
+  // (outfitSetPlanner.js), so the branch above skips those slots entirely — and with nothing reading
+  // transitNeedsRemovableCoolLayer, two Museum Visits cards shipped as a bare dress plus shoes for a
+  // 48F walk to and from the building. An indoor destination excuses the BASE from cold, never the
+  // trip there.
+  //
+  // Disjoint from the cold-transit floor below for the same reason the outdoor tier is disjoint from
+  // isCold: that floor already owns transitIsCold, and it demands MORE — sleeve-bearing coverage.
+  // The gradient is deliberate. Cool transit asks for something to put on; cold transit asks for
+  // something that covers your arms.
+  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold && !layers.length) {
+    findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
+      'the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back',
+      { evidence, remedy: true }))
   }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------
