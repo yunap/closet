@@ -490,8 +490,65 @@ export async function resolveToolStylingContext({
 // alone (nothing supplied one) while still carrying real precipitation/wind data —
 // that is an ordinary local conversation, not spec §6.2's "named destination/date"
 // case, and must proceed rather than stop.
-function weatherContextRequiredStop(stylingContext, { verb }) {
+// Does the request text carry a weather statement the model was supposed to translate?
+//
+// This is a COMPLIANCE DETECTOR, not a weather authority, and the distinction is the whole reason
+// it is allowed to exist. future-trip-weather-estimate-spec.md §3.1 forbids prose from POPULATING
+// user_weather, weather_estimate, ResolvedWeatherContext, or any gate — because the previous
+// prose-scanning repair turned dates, outfit counts and phrases like "warm colors" into parser edge
+// cases. Nothing here sets a value. It can only refuse to proceed and hand the translation back to
+// the model, which is exactly what §4.3 already asks the model to do. A false positive costs one
+// bounce; a false negative restores the previous behaviour.
+//
+// Deliberately narrow for that reason: a number with a temperature unit, or an unambiguous
+// precipitation noun. NOT bare adjectives — "warm", "cool", "hot", "chilly" collide with style prose
+// ("warm colors", "cool tones", "hot pink") and are the exact class of false positive §3.1 was
+// written about.
+const STATED_TEMPERATURE_RE = /\b\d{1,3}\s*(?:°\s*[fc]\b|degrees?\b|[fc]\b)/i // ratchet-allow: compliance detector only, never populates weather (see comment above)
+// `snow` is excluded when it is naming a garment ("snow boots", "snow pants") rather than the
+// condition — the same garment-vs-condition collision the adjectives above are excluded for.
+const STATED_PRECIPITATION_RE = /\b(rain|raining|rainy|snow(?!\s*(?:boots?|pants?|suits?|jackets?))|snowing|snowy|sleet|downpour|drizzle|drizzling)\b/i // ratchet-allow: compliance detector only, never populates weather
+
+export function requestStatesWeather(text = '') {
+  const value = String(text || '')
+  return STATED_TEMPERATURE_RE.test(value) || STATED_PRECIPITATION_RE.test(value) // ratchet-allow: matches the USER'S REQUEST text for a weather statement, never a garment field, and sets no value
+}
+
+function weatherContextRequiredStop(stylingContext, { verb, requestText = '', hasStructuredWeather = false }) {
   const resolved = stylingContext?.weatherProfile?.resolvedWeatherContext
+
+  // Gap closed 2026-09-01 (docs/stated-weather-authority-findings.md). The stop below only ever
+  // covered weather being ABSENT. It never covered weather being WRONG: when the user states a
+  // temperature, the model omits user_weather, and live weather resolves anyway, live silently
+  // substitutes an authoritative-looking wrong number and every downstream weather gate is disarmed
+  // at once. Measured three times in live QA, most visibly as mesh sneakers on a "38°F and raining"
+  // request that the footwear gate would have rejected had it seen the real weather.
+  //
+  // Only fires when the model supplied NO structured weather AND the resolved profile did not
+  // already come from a stated source — a turn where an earlier tool call established stated weather
+  // carries it forward, and must not be bounced again.
+  // Read the PROFILE'S OWN source, not the resolution branch that produced it this call. A turn
+  // that established stated weather on an earlier tool call carries the resolved profile forward,
+  // and the branch provenance then reads `explicit_request.weather_profile` for both a carried
+  // STATED profile and a carried LIVE one — exempting on that would reopen exactly the gap this
+  // closes. `weatherSource`/`overallSource` travel with the profile and keep the two apart.
+  const source = String(
+    stylingContext?.weatherProfile?.resolvedWeatherContext?.overallSource
+    || stylingContext?.weatherProfile?.weatherSource
+    || stylingContext?.provenanceByField?.weatherProfile?.source
+    || ''
+  )
+  const alreadyStated = source.includes('stated')
+  if (!hasStructuredWeather && !alreadyStated && requestStatesWeather(requestText)) {
+    return {
+      status: "weather_context_required",
+      location: resolved?.location || '',
+      date_range: resolved?.dateRange || null,
+      missing: ["user_weather"],
+      message: `The request states the weather, but this call carried no structured weather, so the outfit would be judged against ${resolved?.location ? `live weather for "${resolved.location}"` : 'live weather'} instead of what the user said. Re-call this tool with user_weather set to ONLY the fields the user actually stated (high_f/low_f for a temperature, precipitation for rain/snow) before ${verb}.`
+    }
+  }
+
   if (!resolved || resolved.status !== 'unavailable' || !resolved.location) return null
   return {
     status: "weather_context_required",
@@ -1259,7 +1316,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           inferred: { requestText },
           policy: { requireOccasion: false },
         })
-        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'searching' })
+        const weatherStop = weatherContextRequiredStop(stylingContext, {
+          verb: 'searching',
+          requestText,
+          hasStructuredWeather: Boolean(args?.user_weather || args?.weather_estimate),
+        })
         if (weatherStop) {
           bumpFreeformDiagnostic(toolContext, 'searchWeatherContextRequired')
           return weatherStop
@@ -1847,7 +1908,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'proposing this outfit' })
+        const weatherStop = weatherContextRequiredStop(stylingContext, {
+          verb: 'proposing this outfit',
+          requestText: requestTextForProposal,
+          hasStructuredWeather: Boolean(args?.user_weather || args?.weather_estimate),
+        })
         if (weatherStop) {
           bumpFreeformDiagnostic(toolContext, 'proposeWeatherContextRequired')
           return weatherStop
@@ -3176,7 +3241,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           inferred: { requestText: toolContext.question || '' },
           policy: { mode: 'freeform_action', allowLiveWeather: boundedMultiLook },
         })
-        const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'composing outfits' })
+        const weatherStop = weatherContextRequiredStop(stylingContext, {
+          verb: 'composing outfits',
+          requestText: toolContext.question || '',
+          hasStructuredWeather: Boolean(args?.user_weather || args?.weather_estimate),
+        })
         if (weatherStop) {
           bumpFreeformDiagnostic(toolContext, 'generateWeatherContextRequired')
           return weatherStop

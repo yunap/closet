@@ -293,9 +293,13 @@ function profileForEnvironment(profile, { indoor = false } = {}) {
   return {
     ...profile,
     isCold: false,
+    isColdSevere: false,
     isIndoor: true,
     transitIsHot: Boolean(profile.isHot),
     transitIsCold: Boolean(profile.isCold),
+    // Severity travels with the transit projection for the same reason isCold does: an indoor base
+    // may stay light, but the walk there is still severe cold. Mirrors the planner's slot profile.
+    transitIsColdSevere: Boolean(profile.isColdSevere),
     ...(Number.isFinite(profile.highF) ? { transitHighF: profile.highF } : {}),
     ...(Number.isFinite(profile.lowF) ? { transitLowF: profile.lowF } : {}),
   }
@@ -305,6 +309,13 @@ function profileFromResolvedWeatherContext(resolved, { indoor = false } = {}) {
   const t = resolved.temperature
   return profileForEnvironment({
     isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,
+    // [R1] gap, found 2026-09-01 by the composer weather test. Severity was propagated into
+    // resolveTemperatureField, the persisted shape and the planner's slot profiles, but NOT through
+    // this projection — which is the one every STRUCTURED-weather path uses (user_weather,
+    // weather_estimate, named-destination live). So no /ask or composer turn resolving structured
+    // weather ever carried isColdSevere, and Contract C's severe-cold branch plus the mesh cold rule
+    // could not fire on those turns at all. Exactly the silent-loss shape [R1] was written about.
+    isColdSevere: Boolean(t.isColdSevere),
     ...(Number.isFinite(t.highF) ? { highF: t.highF } : {}),
     ...(Number.isFinite(t.lowF) ? { lowF: t.lowF } : {}),
     isRainy: resolved.precipitation?.value === 'rain',

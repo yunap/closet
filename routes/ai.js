@@ -2127,6 +2127,12 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   savedOutfitSeed = null,
   resolvedWeatherProfile = null,
   statedWeather = '',
+  // docs/stated-weather-authority-findings.md §6 option 3. Until now this composer had NO structured
+  // weather input at all: its only weather control was the 7-value season dropdown, and a temperature
+  // typed into Mood or Styling request reached only the heuristic path, which ranks BELOW live
+  // weather — so a user could not state 38°F on this surface in a way that won. Same typed contract
+  // /ask's tools use; validateUserWeather owns the shape and unstated fields stay unstated.
+  userWeather = null,
   location = '',
   date = null,
   currentDate = null,
@@ -2154,6 +2160,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         location: location || getHomeLocation(),
         date: date || currentDate || new Date(),
         statedWeather,
+        userWeather,
         weatherProfile: resolvedWeatherProfile,
       },
       policy: { allowLiveWeather: true },
