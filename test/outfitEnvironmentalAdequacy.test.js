@@ -132,11 +132,15 @@ test('rain alone does not require a rain-protective coat', () => {
   assert.deepEqual(codes(result), [], 'a passing mention of rain is not meaningful wet exposure')
 })
 
-test('meaningful wet exposure without rain capability is a hard finding outdoors', () => {
+test('wet exposure without rain capability is ADVISORY, never a hard rejection', () => {
+  // §6: rain must not mechanically require a rain-protective coat. isWetExposure only means wet
+  // conditions were mentioned, and rain capability is tagged on 1 of 31 real outerwear pieces — a
+  // hard rule would reject nearly every outfit whenever rain comes up.
   const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), WOOL_COAT], {
     weatherProfile: { isWetExposure: true },
   })
-  assert.deepEqual(hardCodes(result), [C.RAIN_PROTECTION_MISSING])
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(codes(result).includes(C.RAIN_PROTECTION_MISSING))
 })
 
 test('the same exposure softens to advisory for an indoor destination', () => {
@@ -162,7 +166,6 @@ test('every new hard environmental finding names the escape hatch', () => {
   const cases = [
     [[top(), bottom(), shoes(), CARDIGAN], { weatherProfile: { isCold: true, isColdSevere: true } }],
     [[top(), bottom(), shoes()], { weatherProfile: { isCold: true, isColdSevere: true } }],
-    [[top(), bottom(), shoes(), WOOL_COAT], { weatherProfile: { isWetExposure: true } }],
   ]
   for (const [pieces, context] of cases) {
     const result = evaluateOutfitEnvironmentalAdequacy(pieces, context)

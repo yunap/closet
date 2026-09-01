@@ -1287,7 +1287,7 @@ slot register, activity, season and plan requirements.
 | `outfitSetPlanner.js:4096` submitted-plan validation | yes — `slot.weatherProfile`, `slot.environment` | **passes context** |
 | `rules.js` `locallyGateWholeWardrobeOutfits` | yes — supplied `weatherProfile` | **passes context**, deliberately the *supplied* profile and never `resolvedWeatherProfile`, whose `weatherProfileFromContext({mood, season})` fallback is a local prose derivation. `[O2]` forbids manufacturing context; that fallback remains fine for this wrapper's own ranking and repair. |
 | `rules.js` whole-wardrobe repair `validate` | no | context-free, unchanged |
-| `tools.js` ×3 (`propose_outfit`, correction, swap) | no weather in scope at the call | **lost-context migration finding** — the freeform tool context resolves weather elsewhere in the turn; threading it here is Slice E/F work, not a silent omission |
+| `tools.js` ×3 (`propose_outfit`, correction, swap) | **yes — this row was wrong, see D.6** | **now wired** (owner instruction 2026-09-01) |
 | `core.js:620` | no | context-free, unchanged |
 | `routes/ai.js` ×3 | no | context-free, unchanged |
 
@@ -1463,3 +1463,69 @@ Recording it here so the next reader finds the measurement rather than re-derivi
 * Acceptance criteria: all met except where explicitly recorded as retained-by-measurement (§21.10
   is satisfied for weather suitability; the capsule indoor/cold-layer definitions remain local by
   ruling `[A6]`, which §11 anticipated).
+
+
+---
+
+## Appendix G — freeform wiring (2026-09-01), and a correction to D.4
+
+**D.4 was wrong.** It recorded the three `tools.js` `evaluateWearableOutfit` sites as having "no
+weather in scope at the call". Weather is in scope, or reachable, at all three — PR #284 puts the
+resolved profile on `toolContext.weatherProfile` and each tool resolves its own styling context. The
+audit looked for a `weatherProfile` identifier on the call lines, found none, and wrote all three off
+together. Corrected on owner instruction: **wire all three.**
+
+Per site:
+
+| Site | Actual state | Action |
+|---|---|---|
+| `suggest_slot_swaps` | `resolvedWeather` already in scope | passes it |
+| correction `validate` | inside `propose_outfit`, after its context resolution | passes it |
+| `propose_outfit` | validation ran 41 lines **before** the tool resolved its own context | resolution moved above the contract gates |
+
+The `propose_outfit` reorder is deliberate and minimal. Its contract gates carry a load-bearing
+comment — *"checked TOGETHER so the model learns every blocker in ONE bounce — live-tested
+2026-07-12: sequential early returns burned three loop iterations and the turn died at the iteration
+cap with zero cards"* — so a weather finding raised **after** those gates would cost exactly the
+extra iteration that comment exists to prevent. Only the resolution moved;
+`weatherContextRequiredStop` stays where it was, so PR #284's stop ordering is unchanged.
+
+### Rain corrected to advisory
+
+Wiring freeform immediately exposed an over-aggressive rule of mine: `isWetExposure` was producing a
+**hard** finding, and it rejected a pinned fixture. Two reasons it was wrong, both from the spec
+rather than from the failure:
+
+* §6 says plainly: *"do not implement precipitation = rain → rain-protective coat required. That is
+  too strong."*
+* `isWetExposure` does not mean sustained exposure. `weatherProfileFromContext` sets it from any wet
+  word in the text, or a coastal+fog+walking combination. It means wet conditions were **mentioned**.
+
+And the supply reality makes a hard rule punitive: rain capability is tagged on **1 of 31** real
+outerwear pieces, so a hard requirement would reject nearly every outfit on any turn that mentions
+rain — converting absent metadata into invalidity, which acceptance criterion 8 forbids. This is the
+same error as the Slice D thermal ladder, in a new place.
+
+Rain findings are now **advisory in every context**. A genuinely hard wet-weather requirement needs
+an exposure signal the resolved profile does not carry (hike / long outdoor walk AND rain, per §6's
+own examples) — recorded as open work rather than approximated.
+
+### A behaviour expansion the owner should know about
+
+Contract C bundles two things: the **migrated plan floors** (any `isCold` needs a warm layer or a
+heavy main; any `transitIsCold` needs a removable sleeve-bearing layer) and the **new capability
+judgments** (severe cold, hazards). Wiring freeform gives it *both* — so rules that were previously
+**plan-only now apply to `/ask`**. A freeform outfit of top + bottom + shoes on a cold day is now a
+hard finding where it previously passed silently.
+
+That is defensible (the same rule has governed plan cards for a long time, and a heavy main still
+satisfies it) but it is a real expansion beyond "wire the capability verdict", and it is the largest
+behavioural delta in this slice.
+
+Two pinned fixtures were updated as a consequence — **not** by weakening their assertions, which
+concern weather *authority* and cached cold transit, but by giving their outfits an outer layer so
+they remain weather-valid and still measure their actual subject. Both are annotated in place.
+
+**Cost note:** in freeform a hard finding becomes a contract issue the model must fix, so cold-weather
+turns that compose an inadequate outfit will spend one extra tool iteration. Iteration count is the
+dominant `/ask` cost driver.

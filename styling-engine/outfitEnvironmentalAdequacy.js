@@ -188,11 +188,27 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.isWetExposure) {
     const rainCapable = layers.some(piece => evaluateOuterwearCapability(piece, { requiredHazards: ['rain'] }).verdict === 'pass')
     if (!rainCapable) {
+      // ADVISORY, never hard — corrected 2026-09-01 after this fired on freeform fixtures.
+      //
+      // Two reasons, both from the spec rather than from the failure. First, §6: "do not implement
+      // precipitation = rain → rain-protective coat required. That is too strong." Second,
+      // `isWetExposure` does not mean sustained outdoor exposure — weatherProfileFromContext sets it
+      // from any wet word in the text ("drizzle", "rain") or a coastal+fog+walking combination. It
+      // means wet conditions were MENTIONED, not that the person is out in them for an afternoon.
+      //
+      // And the supply reality makes a hard rule punitive: rain capability is tagged on 1 of 31
+      // outerwear pieces in the real wardrobe, so a hard requirement would reject nearly every
+      // outfit on any turn that mentions rain — converting absent metadata into invalidity, which
+      // acceptance criterion 8 forbids.
+      //
+      // A genuinely hard wet-weather requirement needs an exposure signal the resolved profile does
+      // not currently carry (hike/long outdoor walk AND rain, per §6's own examples). Recorded as
+      // open work rather than approximated here.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.RAIN_PROTECTION_MISSING,
         indoorDestination
           ? 'no layer here has tagged rain protection; brief transit to an indoor destination may still be fine'
-          : 'no layer here has tagged rain protection for sustained wet outdoor exposure',
-        { severity: indoorDestination ? 'advisory' : 'error', evidence, remedy: true }))
+          : 'no layer here has tagged rain protection for wet conditions',
+        { severity: 'advisory', evidence }))
     }
   }
 

@@ -1712,6 +1712,42 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
+        // Slice D follow-up (2026-09-01): this resolution moved ABOVE the contract gates so the
+        // wearable validation below can pass authoritative resolved weather to Contract C. The
+        // gates are deliberately checked together in one bounce (see the comment below), so a
+        // weather finding raised after them would cost the extra loop iteration that comment
+        // exists to prevent. weatherContextRequiredStop stays where it was — only the resolution
+        // moved, so PR #284's stop ordering is unchanged.
+        const requestTextForProposal = [
+          toolContext.request,
+          toolContext.question,
+          occasion_context
+        ].filter(Boolean).join(' ')
+        const stylingContext = await resolveToolStylingContext({
+          explicitRequest: {
+            occasion,
+            activity,
+            season: extractSeasonRequest(season),
+            // Spec §3.1: free-text weather must not exist as an authority on any
+            // tool. 'indoor' is the sole documented exception on this schema (its
+            // own field description teaches it) — any other season text (e.g. a
+            // model-invented "hot weather") must NOT reach statedWeather, or it
+            // silently outranks a genuine weather_estimate/user_weather for a
+            // named destination (resolveWeather checks statedWeatherCandidate
+            // before structured resolution ever runs).
+            statedWeather: season === 'indoor' ? 'indoor' : '',
+            location: proposeLocation,
+            date: proposeDate,
+            dateRange: proposeDate ? { start: proposeDate, end: proposeDate } : null,
+            userWeather: args?.user_weather || null,
+            weatherEstimate: args?.weather_estimate || null,
+            requestText: requestTextForProposal,
+          },
+          toolContext,
+          inferred: { requestText: requestTextForProposal },
+          policy: { mode: 'freeform_action' },
+        })
+
         // Contract gates (steps 3+4), checked TOGETHER so the model learns every
         // blocker in ONE bounce — live-tested 2026-07-12: sequential early returns
         // burned three loop iterations (intent, then retrieval, then gate) and the
@@ -1775,6 +1811,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           roleAware: true,
           includeLayerDirections: true,
           seenPieceIds: seenIdsThisTurn,
+          // [O2]: the freeform tools own a resolved profile, so they feed the shared Contract C
+          // stage. Always the CANONICAL resolved profile — never a locally derived one — and null
+          // when nothing resolved, which keeps the stage silent rather than guessing.
+          weatherContext: stylingContext.weatherProfile ? { weatherProfile: stylingContext.weatherProfile } : null,
         })
         if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
           const idsToSee = wearableValidation.unresolvedSightPieceIds
@@ -1807,35 +1847,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const requestTextForProposal = [
-          toolContext.request,
-          toolContext.question,
-          occasion_context
-        ].filter(Boolean).join(' ')
-        const stylingContext = await resolveToolStylingContext({
-          explicitRequest: {
-            occasion,
-            activity,
-            season: extractSeasonRequest(season),
-            // Spec §3.1: free-text weather must not exist as an authority on any
-            // tool. 'indoor' is the sole documented exception on this schema (its
-            // own field description teaches it) — any other season text (e.g. a
-            // model-invented "hot weather") must NOT reach statedWeather, or it
-            // silently outranks a genuine weather_estimate/user_weather for a
-            // named destination (resolveWeather checks statedWeatherCandidate
-            // before structured resolution ever runs).
-            statedWeather: season === 'indoor' ? 'indoor' : '',
-            location: proposeLocation,
-            date: proposeDate,
-            dateRange: proposeDate ? { start: proposeDate, end: proposeDate } : null,
-            userWeather: args?.user_weather || null,
-            weatherEstimate: args?.weather_estimate || null,
-            requestText: requestTextForProposal,
-          },
-          toolContext,
-          inferred: { requestText: requestTextForProposal },
-          policy: { mode: 'freeform_action' },
-        })
         const weatherStop = weatherContextRequiredStop(stylingContext, { verb: 'proposing this outfit' })
         if (weatherStop) {
           bumpFreeformDiagnostic(toolContext, 'proposeWeatherContextRequired')
@@ -2037,7 +2048,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
               // The model has already supplied the complete corrected card. Treat that exact card
               // as the substitution result; do not reconstruct it and risk losing roles or text.
               mutate: (_broken, corrected) => corrected,
-              validate: corrected => evaluateWearableOutfit(corrected.pieces, { roleAware: true, includeLayerDirections: true }),
+              validate: corrected => evaluateWearableOutfit(corrected.pieces, {
+                roleAware: true,
+                includeLayerDirections: true,
+                // [O2]: same canonical profile the surrounding propose_outfit call resolved.
+                weatherContext: stylingContext.weatherProfile ? { weatherProfile: stylingContext.weatherProfile } : null,
+              }),
               context: { flow: 'freeform_propose_outfit', supersededLabel: supersededBroken.label || '' },
             })
           : null
@@ -2264,6 +2280,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             roleAware: true,
             includeLayerDirections: true,
             seenPieceIds: toolContext.visuallySeenPieceIds,
+            // [O2]: resolvedWeather is this tool's own canonical resolved profile.
+            weatherContext: resolvedWeather ? { weatherProfile: resolvedWeather } : null,
           })
           const roleIssues = wearableValidation.hardFindings.map(finding => finding.message)
           if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
