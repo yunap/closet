@@ -1641,3 +1641,60 @@ served a weakened rule.
 name/tag contradiction rate and the gate effect. On the reference wardrobe: 2 contradictions of 33
 shoes, and 8 shoes remain available on a cold wet day. Those numbers describe **that** wardrobe and
 are deliberately not an input to the rule.
+
+
+---
+
+## Appendix J — footwear insulation: the data, not the rule (2026-09-01)
+
+**Question asked:** should the engine understand insulated winter shoes?
+
+**What it does today.** Nothing. `pieceWeatherEvidence` returns `null` for shoes, so a
+shearling-lined winter boot and a thin ballet flat both score `cold = 0`. Contract C's
+`systemColdScore` therefore judges an outfit's warmth with footwear contributing exactly zero,
+always.
+
+**But one path already works.** `hotWeatherInsulationReason` (`styling-engine/rules.js`) evaluates
+`pieceHasInsulatingMaterial` **before** its shoe/accessory exemption, and reads the attribute
+directly rather than through the null-returning `pieceWeatherEvidence`. Measured:
+
+```text
+plain leather boot                          []
+shearling-lined boot (lining tagged wool)   ["hot weather: insulating fiber"]
+fleece-lined boot                           ["hot weather: insulating fiber"]
+```
+
+So hot-weather exclusion of insulated footwear has always been correct — it has simply never
+received data. Nothing recorded linings: the reference wardrobe's two boots read `["leather"]` and
+`["suede"]`, upper material only.
+
+### What shipped: a tagger change, no code, no new field
+
+`fiber_content` now asks for the **lining/interior material** on footwear when visible — a shearling
+collar, a fuzzy or quilted interior — recorded as `wool`/`fleece`/`down`, and only when actually
+visible (never inferred from the word "boot" or "winter").
+
+`fiber_content` is the only home available: `fabric_weight` is null for shoes by schema, and
+`fabric_category` describes the upper. It asks the user nothing — "is there fleece inside this boot"
+is a visual question, not a fabric-performance one, which keeps it clear of §20's *"ask the user to
+classify technical fabric performance"*.
+
+### What deliberately did NOT ship
+
+**Ungating `pieceWeatherEvidence` for shoes.** It looks like the obvious fix — the gate's own comment
+argues only about `fabric_weight` ("a chunky-heel sandal tagged heavy"), while it also discards
+insulating-material evidence that would be valid. But `pieceWeatherScores` feeds
+`systemColdScore`, whose severe-cold floor of 12 was calibrated with footwear contributing zero.
+Ungating inflates every outfit's score and quietly loosens that floor: a threshold change wearing
+the costume of a plumbing fix. If it happens it should be a deliberate recalibration.
+
+**A cold-side footwear requirement.** No turn has produced a bad outcome here — the exclusion rules
+already remove open-toe, sandal, mesh and knit. Building a third weather axis before an incident is
+the mistake the mesh→knit sequence already demonstrated.
+
+### The gate on building one
+
+`scratch/audit_shoe_material_tagging.mjs` §3 counts shoes recording any insulating material.
+**Currently 0 of 33.** Until that is non-zero a cold-side consumer would be inert, and the hot-side
+path cannot fire either. Same "is the data actually there" check Slice A.1 made mandatory — the one
+piece of process in this arc that has consistently paid.

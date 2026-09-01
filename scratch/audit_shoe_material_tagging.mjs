@@ -8,7 +8,11 @@
 //      owner- or tagger-authored prose and is NOT authority (that is the whole point of structured
 //      tags), so a contradiction is not proof the tag is wrong — it is a reliability signal worth
 //      counting.
-//   2. GATE EFFECT — how many shoes each weather gate excludes, so the cost of a rule is visible
+//   2. INSULATION SIGNAL — how many shoes record a lining at all. fabric_weight is null for shoes
+//      and fabric_category describes the UPPER, so fiber_content is the only place a boot's warmth
+//      can live. Until this number is non-zero a cold-side footwear consumer would be inert, which
+//      is the same "is the data actually there" check Slice A.1 made mandatory.
+//   3. GATE EFFECT — how many shoes each weather gate excludes, so the cost of a rule is visible
 //      rather than assumed. Reported as information: supply is a per-user fact and must never
 //      calibrate a rule that ships to everyone.
 //
@@ -16,7 +20,7 @@
 import path from 'path'
 const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
 const Database = (await import('better-sqlite3')).default
-const { pieceHasWetSensitiveFootwearMaterial, pieceHasVentilatedFootwearMaterial } = await import(ROOT + '/styling-engine/attributes.js')
+const { pieceHasWetSensitiveFootwearMaterial, pieceHasVentilatedFootwearMaterial, pieceHasInsulatingMaterial } = await import(ROOT + '/styling-engine/attributes.js')
 
 const dbPath = process.argv[2] || path.join(ROOT, 'wardrobe.db')
 const db = new Database(dbPath, { readonly: true, fileMustExist: true })
@@ -58,3 +62,15 @@ console.log(`  excluded on SEVERE cold:   ${coldOut.size} / ${shoes.length}   re
 const both = shoes.filter(s => !wet.includes(s) && !coldOut.has(s))
 console.log(`  remaining on a COLD WET day: ${both.length}` + (both.length ? '' : '  ← wardrobe gap, disclosure path'))
 for (const s of both) console.log(`     ${String(s.id).padEnd(7)}${String(s.name).slice(0, 36).padEnd(38)}fab=${String(s.fabric_category || '-').padEnd(10)}support=${s.walk_support || '-'}`)
+
+
+const insulated = shoes.filter(pieceHasInsulatingMaterial)
+console.log(`\n## 3. Insulation signal: ${insulated.length} of ${shoes.length} shoes record an insulating material`)
+if (!insulated.length) {
+  console.log('  none — no lining is recorded anywhere, so:')
+  console.log('    · hot-weather exclusion of lined winter boots cannot fire (the code path is live and correct,')
+  console.log('      hotWeatherInsulationReason reads pieceHasInsulatingMaterial BEFORE the shoe exemption)')
+  console.log('    · any future cold-side footwear consumer would be inert. Do not build one until this is non-zero.')
+} else {
+  for (const s of insulated) console.log(`  ${String(s.id).padEnd(7)}${String(s.name).slice(0, 38).padEnd(40)}fiber=${JSON.stringify(s.fiber_content)}`)
+}
