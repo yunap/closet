@@ -1,6 +1,6 @@
 # Findings — stated weather silently loses to live weather
 
-**Status:** Diagnosed 2026-09-01, not implemented. Needs one owner ruling (§6).
+**Status:** Diagnosed 2026-09-01; options 1 and 3 implemented the same day on owner instruction — see §8.
 **Route:** [docs/README.md](README.md). Companion to
 [future-trip-weather-estimate-spec.md](future-trip-weather-estimate-spec.md) (PR #284), whose
 §3.1 boundary this finding deliberately does not cross without a decision.
@@ -143,3 +143,69 @@ declines to pass `user_weather`. A deterministic proxy exists: call `resolveStyl
 `requestText` containing weather, no `userWeather`, an available live resolver, and assert the
 resolved provenance is `live` while the text says otherwise. That test would encode the current
 (intended) behaviour, so it belongs with whichever option above is chosen, not before it.
+
+
+---
+
+## 8. Implementation (2026-09-01)
+
+Owner chose the recommendation: options 1 and 3, which fix different surfaces.
+
+### Option 1 — the stop now covers substitution
+
+`weatherContextRequiredStop` gains a branch that fires when the request text states weather, the
+call carried no `user_weather`/`weather_estimate`, and the resolved profile did not already come
+from a stated source. It returns the existing typed `weather_context_required` status, so the model
+re-calls with the translation §4.3 already asks it for.
+
+**Why this stays inside §3.1.** The detector sets nothing. It cannot populate `user_weather`,
+`ResolvedWeatherContext`, or any gate — it can only refuse to proceed. A false positive costs one
+bounce; a false negative restores the previous behaviour.
+
+Deliberately narrow: a number with a temperature unit, or an unambiguous precipitation noun. **Not**
+bare adjectives — `warm`, `cool`, `hot`, `chilly` collide with style prose (*"warm colors"*, *"cool
+tones"*, *"hot pink"*) and are the exact false-positive class §3.1 was written about. `snow` is
+excluded when it names a garment (*"snow boots"*). The accepted consequence is a false negative:
+*"chilly evening"* is real weather and is not detected.
+
+The carry-forward exemption reads the **profile's own** `weatherSource`/`overallSource`, not the
+resolution branch — a carried profile reports `explicit_request.weather_profile` whether it
+originated from stated weather or from live, so exempting on the branch would have reopened the gap.
+
+### Option 3 — the Visual Composer gets a structured weather input
+
+An optional high/low °F pair on the brief form, sent as `userWeather` and resolved through the same
+typed contract `/ask` uses. Empty means unstated and the composer behaves exactly as before.
+Transposed entries are normalized rather than rejected, since `validateUserWeather` requires
+`high >= low` and would otherwise silently drop the pair and use the forecast.
+
+### A third bug this surfaced
+
+The option-3 test — *"a structured userWeather range beats an available live forecast"* — passed on
+`isCold` and failed on `isColdSevere`. Cause: `profileFromResolvedWeatherContext`
+(`styling-engine/stylingContext.js`) dropped severity.
+
+That projection is the one **every structured-weather path** uses: `user_weather`,
+`weather_estimate`, and named-destination live. So no `/ask` or composer turn resolving structured
+weather has ever carried `isColdSevere` — meaning Contract C's severe-cold branch and the new mesh
+cold rule could not fire on those turns at all.
+
+Same silent-loss shape as the consolidation spec's `[R1]`, in a third place: severity was propagated
+into `resolveTemperatureField`, into the persisted shape, and into the planner's slot profiles, but
+not through this projection. Fixed, with `transitIsColdSevere` carried through the indoor projection
+to match the planner.
+
+It also revises the earlier live-QA read: the three `/ask` turns that resolved
+`named_destination.stated_user` and produced correct outfits did so on the mild-cold floor and model
+judgment, **not** on the severe-cold branch, which was inert throughout.
+
+### Tests
+
+`test/statedWeatherComplianceStop.test.js` (6) pins the detector, including the whole
+false-positive class and the deliberate false negatives. `test/composerStatedWeather.test.js` (4)
+pins that prose still loses, that structured weather wins over an available live forecast, that a
+mild range does not manufacture cold, and that no input leaves behaviour unchanged.
+
+Three fixtures gained an outer layer — not by weakening assertions, but because severity now
+actually reaches consumers and an outfit with no layer at a 40°F low legitimately fails. Each is
+annotated in place.
