@@ -731,6 +731,11 @@ export default function StylistChat({
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('')
   const [wardrobeOutfitRequest, setWardrobeOutfitRequest] = useState('')
+  // docs/stated-weather-authority-findings.md §6 option 3. The brief had no structured weather
+  // input, so a temperature typed into Mood/Styling request could never outrank live weather.
+  // Empty means "not stated" and the composer resolves weather exactly as before.
+  const [wardrobeOutfitHighF, setWardrobeOutfitHighF] = useState('')
+  const [wardrobeOutfitLowF, setWardrobeOutfitLowF] = useState('')
   const [wardrobeOutfitMission, setWardrobeOutfitMission] = useState('mix')
   const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
@@ -4562,6 +4567,20 @@ export default function StylistChat({
     const request = wardrobeOutfitRequest.trim()
     const mission = wardrobeOutfitMission || 'mix'
     const activity = wardrobeOutfitActivity || 'none'
+    // Both numbers or neither. validateUserWeather requires a complete range on the server, and a
+    // single stated temperature is deliberately not a range
+    // (future-trip-weather-estimate-spec.md §4.1) — sending a half-filled pair would be dropped
+    // there anyway, so the intent stays explicit here.
+    const enteredHigh = Number(wardrobeOutfitHighF)
+    const enteredLow = Number(wardrobeOutfitLowF)
+    const bothEntered = String(wardrobeOutfitHighF).trim() !== '' && String(wardrobeOutfitLowF).trim() !== ''
+      && Number.isFinite(enteredHigh) && Number.isFinite(enteredLow)
+    // snake_case is the typed contract validateUserWeather reads. Ordering is normalized rather
+    // than rejected: it requires high >= low and returns null otherwise, so a transposed pair would
+    // be silently dropped and the user would see the forecast used instead of their numbers.
+    const userWeather = bothEntered
+      ? { high_f: Math.max(enteredHigh, enteredLow), low_f: Math.min(enteredHigh, enteredLow) }
+      : null
     const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, mood: ${mood}` : ''}${request ? `, request: ${request}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
     const resultId = createResultId('whole-wardrobe')
@@ -4648,7 +4667,9 @@ export default function StylistChat({
       const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, request, question: request, mission, limit: 5, activity })
+        // Both numbers or neither: validateUserWeather requires a complete range, and a single
+        // stated temperature is deliberately not a range (future-trip-weather-estimate-spec §4.1).
+        body: JSON.stringify({ occasion, season, mood, request, question: request, mission, limit: 5, activity, userWeather })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
@@ -5905,6 +5926,32 @@ export default function StylistChat({
           rows={2}
           style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
         />
+      </div>
+
+      <div className="wardrobe-builder-weather">
+        <div style={wardrobeBuilderFieldLabelStyle}>
+          Temperature <span style={{ fontWeight: 400, opacity: 0.7 }}>— optional, overrides the forecast</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={wardrobeOutfitHighF}
+            onChange={e => setWardrobeOutfitHighF(e.target.value)}
+            placeholder="high °F"
+            aria-label="High temperature in Fahrenheit"
+            style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
+          />
+          <input
+            type="number"
+            inputMode="numeric"
+            value={wardrobeOutfitLowF}
+            onChange={e => setWardrobeOutfitLowF(e.target.value)}
+            placeholder="low °F"
+            aria-label="Low temperature in Fahrenheit"
+            style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
+          />
+        </div>
       </div>
       </fieldset>
       {loading && (

@@ -2896,17 +2896,25 @@ test('executeTool propose_outfit persists weatherUsed/resolvedWeatherContext ont
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
     VALUES ('weather-persist shoes', 'shoes', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'shoes', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
   `).run().lastInsertRowid
+  // Added 2026-09-01: a 40°F low now carries isColdSevere through the structured-weather projection
+  // (it was silently dropped before), so an outfit with no outer layer at all legitimately fails.
+  // The layer keeps this test measuring weatherUsed/resolvedWeatherContext PERSISTENCE, its subject.
+  const layerId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, sleeve_length, outerwear_role)
+    VALUES ('weather-persist coat', 'outerwear', '[]', '["city"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'coat', '', 'wool', 'heavy', '["wool"]', 'everyday', '', '{}', 'long', 'cold_weather_outerwear')
+  `).run().lastInsertRowid
   try {
     const toolContext = {
       declaredIntent: { want: 'cards' },
       generatedOutfits: [],
-      retrievedPieceIds: new Set([topId, bottomId, shoesId]),
+      retrievedPieceIds: new Set([topId, bottomId, shoesId, layerId]),
     }
     const result = await executeTool('propose_outfit', {
       pieces: [
         { id: topId, role: 'primary_top' },
         { id: bottomId, role: 'primary_bottom' },
         { id: shoesId, role: 'shoes' },
+        { id: layerId, role: 'layer_top' },
       ],
       label: 'Vienna Evening',
       why_it_works: 'a warm layered city outfit',
