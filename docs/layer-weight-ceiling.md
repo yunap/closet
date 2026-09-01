@@ -1,7 +1,8 @@
 # Findings — every weather tier is a floor; nothing is a ceiling
 
-**Status:** Evidence, retained. Diagnosed 2026-09-01; **§6's implementation proposal is superseded**
-by [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md), which absorbs thermal overshoot as
+**Status:** superseded-by [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md) for its
+implementation; §1-§5 retained as active evidence. Diagnosed 2026-09-01. The band spec absorbs
+thermal overshoot as
 required use case 2. Its original PR was closed unmerged on that basis: the evidence below belongs in
 the record, a penalty keyed on `!isColdSevere` does not — it would be built and immediately replaced.
 Read §1-§5 as findings; read §6 as a rejected design kept for its failure-mode list.

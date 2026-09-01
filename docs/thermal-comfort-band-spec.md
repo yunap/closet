@@ -1,6 +1,7 @@
 # Spec — decomposing `isCold` into a thermal comfort band
 
-**Status:** Audit and design, 2026-09-01. **No code.** Thresholds deliberately not chosen (§6).
+**Status:** active — audit and design, 2026-09-01. **No code.** Thresholds deliberately not chosen
+(§6).
 **Route:** [docs/README.md](README.md). Supersedes the *authority* of `isCold`, `transitIsCold` and
 `isColdSevere`; amends [cold-severity-spec.md](cold-severity-spec.md) and
 [cool-weather-tier-spec.md](cool-weather-tier-spec.md) §8, which required this audit.
