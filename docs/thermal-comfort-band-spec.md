@@ -296,4 +296,23 @@ Those field names are illustrative. What Slice 1 must actually settle, before an
 4. What is the `unknown` contribution of an untagged garment — zero, or absent? Criterion 8 says the
    two must not be conflated, and `systemColdScore` currently conflates them.
 
-**No numerical calibration in Slice 1.** Ownership and shape only.
+### 9.3 Two things Slice 1 must not do
+
+**Do not treat `pieceWeatherScores().cold` as the shared scale by default.** Slice 1 must determine
+whether it is a suitable *contribution unit* or merely existing *evidence to be decomposed and
+reused*. The new aggregation contract must not canonize its numeric scale without calibration. Those
+weights were tuned for relative ranking inside the old system — the `[20, -2, 0]` and `[-8, 14, 0]`
+readings above are informative about placement, not certified as a measure of absolute warmth
+comparable against a temperature demand. An old implementation detail becoming the measurement unit
+of the replacement architecture is how the replacement inherits the original's assumptions silently.
+
+**Do not reverse-engineer the representation from §3's buckets.** Fields like `baseWarmth`,
+`removableWarmth`, `outerWarmth`, `legWarmth` are tempting precisely *because* the current bugs
+mention them, which makes them a description of today's failures rather than of the physics. Derive
+the structure from the questions the comparison must actually preserve, and let the investigation
+prove the **minimum** useful structure. The A/B measurement supplies one real requirement
+(placement/removability); coverage overlap probably supplies a second; unknown evidence a third.
+Three demonstrated requirements is a better starting point than seven inherited bucket names.
+
+**No numerical calibration in Slice 1.** Ownership, shape, and the scale question above — nothing
+else.
