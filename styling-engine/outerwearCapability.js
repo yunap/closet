@@ -64,6 +64,26 @@ export function pieceOuterwearCapabilityFacts(piece = {}) {
 }
 
 /**
+ * Slice E — the ONE canonical rendering of these two facts for every model-facing projection.
+ *
+ * Returns display strings, not sentences: the manifest, the truth text and the tool rows each apply
+ * their own house formatting around these values, but none of them decides what the values MEAN.
+ * That is the §10 rule — projection code transmits canonical facts, it does not own their meaning —
+ * and the reason it exists is that three projections each writing their own gloss of
+ * "indoor_layer" is how a field acquires three meanings.
+ *
+ * Both are null when absent, so a projection can omit the clause entirely rather than printing an
+ * empty label. Non-outerwear pieces get null for the same reason: the readers are category-gated.
+ */
+export function outerwearCapabilityDisplay(piece = {}) {
+  const { outerwearRole, weatherProtection } = pieceOuterwearCapabilityFacts(piece)
+  return {
+    role: outerwearRole ? outerwearRole.replace(/_/g, ' ') : null,
+    protection: weatherProtection.length ? weatherProtection.join('/') : null,
+  }
+}
+
+/**
  * @param {object} piece
  * @param {object} requirement
  * @param {boolean} requirement.requireOutdoorLayer  the context needs a genuine outdoor outer layer

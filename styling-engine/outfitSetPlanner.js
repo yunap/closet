@@ -28,6 +28,7 @@
 // buildPlanReport).
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
+import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -2479,12 +2480,16 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
   return [`[missing wardrobe gap: the shoe quota under this ${budget}-piece budget cannot cover both ${joined}]`]
 }
 
+// Exported under a test-only alias: the line itself is internal, but Slice E's cross-projection
+// parity fixture has to prove capability reaches THIS surface too, not just the shared truth text.
+export { planWorkbenchPieceLine as _planWorkbenchPieceLineForTests }
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
   const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
   const waistbandConstraint = piece.waistband_type
     ? `waistband:${piece.waistband_type}`
     : ''
+  const capability = outerwearCapabilityDisplay(piece)
   const bits = [
     `ID ${piece.id}`,
     piece.name || 'Garment',
@@ -2501,6 +2506,12 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.tuck_behavior ? `tuck:${piece.tuck_behavior}` : '',
     waistbandConstraint,
     piece.opacity && piece.opacity !== 'opaque' ? `opacity:${piece.opacity}` : '',
+    // Slice E: the plan workbench writes its own compact line rather than reusing
+    // buildWardrobePieceTruthText, so it needs the capability facts explicitly or the planner is
+    // the one model-facing surface that cannot see them. Values come from the shared display
+    // helper; only the `key:value` house style is local.
+    capability.role ? `outerwear_role:${capability.role.replace(/ /g, '_')}` : '',
+    capability.protection ? `weather_protection:${capability.protection}` : '',
     pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',

@@ -1,3 +1,4 @@
+import { outerwearCapabilityDisplay } from '../../styling-engine/outerwearCapability.js'
 const CLOTHING_WITH_TUCK = new Set(['top', 'dress', 'outerwear'])
 
 export function safeJsonParse(value, fallback = null) {
@@ -273,6 +274,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
   // afterwards as feedback.
   const sleeveLengthText = trustedFieldText(piece, 'sleeve_length', 'sleeve length', piece.sleeve_length)
   if (sleeveLengthText) parts.push(sleeveLengthText)
+  // Slice E: the composer/get_garment_details truth text. Same canonical values as the manifest,
+  // this file's own label:value house style, and no independent gloss of what a role implies.
+  const capability = outerwearCapabilityDisplay(piece)
+  const roleText = trustedFieldText(piece, 'outerwear_role', 'outerwear role', capability.role)
+  if (roleText) parts.push(roleText)
+  if (capability.protection) parts.push(`weather protection: ${capability.protection}`)
+
   const sleeveShapeText = piece.sleeve_length !== 'sleeveless'
     ? trustedFieldText(piece, 'sleeve_shape', 'sleeve shape', piece.sleeve_shape)
     : null
@@ -388,6 +396,7 @@ export function buildWardrobeManifestLine(piece = {}) {
     const v = String(value ?? '').trim()
     return v && v.toLowerCase() !== 'none' ? v : ''
   }
+  const capability = outerwearCapabilityDisplay(piece)
   const neckline = present(piece.neckline) ? manifestValue(piece, 'neckline', piece.neckline) : ''
   const sleeves = [present(piece.sleeve_length), present(piece.sleeve_shape)].filter(Boolean).join('/')
 
@@ -408,6 +417,14 @@ export function buildWardrobeManifestLine(piece = {}) {
     sleeves ? `sleeve ${sleeves}` : '',
     present(piece.hem_finish) ? `hem ${manifestValue(piece, 'hem_finish', piece.hem_finish)}` : '',
     present(piece.tuck_behavior) ? `tuck ${manifestValue(piece, 'tuck_behavior', piece.tuck_behavior)}` : '',
+    // Slice E of docs/outerwear-weather-consolidation-spec.md, landing here for the same reason as
+    // the five fields above: docs/search-payload-spec.md option B makes this cached line the ONE
+    // home for stable garment truth, and search rows carry only per-request judgment whenever the
+    // manifest is present. Putting outerwear capability anywhere else would leave it invisible on
+    // the common path. Outerwear-only by construction — the readers are category-gated, so these
+    // are null for everything else and the clause simply does not print.
+    capability.role ? `outerwear role ${manifestValue(piece, 'outerwear_role', capability.role)}` : '',
+    capability.protection ? `protects against ${capability.protection}` : '',
     present(piece.walk_support) ? `support ${manifestValue(piece, 'walk_support', piece.walk_support)}` : '',
     pattern ? `pattern ${pattern}` : '',
     piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',

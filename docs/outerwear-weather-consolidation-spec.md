@@ -2,8 +2,8 @@
 
 **Status:** Proposed — amended 2026-08-31 after independent review. Slice A and Slice A.1 are
 complete (Appendix A). Both blocking owner rulings were given 2026-08-31 and executed — the
-data-quality precondition **passes** (Appendix B). Slices B, C and D are implemented
-(Appendices C and D); **Slice E is next.**
+data-quality precondition **passes** (Appendix B). Slices B through E are implemented
+(Appendices C, D and E); **Slice F is next.**
 **Route:** [docs/README.md](README.md).
 **Scope:** Architecture-remediation extension to the completed ownership-consolidation arc.
 **Predecessors, both ratified, neither reopened here:**
@@ -1307,3 +1307,75 @@ hand-off.
 * Slices A, A.1, B, C, D — complete.
 * Slice E (fact projection) and F (legacy cleanup) — next.
 * Open migration finding: the three `tools.js` call sites above.
+
+---
+
+## Appendix E — Slice E results (2026-08-31)
+
+Fact projection. **1668/1669 tests pass** (same single pre-existing failure).
+`test/outerwearCapabilityProjection.test.js`, 8 tests.
+
+### The audit changed where this had to land
+
+§10's list opens with "wardrobe manifest", and the census first read that as one surface among
+several — `tools.js` calls the manifest *"an index, not garment truth"* in two places. That reading
+was wrong. Per [search-payload-spec.md](search-payload-spec.md) option B, the cached manifest line
+is the **one home for stable garment truth**, and both retrieval tools deliberately stop re-sending
+stable fields whenever it is present:
+
+```js
+// search_wardrobe, trimToJudgment branch — id/name/category/weatherFit/ruleFit and nothing else
+// wardrobe_coverage
+candidates: manifestCarriesTruth ? scoped.map(p => ({ id, name })) : scoped.map(wardrobeTruthRow)
+```
+
+So capability facts added only to the tool rows would have been invisible on the common path. The
+manifest is where they had to go first.
+
+### One shared helper, four projections
+
+`outerwearCapabilityDisplay(piece)` returns display **values** (`'cold weather outerwear'`,
+`'rain/wind'`, or `null`), never sentences. Each projection applies its own house format; none
+decides what the values mean. That is §10's rule, and the reason for it is concrete: three
+projections each writing their own gloss of `indoor_layer` is how one field acquires three meanings.
+
+| Surface | Wiring | Format |
+|---|---|---|
+| `buildWardrobeManifestLine` | explicit | `outerwear role cold weather outerwear; protects against rain/wind` |
+| `buildWardrobePieceTruthText` | explicit | `outerwear role: cold weather outerwear \| weather protection: rain/wind` |
+| `wardrobeTruthRow` (above-cap) | explicit | raw canonical values |
+| `search_wardrobe` untrimmed row | explicit | raw canonical values |
+| `planWorkbenchPieceLine` | explicit | `outerwear_role:cold_weather_outerwear` |
+| **~35 composer / capsule / critique / get_garment_details sites** | **inherited** | via `buildPieceText`, which is `buildWardrobePieceTruthText` |
+
+That last row is the payoff. `buildPieceText` feeds the whole-wardrobe composer roster
+(`rules.js:1466`, `:1526`), `get_garment_details` (`tools.js:2520`), the capsule and bench truth
+catalogs (`routes/ai.js:4091`, `:4268`, `:4395`), and the selected/critique paths in `core.js` —
+all of which gained the facts with no per-site change, because the projection was consolidated
+rather than copied.
+
+Only `planWorkbenchPieceLine` needed explicit wiring: it writes its own compact `key:value` line
+instead of reusing the truth text, so it was the single model-facing surface that could not inherit.
+
+### Deliberately NOT wired
+
+* `pieceMatchBlob` / `structuredPieceSignalTokens` (`rules.js:1884`, `:1963`) — internal
+  text-matching and mission-scoring blobs, not model-facing projections. §10's "do not add the
+  fields blindly to unrelated contexts".
+* `search_wardrobe`'s `trimToJudgment` branch — by design carries per-request judgment only; the
+  manifest supplies the stable truth. Adding them there would re-transmit uncached what the cached
+  line already holds, which is the exact cost regression option B was written to end.
+
+### Pinned by test
+
+Capability reaches the manifest, truth text, truth row and workbench line; an empty hazard list
+prints no clause rather than an empty label; an untagged piece prints nothing; a stray role on a
+non-outerwear piece never reaches the model (the category gate lives in the readers, so every
+projection inherits it); and no projection editorialises — no "not suitable for", no "keep
+indoors", nothing that duplicates Contract B's judgment in prose the code does not own.
+
+### Status
+
+* Slices A, A.1, B, C, D, E — complete.
+* Slice F (legacy/special-case cleanup, incl. the `[A6]` capsule cardigan question) — next.
+* Open migration finding: the three `tools.js` `evaluateWearableOutfit` call sites from D.4.
