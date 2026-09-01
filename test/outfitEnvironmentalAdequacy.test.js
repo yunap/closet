@@ -88,6 +88,42 @@ test('SEVERE cold: an indoor destination does not demand outdoor outerwear', () 
   assert.deepEqual(hardCodes(result), [])
 })
 
+// --- a thin base under a real outer layer: two tiers, split by evidence --------------------------
+
+test('SEVERE cold: a MEASURED thin base under a good coat is a hard finding', () => {
+  // Live "Trail Tee, Pants & Puffer": a light warm-season tee and light warm-season track pants
+  // under a winter puffer. The shortfall was detected (systemCold 4 against a floor of 12) and was
+  // advisory, so it never rendered and the card shipped. Every base piece is tagged, so this is a
+  // measurement, not a gap.
+  const tee = top({ fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' })
+  const trackPants = { id: 11, category: 'bottom', name: 'track pants', fabric_weight: 'light', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([tee, trackPants, shoes(), WOOL_COAT], {
+    weatherProfile: { isCold: true, isColdSevere: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.THERMAL_CAPACITY_INSUFFICIENT])
+  assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'a supply-sensitive finding names a legal move')
+})
+
+test('SEVERE cold: an UNMEASURED base under the same coat stays advisory', () => {
+  // The distinction acceptance criterion 8 turns on. Nothing is known about these garments, so the
+  // low total is absence of evidence rather than evidence of absence.
+  const result = evaluateOutfitEnvironmentalAdequacy(
+    [{ id: 10, category: 'top', name: 'untagged top' }, { id: 11, category: 'bottom', name: 'untagged bottom' }, shoes(), RAIN_SHELL],
+    { weatherProfile: { isCold: true, isColdSevere: true } },
+  )
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(codes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
+})
+
+test('SEVERE cold: a measured but genuinely warm base passes', () => {
+  // The split must not turn "fully tagged" into "suspicious" — a tagged heavy base clears the floor.
+  const result = evaluateOutfitEnvironmentalAdequacy(
+    [top({ fabric_weight: 'heavy', fiber_content: ['wool'] }), bottom(), shoes(), RAIN_SHELL],
+    { weatherProfile: { isCold: true, isColdSevere: true } },
+  )
+  assert.deepEqual(hardCodes(result), [])
+})
+
 // --- missing metadata is never hard invalidity (acceptance criterion 8) --------------------------
 
 test('an untagged outer layer is never a hard failure, however thin its recorded fabric', () => {
