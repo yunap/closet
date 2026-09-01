@@ -1,7 +1,7 @@
 # Spec — `needsRemovableCoolLayer`
 
-**Status:** Proposed 2026-09-01, not implemented. Threshold ruled **A (`lowF <= 55`)** on 2026-09-01,
-with two tightenings required before coding (§3, §5.2) and a follow-up audit (§8).
+**Status:** Implemented 2026-09-01. Threshold ruled **A (`lowF <= 55`)**; the two tightenings (§3,
+§5.2) are in the shipped behaviour. **§8's `isCold` consumer audit remains outstanding.**
 **Route:** [docs/README.md](README.md). Amends
 [cold-severity-spec.md](cold-severity-spec.md), which introduced the severe tier and whose
 2026-09-01 amendment surfaced this gap.
@@ -258,3 +258,46 @@ follow-up, not an optional one:
 
 Without that audit the engine carries two overlapping cold models, which is the condition the
 consolidation arc exists to prevent.
+
+
+---
+
+## 9. Implementation (2026-09-01)
+
+`COOL_LOW_F = 55` and `needsRemovableCoolLayerForRange` in `styling-engine/weather.js`, emitted by
+`resolveTemperatureField` on all branches and by `BAND_FLAGS`, persisted as
+`needs_removable_cool_layer`, and propagated through `profileFromResolvedWeatherContext`, the indoor
+projection (`transitNeedsRemovableCoolLayer`) and the planner's slot profiles — at the source rather
+than at a call site, per `[R1]`'s lesson.
+
+Consumer: one branch in `evaluateOutfitEnvironmentalAdequacy`.
+
+```text
+85/68  isCold ✗  severe ✗  needsRemovableCoolLayer ✗
+72/58  ✗ ✗ ✗
+72/55  ✗ ✗ ✓        the evening-layer case only threshold A catches
+65/48  ✗ ✗ ✓        the live bug
+58/55  ✗ ✗ ✓        pinned cool coastal summer
+65/45  ✓ ✗ ✓
+45/45  ✓ ✓ ✓
+```
+
+Two decisions worth recording because neither is obvious from the spec text:
+
+**Satisfied only by an actual layer, hard when there is none.** §3's tightening is structural: a
+heavy long-sleeved base does not satisfy it. Verified — the tank card fails, the same card plus a
+cardigan passes, and a heavy-wool-top version still fails.
+
+**Fires only when `isCold` has not.** Below 45°F the minimum-warmth floor already owns the outfit and
+accepts a heavy main where this tier would not; letting both fire produces two findings for one
+outfit. The tiers are therefore disjoint by construction, which is a deliberate stopgap — §8's audit
+is what actually resolves the overlap. Recorded here so the disjointness is not mistaken for the
+final model.
+
+Not implemented: a transit consumer. `transitNeedsRemovableCoolLayer` is propagated and available,
+but no rule reads it yet — the existing transit floor still requires `transitIsCold` (≤45°F), so a
+cool-but-not-cold transit to an indoor destination has no removable-coverage requirement. Recorded
+as a gap rather than closed, since it wants the same daypart reasoning as §5.2.
+
+Tests: 8 in `test/outfitEnvironmentalAdequacy.test.js`, including the warm-base control, the
+disjointness check, and resolution/persistence round-trip against the real resolver.

@@ -286,3 +286,82 @@ test('a mild band does not manufacture severity', () => {
   assert.equal(context.temperature.isCold, false)
   assert.equal(context.temperature.isColdSevere, false)
 })
+
+// --- needsRemovableCoolLayer (docs/cool-weather-tier-spec.md) -----------------------------------
+
+test('COOL: an outfit with no layer at all is a hard finding', () => {
+  // The live defect: a 65F/48F October day produced no weather handling whatsoever, because isCold
+  // needs lowF <= 45. Both Sightseeing cards shipped with no outer layer; one was a sleeveless tank.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'supply-sensitive findings name a legal move')
+})
+
+test('COOL: any layer satisfies it — an indoor_layer cardigan counts', () => {
+  // This tier asks for removable coverage, not outdoor capability. An indoor_layer is a perfectly
+  // good answer to "it gets cool at dusk"; requiring outdoor capability is the severe tier's job.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL: a WARM BASE does not satisfy it — removability is the point', () => {
+  // On a 72F/55F day, accepting a heavy long-sleeved top would approve an outfit that is too warm
+  // through the 72F afternoon AND still has nothing to add at dusk. The base may stay mild; what is
+  // required is something to put on.
+  const result = evaluateOutfitEnvironmentalAdequacy(
+    [top({ fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' }), bottom(), shoes()],
+    { weatherProfile: { needsRemovableCoolLayer: true } },
+  )
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+})
+
+test('COOL: silent on a genuinely warm day', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: {},
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL: does not double-fire with the isCold floor', () => {
+  // Below 45F the minimum-warmth floor already owns this outfit, and it accepts a heavy main where
+  // this tier would not. Two findings for one outfit would be noise, so the tiers stay disjoint by
+  // construction until §8's isCold consumer audit unifies them.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true, isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
+})
+
+test('COOL: an indoor destination needs no layer for the destination itself', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('the signal survives real resolution and its persistence round trip', () => {
+  // [R1]'s lesson: propagate at the source and assert against the real resolver, not a literal.
+  const context = resolveWeatherContext({
+    modelEstimate: { highF: 65, lowF: 48, precipitation: 'unknown', wind: 'unknown' },
+    location: 'Vienna, Virginia',
+    dateRange: { start: '2026-10-12', end: '2026-10-19' },
+  })
+  assert.equal(context.temperature.isCold, false, '48F clears the isCold cliff — this is the blind spot')
+  assert.equal(context.temperature.needsRemovableCoolLayer, true)
+
+  const restored = restoreResolvedWeatherContext(serializeResolvedWeatherContext(context))
+  assert.equal(restored.temperature.needsRemovableCoolLayer, true)
+})
+
+test('a genuinely warm day does not manufacture a cool-layer requirement', () => {
+  const context = resolveWeatherContext({
+    modelEstimate: { highF: 85, lowF: 68, precipitation: 'unknown', wind: 'unknown' },
+    location: 'Vienna, Virginia',
+    dateRange: { start: '2026-07-12', end: '2026-07-19' },
+  })
+  assert.equal(context.temperature.needsRemovableCoolLayer, false)
+})

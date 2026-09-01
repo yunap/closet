@@ -10,6 +10,10 @@ const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 const HOT_F = 80
 const COLD_F = 45
+// docs/cool-weather-tier-spec.md, ruled 2026-09-01. The temperature at which the cold end of a day
+// warrants something the wearer can put ON — distinct from COLD_F, which asks how warm the base
+// itself should be. Deliberately read off the LOW: the low is when a removable layer is wanted.
+const COOL_LOW_F = 55
 const EXTREME_HEAT_F = 100
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
 const FETCH_TIMEOUT_MS = 4000
@@ -345,10 +349,18 @@ export function validateWeatherEstimate(input) {
 const coldSevereForRange = ({ highF, lowF } = {}) =>
   Number.isFinite(highF) ? highF <= COLD_F : Number.isFinite(lowF) ? lowF <= COLD_F : false
 
+// docs/cool-weather-tier-spec.md. Does this outfit need a REMOVABLE layer for the cold end of the
+// day? Read off the low, and — per §5.2 — this is a range-level PROXY for an unspecified or full-day
+// wearing period, not a claim that the daily low governs every slot on the date. A 1-4pm museum
+// visit does not really need a layer mandated by the 5am low; narrowing that needs daypart weather
+// the planner does not have, so the conservative all-day answer ships first.
+const needsRemovableCoolLayerForRange = ({ highF, lowF } = {}) =>
+  Number.isFinite(lowF) ? lowF <= COOL_LOW_F : Number.isFinite(highF) ? highF <= COOL_LOW_F : false
+
 const BAND_FLAGS = {
-  hot: { isHot: true, isCold: false, isColdSevere: false },
-  cold: { isHot: false, isCold: true, isColdSevere: true },
-  mild: { isHot: false, isCold: false, isColdSevere: false },
+  hot: { isHot: true, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false },
+  cold: { isHot: false, isCold: true, isColdSevere: true, needsRemovableCoolLayer: true },
+  mild: { isHot: false, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false },
 }
 
 function resolveTemperatureField({ userTemperature, liveTemperature, estimateTemperature }) {
@@ -365,7 +377,9 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: userTemperature.highF, lowF: userTemperature.lowF, band: null,
       isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
-      isColdSevere: coldSevereForRange(userTemperature), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isColdSevere: coldSevereForRange(userTemperature),
+      needsRemovableCoolLayer: needsRemovableCoolLayerForRange(userTemperature),
+      isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'stated_user',
     }
   }
@@ -374,6 +388,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
       highF: liveTemperature.highF, lowF: liveTemperature.lowF, band: null,
       isHot: Boolean(liveTemperature.isHot), isCold: Boolean(liveTemperature.isCold),
       isColdSevere: coldSevereForRange(liveTemperature),
+      needsRemovableCoolLayer: needsRemovableCoolLayerForRange(liveTemperature),
       isExtremeHeat: Boolean(liveTemperature.isExtremeHeat),
       source: 'live',
     }
@@ -383,11 +398,13 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
     return {
       highF: estimateTemperature.highF, lowF: estimateTemperature.lowF, band: null,
       isHot: Boolean(classified.isHot), isCold: Boolean(classified.isCold),
-      isColdSevere: coldSevereForRange(estimateTemperature), isExtremeHeat: Boolean(classified.isExtremeHeat),
+      isColdSevere: coldSevereForRange(estimateTemperature),
+      needsRemovableCoolLayer: needsRemovableCoolLayerForRange(estimateTemperature),
+      isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'model_estimate',
     }
   }
-  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isColdSevere: false, isExtremeHeat: false, source: 'unavailable' }
+  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false, isExtremeHeat: false, source: 'unavailable' }
 }
 
 function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimate }) {
@@ -546,6 +563,7 @@ export function serializeResolvedWeatherContext(context = null) {
       // does not round-trip vanishes on the next turn's carry-forward — the same silent-loss shape
       // that left isColdSevere undefined at the validator in the first place.
       is_cold_severe: Boolean(context.temperature?.isColdSevere),
+      needs_removable_cool_layer: Boolean(context.temperature?.needsRemovableCoolLayer),
       is_extreme_heat: Boolean(context.temperature?.isExtremeHeat),
       source: context.temperature?.source || 'unavailable',
     },
@@ -569,6 +587,7 @@ export function restoreResolvedWeatherContext(stored = null) {
       isHot: Boolean(t.is_hot),
       isCold: Boolean(t.is_cold),
       isColdSevere: Boolean(t.is_cold_severe),
+      needsRemovableCoolLayer: Boolean(t.needs_removable_cool_layer),
       isExtremeHeat: Boolean(t.is_extreme_heat),
       source: t.source || 'unavailable',
     },

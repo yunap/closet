@@ -24,6 +24,7 @@ import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
+  NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
   NO_OUTDOOR_LAYER_FOR_SEVERE_COLD: 'outfit_no_outdoor_capable_layer_for_severe_cold',
@@ -117,6 +118,31 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     isCold: Boolean(weather.isCold),
     isColdSevere: Boolean(weather.isColdSevere),
     transitIsColdSevere: Boolean(weather.transitIsColdSevere),
+  }
+
+  // --- removable layer for the cool end of the day (docs/cool-weather-tier-spec.md) --------------
+  //
+  // The 45-80F blind spot. `isCold` needs lowF <= 45, so a 65F/48F October day produced NO weather
+  // handling at all and a live trip card shipped a sleeveless tank with no layer. This tier answers
+  // a different question from the two below it — not "how warm should the base be" but "does this
+  // outfit need something the wearer can put ON" — which is why it reads the LOW while severity
+  // reads the high.
+  //
+  // Satisfied ONLY by an actual layer. A warm base deliberately does not count: on a 72F/55F day
+  // that would approve a heavy long-sleeved top worn through the 72F afternoon, leaving the wearer
+  // overdressed by day and still with nothing to add at dusk. The point of a removable layer is that
+  // the base can stay mild.
+  //
+  // Fires only when `isCold` has NOT — it fills the gap above that cliff rather than duplicating the
+  // floor below it, which accepts a heavy main and would otherwise produce two findings for one
+  // outfit. §8 of the spec requires an audit of isCold's consumers now that a graded tier exists
+  // beneath it; until then the two stay disjoint by construction.
+  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
+    if (!layers.length) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
+        'this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed',
+        { evidence, remedy: true }))
+    }
   }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------

@@ -1016,6 +1016,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         // it, Contract C's cold-transit branch reads undefined and silently never fires — the exact
         // failure mode of a hand-built fixture passing while production does nothing.
         transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
+        transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
         transitHighF: t.highF, transitLowF: t.lowF,
         weatherSource: t.source,
         resolvedWeatherContext: context,
@@ -1026,7 +1027,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
 
   return {
     profile: {
-      isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere), isExtremeHeat: t.isExtremeHeat,
+      isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),
+      needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
       weatherSource: t.source,
       resolvedWeatherContext: context,

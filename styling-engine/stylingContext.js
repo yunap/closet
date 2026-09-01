@@ -294,6 +294,10 @@ function profileForEnvironment(profile, { indoor = false } = {}) {
     ...profile,
     isCold: false,
     isColdSevere: false,
+    // The indoor destination itself needs no layer, but the trip there does — mirroring how isCold
+    // is zeroed while transitIsCold is preserved.
+    needsRemovableCoolLayer: false,
+    transitNeedsRemovableCoolLayer: Boolean(profile.needsRemovableCoolLayer),
     isIndoor: true,
     transitIsHot: Boolean(profile.isHot),
     transitIsCold: Boolean(profile.isCold),
@@ -316,6 +320,7 @@ function profileFromResolvedWeatherContext(resolved, { indoor = false } = {}) {
     // weather ever carried isColdSevere, and Contract C's severe-cold branch plus the mesh cold rule
     // could not fire on those turns at all. Exactly the silent-loss shape [R1] was written about.
     isColdSevere: Boolean(t.isColdSevere),
+    needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
     ...(Number.isFinite(t.highF) ? { highF: t.highF } : {}),
     ...(Number.isFinite(t.lowF) ? { lowF: t.lowF } : {}),
     isRainy: resolved.precipitation?.value === 'rain',
