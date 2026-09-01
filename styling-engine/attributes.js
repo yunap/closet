@@ -499,31 +499,50 @@ export function pieceHasInsulatingMaterial(p) {
 // strictly on structured material fields so a name or note cannot silently create
 // a hard gate. Pieces whose visible name says canvas but whose material metadata
 // says cotton must be retagged rather than inferred here.
+const ABSORBENT_FOOTWEAR_MATERIALS = ['canvas', 'suede', 'nubuck', 'mesh', 'knit', 'woven', 'textile']
+
 export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return false
   const materials = new Set([
     String(p.fabric_category || '').toLowerCase().trim(),
     ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
   ].filter(Boolean))
-  // 'mesh' added 2026-09-01 by owner ruling. outerwear-weather-capability-spec.md §8 deferred this
-  // pending "a separate evidence/ruling"; the evidence is a live freeform turn (42°F, raining, "I'll
-  // be walking a lot") that put grey/orange mesh athletic sneakers on. fabric_category was in the
-  // wardrobe manifest, so the model could see 'mesh' and chose it anyway — model judgment alone had
-  // been the de facto policy and did not hold.
-  return materials.has('canvas') || materials.has('suede') || materials.has('nubuck') || materials.has('mesh')
+  // Absorbent = a permeable FIBRE upper, which soaks in sustained wet. This is a claim about garment
+  // physics, true in any wardrobe — deliberately NOT calibrated on how many shoes a particular user
+  // would lose, which is a supply question the disclosed-shortfall path owns instead.
+  //
+  // Widened from a mesh-only special case on 2026-09-01, second incident: a "38°F and raining,
+  // walking for hours" turn selected `taupe knit lace-up sneakers` — a visibly flyknit trainer —
+  // immediately after the mesh rule shipped. The rule had caught the instance, not the class.
+  //
+  // Included, all permeable fibre: canvas, suede, nubuck, mesh, knit, woven (raffia/straw/textile
+  // weave), textile.
+  // Excluded on purpose:
+  //   leather / patent / rubber — not permeable.
+  //   synthetic — genuinely ambiguous. It covers both a coated waterproof PU upper and a soft
+  //     textile one, so treating it as absorbent would reject shoes that are fine in rain.
+  //   other / unset — unknown is not inadequacy (consolidation spec acceptance criterion 8).
+  return ABSORBENT_FOOTWEAR_MATERIALS.some(material => materials.has(material))
 }
 
-// Ventilated footwear construction — open weave built to move air, which is the opposite of what
-// severe cold calls for. Deliberately NARROWER than the wet-sensitive list above: canvas and suede
-// soak, but they do not vent, so they are not cold-inappropriate for that reason. Same structured
-// fields, same "no name matching" discipline as every other reader here.
+// Ventilated footwear construction — a permeable upper built to move air, which is the opposite of
+// what severe cold calls for. Deliberately NARROWER than the absorbent list above: canvas and suede
+// soak but do not vent, so they are not cold-inappropriate for that reason.
+//
+// KNOWN LIMITATION, and the reason the schema changed alongside this: the shoes `fabric_category`
+// enum had no `knit` value until 2026-09-01, so knitted uppers were tagged inconsistently as `mesh`
+// OR `woven` depending on the photo. In one real wardrobe the word "knit" appears in four shoe names
+// split across both values — meaning a mesh-only rule caught some flyknit shoes and missed others by
+// tagging luck alone. `knit` now exists, but pieces tagged before it do not move on their own, so a
+// knit upper still filed under `woven` escapes THIS rule until retagged. It is caught by the
+// absorbent rule above either way, so the gap only affects dry severe cold.
 export function pieceHasVentilatedFootwearMaterial(p = {}) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return false
   const materials = new Set([
     String(p.fabric_category || '').toLowerCase().trim(),
     ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
   ].filter(Boolean))
-  return materials.has('mesh')
+  return materials.has('mesh') || materials.has('knit')
 }
 
 export function shoeCoverage(p) {

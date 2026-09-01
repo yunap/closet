@@ -1580,3 +1580,64 @@ the correct answer for this wardrobe, and the shortfall is disclosed rather than
 **Pre-existing bug surfaced, not fixed:** piece 289 "brown suede platform sandals" has `shoe_type`
 and `toe_shape` both NULL and therefore passes the existing cold open-toe gate. Tagging gap, not a
 rule gap.
+
+
+---
+
+## Appendix I — the mesh ruling widened to a class, and the schema gap under it (2026-09-01)
+
+Appendix H's mesh ruling was correct and **too narrow**. One live turn after it shipped —
+*"38°F and raining, walking for hours"* — the composer selected `taupe knit lace-up sneakers`, a
+visibly flyknit trainer. The rule had caught the instance; the engine simply routed to the next
+permeable shoe.
+
+### The root cause is a schema gap, not bad tagging
+
+The shoes `fabric_category` enum had **no `knit` value**:
+
+```text
+leather | suede | nubuck | patent | canvas | mesh | woven | synthetic | textile | rubber | other
+```
+
+A knitted upper has no correct tag, so the tagger picks whichever neighbour the photo suggests. In
+one real wardrobe the word "knit" appears in four shoe names split across **two** values — two
+tagged `mesh`, one `woven`. A mesh-only rule therefore fired on some flyknit shoes and missed others
+**by tagging luck alone**, which is not a property any gate should have.
+
+`knit` is now a valid shoes value in both copies of the tagger schema, described against `woven` so
+the two do not collide. Pieces tagged before the change do not move on their own.
+
+### The rule is now a physical class, argued without reference to any wardrobe
+
+```text
+absorbent (wet)   canvas · suede · nubuck · mesh · knit · woven · textile   — permeable fibre uppers
+ventilated (cold) mesh · knit                                              — built to move air
+excluded          leather · patent · rubber   not permeable
+                  synthetic                   ambiguous: covers coated waterproof PU and soft textile
+                  other · unset               unknown is not inadequacy (criterion 8)
+```
+
+`synthetic` staying out is the load-bearing exclusion: treating it as absorbent would reject shoes
+that are genuinely fine in rain.
+
+### Correction to how the earlier ruling was justified
+
+Appendix H reasoned partly from supply — *"widening would pull four walkable shoes out of every
+mild-cool turn"*. Those were four shoes in **one** wardrobe. **This app is not single-user**, and
+supply cannot calibrate a rule that ships to everyone: another user owns rain boots and loses
+nothing, a third owns only trainers and loses everything.
+
+The severity gating (mesh fine at 55°F, wrong at 38°F) survives that correction, because it rests on
+garment physics rather than on supply — but the justification recorded for it was the wrong one, and
+is restated here.
+
+Scarcity has its own owner: §9's `known inadequate` / `unknown` / `adequate` distinction and the
+disclosed-shortfall path. A user whose wardrobe cannot satisfy a context should be **told**, not
+served a weakened rule.
+
+### Measured, as information only
+
+`scratch/audit_shoe_material_tagging.mjs` (read-only, runs against any wardrobe) reports both the
+name/tag contradiction rate and the gate effect. On the reference wardrobe: 2 contradictions of 33
+shoes, and 8 shoes remain available on a cold wet day. Those numbers describe **that** wardrobe and
+are deliberately not an input to the rule.

@@ -26,6 +26,34 @@ const reasons = (piece, weatherProfile) => wholeWardrobePieceTrustDecision(piece
 
 // --- readers ------------------------------------------------------------------------------------
 
+test('the absorbent class is every permeable fibre upper, not a mesh special case', () => {
+  // Widened 2026-09-01 after a second incident: a "38°F and raining, walking for hours" turn picked
+  // `taupe knit lace-up sneakers` — a visibly flyknit trainer tagged `woven` — right after the
+  // mesh-only rule shipped. The rule had caught the instance, not the class. This is a claim about
+  // garment physics, so it is asserted per material rather than per wardrobe.
+  const shoe = (fabric_category) => ({ category: 'shoes', fabric_category, fiber_content: [] })
+  for (const material of ['canvas', 'suede', 'nubuck', 'mesh', 'knit', 'woven', 'textile']) {
+    assert.equal(pieceHasWetSensitiveFootwearMaterial(shoe(material)), true, material)
+  }
+  // Not permeable, or genuinely ambiguous. `synthetic` covers both a coated waterproof upper and a
+  // soft textile one, so treating it as absorbent would reject shoes that are fine in rain; `other`
+  // and unset are unknown, and unknown is not inadequacy.
+  for (const material of ['leather', 'patent', 'rubber', 'synthetic', 'other', '']) {
+    assert.equal(pieceHasWetSensitiveFootwearMaterial(shoe(material)), false, material || '(unset)')
+  }
+})
+
+test('the ventilated class is narrower — soaking and venting are different properties', () => {
+  const shoe = (fabric_category) => ({ category: 'shoes', fabric_category, fiber_content: [] })
+  for (const material of ['mesh', 'knit']) {
+    assert.equal(pieceHasVentilatedFootwearMaterial(shoe(material)), true, material)
+  }
+  // Canvas and suede soak but do not vent, so they are absorbent without being cold-inappropriate.
+  for (const material of ['canvas', 'suede', 'woven', 'textile', 'leather']) {
+    assert.equal(pieceHasVentilatedFootwearMaterial(shoe(material)), false, material)
+  }
+})
+
 test('mesh is both wet-sensitive and ventilated; canvas and suede are only wet-sensitive', () => {
   assert.equal(pieceHasWetSensitiveFootwearMaterial(MESH), true)
   assert.equal(pieceHasVentilatedFootwearMaterial(MESH), true)
