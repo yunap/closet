@@ -806,3 +806,40 @@ pure model output.
   add/edit/retag path only.
 - **10 screening cases plus one production call** is not a powered study. It is enough to justify
   a reversible default on one wardrobe; it is not enough to bound a rare-failure rate.
+
+### 6f. Truncation at the token cap — found in live use, 2026-09-02
+
+The first real tagging session after §6e's switch hit the tagger's `maxTokens` cap and failed:
+
+```text
+Model response hit the token cap (maxTokens: 2500) and was truncated before valid JSON completed
+```
+
+Measured against `ai_call_log`, output tokens on the old cap:
+
+```text
+claude-haiku-4-5       1735    69%
+claude-sonnet-4-6      1662    66%
+gemini-3.1-flash-lite  1571    63%
+gemini-3.1-flash-lite  2496   100%   ← truncated mid-JSON, same schema, same model
+```
+
+**1571 → 2496 on identical work is the finding.** The cap was not marginally low; it sat inside the
+model's ordinary output variance. Two things moved into that margin at once — the schema gained two
+output fields (`fiber_content_completeness`, `insulating_layer_materials`) and the default tagger
+became a markedly more verbose model.
+
+**§6d saw this exact truncation during screening and dismissed it.** Its own note reads: *"a repeat
+of the identical call completed normally… ordinary run-to-run variance, not a systematic defect."*
+That was right about the variance and wrong about the consequence — a model whose output varies by
+900 tokens needs headroom, not a clean repeat. The screen measured cost and latency carefully and
+never asked how close to the ceiling the winning tier ran.
+
+Raised to **4000** for single-piece tagging and **5000** for `/extract-pieces`, which emits the same
+expanded schema once per garment from one photo and is structurally more exposed. Output tokens are
+billed as produced, so a higher ceiling costs nothing unless used: a full 4000-token Gemini 3.1
+response is $0.006.
+
+**Telemetry gap, unfixed:** the truncated call is recorded in `ai_call_log` with `success = 1`,
+because the provider returned 200 and the failure only appeared when the body would not parse. A
+truncation is invisible in the spend log and visible only in the app error.

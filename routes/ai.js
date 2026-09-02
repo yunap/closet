@@ -504,7 +504,25 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     // ("Unterminated string in JSON at position 5084") at the prior cap —
     // spec 22 fixed the 400 the truncated body caused on the Anthropic
     // path, but the underlying truncation itself was still live.
-    maxTokens: 2500,
+    //
+    // RAISED 2500 -> 4000 on 2026-09-02, after a live retag truncated again. Two things moved at
+    // once: the schema grew two output fields (fiber_content_completeness,
+    // insulating_layer_materials) and Gemini 3.1 Flash-Lite became the tagger default, which is
+    // markedly more verbose than Haiku. Measured on real calls against the old cap:
+    //
+    //   claude-haiku-4-5       1735   69%
+    //   claude-sonnet-4-6      1662   66%
+    //   gemini-3.1-flash-lite  1571   63%
+    //   gemini-3.1-flash-lite  2496  100%   <- truncated mid-JSON, same schema, same model
+    //
+    // That 1571 -> 2496 spread on identical work is the point: the cap was not marginally low, it
+    // was inside the model's ordinary variance. docs/tagger-cost-spec.md §6d saw this exact
+    // truncation once during screening and dismissed it as run-to-run noise after a single clean
+    // repeat — correct about the variance, wrong to leave the headroom unchanged.
+    //
+    // Output tokens are billed as produced, so a higher ceiling costs nothing unless it is used:
+    // at Gemini 3.1's $1.50/M output, even a full 4000-token response is $0.006.
+    maxTokens: 4000,
     ...(model ? { model } : {}),
     ...(providerOverride ? { providerOverride } : {}),
     messages: [{
@@ -1537,7 +1555,10 @@ router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
 
     const raw = await askStylist({
       system: EXTRACT_PIECES_SYSTEM,
-      maxTokens: 3000,
+      // Raised with the tagger's own cap 2026-09-02 and for the same reason, with more headroom:
+      // this emits the same expanded per-garment schema MULTIPLE times from one photo, so it is
+      // structurally more exposed to the cap than the single-piece path that actually truncated.
+      maxTokens: 5000,
       // Vision garment extraction — same job as tagPieceWithProvider, just multi-piece from one
       // photo, so it uses the tagger's own config rather than the general stylist one.
       providerOverride: taggerProviderOverride,
