@@ -2532,7 +2532,6 @@ function planWorkbenchPieceLine(piece = {}) {
     // buildWardrobePieceTruthText, so it needs the capability facts explicitly or the planner is
     // the one model-facing surface that cannot see them. Values come from the shared display
     // helper; only the `key:value` house style is local.
-    capability.role ? `outerwear_role:${capability.role.replace(/ /g, '_')}` : '',
     capability.protection ? `weather_protection:${capability.protection}` : '',
     pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',

@@ -19,7 +19,7 @@
 //
 // Severity follows evaluateWearableOutfit's existing convention: `severity: 'error'` is a hard
 // finding, anything else is advisory.
-import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup } from './attributes.js'
+import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup, thermalMaterialVerdict, pieceWeatherProtection, garmentKind } from './attributes.js'
 import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 
@@ -104,6 +104,48 @@ function baseIsWarmSeasonOnly(pieces) {
 function baseLayersAreFullyMeasured(pieces) {
   const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
   return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
+}
+
+// Can this layer serve as the OUTERMOST layer in severe cold?
+//
+// This replaces the `outerwear_role` gate (docs/outerwear-role-ontology-spec.md). That tag asked a
+// garment to carry a condition-free answer to a question that has none — a light cardigan is
+// adequate outdoors at 74°F and not at 40°F — and it was consulted from here, the one place that
+// already knows the temperature.
+//
+// Built from facts that are genuinely intrinsic, and following this file's own method: no new
+// threshold. `SEVERE_COLD_SYSTEM_COLD_FLOOR` below still does all the quantitative work; this
+// function only sorts a layer into the same three buckets the role did, so the surrounding severity
+// ladder is unchanged.
+//
+// Criterion 8 shapes the asymmetry, as everywhere else here. 'insufficient' requires POSITIVE
+// evidence of inadequacy — see-through construction, or a composition established as carrying no
+// insulation. Absence of evidence stays 'unknown' and cannot hard-fail an outfit.
+//
+// `non_insulating` is now reachable precisely because it demands an explicit human assertion (a
+// complete composition AND "no insulating layer"), which is exactly the positive-evidence standard
+// this branch needs. Under the old tag the equivalent signal was a model's guess.
+function outerLayerSevereColdAdequacy(piece = {}) {
+  // Same bar the cool tier uses, and for the same reason: a sheer shrug is not a coat, and opacity
+  // is a defined tagged field rather than a number someone picked.
+  if (SEE_THROUGH_OPACITY.has(String(piece?.opacity || '').toLowerCase().trim())) return 'insufficient'
+
+  // CONSTRUCTION FIRST, and this ordering was measured rather than assumed. A first version tested
+  // thermal evidence before construction, and it moved 23 of 33 outerwear pieces between buckets —
+  // sending cashmere cardigans to 'adequate' for 28°F outdoor exposure, which is precisely what the
+  // old gate existed to prevent. Insulating MATERIAL is not the same claim as "built to be the
+  // layer you go outside in": a wool cardigan is warm and is still not a coat.
+  const kind = String(garmentKind(piece) || '')
+  if (['cardigan', 'vest'].includes(kind)) return 'insufficient'
+  if (!['coat', 'jacket'].includes(kind)) return 'unknown'
+
+  // Within outdoor construction, warmth or a weather barrier decides. "A shell over real insulation
+  // passes" — this branch's own existing comment, now executable.
+  if (thermalMaterialVerdict(piece) === 'insulating') return 'adequate'
+  if (pieceWeatherProtection(piece).length) return 'adequate'
+  if (fabricWeight(piece) === 'heavy') return 'adequate'
+  if (thermalMaterialVerdict(piece) === 'non_insulating') return 'insufficient'
+  return 'unknown'
 }
 
 // remedy is opt-in rather than automatic: the migrated minimum-warmth floor (below) keeps its
@@ -243,8 +285,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // new hard requirement here. Only severe cold asks for a genuine outdoor-capable layer, and even
   // then the role is evidence rather than a gate — a shell over real insulation passes.
   if (weather.isColdSevere && !indoorDestination) {
-    const verdicts = layers.map(piece => ({ piece, ...evaluateOuterwearCapability(piece, { requireOutdoorLayer: true }) }))
-    const outdoorCapable = verdicts.filter(v => v.verdict === 'pass')
+    const verdicts = layers.map(piece => ({ piece, verdict: outerLayerSevereColdAdequacy(piece) }))
+    const outdoorCapable = verdicts.filter(v => v.verdict === 'adequate')
     const unknown = verdicts.filter(v => v.verdict === 'unknown')
     const systemCold = systemColdScore(list)
     evidence.systemColdScore = systemCold
@@ -298,8 +340,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_TRANSIT_LAYER_FOR_SEVERE_COLD,
         'the indoor base may stay light, but this outfit has no removable sleeve-bearing layer for cold transit', { evidence, remedy: true }))
     } else {
-      const verdicts = removable.map(piece => evaluateOuterwearCapability(piece, { requireOutdoorLayer: true }))
-      if (verdicts.every(v => v.verdict === 'insufficient')) {
+      const verdicts = removable.map(piece => outerLayerSevereColdAdequacy(piece))
+      if (verdicts.every(v => v === 'insufficient')) {
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.TRANSIT_LAYER_NOT_OUTDOOR_CAPABLE,
           'the removable layer here stays on indoors rather than functioning as outdoor outerwear for cold transit', { evidence, remedy: true }))
       }
