@@ -17,6 +17,7 @@ scratch/*
 !scratch/backfill_gate_metadata.js
 !scratch/recall_at_cap.js
 !scratch/check_style_claims.js
+!scratch/check_tagger_output_budget.js
 !scratch/backfill_retagger.js
 !scratch/build_dedup_fix_demo_thread.js
 !scratch/derive_surface_skeleton.js
