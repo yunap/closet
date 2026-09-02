@@ -24,6 +24,9 @@ import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
+  NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
+  COOL_LAYER_IS_SEE_THROUGH: 'outfit_cool_layer_is_see_through',
+  NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
   NO_OUTDOOR_LAYER_FOR_SEVERE_COLD: 'outfit_no_outdoor_capable_layer_for_severe_cold',
@@ -63,6 +66,41 @@ function systemColdScore(pieces) {
 // POSITIVE evidence of inadequacy — the same class as an indoor_layer-only outfit, which hard-fails.
 // A base with any unmeasured piece is absence of evidence, which acceptance criterion 8 says must
 // never become invalidity.
+// Does at least one layer plausibly DO something in cool conditions?
+//
+// The first cut of the cool tier tested `!layers.length` — which is `Boolean(layer)`, the exact
+// shortcut §7 of this arc's spec exists to delete from the cold branch, reintroduced one tier up.
+// It shipped live: two cards satisfied "you need something to put on" with a `semi_sheer` shrug.
+//
+// The bar is SEE-THROUGH-NESS, not a thermal threshold. A thermal bar was tried first and rejected:
+// measured `cold` scores put a sheer shrug at -8, a light unlined cotton jacket at -2, a sleeveless
+// vest at 0 and a knit cardigan at 12. Any cutoff that excludes the shrug also excludes the light
+// jacket, which is perfectly reasonable outerwear for a cool evening — and picking a number between
+// -2 and -8 would be exactly the arbitrary threshold this arc keeps having to walk back.
+//
+// `opacity` is an existing tagged field with a clear definition ("sheer: clearly see-through";
+// "semi_sheer: skin/light hints through") and it is the actual reason a shrug does not help. An
+// unset opacity counts as adequate, for the same criterion-8 reason unmeasured warmth does.
+const SEE_THROUGH_OPACITY = new Set(['sheer', 'semi_sheer'])
+
+function someLayerContributesWarmth(layers) {
+  return layers.some(piece => !SEE_THROUGH_OPACITY.has(String(piece?.opacity || '').toLowerCase().trim()))
+}
+
+// Is the whole base tagged as warm-season clothing?
+//
+// CORROBORATION ONLY. docs/piece-season-as-weather-evidence.md is explicit that `season` is
+// wearer-INTENT evidence, not physical thermal evidence, and must never independently exclude a
+// garment or create a finding. This function is therefore only ever consulted to enrich a shortfall
+// the physical rule has ALREADY found — never in a condition that decides one.
+//
+// The control that keeps the hierarchy honest: delete this function and every finding still fires,
+// with a shorter message. There is a test asserting exactly that.
+function baseIsWarmSeasonOnly(pieces) {
+  const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
+  return base.length > 0 && base.every(piece => String(piece?.season || '').toLowerCase().trim() === 'warm')
+}
+
 function baseLayersAreFullyMeasured(pieces) {
   const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
   return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
@@ -117,6 +155,67 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     isCold: Boolean(weather.isCold),
     isColdSevere: Boolean(weather.isColdSevere),
     transitIsColdSevere: Boolean(weather.transitIsColdSevere),
+    transitNeedsRemovableCoolLayer: Boolean(weather.transitNeedsRemovableCoolLayer),
+  }
+
+  // --- removable layer for the cool end of the day (docs/cool-weather-tier-spec.md) --------------
+  //
+  // The 45-80F blind spot. `isCold` needs lowF <= 45, so a 65F/48F October day produced NO weather
+  // handling at all and a live trip card shipped a sleeveless tank with no layer. This tier answers
+  // a different question from the two below it — not "how warm should the base be" but "does this
+  // outfit need something the wearer can put ON" — which is why it reads the LOW while severity
+  // reads the high.
+  //
+  // Satisfied ONLY by an actual layer. A warm base deliberately does not count: on a 72F/55F day
+  // that would approve a heavy long-sleeved top worn through the 72F afternoon, leaving the wearer
+  // overdressed by day and still with nothing to add at dusk. The point of a removable layer is that
+  // the base can stay mild.
+  //
+  // Fires only when `isCold` has NOT — it fills the gap above that cliff rather than duplicating the
+  // floor below it, which accepts a heavy main and would otherwise produce two findings for one
+  // outfit. §8 of the spec requires an audit of isCold's consumers now that a graded tier exists
+  // beneath it; until then the two stay disjoint by construction.
+  // Corroboration text, appended to a cool-tier finding that has already fired on physical grounds.
+  // Never a condition, never a severity change — see baseIsWarmSeasonOnly.
+  const warmSeasonBase = baseIsWarmSeasonOnly(list)
+  const corroborate = (message) => warmSeasonBase
+    ? `${message}, and every piece under it is tagged as warm-season clothing`
+    : message
+  if (warmSeasonBase) evidence.baseIsWarmSeasonOnly = true
+
+  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
+    if (!layers.length) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
+        corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed'),
+        { evidence, remedy: true }))
+    } else if (!someLayerContributesWarmth(layers)) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
+        corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
+        { evidence, remedy: true }))
+    }
+  }
+
+  // The transit half of the same tier, added 2026-09-01 after it was recorded as a known gap and
+  // then immediately caused two bad cards. `museum` and `gallery` classify as indoor
+  // (outfitSetPlanner.js), so the branch above skips those slots entirely — and with nothing reading
+  // transitNeedsRemovableCoolLayer, two Museum Visits cards shipped as a bare dress plus shoes for a
+  // 48F walk to and from the building. An indoor destination excuses the BASE from cold, never the
+  // trip there.
+  //
+  // Disjoint from the cold-transit floor below for the same reason the outdoor tier is disjoint from
+  // isCold: that floor already owns transitIsCold, and it demands MORE — sleeve-bearing coverage.
+  // The gradient is deliberate. Cool transit asks for something to put on; cold transit asks for
+  // something that covers your arms.
+  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
+    if (!layers.length) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
+        corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back'),
+        { evidence, remedy: true }))
+    } else if (!someLayerContributesWarmth(layers)) {
+      findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
+        corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
+        { evidence, remedy: true }))
+    }
   }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------

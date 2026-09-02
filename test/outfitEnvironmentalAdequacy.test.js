@@ -286,3 +286,229 @@ test('a mild band does not manufacture severity', () => {
   assert.equal(context.temperature.isCold, false)
   assert.equal(context.temperature.isColdSevere, false)
 })
+
+// --- needsRemovableCoolLayer (docs/cool-weather-tier-spec.md) -----------------------------------
+
+test('COOL: an outfit with no layer at all is a hard finding', () => {
+  // The live defect: a 65F/48F October day produced no weather handling whatsoever, because isCold
+  // needs lowF <= 45. Both Sightseeing cards shipped with no outer layer; one was a sleeveless tank.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'supply-sensitive findings name a legal move')
+})
+
+test('COOL: any layer satisfies it — an indoor_layer cardigan counts', () => {
+  // This tier asks for removable coverage, not outdoor capability. An indoor_layer is a perfectly
+  // good answer to "it gets cool at dusk"; requiring outdoor capability is the severe tier's job.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL: a WARM BASE does not satisfy it — removability is the point', () => {
+  // On a 72F/55F day, accepting a heavy long-sleeved top would approve an outfit that is too warm
+  // through the 72F afternoon AND still has nothing to add at dusk. The base may stay mild; what is
+  // required is something to put on.
+  const result = evaluateOutfitEnvironmentalAdequacy(
+    [top({ fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' }), bottom(), shoes()],
+    { weatherProfile: { needsRemovableCoolLayer: true } },
+  )
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+})
+
+test('COOL: silent on a genuinely warm day', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: {},
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL: does not double-fire with the isCold floor', () => {
+  // Below 45F the minimum-warmth floor already owns this outfit, and it accepts a heavy main where
+  // this tier would not. Two findings for one outfit would be noise, so the tiers stay disjoint by
+  // construction until §8's isCold consumer audit unifies them.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true, isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
+})
+
+test('COOL: an indoor destination needs no layer for the destination itself', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('the signal survives real resolution and its persistence round trip', () => {
+  // [R1]'s lesson: propagate at the source and assert against the real resolver, not a literal.
+  const context = resolveWeatherContext({
+    modelEstimate: { highF: 65, lowF: 48, precipitation: 'unknown', wind: 'unknown' },
+    location: 'Vienna, Virginia',
+    dateRange: { start: '2026-10-12', end: '2026-10-19' },
+  })
+  assert.equal(context.temperature.isCold, false, '48F clears the isCold cliff — this is the blind spot')
+  assert.equal(context.temperature.needsRemovableCoolLayer, true)
+
+  const restored = restoreResolvedWeatherContext(serializeResolvedWeatherContext(context))
+  assert.equal(restored.temperature.needsRemovableCoolLayer, true)
+})
+
+test('a genuinely warm day does not manufacture a cool-layer requirement', () => {
+  const context = resolveWeatherContext({
+    modelEstimate: { highF: 85, lowF: 68, precipitation: 'unknown', wind: 'unknown' },
+    location: 'Vienna, Virginia',
+    dateRange: { start: '2026-07-12', end: '2026-07-19' },
+  })
+  assert.equal(context.temperature.needsRemovableCoolLayer, false)
+})
+
+test('COOL TRANSIT: an indoor destination excuses the base, never the trip there', () => {
+  // Live: `museum` and `gallery` classify as indoor, so the outdoor cool branch skips those slots.
+  // With nothing reading transitNeedsRemovableCoolLayer, two Museum Visits cards shipped as a bare
+  // dress plus shoes for a 48F walk to and from the building.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+})
+
+test('COOL TRANSIT: any layer satisfies it — including a sleeveless one', () => {
+  // The gradient is deliberate: cool transit asks for something to put on, cold transit asks for
+  // something that covers your arms. A vest is a legitimate answer to a 50F walk to dinner.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), SLEEVELESS_VEST], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL TRANSIT: does not double-fire with the cold-transit floor', () => {
+  // Below 45F the cold-transit floor already owns it AND demands more (sleeve-bearing), so the
+  // cool tier stands down rather than adding a second, weaker finding for the same outfit.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitIsCold: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_TRANSIT_LAYER_FOR_COLD])
+})
+
+test('COOL TRANSIT: silent when the trip itself is warm', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true }, environment: 'indoor',
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL: a see-through layer does not satisfy the tier', () => {
+  // Live regression of my own making: `!layers.length` is Boolean(layer) — the exact shortcut §7 of
+  // the consolidation spec deletes from the cold branch, reintroduced one tier up. Two cards
+  // satisfied "you need something to put on" with a semi_sheer shrug scoring -8.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})
+
+test('COOL: a cardigan satisfies it, and so does a light opaque jacket', () => {
+  // The bar is see-through-ness, not a thermal cutoff. A light unlined jacket scores BELOW a sheer
+  // shrug is not true — it scores -2 against the shrug's -8 — and any threshold excluding the shrug
+  // would also exclude the jacket, which is reasonable cool-evening outerwear.
+  const lightJacket = { id: 32, category: 'outerwear', name: 'light cotton jacket', fabric_weight: 'light', opacity: 'opaque', fiber_content: ['cotton'], sleeve_length: 'long' }
+  const jacketResult = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), lightJacket], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(jacketResult), [])
+})
+
+test('COOL: a cardigan satisfies it', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL: a layer with UNSET opacity counts as adequate', () => {
+  // Criterion 8 again. Unknown is not inadequate, and treating it so is the mistake this arc has
+  // already made twice.
+  const untagged = { id: 31, category: 'outerwear', name: 'untagged jacket' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), untagged], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('COOL TRANSIT: the adequacy bar applies there too', () => {
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})
+
+// --- piece.season corroboration (docs/piece-season-as-weather-evidence.md) -----------------------
+
+const warmTop = (id = 40) => ({ id, category: 'top', name: 'summer tee', fabric_weight: 'light', season: 'warm' })
+const warmBottom = (id = 41) => ({ id, category: 'bottom', name: 'linen pants', fabric_weight: 'light', season: 'warm' })
+const neutralTop = (id = 42) => ({ id, category: 'top', name: 'knit top', fabric_weight: 'light', season: 'year-round' })
+const neutralBottom = (id = 43) => ({ id, category: 'bottom', name: 'trousers', fabric_weight: 'light', season: 'year-round' })
+
+test('season NEVER creates a finding — a warm-season base with a real layer is fine', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes(), CARDIGAN], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(codes(result), [], 'no physical shortfall, so nothing for season to corroborate')
+})
+
+test('season corroborates a shortfall the physical rule already found', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+  assert.equal(result.evidence.baseIsWarmSeasonOnly, true)
+})
+
+test('THE CONTROL: the same shortfall fires without season corroboration', () => {
+  // This is what keeps the evidence hierarchy honest. Swap the season tags for `year-round` and the
+  // finding is identical in code and severity — only the explanatory clause disappears. Delete the
+  // corroboration entirely and every finding still fires.
+  const withSeason = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  const withoutSeason = evaluateOutfitEnvironmentalAdequacy([neutralTop(), neutralBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(withoutSeason), hardCodes(withSeason), 'same code')
+  assert.equal(withoutSeason.hardFindings[0].severity, withSeason.hardFindings[0].severity, 'same severity')
+  assert.doesNotMatch(withoutSeason.hardFindings[0].message, /warm-season/)
+  assert.ok(!withoutSeason.evidence.baseIsWarmSeasonOnly)
+})
+
+test('a MIXED base does not corroborate — every piece must be warm-season', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), neutralBottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
+})
+
+test('season corroboration reaches the transit finding too', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+})
+
+test('season does not leak into the cold or severe tiers', () => {
+  // Those tiers have better physical evidence and were deliberately left alone; the corroboration
+  // is scoped to the cool tier only.
+  const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
+  assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
+})
