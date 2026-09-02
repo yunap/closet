@@ -1,7 +1,9 @@
 # Spec — what `outerwear_role` is supposed to own
 
-**Status:** Proposed 2026-09-02. **No implementation, deliberately** — the first question is
-ontological and needs an owner ruling before any prompt or code changes. **Route:**
+**Status:** Ruled 2026-09-02, **no implementation**. Conclusion: `outerwear_role` is deprecated
+with **no replacement tag** — outdoor adequacy is a contextual verdict, not a garment fact. Two
+earlier positions in this document were superseded during the discussion and are kept visible
+(§6, §6.1) because the reasoning is the point. **Route:**
 [docs/README.md](README.md). Amends
 [outerwear-weather-capability-spec.md](outerwear-weather-capability-spec.md); continues the open
 ruling recorded in
@@ -150,83 +152,83 @@ between a garment's warmth and a day's demand — which is precisely what the th
 now computes. Storing it as an intrinsic tag duplicates that authority in a field a model assigns
 from a photo.
 
-### 6.1 Proposed replacement
+### 6.1 A replacement was proposed, and then withdrawn
+
+The first replacement was `can_serve_as_outdoor_layer: yes | no | unknown`. **Owner objection, and
+it is decisive: that field still has no stable answer.**
 
 ```text
-can_serve_as_outdoor_layer:  yes | no | unknown
+74°F   light cardigan          → yes
+58°F   light cardigan          → probably insufficient
+58°F   substantial wool cardigan → yes
+35°F   both                    → insufficient as the sole outer layer
 ```
 
-One question: **can this piece legitimately be the outermost layer for outdoor exposure?** Note
-this is *not* "is it worn indoors" — a cardigan can be worn outdoors in mild weather, and the
-current `indoor_layer` name conflates the two.
+"Can serve outdoors" is not a property of a garment. It is a relationship between a garment and a
+day. Storing it as an intrinsic tag smuggles weather demand into a garment fact — the same defect
+as `transition_layer`, wearing a cleaner name.
 
-## 7. Measurement — what the engine actually uses
+**This reached §8's stop condition analytically, before spending anything on the screen.** The
+screen was going to ask whether a tagger can answer the question reliably; the question has no
+condition-free answer, so no tagging accuracy could have rescued it.
 
-### 7.1 The enum already collapses to one bit
+## 7. Conclusion — the capability is a verdict, not a tag
 
-`outerwearCapability.js` is the only place the values branch:
+Nothing replaces `outerwear_role`. Its one live job becomes a contextual judgment, computed where
+the conditions are already known.
+
+```text
+intrinsic garment facts          contextual verdict
+  garmentKind                      given these facts AND today's conditions,
+  thermal evidence                 is this adequate as the outermost layer
+  coverage                         for THIS outing?
+  insulating_layer_materials
+  weather_protection
+  construction
+```
+
+`transition_layer`, `cold_weather_outerwear` and `can_serve_as_outdoor_layer` are all the same
+mistake at different resolutions: a stored answer to a question that only has answers in context.
+
+### 7.1 The contextual home already exists — and is already the only caller
+
+**`outfitEnvironmentalAdequacy.js` (Contract C) is the sole consumer of `requireOutdoorLayer`.**
+Both call sites are inside weather branches that already hold the temperature:
 
 ```js
-const OUTDOOR_CAPABLE_ROLES = new Set(['transition_layer', 'protective_shell', 'cold_weather_outerwear'])
+if (weather.isColdSevere && !indoorDestination) {
+  const verdicts = layers.map(piece => evaluateOuterwearCapability(piece, { requireOutdoorLayer: true }))
 ```
 
-Three to one. Every other reference passes the raw string through to a prompt or a cache key. The
-field's own comment states the intent outright: *"indoor_layer is the whole point of the field."*
-**So replacing four values with `yes|no|unknown` discards no deterministic behaviour** — it removes
-three distinctions nothing reads.
+So a condition-free garment tag is being consulted from the one place in the codebase that knows
+the condition. That is the whole argument in one line: the evaluator can ask "is this adequate at
+28°F" directly, and does not need the tagger to have guessed "is this adequate outdoors" at tagging
+time with no temperature in hand.
 
-### 7.2 The bit is largely predicted by `garmentKind` already
+Contract C already computes exactly this shape of judgment for warmth — `hasMinimumWarmLayer`,
+`someLayerContributesWarmth`, `systemColdScore`, `baseLayersAreFullyMeasured`. Outdoor adequacy is
+the same question about the outer layer, and it belongs beside them.
 
-Across all 33 tagged outerwear pieces, `garmentKind ∈ {jacket, coat}` predicts the current
-outdoor-capable bit **27/33 = 82%** of the time. All six disagreements are the same shape —
-`garmentKind: jacket` filed as `indoor_layer`:
+Note the existing comment at the severe-cold branch already concedes the direction: *"the role is
+evidence rather than a gate — a shell over real insulation passes."* The field was already being
+demoted to evidence by the code that reads it.
 
-```text
-141     sheer black shrug                    plausibly indoor
-184     patchwork knit buttoned top          plausibly indoor
-250     charcoal textured cropped jacket     tweed — reads outdoor
-990358  navy technical hoodie                technical/performance — reads outdoor
-990441  grey layered zip jacket              technical/performance — reads outdoor
-996768  Duster                               a duster is an outdoor layer by definition
-```
+### 7.2 The one possible survivor
 
-Two readings, and they point the same way. Either the field contributes almost nothing beyond
-garment kind, or its unique contribution is **four probable mis-tags out of six**. Neither
-supports keeping a four-way enum.
+A genuinely construction-based fact — *"built as an external shell"* — is condition-free and might
+deserve to exist. But it is probably already expressible as `garmentKind` + `weather_protection`,
+and §4 shows that pair working. Not proposed here; noted so it is a decision rather than an
+oversight.
 
-This also closes a loop with Appendix F, which found three separate rules reconstructing
-indoor-wearability from `garmentKind === 'cardigan'`. The tagger appears to be doing the same thing
-implicitly — 13 of 19 `indoor_layer` pieces are cardigans or vests.
+## 8. What this means for the field
 
-### 7.3 `indoor_layer = no` is too coarse
-
-Confirmed by the same six rows. A technical hoodie and a layered zip jacket are outdoor-wearable by
-any ordinary reading; filing them as "not what you put on to walk outside" is wrong, not merely
-debatable.
-
-## 8. What must be measured before implementing
-
-**The open question is whether a tagger can reliably answer `yes|no|unknown` from photos.** §7.2
-suggests the current boundary is being drawn largely from garment kind, with errors where it is
-not — so a rename alone may reproduce the same mistakes under a cleaner label.
-
-Proposed screen, cheap now that tagging is on Gemini 3.1 Flash-Lite at ~$0.008/garment:
-
-1. Re-tag the six §7.2 disagreements plus a control set of clear yes/no cases under a prompt that
-   asks the new question directly, with the examples in §8.1.
-2. Adjudicate against the photos, owner-ruled, the way §6b/§6d of the cost spec did.
-3. **Stop condition:** if the model cannot separate a technical hoodie from a knit shrug, the
-   capability is not reliably taggable and belongs at outfit time instead — derived from
-   `garmentKind` + thermal evidence + weather demand rather than stored.
-
-### 8.1 Examples the prompt should carry
-
-```text
-yes:      wool coat · leather jacket · denim jacket · trench · puffer · windbreaker · rain shell
-          · a substantial cardigan genuinely usable outside
-no:       lightweight indoor cardigan · knit shrug · house/indoor-only layer
-unknown:  evidence insufficient
-```
+- **Deprecate `outerwear_role`.** No replacement tag.
+- **Do not run the §8 screen.** Its stop condition was reached by argument; spending Gemini calls
+  to confirm a question is unanswerable would be waste.
+- **Contract B keeps its shape** for the parts that are genuinely intrinsic — `weather_protection`
+  hazards. Its `requireOutdoorLayer` requirement moves to Contract C as a weather-aware judgment.
+- **Nothing is deleted until the replacement judgment exists.** Removing the field first would
+  silently drop the severe-cold outdoor check.
 
 ## 9. Migration notes
 
