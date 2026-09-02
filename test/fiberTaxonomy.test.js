@@ -5,9 +5,9 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
-import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial } from '../styling-engine/attributes.js'
+import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE } from '../styling-engine/attributes.js'
 import { warmthCalibrationEvidenceState, proposedWarmthLevel } from '../styling-engine/warmthCalibration.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
@@ -302,4 +302,46 @@ test('warmth calibration: unverified is not the same as uncharacterized', () => 
   // Without the starting fact there is nothing to calibrate from.
   assert.equal(state({ fabric_category: 'knit', fiber_content: ['wool'] }), 'insufficient_evidence')
   assert.equal(proposedWarmthLevel({ fabric_category: 'knit', fiber_content: ['wool'] }), null)
+})
+
+test('the editor projects fibre chips from taxonomy metadata and keeps no local copy', () => {
+  // §7.5. The screenshot that started this showed a coat being offered pearl, enamel, horn and
+  // ceramic in a flat wall of 35 chips with `down` unmarked in the middle. Grouping and filtering
+  // are now projections of FIBER_FAMILIES / FIBER_FAMILY_APPLICABILITY.
+  const groups = category => Object.entries(FIBER_FAMILIES)
+    .filter(([family]) => (FIBER_FAMILY_APPLICABILITY[family] || []).includes(category))
+
+  const outerwear = groups('outerwear')
+  const shown = outerwear.flatMap(([, values]) => values)
+  assert.equal(shown.length, 24, 'a coat sees 24 chips, not all 35')
+  for (const jewelleryOnly of FIBER_FAMILIES.jewelry_material) {
+    assert.ok(!shown.includes(jewelleryOnly), `${jewelleryOnly} must not be offered on a coat`)
+  }
+  assert.ok(shown.includes('down'), 'and down must still be there — under a labelled warm family')
+  assert.deepEqual(outerwear.find(([f]) => f === 'insulating')[1], FIBER_FAMILIES.insulating)
+
+  // Accessories keep the full list, which is the point of the applicability metadata.
+  assert.equal(groups('accessory').flatMap(([, v]) => v).length, 35)
+
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
+  assert.match(source, /FIBER_FAMILY_APPLICABILITY/)
+  assert.ok(!/const FIBER_OPTIONS\s*=\s*\[/.test(source), 'no local fibre list may reappear')
+})
+
+test('the editor warning claims ambiguity, never that a garment is non-insulating', () => {
+  // The app has established no such thing for these pieces — saying it would contradict the
+  // verdict layer. The warning is driven by the shared calibration state, not a local heuristic.
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
+  assert.match(source, /warmthCalibrationEvidenceState\(form\) === 'thermally_ambiguous'/)
+  assert.ok(!/fabric_weight === 'heavy'\s*&&/.test(source),
+    'the editor must not re-derive thermal ambiguity from weight/fabric locally')
+  const warning = source.slice(source.indexOf('data-piece-field="fiber_content_ambiguous"'))
+    .slice(0, source.slice(source.indexOf('data-piece-field="fiber_content_ambiguous"')).indexOf('</div>'))
+  assert.match(warning, /don’t say how warm this is/)
+  assert.ok(!/not insulating|non-insulating/i.test(warning),
+    'the rendered copy must not claim a thermal verdict the app has not established')
+
+  // Consequence copy comes from the canonical registry, and `gate` is not user-facing meaning.
+  assert.match(source, /FIELD_CONSEQUENCE\[field\]/)
+  assert.equal(FIELD_CONSEQUENCE.fiber_content, 'Affects warmth and weather suitability')
 })

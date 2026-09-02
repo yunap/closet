@@ -19,6 +19,20 @@ export const OUTERWEAR_ROLE_VALUES = ['indoor_layer', 'transition_layer', 'prote
 export const WEATHER_PROTECTION_VALUES = ['rain', 'wind']
 export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
+// What a field actually DECIDES, in the owner's terms — the registry the editor projects.
+//
+// Deliberately NOT keyed off GATE_CRITICAL_FIELDS. That list is an implementation concern (which
+// fields the intake review chases) and does not define any field's user-facing meaning; letting it
+// own this text would quietly make it a second field-semantics registry. A field's consequence
+// belongs with its own definition, and this is the lookup point.
+//
+// Only the fibre fields are populated so far — the rest is a follow-up audit, not an omission to
+// paper over with generic copy. A field with no entry renders no consequence line.
+export const FIELD_CONSEQUENCE = {
+  fiber_content: 'Affects warmth and weather suitability',
+  fiber_content_completeness: 'Lets the app tell "no warm fibres recorded" apart from "not checked"',
+}
+
 export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
 // Canonical sleeve-shape taxonomy: a functional sleeve-VOLUME classification answering "where does

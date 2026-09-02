@@ -735,7 +735,100 @@ jacket` (heavy, `synthetic`, plausibly lined). It also holds a few shoes and acc
 warmth scale should be scoring at all; those are excluded by category elsewhere and are not
 addressed here.
 
-## 14. Remaining
+## 14. Consumer census — **DONE 2026-09-01**, nothing migrated
+
+Ran before touching anything, because the 268-piece parity proof shows only that the wrapper
+preserves behaviour, not that the behaviour is right now a third state exists.
+
+**Decisive measurement first:**
+
+```text
+verdict today                         unknown 231   insulating 37   non_insulating 0
+verdict if every piece were complete   non_insulating 231   insulating 37
+garments in thermal-model scope that would become non_insulating: 176 of 210
+```
+
+`non_insulating` is **unreachable today**, so any migration keying on it is unfalsifiable right
+now — and once completeness is filled in it becomes the *dominant* state rather than a rare one.
+That is the argument for deciding it against real rows instead of in advance.
+
+| # | site | bucket | action |
+|---|---|---|---|
+| 1 | `thermal.js:120` | positive-evidence-only; **latent** negative-sensitive | none |
+| 2 | `rules.js:2501` | positive-evidence-only (hot-weather exclusion) | none |
+| 3 | `rules.js:3730` | positive-evidence-only | none |
+| 4 | `outfitSetPlanner.js:1643` | positive-evidence-only | none |
+| 5 | `outfitSetPlanner.js:2603` | positive-evidence-only | none |
+| 6 | `attributes.js:169` | positive-evidence-only; **latent** confidence gain | none |
+
+**All six are semantically correct as they stand.** `pieceHasInsulatingMaterial()` has never
+mistaken absence of positive evidence for evidence of absence — every caller asks only "do I have
+proof?" So it is **retained as a canonical positive-evidence helper, not deprecated debt.** The
+"delete the wrapper once no consumer remains" note in §12.3 is withdrawn.
+
+### 14.1 The two latent cases, docketed as future behaviour changes
+
+Neither is a migration. Both are new claims, and both need real `complete` rows before they can be
+evaluated at all.
+
+**#1 — `pieceWeatherEvidence` is a signed-term model,** so a confirmed negative is *representable*
+there in a way it is not anywhere else. A verified non-insulating garment could contribute negative
+cold evidence. The risk is double-counting: `massIndex` already carries "heavy". Direction if
+changed: heavy verified-synthetic coats rank down for cold — stricter. The fixture that would prove
+it is two heavy coats identical but for completeness, which cannot be built from real data yet.
+
+Note the null-check is already safe: `non_insulating` requires `complete`, which requires recorded
+fibres, which makes `pieceFiberBreathability` non-zero, so a piece never reaches the all-silent
+branch on that fact alone.
+
+**#6 — `pieceWarmthTier` already returns `null` for unknown,** so the third state is representable
+in its output today; it simply does not distinguish "no evidence" from "evidence says no". A
+verified-`complete` cotton piece with no `fabric_weight` falls through to coverage/bareness/null
+when we arguably know enough to say `light`. Direction if changed: looser, not stricter.
+
+## 15. UI projections — **DONE 2026-09-01**
+
+Projection-only, as the review required. The editor derives every one of these from a canonical
+owner and holds no material logic of its own.
+
+**Chips grouped and filtered from taxonomy metadata.** `FIBER_FAMILIES` supplies the grouping,
+`FIBER_FAMILY_APPLICABILITY` the per-category filter. A coat now sees **24 chips in 7 labelled
+groups** instead of a flat wall of 35; `pearl`, `enamel`, `horn`, `ceramic` and the rest of the
+jewellery family are gone from garments, and `down` sits under a **Warm / insulating** heading
+rather than unmarked in the middle of the wall. Accessories still see all 35 — which is what the
+applicability metadata is for.
+
+**Consequence copy from a canonical registry.** `FIELD_CONSEQUENCE` in `attributes.js`, keyed by
+field, explicitly **not** by `GATE_CRITICAL_FIELDS` — that list is an implementation concern and
+letting it own user-facing text would make it a second field-semantics registry. `gate` stays as an
+internal marker on the label and never carries meaning to the user. Only the fibre fields are
+populated; a field with no entry renders nothing, because generic filler is worse than silence.
+
+**The warning states ambiguity, not a verdict.** Driven by
+`warmthCalibrationEvidenceState(form) === 'thermally_ambiguous'`, never by a local heavy+synthetic
+heuristic:
+
+> The recorded materials don't say how warm this is. For a lined, padded or quilted piece, the fill
+> is usually what decides — and it's often only on the care label.
+
+It deliberately does **not** say "this garment is non-insulating." The app has established no such
+thing, and claiming it would contradict §12. A test asserts the rendered copy never makes that
+claim.
+
+### 15.1 What is verified, and what is not
+
+The projections are asserted deterministically — chip counts per category, jewellery values absent
+from garments, the warning bound to the shared state, no local fibre list or local ambiguity
+heuristic in the component — and `vite build` passes. **The rendered result has not been seen.**
+Driving the signed-in editor needs sandbox credentials, which is not something to do on the owner's
+behalf; the sandbox is running at `http://localhost:5174` for them to look at directly.
+
+Two defects the checks caught that a visual pass would also have shown: `.form-hint` and
+`.form-subgroup` were used in §11.4's completeness control **and never defined in any stylesheet**,
+and the family label was written at a hard-coded `10px`, which the typography ratchet rejects. Both
+fixed in `src/App.css` against the design tokens.
+
+## 16. Remaining
 
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

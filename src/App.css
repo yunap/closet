@@ -1937,6 +1937,34 @@ img { display: block; max-width: 100%; }
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
+/* Fibre editor projections — docs/fiber-evidence-completeness-spec.md §7.5.
+   The chip wall is grouped by material family and filtered by category, both projected from
+   fiberTaxonomy.js; these classes only carry the presentation. */
+.form-hint {
+  font-size: var(--type-caption);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.form-subgroup { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.fiber-family-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.fiber-family-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--type-eyebrow);
+  opacity: 0.72;
+}
+.field-consequence { font-style: italic; margin-top: -2px; }
+/* Says the evidence is ambiguous, never that the garment is non-insulating — the app has
+   established no such thing. */
+.form-warning {
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--repair);
+  background: var(--repair-bg);
+  color: var(--text);
+  font-size: var(--type-meta);
+  line-height: 1.45;
+}
 .form-input, .form-select, .form-textarea {
   width: 100%;
   padding: 11px 14px;
