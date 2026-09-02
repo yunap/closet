@@ -1,6 +1,8 @@
 # Spec — fiber evidence completeness and its canonical owner
 
-**Status:** Proposed 2026-09-01. Written in response to a review of the garment-editor
+**Status:** Proposed 2026-09-01, **amended the same day** after review. §6's derivation was
+too strong and is corrected below; §8's condition is now answered by measurement rather than
+left as a suspicion; two new required corrections (§9, §10) came out of that audit. Written in response to a review of the garment-editor
 proposal that followed the black-puffer tagging incident. **Route:**
 [docs/README.md](README.md). Governed by
 [architecture-ownership-consolidation-spec.md](architecture-ownership-consolidation-spec.md)
@@ -70,6 +72,28 @@ That is the `[R1]` shape this arc has already fixed three times: a fact recorded
 and dropped at the consumer. Had the puffer been tagged with the trailing `"unknown"`, the
 information needed to catch it would have been present in the row — and still ignored.
 
+### 2.2 Correction: the puffer's current stored state
+
+An earlier claim in this session — that the puffer had dropped out of the warning set *because
+`down` had been added to it* — was wrong on both halves. Its stored state today is:
+
+```text
+996775  Black puffer coat   outerwear   heavy   fabric_category: synthetic
+        fiber_content    : ["unknown"]
+        manual_overrides : [... "fiber_content" ...]
+        style_profile_json confidence: {}   (empty)
+```
+
+**No piece in the wardrobe records `down`** — not in `wardrobe.db`, not in the sandbox DB. The
+edit did not reach either database. The write path is not at fault: `PieceForm.jsx:763`
+serializes the array with `JSON.stringify` and `routes/crud.js` stores it verbatim, so a saved
+`down` would have persisted. Worth the owner re-checking where that edit went; nothing here can
+determine it, and this spec does not guess.
+
+The state that *is* recorded is the more interesting one, and it is the counterexample §8 needed:
+**the one garment in this wardrobe whose full composition is documented on a photographed care
+label stores `["unknown"]`, manually pinned.** The care-label facts have nowhere to land.
+
 ## 3. `"unknown"` is currently overloaded three ways
 
 1. **Honest uncertainty.** The tagger prompt instructs it explicitly: "for uncertain textile
@@ -133,46 +157,47 @@ SHARED FACT READER / VERDICT        fiberEvidenceCompleteness(piece)
 The UI owns **when and how to show** the warning. It does not own **whether the evidence is
 incomplete**.
 
-## 6. Where this spec diverges from the review
+## 6. The derivation contract (amended)
 
-The review proposes a new persisted column:
+The review's correction is adopted, and it is the same error class as everything else in this
+arc: **never manufacture a fact from the absence of a marker.**
+
+The original §6 proposed `[...fibres] → complete`. The puffer disproves that inference directly —
+`["polyester","nylon"]` was produced from a good photo and was incomplete. Absence of `"unknown"`
+tells us the writer did not emit an uncertainty marker. It does not tell us the composition was
+established. Deriving `complete` there would define the natural experiment out of existence and
+recreate exactly the confidently-wrong state this spec exists to prevent.
+
+The canonical reader in `styling-engine/attributes.js` therefore owns three states, none of which
+asserts completeness:
 
 ```text
-fiber_content_completeness = unknown | partial | complete
+fiberContentEvidenceState(piece)
+
+[]                              → unknown
+["unknown"]                     → unknown
+["cotton","unknown"]            → partial
+["polyester","nylon"]           → resolved, completeness unknown
+["polyester","nylon","down"]    → resolved, completeness unknown
 ```
 
-**This spec proposes deriving the verdict first, with no schema change.** §2.1 shows the
-distinction is already present in the stored data:
+**Derive incompleteness where the data proves it; do not derive completeness where it does not.**
+Promotion of the third state to `complete` requires a separate source assertion, which the current
+value list cannot encode by itself.
 
-```text
-[]  or  ["unknown"]        → unknown
-[...fibres, "unknown"]     → partial
-[...fibres]                → complete
-```
+### 6.1 Still not a stored column — yet
 
-Reasons to derive rather than store:
+The reasons for deriving rather than persisting the *first two* states stand: they are already
+present in real data (§2), they need no migration or backfill, and a derived verdict cannot drift
+from the list it describes. What §8 now settles is whether a *fourth* fact — "the composition was
+actually checked" — has anywhere to live.
 
-- It ships against 10 rows of **real existing data** instead of a column that is `NULL`
-  everywhere until a backfill runs.
-- It requires no migration, no backfill authorization, and no second write path to keep in sync
-  with `fiber_content` itself.
-- It honours the ownership chain exactly as drawn — the verdict is canonical and shared; only its
-  *storage* differs.
-- The review's own reasoning for separating completeness from provenance applies with more force
-  here: a derived verdict **cannot** drift from the fibre list it describes, whereas a stored
-  column can.
+### 6.2 Adopted without change
 
-The weakness is real and should be stated plainly: derivation depends on the tagger emitting the
-trailing `"unknown"` reliably, and **it currently does not** — the puffer did not get one. So
-§7.4 makes that instruction explicit in the tagger prompt. If, after a measurement pass on
-re-tagged pieces, the marker still proves unreliable, a stored column earns its keep and this
-decision should be revisited. Recording that as a re-openable decision rather than a settled one.
-
-Everything else in the review is adopted as written, including its rejection of the phrase
-"apply the same treatment to every `GATE_CRITICAL_FIELDS` entry." That was wrong: it makes an
-implementation bucket the owner of user-facing meaning, and would turn `GATE_CRITICAL_FIELDS` into
-a second field-semantics registry. The correct form is: **audit every gate-critical field for
-missing user-consequence metadata; do not let the list own that metadata.**
+The review's rejection of "apply the same treatment to every `GATE_CRITICAL_FIELDS` entry" is
+adopted. That phrasing made an implementation bucket the owner of user-facing meaning and would
+have turned the list into a second field-semantics registry. Correct form: **audit every
+gate-critical field for missing user-consequence metadata; do not let the list own it.**
 
 ## 7. The work
 
@@ -242,8 +267,72 @@ This is also the one instruction that would have prevented the incident at its s
   on the current wardrobe is small and specific rather than noisy, and it would have fired on the
   puffer in its pre-correction state.
 
-## 8. Open ruling
+## 8. Can existing provenance express completeness? — measured: no
 
-Whether to revisit §6 and add a stored `fiber_content_completeness` column, once §7.4 has been
-live long enough to measure whether the partial marker is emitted reliably. Deriving first is
-reversible; storing first is not.
+The review set the correct condition: *a stored completeness fact is required only if no existing
+authoritative provenance mechanism can express that the composition was actually checked as
+complete.* That is now audited rather than suspected.
+
+**`manual_overrides` cannot express it.** It records that a human owns the current value, not that
+they established every shell/lining/fill component. The wardrobe contains **5 direct
+counterexamples** — pieces whose `fiber_content` is manually pinned *and* unresolved or partial.
+The puffer is one: `manual_overrides` asserts human ownership of the value `["unknown"]`. A
+mechanism that is simultaneously true and uninformative about completeness cannot be the
+completeness fact.
+
+**Tagger confidence cannot express it.** Confidence is confidence in the emitted answer, not
+completeness of inaccessible construction — the prompt itself says to emit medium/high "when
+fiber, category, and drape agree", none of which can see a fill. And manual pinning sets
+confidence to `manual`, which would decorate the puffer's `["unknown"]` with the *highest*
+available authority. The puffer's `style_profile_json` confidence map is in fact empty, so there
+is not even a value to reinterpret.
+
+**Conclusion:** neither mechanism answers "was the complete material composition established?", so
+a small persisted completeness/source fact does earn its keep — reached from the semantic
+requirement, as the review asked, not from backfill mechanics. Its shape is deliberately left
+open here; it should be specified only alongside §7.4, since a completeness assertion with no
+reliable writer is worth nothing.
+
+The care label is the concrete case it must serve:
+
+```text
+SHELL:  100% polyester      ← a photo can see this
+LINING: 100% polyester
+FILL:   60% duck down       ← this decides the warmth, and only a label states it
+```
+
+## 9. Required correction — out-of-vocabulary is not unknown
+
+Raised by the review and adopted as a separate required fix.
+`normalizeFiberContent()` does `.map(v => VALID_FIBERS.has(v) ? v : 'unknown')`, collapsing
+**invalid evidence into valid uncertainty**. The responsibility census requires hard invalidity and
+unknown metadata to stay distinct:
+
+```text
+out-of-vocabulary fiber   ≠   unknown fiber
+```
+
+An unrecognised value should be rejected or flagged for review, not silently rewritten into an
+honest-looking admission of uncertainty. This also removes the one case that muddied §6: a coerced
+value currently lands in a list looking exactly like a deliberate partial marker.
+
+## 10. Required correction — `fiber_content` has two write paths with different semantics
+
+Found while auditing §8, and it undermines the `[] → unknown` half of §6 if left alone.
+
+- **Tagger merge** goes through `normalizeFiberContent()`, which returns `["unknown"]` for empty
+  input.
+- **Manual edit** does not. `routes/crud.js` writes `fiber_content||'[]'` verbatim — in the same
+  `UPDATE` statement where `fabric_category`, `formality`, `heel_height`, `walk_support`,
+  `accessory_subtype`, `jewelry_type`, `necklace_length`, `bottom_subtype`, `outerwear_role` and
+  `weather_protection` are all normalized. `fiber_content` is the omission.
+
+So `[]` versus `["unknown"]` is decided by **which path last wrote the row**, not by anything
+anyone knows about the garment. That is why the four `[]` pieces (§2) exist at all despite a
+normalizer that should make the state unreachable. Both routes must share one normalizer before
+any verdict is derived from the distinction between them.
+
+## 11. Open ruling
+
+The shape of the persisted completeness/source fact established as necessary in §8 — and whether
+it is specified before or after §7.4's tagger change gives it a reliable writer.
