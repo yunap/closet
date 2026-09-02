@@ -838,7 +838,7 @@ Evaluate the garment's visual structure and weight along these two axes:
    - Compact (fitted, slim, shell, basic tank): Torso-conforming, zero visual bulk. Allows volume elsewhere.
    - Voluminous (oversized, boxy, a sleeve with real shoulder/arm/cuff volume, full skirt): Stands out as the dominant shape.
 2. Fabric & Drape:
-   - Structured/Stiff (denim, twill, canvas, heavy cotton, quilted/padded shells): Holds its own shape away from the body. Fit DEFAULTS to "structured" or "hangs_straight" — but this is a fallback for an unshaped garment, not a rule. Fabric stiffness and body relationship are different axes: a stiff fabric can still be cut to the waist, and visible shaping overrides this default (see Fit On Body below).
+   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit DEFAULTS to "structured" or "hangs_straight" — but this is a fallback for an UNSHAPED garment, not a rule. Fabric stiffness and body relationship are different axes: a stiff fabric can still be cut to the waist, and visible shaping overrides this default (see Fit on Body below). QUILTING AND PADDING ARE NOT STIFFNESS and do not belong in this judgement at all — a padded shell is commonly cut to the waist, so decide a puffer under Fit on Body, never here.
    - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit defaults to "skims" or "drapes" (never "structured").
 
 === DESCRIPTIVE CUES & LABELS ===

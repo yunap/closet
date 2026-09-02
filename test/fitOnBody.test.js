@@ -41,6 +41,15 @@ test('fabric stiffness is a default that shaping overrides, not a determinant', 
     'stiffness must no longer decide the fit value outright')
   assert.match(TAG_PIECE_PROMPT, /Fit DEFAULTS to "structured" or "hangs_straight" — but this is a fallback/)
   assert.match(TAG_PIECE_PROMPT, /a stiff fabric can still be cut to the waist/)
+
+  // Self-inflicted regression, caught by a live retag. The first implementation ADDED
+  // "quilted/padded shells" to the stiff-fabric list — telling the model in one line that a padded
+  // shell defaults to hangs_straight, and ten lines later that padding is not structure. For the
+  // one garment this spec exists to fix, the wrong signal was stated first and nearer the fabric
+  // reasoning. The retag still returned hangs_straight.
+  assert.ok(!/Structured\/Stiff \([^)]*quilted/i.test(TAG_PIECE_PROMPT),
+    'quilting must not be listed as a stiff fabric — it primes exactly the wrong fit value')
+  assert.match(TAG_PIECE_PROMPT, /QUILTING AND PADDING ARE NOT STIFFNESS/)
 })
 
 test('both photo-derived producers project one description', () => {

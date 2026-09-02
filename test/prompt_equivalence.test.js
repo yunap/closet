@@ -102,7 +102,7 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         "   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit matches: \"structured\" or \"hangs_straight\".",
-        "   - Structured/Stiff (denim, twill, canvas, heavy cotton, quilted/padded shells): Holds its own shape away from the body. Fit DEFAULTS to \"structured\" or \"hangs_straight\" \u2014 but this is a fallback for an unshaped garment, not a rule. Fabric stiffness and body relationship are different axes: a stiff fabric can still be cut to the waist, and visible shaping overrides this default (see Fit On Body below)."
+        "   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit DEFAULTS to \"structured\" or \"hangs_straight\" \u2014 but this is a fallback for an UNSHAPED garment, not a rule. Fabric stiffness and body relationship are different axes: a stiff fabric can still be cut to the waist, and visible shaping overrides this default (see Fit on Body below). QUILTING AND PADDING ARE NOT STIFFNESS and do not belong in this judgement at all \u2014 a padded shell is commonly cut to the waist, so decide a puffer under Fit on Body, never here."
       )
       expected = expected.replace(
         "   - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit matches: \"skims\" or \"drapes\" (never \"structured\").",

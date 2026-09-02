@@ -1,7 +1,7 @@
 # Spec — defining `fit_on_body`
 
-**Status:** Implemented 2026-09-02, **with its diagnosis corrected during implementation** — see
-§1. One live retag remains to confirm the model acts on the change. Proposed 2026-09-02. Written after a live retag tagged a visibly waisted quilted
+**Status:** Implemented 2026-09-02; **first attempt failed its own live check and was corrected** —
+see §8. Diagnosis was also corrected during implementation (§1). One confirming retag outstanding. Written after a live retag tagged a visibly waisted quilted
 jacket (`996866`) as `hangs_straight`. **Route:** [docs/README.md](README.md). Follows the
 house pattern set by the sleeve taxonomy — see
 [garment-field-reference.md](garment-field-reference.md) → *"Sleeve taxonomy: functional volume,
@@ -205,3 +205,43 @@ clean falsification rather than an ambiguous one.
   until the values mean something reliable; today no consumer does, and that is fine.
 - **No change to `silhouette`.** Its outerwear vocabulary already includes `structured` and is
   working as intended.
+
+## 8. First attempt failed the live check — a self-inflicted contradiction
+
+Retag of `996866` after the definitions shipped:
+
+```text
+fit_on_body  hangs_straight     ← unchanged
+silhouette   boxy               ← reverted from structured
+```
+
+The server was verified to be running the new prompt (started 22:08, change committed 22:04), and
+the guidance was verified present in the assembled prompt. So this was the falsification §6
+promised — except the cause was not the model.
+
+**The implementation added `quilted/padded shells` to the Structured/Stiff fabric list.** That was
+not in the original prompt; it was introduced while "completing" the stiff-fabric examples. The
+result contradicted the spec inside the same prompt:
+
+```text
+line 29  Structured/Stiff (…, quilted/padded shells) … Fit DEFAULTS to "structured"/"hangs_straight"
+line 39  PADDING IS NOT STRUCTURE — judge a puffer by whether it is shaped to the waist
+```
+
+For the single garment this spec exists to fix, the wrong signal was stated **first**, and nearer
+the fabric reasoning the model was already doing. Removed, and replaced with an explicit exclusion:
+*quilting and padding are not stiffness and do not belong in this judgement at all — decide a
+puffer under Fit on Body, never here.* Two tests now guard it: quilting must not appear in the
+stiff-fabric list, and the exclusion must be present.
+
+**Cost of the mistake: one billed retag, and a second one still needed.** Recorded rather than
+quietly fixed, because the failure mode is worth remembering — a prompt change was verified by
+tests that only checked the text I *intended* to add, not the text I had *also* added.
+
+### 8.1 If the next retag still returns `hangs_straight`
+
+Then the prompt is not the lever for this field, and the honest response is not a third attempt.
+`silhouette` reverting to `boxy` on the same run is a hint in that direction: it suggests the model
+reads a quilted outer shell as boxy-and-straight from overall impression, regardless of what the
+schema says. In that case the recommendation is to treat `fit_on_body` on outerwear as a
+review-on-intake field rather than a trusted tag, and to stop spending on prompt iterations.
