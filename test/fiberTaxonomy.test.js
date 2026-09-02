@@ -7,6 +7,7 @@ import path from 'node:path'
 import assert from 'node:assert'
 import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
+import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial } from '../styling-engine/attributes.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 
@@ -174,4 +175,87 @@ test('every photo-derived producer of fiber_content obeys the completeness write
   //   src/components/{PieceForm,BatchAdd}.jsx — clients. They post to crud, which is writer 3.
   //   routes/importer.js — calls tagPieceWithProvider, inheriting writer 1.
   assert.match(read('routes/importer.js'), /tagPieceWithProvider/)
+})
+
+test('thermalMaterialVerdict: positive evidence is decisive, negative evidence is not', () => {
+  // The asymmetry, pinned. Positive insulating evidence settles the question even from a partial
+  // record. A negative reading only settles it when the composition is known complete — the black
+  // puffer's ["polyester","nylon"] was TRUE about its shell and lining, and concluding "not
+  // insulated" from it is the error this chain exists to prevent.
+  const v = (fiber_content, fiber_content_completeness) =>
+    thermalMaterialVerdict({ fiber_content, fiber_content_completeness })
+
+  assert.equal(v(['down'], 'partial'), 'insulating')
+  assert.equal(v(['wool'], 'unknown'), 'insulating')
+  assert.equal(v(['cotton'], 'complete'), 'non_insulating')
+  assert.equal(v(['polyester', 'nylon'], 'complete'), 'non_insulating')
+  assert.equal(v(['polyester', 'nylon'], 'unknown'), 'unknown')
+  assert.equal(v(['polyester', 'nylon'], 'partial'), 'unknown')
+  assert.equal(v([], 'unknown'), 'unknown')
+  assert.equal(v(['unknown'], 'unknown'), 'unknown')
+
+  // The puffer, before and after its care label was read. Same garment, same fibres once the fill
+  // is recorded — the difference is entirely in what was established.
+  assert.equal(v(['polyester', 'nylon'], 'unknown'), 'unknown')
+  assert.equal(v(['polyester', 'nylon', 'down'], 'unknown'), 'insulating')
+})
+
+test('positive evidence includes fabric_category, which completeness never overrides', () => {
+  // completeness describes the FIBRE record only. A cardigan tagged fiber_content ["unknown"] with
+  // fabric_category 'fleece' is insulating and always was; gating that on a fibre-record fact
+  // would be a silent regression at every existing caller.
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['unknown'], fabric_category: 'fleece' }), 'insulating')
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'], fabric_category: 'shearling', fiber_content_completeness: 'complete' }), 'insulating')
+})
+
+test('the two verdicts answer different questions and neither leaks into the other', () => {
+  // "complete cotton" and "partial list containing down" are the pair that makes one combined
+  // verdict impossible: they disagree on composition and on warmth, in opposite directions.
+  const completeCotton = { fiber_content: ['cotton'], fiber_content_completeness: 'complete' }
+  const partialDown = { fiber_content: ['polyester', 'down'], fiber_content_completeness: 'partial' }
+
+  assert.equal(compositionEvidenceState(completeCotton), 'complete')
+  assert.equal(thermalMaterialVerdict(completeCotton), 'non_insulating')
+  assert.equal(compositionEvidenceState(partialDown), 'partial')
+  assert.equal(thermalMaterialVerdict(partialDown), 'insulating')
+
+  // compositionEvidenceState reads the stored fact and never re-derives it from the list.
+  assert.equal(compositionEvidenceState({ fiber_content: ['cotton', 'unknown'] }), 'unknown',
+    'an unanswered row is unknown, whatever its fibre list looks like')
+  assert.equal(compositionEvidenceState({ fiber_content_completeness: 'nonsense' }), 'unknown')
+})
+
+test('pieceHasInsulatingMaterial stays exactly verdict === insulating while callers migrate', () => {
+  // It has always meant "is there positive insulating evidence?". If it started returning false
+  // for 'unknown' in some new sense, six production callers would change behaviour silently.
+  for (const piece of [
+    { fiber_content: ['down'], fiber_content_completeness: 'partial' },
+    { fiber_content: ['cotton'], fiber_content_completeness: 'complete' },
+    { fiber_content: ['polyester'], fiber_content_completeness: 'unknown' },
+    { fiber_content: ['unknown'], fabric_category: 'fleece' },
+    { fiber_content: [] },
+  ]) {
+    assert.equal(pieceHasInsulatingMaterial(piece), thermalMaterialVerdict(piece) === 'insulating')
+  }
+})
+
+test('no caller infers thermal-material truth directly from fiber_content', () => {
+  // One semantic question, one owner. INSULATING_FIBERS may only be consulted where the verdict
+  // is defined; anywhere else is a second thermal authority forming.
+  const OWNERS = ['styling-engine/attributes.js', 'styling-engine/fiberTaxonomy.js']
+  const roots = ['styling-engine', 'routes', 'lib', 'src']
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) return e.name === 'node_modules' || e.name === 'dist' ? [] : walk(full)
+    return /\.(js|jsx)$/.test(e.name) ? [full] : []
+  })
+  for (const root of roots) {
+    for (const file of walk(path.join(process.cwd(), root))) {
+      const rel = path.relative(process.cwd(), file)
+      if (OWNERS.includes(rel)) continue
+      const text = fs.readFileSync(file, 'utf8')
+      assert.ok(!/INSULATING_FIBERS\s*\.\s*has/.test(text),
+        `${rel} tests INSULATING_FIBERS directly — use thermalMaterialVerdict() instead`)
+    }
+  }
 })

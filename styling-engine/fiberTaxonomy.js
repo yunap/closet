@@ -180,3 +180,14 @@ export const FIBER_COMPLETENESS_SCHEMA_DESCRIPTION =
   "care label can assert that. 'unknown' means completeness was not established; 'partial' means " +
   "the list is positively known not to describe the whole garment. Do not use 'partial' merely " +
   "because you are unsure, and do not assume it by category."
+
+// Verdict 1 of 2. Answers ONLY: how complete is the recorded fibre composition?
+// It says nothing about warmth — see thermalMaterialVerdict() in attributes.js for that.
+//
+// Reads the stored fact rather than inferring one. The absence of an "unknown" marker is not
+// evidence of completeness, which is the whole reason fiber_content_completeness exists; a row
+// that predates the column, or one nobody has answered for, is 'unknown'.
+export function compositionEvidenceState(piece = {}) {
+  const stored = String(piece?.fiber_content_completeness ?? '').toLowerCase().trim()
+  return FIBER_COMPLETENESS_VALUES.includes(stored) ? stored : 'unknown'
+}

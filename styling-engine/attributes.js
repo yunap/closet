@@ -2,10 +2,11 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
-import { INSULATING_FIBERS } from './fiberTaxonomy.js'
+import { INSULATING_FIBERS, compositionEvidenceState } from './fiberTaxonomy.js'
 
 export {
   ALL_PIECE_CATEGORIES,
+  compositionEvidenceState,
   FIBER_FAMILIES,
   FIBER_FAMILY_APPLICABILITY,
   FIBER_FAMILY_BY_VALUE,
@@ -495,10 +496,44 @@ export function pieceHemCoverage(p) {
 // Checking fiber_content alone silently missed those — this checks both, so a piece needs only
 // ONE of the two fields to correctly name the material.
 const INSULATING_FABRIC_CATEGORIES = new Set(['wool', 'cashmere', 'fleece', 'tweed', 'corduroy', 'shearling', 'flannel', 'sweatshirt fleece'])
-export function pieceHasInsulatingMaterial(p) {
+function hasPositiveInsulatingEvidence(p) {
   const fibers = Array.isArray(p?.fiber_content) ? p.fiber_content : []
   if (fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))) return true
   return INSULATING_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())
+}
+
+// Verdict 2 of 2, and the canonical owner of "what does the recorded material evidence establish
+// thermally?" — see compositionEvidenceState() in fiberTaxonomy.js for the other half.
+//
+//   any completeness  + insulating evidence  → insulating
+//   complete          + no insulating fibre  → non_insulating
+//   partial/unknown   + no insulating fibre  → unknown
+//
+// The asymmetry is the point. POSITIVE evidence is decisive even from a partial record — a list
+// containing 'down' establishes insulation whether or not anything else is missing. NEGATIVE
+// evidence is decisive only when the composition is complete: the black puffer's
+// ["polyester","nylon"] was a true statement about its shell and lining, and reading "therefore
+// not insulated" off it was the error this whole chain exists to prevent.
+//
+// Deliberately NOT a strength scale. It is a narrow factual verdict; the ordinal warmth
+// calibration consumes it alongside fabric_weight/fabric_category rather than living here.
+//
+// Note that positive evidence includes fabric_category (fleece, shearling, wool...), not just
+// fiber_content — a cardigan tagged fiber_content ["unknown"] with fabric_category 'fleece' is
+// insulating, and always was. Completeness describes the FIBRE record only, so it gates the
+// negative branch and never overrides a positive fabric_category.
+export function thermalMaterialVerdict(p = {}) {
+  if (hasPositiveInsulatingEvidence(p)) return 'insulating'
+  return compositionEvidenceState(p) === 'complete' ? 'non_insulating' : 'unknown'
+}
+
+// Compatibility wrapper, deliberately kept while its six consumers are migrated one at a time.
+// It has always meant "is there positive insulating evidence?", so it is exactly
+// `verdict === 'insulating'` — false has never asserted non-insulating, and this wrapper must not
+// start doing so. Migrating a caller means deciding what IT should do with 'unknown', which is a
+// per-caller judgement, not a rename. Delete this once no consumer remains.
+export function pieceHasInsulatingMaterial(p) {
+  return thermalMaterialVerdict(p) === 'insulating'
 }
 
 // Wet-exposure suitability is physical garment truth, not taste. Keep this reader

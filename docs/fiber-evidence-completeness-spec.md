@@ -586,20 +586,83 @@ canonical contract, or be documented as incapable with the downstream state defa
 | `PieceForm` / `BatchAdd` | **not producers** — clients posting to `crud` |
 | `routes/importer.js` | **not a producer** — calls `tagPieceWithProvider`, inheriting its contract |
 
-## 12. Remaining
+## 12. The verdict layer — **DONE 2026-09-01**
 
-- **The verdict layer (§5).** Two verdicts, not one. Completeness and thermal evidence are
-  related but not the same question, and collapsing them produces a word like "sufficient" that
-  cannot say sufficient *for what*:
+Two verdicts, not one. Collapsing them produces a word like "sufficient" that cannot say sufficient
+*for what*, and this pair is why:
 
-  ```text
-  complete cotton composition   → composition complete, little insulating evidence
-  partial list containing down  → composition incomplete, strong insulating evidence already
-  ```
+```text
+complete cotton composition   → composition complete, little insulating evidence
+partial list containing down  → composition incomplete, strong insulating evidence already
+```
 
-  So the chain is `fibre facts + completeness → composition evidence state → thermal-material
-  verdict`, rather than one verdict answering both. Acceptance criterion 8 still binds: neither
-  may become hard invalidity.
-- ~~**Tagger emission of `partial`.**~~ **DONE 2026-09-01** — see §11.6.
+They disagree on both axes, in opposite directions.
+
+### 12.1 `compositionEvidenceState(piece) → unknown | partial | complete`
+
+In `fiberTaxonomy.js`. Answers only *how complete is the recorded fibre composition?* It reads the
+stored fact and never re-derives it from the list — a row nobody has answered for is `unknown`
+however its fibres look.
+
+### 12.2 `thermalMaterialVerdict(piece) → insulating | non_insulating | unknown`
+
+In `attributes.js`. Answers only *what does the recorded material evidence establish thermally?*
+
+```text
+any completeness  + insulating evidence   → insulating
+complete          + no insulating fibre   → non_insulating
+partial/unknown   + no insulating fibre   → unknown
+```
+
+The asymmetry is the whole point: **positive evidence is decisive even from a partial record;
+negative evidence is decisive only when the composition is complete.** The puffer's
+`["polyester","nylon"]` was a *true* statement about its shell and lining, and concluding "not
+insulated" from it is the error the chain exists to prevent.
+
+Deliberately **not** a strength scale. It stays a narrow factual verdict; the ordinal warmth
+calibration consumes it alongside `fabric_weight`/`fabric_category` rather than absorbing it.
+
+**One extension beyond the ruled fixtures, flagged rather than assumed:** positive evidence
+includes `fabric_category` (fleece, shearling, wool…), not just `fiber_content`. A cardigan tagged
+`fiber_content: ["unknown"]` with `fabric_category: 'fleece'` is insulating and always was.
+Completeness describes the **fibre** record only, so it gates the negative branch and never
+overrides a positive `fabric_category`; without this, every existing caller would have quietly
+regressed.
+
+### 12.3 Migration, not a rename
+
+`pieceHasInsulatingMaterial()` is now a thin wrapper — `verdict === 'insulating'` — kept
+deliberately while its **six production consumers** are migrated one at a time (`thermal.js:120`,
+`rules.js:2501`, `rules.js:3730`, `outfitSetPlanner.js:1643`, `outfitSetPlanner.js:2603`,
+`attributes.js:169`). It has always meant "is there positive insulating evidence?", so `false` has
+never asserted non-insulating and the wrapper must not start doing so. Migrating a caller means
+deciding what *it* should do with `unknown` — a per-caller judgement. Delete the wrapper when no
+consumer remains.
+
+**Verified behaviour-identical on real data**, not argued: the wrapper and the pre-change
+implementation agree on all **268** active pieces.
+
+### 12.4 Architecture guard
+
+A test walks `styling-engine/`, `routes/`, `lib/` and `src/` and fails if any file outside the two
+verdict owners tests `INSULATING_FIBERS` membership directly. One semantic question, one owner;
+anywhere else is a second thermal authority forming.
+
+### 12.5 Distribution today
+
+Against a WAL-inclusive copy with the column seeded:
+
+```text
+composition evidence   unknown 258   partial 10   complete 0
+thermal verdict        unknown 231   insulating 37   non_insulating 0
+```
+
+`non_insulating` is **currently unreachable**, and that is correct rather than broken: no piece has
+a verified composition yet, so nothing has earned a decisive negative. The branch opens as the
+owner answers the editor control. `994060` (a wool scarf recorded as `["wool","unknown"]`) is the
+live proof of the asymmetry — a partial record returning `insulating`.
+
+## 13. Remaining
+
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.
