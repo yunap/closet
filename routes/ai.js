@@ -504,7 +504,28 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     // ("Unterminated string in JSON at position 5084") at the prior cap —
     // spec 22 fixed the 400 the truncated body caused on the Anthropic
     // path, but the underlying truncation itself was still live.
-    maxTokens: 2500,
+    //
+    // RAISED 2500 -> 4000 on 2026-09-02, after a live retag truncated again. Two things moved at
+    // once: the schema grew two output fields (fiber_content_completeness,
+    // insulating_layer_materials) and Gemini 3.1 Flash-Lite became the tagger default, which is
+    // markedly more verbose than Haiku. Measured on real calls against the old cap:
+    //
+    //   claude-haiku-4-5       1735   69%
+    //   claude-sonnet-4-6      1662   66%
+    //   gemini-3.1-flash-lite  1571   63%
+    //   gemini-3.1-flash-lite  2496  100%   <- truncated mid-JSON, same schema, same model
+    //
+    // That 1571 -> 2496 spread on identical work is the point: the cap was not marginally low, it
+    // was inside the model's ordinary variance. docs/tagger-cost-spec.md §6d saw this exact
+    // truncation once during screening and dismissed it as run-to-run noise after a single clean
+    // repeat — correct about the variance, wrong to leave the headroom unchanged.
+    //
+    // Raised to 3000, not 4000. The ceiling protects against unusual variance; it must not
+    // subsidize a verbose output contract. The same investigation found and fixed the actual
+    // source of the bulk — real_wear_notes was filled 4.9/5 on average with unbounded prose, and
+    // _confidence rated ten fields inapplicable to the garment's own category. Clean outputs sit
+    // at 1600-1700, so 3000 is slack rather than a new normal.
+    maxTokens: 3000,
     ...(model ? { model } : {}),
     ...(providerOverride ? { providerOverride } : {}),
     messages: [{
@@ -1537,6 +1558,11 @@ router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
 
     const raw = await askStylist({
       system: EXTRACT_PIECES_SYSTEM,
+      // Left at 3000 deliberately. An earlier version of this change raised it to 5000 by analogy
+      // with the single-piece truncation — "same schema, therefore more exposed" — which is not
+      // evidence. This endpoint's output scales with the NUMBER of garments in the photo, so it
+      // needs a sizing rule rather than a borrowed constant, and ai_call_log contains ZERO calls
+      // from this flow to size one from. Measure it before moving it.
       maxTokens: 3000,
       // Vision garment extraction — same job as tagPieceWithProvider, just multi-piece from one
       // photo, so it uses the tagger's own config rather than the general stylist one.

@@ -66,8 +66,13 @@ test('4/5. server validates against the known list rather than trusting arbitrar
 })
 
 test('tagPieceWithProvider re-establishes its telemetry snapshot directly around the provider call', () => {
+  // Bounded by the function's real end rather than a fixed character window: a 6000-char slice
+  // silently stopped covering the assertion when a comment above the provider call grew (the
+  // 2026-09-02 maxTokens raise). A window that shrinks as comments grow tests the comments, not
+  // the code.
   const fnStart = routeAiSource.indexOf('export async function tagPieceWithProvider(')
-  const fnSection = routeAiSource.slice(fnStart, fnStart + 6000)
+  const nextTopLevel = routeAiSource.indexOf('\nexport ', fnStart + 1)
+  const fnSection = routeAiSource.slice(fnStart, nextTopLevel === -1 ? undefined : nextTopLevel)
   assert.match(fnSection, /const telemetrySnapshot = \{ \.\.\.getAiTelemetryContext\(\) \}/)
   assert.match(fnSection, /await runWithAiTelemetryContext\(telemetrySnapshot, \(\) => askStylistWithUsage\(payload\)\)/)
 })

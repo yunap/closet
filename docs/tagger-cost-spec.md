@@ -806,3 +806,161 @@ pure model output.
   add/edit/retag path only.
 - **10 screening cases plus one production call** is not a powered study. It is enough to justify
   a reversible default on one wardrobe; it is not enough to bound a rare-failure rate.
+
+### 6f. Truncation at the token cap — a verbose output contract, not a low ceiling (2026-09-02)
+
+The first real tagging session after §6e's switch failed:
+
+```text
+Model response hit the token cap (maxTokens: 2500) and was truncated before valid JSON completed
+```
+
+Output tokens from `ai_call_log` against the old cap:
+
+```text
+claude-haiku-4-5       1735    69%
+claude-sonnet-4-6      1662    66%
+gemini-3.1-flash-lite  1571    63%
+gemini-3.1-flash-lite  2496   100%   truncated mid-JSON, same schema, same model
+```
+
+**The first fix was a cap raise to 4000, and it was wrong** — it protected the symptom and left the
+cause. Owner ruling: *the token ceiling should protect against unusual variance, not subsidize an
+unnecessarily verbose output contract.* Examining the schema found two real sources.
+
+#### The elastic block: `real_wear_notes`
+
+Five sub-keys, **two specified as literally empty strings** (`drape`, `placement`) — no guidance on
+content, no length bound on any of the five. Measured across the 221 pieces carrying
+`garment_intelligence`:
+
+```text
+pairing_requirements    mean 1.5   max 3    (schema allows 0-4)
+failure_risks           mean 0.9   max 3    (0-4)
+formula_compatibility   mean 1.7   max 4    (0-4)
+do_not_pair_rules       mean 1.3   max 3    (0-4)
+real_wear_notes         mean 4.9   max 5    (5 sub-keys)
+```
+
+**The bounded lists were never the problem** — the model self-limits at roughly a third of its
+allowance, so tightening them would have saved almost nothing. `real_wear_notes` is filled 4.9 of 5,
+*including* `maintenance`, whose own instruction says to omit it for ordinary machine-washable
+garments. That is a prompt-contract failure rather than model variance: empty-string placeholders
+read as slots that must be answered.
+
+Every key now carries a purpose and an **8-12 word bound**, and **OMIT replaces the empty string**,
+with an explicit rule against sending empty values or the object itself when nothing applies.
+
+#### The bookkeeping: `_confidence`
+
+34 keys emitted flat with no category conditioning — while the same schema *is* category-conditional
+for `silhouette`, `fabric_category` and `length_hits_at`. A coat was rating its confidence in
+`heel_height`, `jewelry_type`, `waistband_type`, `shoe_type`, `toe_shape`, `walk_support`,
+`accessory_subtype`, `bottom_subtype`, `necklace_length` and `tuck_behavior`: **10 of 34
+inapplicable**, about 55 output tokens. Now instructed to omit inapplicable entries.
+
+**What this change does and does not do.** It reduces the irrelevant entries the MODEL EMITS — an
+output-token saving. It does **not** shrink the persisted confidence map, and cannot:
+`normalizeConfidenceMap()` re-materialises every `CONFIDENCE_FIELDS` entry, defaulting an absent one
+to `'low'`. The stored map is 33 keys before and after. An earlier draft of this section predicted
+the stored count would fall to ~25, which was simply wrong about the write path.
+
+Omitted entries therefore land as `'low'`. Verified before shipping that this cannot produce
+spurious review chips: `lowConfidenceFields` filters every one of those fields by category.
+
+A dead `outerwear_role` entry was also still in `CONFIDENCE_FIELDS` after that field's retirement
+earlier the same day.
+
+#### What was NOT cut
+
+`garment_intelligence` is the largest single block (215 tokens on a real coat) and every one of its
+eight sub-keys has live consumers — `occasion_confidence` alone has 14. It earns its size.
+
+#### The ceiling
+
+**3000 for single-piece tagging**, not 4000. Clean outputs sit at 1600-1700, so 3000 is slack rather
+than a new normal: the ceiling absorbs variance, the contract does the work.
+
+**`/extract-pieces` stays at 3000.** An earlier version of this change raised it to 5000 by analogy
+— *"same schema, therefore more exposed"* — which is not evidence. Its output scales with the number
+of garments in one photo, so it needs a sizing rule, and **`ai_call_log` holds zero calls from that
+flow** to build one from. Measure before moving it.
+
+#### Telemetry: truncation was invisible
+
+The truncated call was logged with `success = 1` — the provider returned 200 and the failure only
+surfaced when the caller could not parse the body, after the spend row was written. That made the
+very evidence needed to judge whether these bounds work unreliable.
+
+Fixed at both provider boundaries: a response whose `stopReason` is `max_tokens` is logged as a
+failure with an explicit message — `callOutcomeFromUsage` on the Gemini paths,
+`truncationOutcome` in the Anthropic/OpenAI fetch hook. The provider's own stop reason is
+authoritative, so neither needs a heuristic.
+
+#### A screening result revisited
+
+§6d hit this exact truncation and dismissed it: *"ordinary run-to-run variance, not a systematic
+defect."* Right about the variance, wrong about the consequence. The screen measured cost and
+latency carefully, and never asked how close to the ceiling the winning tier ran — nor whether the
+output contract deserved the tokens it was spending.
+
+#### Acceptance result — 5 live calls, 2026-09-02
+
+Run with `scratch/measure_tagger_contract.mjs` (read-only; measures the tagger's output without
+persisting it). All calls `gemini/gemini-3.1-flash-lite`, routing verified before spending. Total
+spend **$0.0233**.
+
+```text
+                        coat x4                 shoe    baseline
+output tokens      2136 1336 1128 1210         1034     1571 clean / 2496 truncated
+real_wear_notes      3    3    3    3             2      5
+  words              28   26   28   34           20      34   (longest value <= 12 words)
+confidence keys     33   33   33   33            33      35
+stop reason        null null null null         null      never recorded
+parse succeeded    yes  yes  yes  yes           yes      —
+```
+
+**What this establishes:**
+
+- **The elastic block fix works.** `real_wear_notes` fell from 5 keys to 3 (2 on the boot), every
+  value inside its word bound, consistently across all five calls. This was the diagnosis and it
+  holds.
+- **No truncations, no parse failures**, and the worst observed call — 2136 — sits at **71% of the
+  3000 cap**, against 2496 at 100% of the old one. The ceiling is sized for the observed tail.
+- **Typical calls were leaner** (mean 1369 against a 1571 clean baseline).
+
+**What it does NOT establish.** Five calls cannot prove a stable token reduction: the observed
+spread is 1034-2136, wider than the ~115-token saving the change was estimated to produce, so any
+mean comparison here is inside the noise. The claim worth making is narrower — *the elastic block is
+demonstrably sparser and bounded, and the tail now fits comfortably under the ceiling* — not "output
+dropped by N tokens". Note also that the single 2136 call was the only cold one; the other four
+show cache hits.
+
+`stopReason` reads `null` on normal Gemini completions, which is correct: that provider reports a
+finish reason only in the abnormal case. The path that matters is `max_tokens`, which now surfaces
+as failure telemetry rather than `success = 1`.
+
+#### Reproducing the check
+
+
+`scratch/check_tagger_output_budget.js` (read-only) reports the six measurements this review asked
+for, against their pre-change baselines:
+
+```bash
+WARDROBE_ALLOW_LIVE_DB=1 node scratch/check_tagger_output_budget.js --id 996867
+```
+
+```text
+  measurement                   now                    before the change
+  output tokens                 1571                   1571 clean / 2496 truncated
+  real_wear_notes keys          5                      4.9 of 5 on average
+  real_wear_notes words         34                     unbounded; ~8-12 each now
+  confidence keys               35                     34, ten inapplicable on a coat
+  stop reason                   (not recorded)         was never recorded at all
+  parse succeeded               yes                    truncation logged as success
+```
+
+`scratch/check_tagger_output_budget.js` reports the same six values for an already-tagged piece from
+stored data; `scratch/measure_tagger_contract.mjs --id <id> --reps <n>` makes the live calls. Judge
+on the structural lines — `real_wear_notes` keys and words — not on output tokens, for the reason
+above.

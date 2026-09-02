@@ -1026,16 +1026,18 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
       },
       "formula_compatibility": ["0-4 outfit formulas this garment supports, e.g. compact top + movement skirt, dark column + expressive top"],
       "real_wear_notes": {
-        "fit": "visible placement/strain only; do not claim comfort from still image",
-        "drape": "",
-        "scale": "garment volume/visual territory only; no body shape comments",
-        "placement": "",
-        "maintenance": "only specify exceptional physical care burdens (e.g. dry clean only, wrinkles easily, pills easily). leave empty or omit for standard machine-washable items."
+        "_rule": "OMIT any key below rather than sending an empty string, and omit the whole object if none apply. Each value is at most 8-12 words. Measured 2026-09-02: this block was filled 4.9 keys out of 5 on average, including on garments whose own instructions said to leave a key out — the empty-string placeholders were reading as slots that had to be answered.",
+        "fit": "visible fit/strain/placement only; do not claim comfort from a still image; 8-12 words",
+        "drape": "how the fabric falls or hangs; 8-12 words; OMIT if not visually meaningful",
+        "placement": "where key garment features sit on the body; 8-12 words; OMIT if it repeats fit",
+        "scale": "garment volume/visual territory only; no body shape comments; 8-12 words",
+        "maintenance": "an exceptional, VISIBLE care burden only (dry clean only, wrinkles easily, pills easily); 8-12 words; OMIT for ordinary machine-washable items"
       },
       "do_not_pair_rules": ["0-4 concrete pairing rules, e.g. avoid another loud pattern, avoid soft wide bottom"]
     }
   },
   "_confidence": {
+    "_rule": "OMIT entries for fields that do not apply to this garment's category — a coat has no heel_height, jewelry_type or waistband_type, and rating them is pure bookkeeping. Rate only what you were actually asked to produce above.",
     "category": "high|medium|low",
     "accessory_subtype": "high|medium|low",
     "bottom_subtype": "high|medium|low",

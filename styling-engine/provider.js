@@ -1048,6 +1048,19 @@ export function salvageFirstJson(raw) {
 // `stopReason` is the provider's own authoritative finish-reason (from normalizeAiUsage) —
 // when it says 'max_tokens', trust that over the string-ending heuristic below, which exists
 // only for callers that can't supply it (e.g. mocked test responses).
+// A response the provider truncated at the output cap is NOT a success, however cleanly the HTTP
+// call returned. Until 2026-09-02 it was logged with success = 1: the failure only surfaced later,
+// when the caller could not parse the body, by which time the spend row was already written. That
+// made truncation invisible in ai_call_log — the exact evidence needed to judge whether an output
+// contract is too verbose or a cap too low. See docs/tagger-cost-spec.md §6f.
+//
+// The provider's own stop reason is authoritative here, so this needs no heuristic.
+export function callOutcomeFromUsage(usage = null) {
+  return usage?.stopReason === 'max_tokens'
+    ? { success: false, errorMessage: 'provider truncated the response at the output token cap (stop_reason: max_tokens)' }
+    : { success: true }
+}
+
 export function parseModelJson(raw, { context = '', maxTokens = null, stopReason = null } = {}) {
   const cleaned = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
   try {
@@ -1236,7 +1249,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
-    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
     return { text, usage }
   }
 
@@ -1328,7 +1341,7 @@ export async function askStylistStructuredWithUsage({
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
-    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, success: true, latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1840,9 +1853,11 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     })
   }
   await logAiCall({
-    provider: 'gemini', model, callKind, usage, success: true, latencyMs, isMock: false,
+    provider: 'gemini', model, callKind, usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false,
     toolNames: functionCalls.map(fc => fc.name).filter(Boolean).join(','),
-    context: geminiModalityContext(interaction),
+    // The provider's finish reason, recorded so a truncation is measurable and not merely
+    // inferable from the failure flag. See docs/tagger-cost-spec.md §6f.
+    context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null },
   })
   // Restored to match the documented contract (2026-08-30 review correction): the earlier version
   // of this line dropped the status check on the mistaken belief that 'requires_action' was
