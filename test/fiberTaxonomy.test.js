@@ -2,8 +2,10 @@
 // adapters. The cases below are the ones that behaved differently depending on which path wrote
 // the row, or that collapsed two distinct states into one.
 import test from 'node:test'
+import fs from 'node:fs'
+import path from 'node:path'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
@@ -128,4 +130,48 @@ test('the tagger prompt states the narrow partial contract and forbids complete'
   assert.match(schema, /Do not use 'partial' merely because you are unsure/)
   assert.match(schema, /do not assume it by category/)
   assert.ok(!/\bcomplete\|/.test(schema), "'complete' must not appear as a permitted enum value")
+})
+
+test('every photo-derived producer of fiber_content obeys the completeness writer contract', () => {
+  // Architectural acceptance test. `/extract-pieces` was a loophole for exactly one reason: it
+  // produces fiber_content and nobody had asked whether it was a writer. This enumerates the
+  // producers and pins each one's disposition, so the next path of that shape has to declare
+  // itself rather than being found later.
+  //
+  // The rule: a producer either emits completeness under the canonical writer contract, or is
+  // documented as incapable of asserting it with the downstream state defaulting to 'unknown'.
+  const read = f => fs.readFileSync(path.join(process.cwd(), f), 'utf8')
+  const ai = read('routes/ai.js')
+  const crud = read('routes/crud.js')
+  const prompts = read('styling-engine/prompts.js')
+
+  // 1. The tagger (tagPieceWithProvider). Asks for the field, and normalizes at source 'tagger'.
+  assert.match(prompts, /"fiber_content_completeness": "\$\{FIBER_COMPLETENESS_SCHEMA_DESCRIPTION\}"/)
+  assert.match(ai, /tags\.fiber_content_completeness\s*=\s*\n?\s*normalizeFiberCompleteness\(tags\.fiber_content_completeness, \{ source: 'tagger' \}\)/)
+
+  // 2. /extract-pieces. Same schema projection, same source, applied to every returned piece.
+  assert.equal((ai.match(/"fiber_content_completeness": "\$\{FIBER_COMPLETENESS_SCHEMA_DESCRIPTION\}"/g) || []).length, 1)
+  assert.match(ai, /function applyFiberWriterContract/)
+  assert.match(ai, /res\.json\(applyFiberWriterContract\(parseModelJson\(raw\)\)\)/)
+
+  // 3. Manual edit (both crud write paths), the only writer permitted to assert 'complete'.
+  assert.equal((crud.match(/normalizeFiberCompleteness\(fiber_content_completeness, \{ source: 'manual' \}\)/g) || []).length, 2)
+
+  // Neither photo-derived schema may offer 'complete' as a value the model can pick.
+  assert.ok(!FIBER_COMPLETENESS_SCHEMA_DESCRIPTION.includes('complete|'))
+  assert.ok(!FIBER_COMPLETENESS_SCHEMA_DESCRIPTION.includes('|complete'))
+
+  // The description has ONE source. A second inline copy is the §7.1 failure repeating itself.
+  for (const [name, text] of Object.entries({ 'routes/ai.js': ai, 'styling-engine/prompts.js': prompts })) {
+    assert.ok(!text.includes('whether the fiber_content list above describes the WHOLE garment'),
+      `${name} restates the completeness contract instead of projecting FIBER_COMPLETENESS_SCHEMA_DESCRIPTION`)
+  }
+
+  // Documented as NOT producers, so their absence above is a decision rather than an oversight:
+  //   styling-engine/mockAiHandler.js — a provider-level mock. Its canned fiber_content is
+  //     returned THROUGH tagPieceWithProvider, so it lands on the tagger's boundary normalization
+  //     like any real provider response and cannot bypass the contract.
+  //   src/components/{PieceForm,BatchAdd}.jsx — clients. They post to crud, which is writer 3.
+  //   routes/importer.js — calls tagPieceWithProvider, inheriting writer 1.
+  assert.match(read('routes/importer.js'), /tagPieceWithProvider/)
 })

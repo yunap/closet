@@ -551,12 +551,55 @@ a plain tee is model behaviour, and confirming it needs one real, billed tagging
 photos. It is not asserted, and the test says so in place rather than letting a green suite imply
 it. Recommend re-tagging the puffer as the single-piece check when that spend is worth it.
 
+### 11.8 `/extract-pieces` brought under the contract — **DONE 2026-09-01**
+
+Included because it is **another producer of `fiber_content`**, not because it happened to hold a
+duplicate schema. One fact → one meaning → every writer obeys the same contract. A path allowed to
+produce material facts that later become a garment row cannot stay a loophole where
+`fiber_content: ["polyester"]` arrives with completeness silently unspecified while the main tagger
+has learned to say "I know this list is partial."
+
+Auditing it found the loophole was wider than completeness: `/extract-pieces` returned
+`parseModelJson(raw)` **entirely unnormalized**. No fibre validation at all — invalid materials,
+casing and duplicate noise all reached the client, and any taxonomy gap was lost before `crud`
+could see it. `applyFiberWriterContract()` now applies the same normalization, the same
+`source: 'tagger'` completeness rule, and the same `fiber_taxonomy_gaps` reporting to every
+returned piece.
+
+The description itself is **not copied**. `FIBER_COMPLETENESS_SCHEMA_DESCRIPTION` in
+`fiberTaxonomy.js` is the single source and both photo schemas project it — §7.1 is the cautionary
+tale, and a test fails if either file restates it inline.
+
+### 11.9 Producer acceptance test
+
+Enumerates every producer and pins its disposition, so the next `/extract-pieces`-shaped path has
+to declare itself rather than being discovered later. Each must either emit completeness under the
+canonical contract, or be documented as incapable with the downstream state defaulting to
+`unknown`.
+
+| producer | disposition |
+|---|---|
+| tagger (`tagPieceWithProvider`) | asks for the field; normalizes at `source: 'tagger'` |
+| `/extract-pieces` | same projection and source, applied to every returned piece |
+| manual edit (both `crud` paths) | `source: 'manual'` — the only writer that may assert `complete` |
+| `mockAiHandler.js` | **not a producer** — a provider-level mock whose output returns *through* `tagPieceWithProvider`, so it lands on the tagger's boundary normalization and cannot bypass the contract |
+| `PieceForm` / `BatchAdd` | **not producers** — clients posting to `crud` |
+| `routes/importer.js` | **not a producer** — calls `tagPieceWithProvider`, inheriting its contract |
+
 ## 12. Remaining
 
-- **The verdict layer (§5).** `fiberEvidenceCompleteness(piece)` now has a real fact to read
-  instead of inferring one. Its thermal consumer is the point of the exercise: a `complete` "no
-  insulating fibres" is evidence, an `unknown` one is not. Acceptance criterion 8 still binds —
-  neither may become hard invalidity.
+- **The verdict layer (§5).** Two verdicts, not one. Completeness and thermal evidence are
+  related but not the same question, and collapsing them produces a word like "sufficient" that
+  cannot say sufficient *for what*:
+
+  ```text
+  complete cotton composition   → composition complete, little insulating evidence
+  partial list containing down  → composition incomplete, strong insulating evidence already
+  ```
+
+  So the chain is `fibre facts + completeness → composition evidence state → thermal-material
+  verdict`, rather than one verdict answering both. Acceptance criterion 8 still binds: neither
+  may become hard invalidity.
 - ~~**Tagger emission of `partial`.**~~ **DONE 2026-09-01** — see §11.6.
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

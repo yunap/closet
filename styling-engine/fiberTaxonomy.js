@@ -164,3 +164,19 @@ export function normalizeFiberCompleteness(value, { source = 'manual' } = {}) {
   if (!permitted.includes(token)) return 'unknown'
   return token
 }
+
+// The completeness contract as the model is told it — ONE source for every photo-derived producer.
+// Both photo schemas (the tagger in prompts.js and /extract-pieces in routes/ai.js) project this
+// rather than restating it; §7.1 is the cautionary tale for what two hand-kept copies become.
+//
+// The last two sentences are load-bearing, not padding. "Use partial when unsure" or "assume
+// partial for coats" would collapse 'partial' back into 'unknown' and undo the whole distinction.
+export const FIBER_COMPLETENESS_SCHEMA_DESCRIPTION =
+  "partial|unknown — whether the fiber_content list above describes the WHOLE garment. " +
+  "Use 'partial' ONLY when the image gives positive evidence that additional material components " +
+  "exist whose composition cannot be identified: visible lining, padding, quilting or baffles, " +
+  "fill, or clearly distinct unidentified material panels. Otherwise use 'unknown'. Never emit " +
+  "'complete' — a photograph cannot verify that nothing is hidden, and only a person reading a " +
+  "care label can assert that. 'unknown' means completeness was not established; 'partial' means " +
+  "the list is positively known not to describe the whole garment. Do not use 'partial' merely " +
+  "because you are unsure, and do not assume it by category."

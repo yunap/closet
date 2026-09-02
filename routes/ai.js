@@ -147,7 +147,7 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES, fiberContentNormalization, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -1494,6 +1494,29 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 
 
 // ── AI Tagging endpoints ───────────────────────────────────────────────────────
+// /extract-pieces is a second photo-derived producer of fiber_content, so it obeys the same writer
+// contract as the tagger rather than being a loophole where a material list arrives with its
+// completeness silently unspecified. It returns pieces the client may later save, and until now it
+// returned parseModelJson(raw) untouched — no fibre normalization at all, so invalid materials and
+// casing/duplicate noise reached the client and any taxonomy gap was lost before crud could see it.
+//
+// Permitted states here are the photo-derived ones: unknown | partial, never complete.
+function applyFiberWriterContract(result) {
+  const pieces = Array.isArray(result?.pieces) ? result.pieces
+    : Array.isArray(result) ? result
+    : null
+  if (!pieces) return result
+  for (const piece of pieces) {
+    if (!piece || typeof piece !== 'object') continue
+    const { values, invalid } = fiberContentNormalization(piece.fiber_content)
+    piece.fiber_content = values
+    piece.fiber_taxonomy_gaps = invalid
+    piece.fiber_content_completeness =
+      normalizeFiberCompleteness(piece.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
+  }
+  return result
+}
+
 router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No photo provided' })
   const filePath = path.join(userUploadsDir(), req.file.filename)
@@ -1551,6 +1574,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "outerwear_role": "indoor_layer|transition_layer|protective_shell|cold_weather_outerwear|null (outerwear only; null/omit for non-outerwear, and null when evidence is insufficient — do not guess). Functional judgment of what job this garment can do as an OUTER layer outdoors, independent of fabric weight: indoor_layer = modest warmth/styling layer, no real outdoor protection; transition_layer = primary outer layer for mild/cool conditions, not a true shell or winter coat; protective_shell = built to block wind/rain rather than insulate, can be thermally light; cold_weather_outerwear = genuine cold-weather layer with substantial insulation. Do not infer from fabric weight, wool, nylon, or the words coat/jacket/cardigan alone.",
       "weather_protection": "array, 0-2 values from: rain, wind (outerwear only; empty array for non-outerwear or when evidence is insufficient — an empty array is common and normal, not a gap). SEPARATE from outerwear_role — a protective_shell is not automatically both, a transition/cold-weather piece is not automatically empty. Include 'rain' only with genuine construction evidence (coated/sealed face fabric, built as a rain shell) — nylon/polyester fiber alone is not evidence. Include 'wind' only with genuine construction evidence (tight wind-blocking weave, built as a windbreaker) — heavy fabric weight or wool alone is not evidence. A windbreaker is typically ['wind'] only; a raincoat is typically ['rain'] only.",
       "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: ${FIBER_VALUES.join(', ')}. ${FIBER_FAMILIES.jewelry_material.join('/')} are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible (a shearling or fleece collar, a visibly fuzzy or quilted interior) — record it as 'wool', 'fleece', or 'down'. It is the only place a boot's warmth is recorded, since fabric_weight is null for shoes and fabric_category describes the upper. Only when you can see it; never inferred from the word 'boot' or 'winter'. Use 'unknown' if not determinable."],
+      "fiber_content_completeness": "${FIBER_COMPLETENESS_SCHEMA_DESCRIPTION}",
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
       "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)"
@@ -1562,7 +1586,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
     })
 
     console.log('RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
-    res.json(parseModelJson(raw))
+    res.json(applyFiberWriterContract(parseModelJson(raw)))
   } catch (err) {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
     console.error('Extract pieces error:', err)
