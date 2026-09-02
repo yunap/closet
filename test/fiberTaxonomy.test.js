@@ -3,7 +3,7 @@
 // the row, or that collapsed two distinct states into one.
 import test from 'node:test'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
 
 // Stands in for the manual-edit path in routes/crud.js, which receives fiber_content as a JSON
@@ -70,4 +70,26 @@ test('normalization infers nothing about completeness or warmth', () => {
   assert.deepEqual(normalizeFiberContent(['polyester', 'nylon']), ['polyester', 'nylon'])
   assert.deepEqual(normalizeFiberContent(['nylon', 'polyester']), ['polyester', 'nylon'])
   assert.deepEqual(normalizeFiberContent(['polyester', 'nylon', 'down']), ['down', 'polyester', 'nylon'])
+})
+
+test('completeness writer rules: photo inference may never assert complete', () => {
+  // The rule the black puffer motivates. A photo cannot see a lining or a fill, so a tagger
+  // claiming 'complete' is claiming something it had no way to establish. Downgraded to
+  // 'unknown' — "not established" — rather than to 'partial', since proposing completeness is
+  // not evidence of incompleteness either.
+  assert.equal(normalizeFiberCompleteness('complete', { source: 'tagger' }), 'unknown')
+  assert.equal(normalizeFiberCompleteness('partial', { source: 'tagger' }), 'partial')
+  assert.equal(normalizeFiberCompleteness('unknown', { source: 'tagger' }), 'unknown')
+  assert.equal(normalizeFiberCompleteness('complete', { source: 'manual' }), 'complete')
+  assert.equal(normalizeFiberCompleteness('mostly', { source: 'manual' }), null)
+  assert.equal(normalizeFiberCompleteness(null, { source: 'manual' }), null)
+})
+
+test('completeness is not inferred from the fibre list', () => {
+  // Whatever the list contains, normalization of the list itself never produces a completeness
+  // claim. The two facts are stored separately precisely so one cannot masquerade as the other.
+  for (const list of [['polyester', 'nylon'], ['polyester', 'nylon', 'down'], ['cotton', 'unknown'], []]) {
+    const { values } = fiberContentNormalization(list)
+    assert.ok(!('completeness' in Object(values)), 'the list normalizer yields fibres only')
+  }
 })

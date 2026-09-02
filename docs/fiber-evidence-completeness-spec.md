@@ -444,7 +444,82 @@ Full suite **1745 tests, 2 failures — the same 2 that fail at `HEAD`**. Seven 
   `['wool', 'unknown', 'linen']` from a submission containing `'mystery fiber'`, encoding the
   collapse of invalid evidence into valid uncertainty as intended behaviour.
 
-## 11. Open ruling
+## 11. The completeness fact — **DONE 2026-09-01**, owner ruling applied
 
-The shape of the persisted completeness/source fact established as necessary in §8 — and whether
-it is specified before or after §7.4's tagger change gives it a reliable writer.
+Ruled: persist it, do not derive `complete` from the absence of a marker.
+
+```text
+fiber_content               what materials are recorded
+fiber_content_completeness  whether that composition is complete
+manual_overrides/confidence who/what owns the value
+```
+
+### 11.1 Semantics
+
+```text
+unknown   completeness was never established
+partial   explicitly KNOWN incomplete
+complete  explicitly VERIFIED complete
+```
+
+The distinction that makes this durable, per the ruling: **`partial` is not "contains some
+values."** A list with fibres in it says nothing about whether more exist; where the writer does
+not know, the honest state is `unknown`. So nothing sets `partial` merely because fibres are
+present.
+
+### 11.2 Writer rules
+
+| writer | may write |
+|---|---|
+| photo/tagger inference | `unknown`, `partial` |
+| manual edit / care-label transcription | `unknown`, `partial`, `complete` |
+
+A tagger proposing `complete` is downgraded to **`unknown`**, not `partial` — proposing
+completeness is not evidence of incompleteness either. Enforced at the boundary in
+`normalizeFiberCompleteness(value, { source })`, and guarded in `applyTaggerResult` even though the
+tagger does not emit the field today, so the rule holds at the moment one is added rather than
+being remembered later. A manual assertion is protected from retagging by the existing
+`manual_overrides` machinery — verified, not assumed — rather than by a second mechanism here.
+
+### 11.3 Legacy seeding
+
+Legacy rows start at `unknown`. The single exception is rows carrying **explicit existing
+evidence** of incompleteness: an `"unknown"` sitting *alongside* resolved fibres is the writer
+stating "plus something I could not identify" — a statement, not an absence. A bare `["unknown"]`
+is not, since it says nothing was resolved.
+
+Verified against a WAL-inclusive copy of the live DB: **10 seeded `partial`** — exactly the ten
+rows §2 identified — and **258 `unknown`**. The puffer seeds `unknown`: its composition happens to
+be complete, but nobody has yet *asserted* that, and the seed's job is to record what was
+established, not what is true.
+
+### 11.4 The editor control
+
+Asked in the owner's terms, not the internal vocabulary:
+
+```text
+Is this the complete material composition?     [ Yes ]  [ Not sure ]
+```
+
+`Yes → complete`. `Not sure` **preserves an existing `partial`** and otherwise writes `unknown` —
+`partial` is the stronger statement, and answering this control should never quietly discard it.
+
+### 11.5 Evidence
+
+Full suite **1749 tests, 2 failures — the same 2 that fail at `HEAD`**. Tests cover the writer
+rules, the round trip through the real route, rejection of out-of-enum values, and the case that
+motivated the whole thing: two pieces with byte-identical `fiber_content`, one asserting
+`complete` and one left `unknown`, with completeness the only thing separating them.
+
+## 12. Remaining
+
+- **The verdict layer (§5).** `fiberEvidenceCompleteness(piece)` now has a real fact to read
+  instead of inferring one. Its thermal consumer is the point of the exercise: a `complete` "no
+  insulating fibres" is evidence, an `unknown` one is not. Acceptance criterion 8 still binds —
+  neither may become hard invalidity.
+- **Tagger emission of `partial`.** The rules permit it and the guard is in place, but the prompt
+  does not ask for it, so §7.4's instruction has no field to land in yet. Note the cost: this
+  changes the tagger schema, so `test/fixtures/prompts_yuna_snapshot.json` needs a deliberate,
+  documented update — it is currently a byte-for-byte gate.
+- **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
+  incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

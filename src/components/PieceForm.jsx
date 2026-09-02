@@ -440,6 +440,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     opacity:            piece?.opacity            || null,
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
+    fiber_content_completeness: piece?.fiber_content_completeness || 'unknown',
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
     walk_support:       piece?.walk_support       || null,
@@ -1479,6 +1480,25 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <div className="form-group" data-piece-field="fiber_content">
             <FieldLabel field="fiber_content">{cat === 'shoes' || cat === 'accessory' ? 'Material properties' : 'Fiber content'}</FieldLabel>
             <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
+            {/* Completeness is a separate stored fact, not something read off the list above: a
+                shell-only reading and a care-label transcription look identical once stored, and
+                only a person can tell them apart. Asked in the user's terms rather than the
+                internal unknown/partial/complete vocabulary. "Not sure" preserves an existing
+                'partial' — that is a stronger statement than "not established" and answering this
+                control should never quietly discard it. See
+                docs/fiber-evidence-completeness-spec.md §11. */}
+            <div className="form-subgroup" data-piece-field="fiber_content_completeness">
+              <span className="form-hint">Is this the complete material composition?</span>
+              <ChipRow
+                options={[
+                  { value: 'complete', label: 'Yes' },
+                  { value: form.fiber_content_completeness === 'partial' ? 'partial' : 'unknown', label: 'Not sure' },
+                ]}
+                value={form.fiber_content_completeness || 'unknown'}
+                onChange={v => set('fiber_content_completeness', v)}
+                clearable={false}
+              />
+            </div>
           </div>
 
           {fabricConfig.showStretch && (

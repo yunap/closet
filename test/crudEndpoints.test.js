@@ -820,3 +820,39 @@ test('fiber gaps the tagger dropped before the client saw them still reach the r
   assert.equal(queued.length, 1)
   assert.equal(JSON.parse(queued[0].payload).fiber, 'lycra')
 })
+
+test('fiber_content_completeness is persisted, and only a human may assert complete', async () => {
+  // docs/fiber-evidence-completeness-spec.md §11. The fact exists because a care-label
+  // transcription and an unverified photo guess are byte-identical in fiber_content, and neither
+  // manual_overrides nor tagger confidence can tell them apart.
+  const create = new FormData()
+  create.append('name', 'completeness coat')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['black']))
+  create.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
+  create.append('fiber_content_completeness', 'complete')
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.equal(created.fiber_content_completeness, 'complete',
+    'a person confirming the composition is the canonical path that can assert complete')
+
+  // The same fibre list with completeness unstated stays unknown — never promoted by the absence
+  // of an uncertainty marker.
+  const unstated = new FormData()
+  unstated.append('name', 'guessed coat')
+  unstated.append('category', 'outerwear')
+  unstated.append('colors', JSON.stringify(['black']))
+  unstated.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
+  const guessed = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: unstated })).json()
+  assert.equal(guessed.fiber_content_completeness, null)
+  assert.deepEqual(guessed.fiber_content, created.fiber_content,
+    'identical fibre lists — completeness is the only thing separating them, which is the point')
+
+  // Nonsense is rejected rather than stored.
+  const bogus = new FormData()
+  bogus.append('name', 'completeness coat')
+  bogus.append('category', 'outerwear')
+  bogus.append('colors', JSON.stringify(['black']))
+  bogus.append('fiber_content_completeness', 'mostly')
+  const rejected = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: bogus })).json()
+  assert.equal(rejected.fiber_content_completeness, null)
+})

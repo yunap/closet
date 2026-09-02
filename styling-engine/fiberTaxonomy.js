@@ -126,3 +126,41 @@ export function fiberContentNormalization(value) {
 export function normalizeFiberContent(value = []) {
   return fiberContentNormalization(value).values
 }
+
+// ── Completeness: is the recorded composition the WHOLE composition? ─────────────────────────
+//
+// A separate, irreducible fact from the fibre list and from provenance. Three states, and the
+// distinction that keeps them durable:
+//
+//   unknown   completeness was never established
+//   partial   KNOWN to be incomplete — someone said "plus something I could not identify"
+//   complete  explicitly VERIFIED complete
+//
+// 'partial' does not mean "contains some values". A list with fibres in it says nothing about
+// whether more exist; if the writer does not know, the honest state is 'unknown'. And 'complete'
+// is never inferred from the absence of an uncertainty marker — absence means the writer did not
+// emit one. See docs/fiber-evidence-completeness-spec.md §6 and §11.
+export const FIBER_COMPLETENESS_VALUES = ['unknown', 'partial', 'complete']
+
+// Writer rules. Photo-only inference cannot see a lining or a fill, so it is not permitted to
+// assert 'complete' no matter how confident it sounds — that is precisely the claim the black
+// puffer's ["polyester","nylon"] made implicitly and got wrong. A tagger proposing 'complete' is
+// downgraded to 'unknown' ("not established"), not to 'partial': proposing completeness is not
+// evidence of incompleteness either.
+//
+// Only a human confirming the composition — reading a care label, or answering the editor's
+// "is this the complete material composition?" — can write 'complete'. A manual assertion is
+// protected from later retagging by the existing manual_overrides machinery, the same way every
+// other manually-owned field is; this function deliberately does not reimplement that.
+export const FIBER_COMPLETENESS_WRITERS = {
+  tagger: ['unknown', 'partial'],
+  manual: ['unknown', 'partial', 'complete'],
+}
+
+export function normalizeFiberCompleteness(value, { source = 'manual' } = {}) {
+  const token = String(value ?? '').toLowerCase().trim()
+  if (!FIBER_COMPLETENESS_VALUES.includes(token)) return null
+  const permitted = FIBER_COMPLETENESS_WRITERS[source] || FIBER_COMPLETENESS_WRITERS.manual
+  if (!permitted.includes(token)) return 'unknown'
+  return token
+}

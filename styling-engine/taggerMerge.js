@@ -1,5 +1,5 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
-import { normalizeFiberContent } from './fiberTaxonomy.js'
+import { normalizeFiberContent, normalizeFiberCompleteness } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
@@ -338,6 +338,13 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const patch = { ...tags }
   delete patch.color_taxonomy_gaps
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
+  // The tagger does not emit completeness today. This guard is here so that if it ever does, the
+  // writer rule applies at the boundary rather than being remembered later: photo-only inference
+  // cannot see a lining or a fill, so it may never assert 'complete'. See fiberTaxonomy.js.
+  if ('fiber_content_completeness' in patch) {
+    patch.fiber_content_completeness =
+      normalizeFiberCompleteness(patch.fiber_content_completeness, { source: 'tagger' })
+  }
   // Category-aware: a retag may change the category in the same patch, so validate against the
   // incoming category when there is one and fall back to the stored one.
   if ('fabric_category' in patch) patch.fabric_category = normalizeFabricCategory(patch.fabric_category, patch.category ?? existingPiece.category)
