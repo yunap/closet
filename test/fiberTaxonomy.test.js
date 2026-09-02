@@ -7,7 +7,8 @@ import path from 'node:path'
 import assert from 'node:assert'
 import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
-import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, fabricAdmitsHiddenMaterial } from '../styling-engine/attributes.js'
+import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial } from '../styling-engine/attributes.js'
+import { warmthCalibrationEvidenceState, proposedWarmthLevel } from '../styling-engine/warmthCalibration.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 
@@ -275,22 +276,30 @@ test('994060: the real-wardrobe fixture for the asymmetry, pinned permanently', 
   assert.equal(thermalMaterialVerdict(hoodie), 'unknown')
 })
 
-test('fabricAdmitsHiddenMaterial separates "unverified" from "could be hiding something"', () => {
-  // The third fact, kept out of thermalMaterialVerdict deliberately. Without it, the warmth
-  // calibration refused to score 134 of 268 pieces; with it, 15.
-  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'synthetic' }), true)
-  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'technical/performance' }), true)
-  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'other' }), true)
-  assert.equal(fabricAdmitsHiddenMaterial({}), true, 'an untagged fabric_category cannot rule it out')
+test('warmth calibration: unverified is not the same as uncharacterized', () => {
+  // The first attempt at this promoted the distinction to a general garment fact called
+  // fabricAdmitsHiddenMaterial() — "can this fabric hide another material?" That claimed physics
+  // the data does not establish: denim can be quilted, leather jackets can be padded, knit
+  // outerwear can be lined. What the measurement supports is narrower and lives in
+  // warmthCalibration.js as a policy about OUR evidence, not about garments.
+  const state = warmthCalibrationEvidenceState
 
-  // Single-layer constructions: what you see is what it is.
-  for (const fabric_category of ['knit', 'cotton', 'denim', 'leather', 'jersey', 'linen', 'silk']) {
-    assert.equal(fabricAdmitsHiddenMaterial({ fabric_category }), false, `${fabric_category} has no cavity for a fill`)
-  }
+  // Substantial, composition never established, face-fabric-only category → cannot be scored.
+  assert.equal(state({ fabric_weight: 'heavy', fabric_category: 'synthetic', fiber_content: ['polyester', 'nylon'] }), 'thermally_ambiguous')
+  assert.equal(proposedWarmthLevel({ fabric_weight: 'heavy', fabric_category: 'synthetic', fiber_content: ['polyester', 'nylon'] }), null)
 
-  // It answers a different question from the verdict and must not be read as one.
-  const puffer = { fiber_content: ['polyester', 'nylon'], fabric_weight: 'heavy', fabric_category: 'synthetic' }
-  assert.equal(thermalMaterialVerdict(puffer), 'unknown')
-  assert.equal(fabricAdmitsHiddenMaterial(puffer), true,
-    'heavy + synthetic is exactly the shape that can hide a fill — what the puffer exploited')
+  // The same garment once the care label is recorded. Positive evidence ends the ambiguity.
+  assert.equal(state({ fabric_weight: 'heavy', fabric_category: 'synthetic', fiber_content: ['polyester', 'nylon', 'down'] }), 'scoreable')
+  assert.equal(proposedWarmthLevel({ fabric_weight: 'heavy', fabric_category: 'synthetic', fiber_content: ['polyester', 'nylon', 'down'] }), 'very warm')
+
+  // Unverified completeness alone must NOT make a garment unscoreable — the 52% explosion.
+  assert.equal(state({ fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'] }), 'scoreable')
+  assert.equal(state({ fabric_weight: 'medium', fabric_category: 'knit', fiber_content: ['unknown'] }), 'scoreable')
+
+  // Light garments are exempt: what is unstated cannot move them far enough up the scale.
+  assert.equal(state({ fabric_weight: 'light', fabric_category: 'synthetic', fiber_content: ['polyester'] }), 'scoreable')
+
+  // Without the starting fact there is nothing to calibrate from.
+  assert.equal(state({ fabric_category: 'knit', fiber_content: ['wool'] }), 'insufficient_evidence')
+  assert.equal(proposedWarmthLevel({ fabric_category: 'knit', fiber_content: ['wool'] }), null)
 })

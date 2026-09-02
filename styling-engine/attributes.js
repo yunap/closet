@@ -527,29 +527,6 @@ export function thermalMaterialVerdict(p = {}) {
   return compositionEvidenceState(p) === 'complete' ? 'non_insulating' : 'unknown'
 }
 
-// A THIRD fact, distinct from both verdicts: does this garment's construction physically admit
-// material you cannot see? Named and owned here after the warmth-calibration migration measured
-// what happens without it — treating every unverified composition as unscoreable moved 134 of 268
-// pieces (52%) into UNKNOWN, including medium cotton tees, linen and silk blouses.
-//
-// Those are not ambiguous garments. A knit, a denim jacket, a leather coat is what it looks like;
-// there is no cavity for a fill to hide in, so an unverified composition changes nothing about its
-// warmth. A heavy piece tagged only 'synthetic' or 'technical/performance' is the opposite: that
-// value describes a face fabric and says nothing about what sits behind it. On the real wardrobe
-// that distinction is 16 pieces rather than 134.
-//
-// This is what the black puffer actually exploited. Its ["polyester","nylon"] was not suspicious
-// as a fibre list — it was suspicious because a HEAVY garment whose fabric_category is 'synthetic'
-// is exactly the shape that can be hiding a fill.
-//
-// Deliberately NOT part of thermalMaterialVerdict(): that verdict answers what the evidence
-// establishes, and this answers whether more evidence could plausibly exist. Consumers that need
-// to decide "is it worth refusing to score this?" combine the two.
-const HIDDEN_MATERIAL_FABRIC_CATEGORIES = new Set(['synthetic', 'other', 'technical/performance', ''])
-export function fabricAdmitsHiddenMaterial(p = {}) {
-  return HIDDEN_MATERIAL_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())
-}
-
 // Compatibility wrapper, deliberately kept while its six consumers are migrated one at a time.
 // It has always meant "is there positive insulating evidence?", so it is exactly
 // `verdict === 'insulating'` — false has never asserted non-insulating, and this wrapper must not

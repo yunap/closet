@@ -3,7 +3,6 @@ import {
   pieceHasInsulatingMaterial,
   thermalMaterialVerdict,
   compositionEvidenceState,
-  fabricAdmitsHiddenMaterial,
   pieceHasVentilatedFootwearMaterial,
   pieceHasWetSensitiveFootwearMaterial,
   pieceOuterwearRole,
@@ -11,38 +10,8 @@ import {
   wardrobeCategoryGroup,
 } from '../styling-engine/attributes.js'
 import { pieceWeatherScores } from '../styling-engine/thermal.js'
+import { proposedWarmthLevel, warmthCalibrationEvidenceState } from '../styling-engine/warmthCalibration.js'
 import { evaluateOuterwearCapability } from '../styling-engine/outerwearCapability.js'
-
-// The candidate warmth scale from docs/garment-warmth-calibration.md §2, migrated onto the
-// verdict layer 2026-09-01 (fiber-evidence-completeness-spec.md §12). It previously asked
-// pieceHasInsulatingMaterial() — a boolean — and then hand-rolled its own "is the composition
-// unresolved?" test from the raw fibre list. That local heuristic is exactly the question
-// compositionEvidenceState()/thermalMaterialVerdict() now own, so it is gone rather than kept in
-// sync.
-//
-// The three-way rule, which is the point of the migration:
-//   insulating      positive evidence  → substance + 2
-//   non_insulating  negative evidence  → substance alone, decisively
-//   unknown         NOT coerced to the old false — a substantial garment whose composition was
-//                   never established has an unknown warmth level, not a low one
-//
-// The substance floor stays: for an ultralight or light garment the missing evidence cannot change
-// the answer much, so unknown composition there is not worth refusing to score.
-const SUBSTANCE = { light: 0, medium: 1, heavy: 2 }
-function proposedWarmthLevel(piece) {
-  const substance = SUBSTANCE[piece.fabric_weight] ?? null
-  if (substance === null) return 'UNKNOWN (no fabric_weight)'
-  const verdict = thermalMaterialVerdict(piece)
-  // Refuse to score only where the missing evidence could actually change the answer: a
-  // substantial garment whose composition was never established AND whose construction admits
-  // material you cannot see. Without the third condition this refuses to score half the wardrobe —
-  // see fabricAdmitsHiddenMaterial() for the measurement.
-  if (verdict === 'unknown' && substance >= 1 && fabricAdmitsHiddenMaterial(piece)) {
-    return 'UNKNOWN (substantial, hidden material possible, composition never established)'
-  }
-  const bonus = verdict === 'insulating' ? 2 : 0
-  return ['very light', 'light', 'moderate', 'warm', 'very warm'][Math.min(4, substance + bonus)]
-}
 
 // What the engine CONCLUDES from the stored facts above it. Added 2026-09-01: the puffer
 // investigation needed the tags and their consequences side by side — a garment whose
@@ -57,7 +26,8 @@ function printDerived(piece) {
   line('cold / heat score', `${scores.cold} / ${scores.heat}`)
   line('composition evidence', compositionEvidenceState(piece))
   line('thermal material verdict', thermalMaterialVerdict(piece))
-  line('warmth level (proposed)', proposedWarmthLevel(piece))
+  line('calibration evidence', warmthCalibrationEvidenceState(piece))
+  line('warmth level (proposed)', proposedWarmthLevel(piece) ?? '— not assignable')
   if (group === 'outerwear') {
     line('outerwear role', pieceOuterwearRole(piece) ?? 'null (unknown)')
     line('weather protection', JSON.stringify(pieceWeatherProtection(piece)))

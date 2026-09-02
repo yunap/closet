@@ -696,22 +696,38 @@ UNKNOWN (composition)         5           139            15
 Treating every unverified composition as unscoreable moved **134 of 268 pieces (52%)** into UNKNOWN
 — medium cotton tees, linen and silk blouses, knit tops. Those are not ambiguous garments.
 
-The old `NONCOMMITTAL_FABRIC` set was carrying a real physical fact that neither verdict owns:
-**does this construction admit material you cannot see?** A knit, a denim jacket, a leather coat is
-what it looks like — there is no cavity for a fill to hide in, so an unverified composition changes
-nothing about its warmth. A heavy piece tagged only `synthetic` or `technical/performance` is the
-opposite: that value describes a face fabric and says nothing about what sits behind it. Measured
-on the real wardrobe, the medium/heavy population is dominated by `knit` (39), `cotton` (29),
-`leather` (16), `denim` (11); the genuinely ambiguous categories total **16**.
+The old `NONCOMMITTAL_FABRIC` set was carrying a second distinction that neither verdict owns.
 
-**This is what the puffer actually exploited.** `["polyester","nylon"]` was not suspicious as a
-fibre list. It was suspicious because a HEAVY garment whose `fabric_category` is `synthetic` is
-exactly the shape that can be hiding a fill.
+**A first attempt named it wrongly, and the correction matters.** It was called
+"fabricAdmitsHiddenMaterial" — *"can this fabric hide another material?"* — and placed in
+`attributes.js` as a general garment fact. That claimed physics the data does not establish: denim
+can be quilted, leather jackets can be padded, cotton jackets can hold batting, knit outerwear can
+be lined. The measurement supports something narrower:
 
-So it is named and owned — `fabricAdmitsHiddenMaterial()` in `attributes.js` — rather than left as
-a hand-kept Set in a scratch file. Deliberately **not** folded into `thermalMaterialVerdict()`:
-that verdict answers what the evidence establishes, this answers whether more evidence could
-plausibly exist. A consumer deciding "is it worth refusing to score this?" combines the two.
+> For Closet's present taxonomy and garments, `synthetic`, `other` and `technical/performance` are
+> the categories where `fabric_weight` + known fibres most often fail to characterize thermal
+> construction.
+
+That is a calibration finding about **our evidence**, not a property of fabric. So it lives in
+`styling-engine/warmthCalibration.js` as an uncertainty policy, not in `attributes.js` as a truth:
+
+```text
+garment facts (thermalMaterialVerdict, fabric_category, fabric_weight, completeness)
+        ↓
+warmthCalibrationEvidenceState(piece)
+        ↓
+scoreable | thermally_ambiguous | insufficient_evidence
+```
+
+Measured on the real wardrobe, the medium/heavy population is dominated by `knit` (39), `cotton`
+(29), `leather` (16), `denim` (11) — all scoreable; those three categories plus an untagged one
+account for the entire ambiguous band.
+
+The puffer story is cleaner without the physics claim: `heavy + synthetic + composition never
+established` → **thermally ambiguous**; once the care label supplies `down` → **very warm**. No
+need to assert that synthetic fabric intrinsically hides things. When Closet gains a real
+construction fact — visible padding, quilting, a lining — ambiguity should be read off that, and
+this set should shrink or disappear.
 
 The resulting UNKNOWN band is 15 pieces and holds the right ones — including `990441 grey layered
 zip jacket`, one of the four the original editor critique flagged, and `207 black leather zip
