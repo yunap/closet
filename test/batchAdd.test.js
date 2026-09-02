@@ -23,7 +23,7 @@ test('BatchAdd review UI exposes formality before saving', () => {
 
 test('BatchAdd review UI exposes fabric_weight, fiber_content, and shoe comfort fields', () => {
   assert.match(source, /const FABRIC_WEIGHT_OPTIONS = \[/)
-  assert.match(source, /const FIBER_OPTIONS = FIBER_OPTIONS_ORDER/)
+  assert.match(source, /fiberFamiliesForPiece\(form\)/)
   assert.match(source, /const HEEL_HEIGHT_OPTIONS = \[/)
   assert.match(source, /const WALK_SUPPORT_OPTIONS = \[/)
   assert.match(source, /form\.fabric_weight === opt\.value/)

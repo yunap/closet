@@ -191,3 +191,47 @@ export function compositionEvidenceState(piece = {}) {
   const stored = String(piece?.fiber_content_completeness ?? '').toLowerCase().trim()
   return FIBER_COMPLETENESS_VALUES.includes(stored) ? stored : 'unknown'
 }
+
+// Values inside jewelry_material that are genuinely jewellery-specific. The tagger prompt already
+// draws this line in its own wording — pearl/crystal/enamel are described as jewellery beads,
+// accents and findings, while horn/shell/resin are described as "buttons, buckles, and hardware"
+// and metal/wood are ordinary accessory hardware. Real usage agrees: across the wardrobe's 18
+// accessories, jewellery-family values appear on the 8 jewelry pieces (stone, metal, glass, pearl,
+// shell) and on NONE of the belts, bags, glasses or scarves.
+//
+// Kept as a filter rather than a family split, so the canonical FIBER_VALUES ordering — which the
+// tagger prompt and VALID_FIBERS both project — is untouched.
+const JEWELRY_ONLY_VALUES = new Set(['stone', 'ceramic', 'glass', 'pearl', 'crystal', 'enamel'])
+
+// THE projection both intake surfaces use: which fibre families, and which members of them, this
+// piece may be tagged with. Returns [family, values] pairs in canonical family order.
+//
+// `accessory` is a catch-all covering belts, bags, hats, scarves, watches, glasses and gloves as
+// well as jewelry, so category alone is too coarse — offering `pearl` and `enamel` on a scarf is
+// the same defect as offering them on a coat, just less obvious. Subtype narrows it.
+export function fiberFamiliesForPiece(piece = {}) {
+  const category = String(piece?.category || '').toLowerCase().trim()
+  const isJewelry = String(piece?.accessory_subtype || '').toLowerCase().trim() === 'jewelry'
+  const groups = []
+  for (const [family, values] of Object.entries(FIBER_FAMILIES)) {
+    if (!(FIBER_FAMILY_APPLICABILITY[family] || []).includes(category)) continue
+    const usable = family === 'jewelry_material' && !isJewelry
+      ? values.filter(v => !JEWELRY_ONLY_VALUES.has(v))
+      : values
+    if (usable.length) groups.push([family, usable])
+  }
+  return groups
+}
+
+// Presentation labels for the families, so both intake surfaces show the same headings rather than
+// each inventing its own.
+export const FIBER_FAMILY_LABELS = {
+  plant_cellulose: 'Plant fibres',
+  filament_protein: 'Silk',
+  insulating: 'Warm / insulating',
+  regenerated_cellulose: 'Regenerated cellulose',
+  synthetic: 'Synthetics',
+  constructed_textile: 'Leather & constructed textiles',
+  jewelry_material: 'Jewellery & hardware',
+  unresolved: 'Not determinable',
+}

@@ -791,12 +791,24 @@ when we arguably know enough to say `light`. Direction if changed: looser, not s
 Projection-only, as the review required. The editor derives every one of these from a canonical
 owner and holds no material logic of its own.
 
-**Chips grouped and filtered from taxonomy metadata.** `FIBER_FAMILIES` supplies the grouping,
-`FIBER_FAMILY_APPLICABILITY` the per-category filter. A coat now sees **24 chips in 7 labelled
-groups** instead of a flat wall of 35; `pearl`, `enamel`, `horn`, `ceramic` and the rest of the
-jewellery family are gone from garments, and `down` sits under a **Warm / insulating** heading
-rather than unmarked in the middle of the wall. Accessories still see all 35 — which is what the
-applicability metadata is for.
+**Chips grouped and filtered by one canonical function.** `fiberFamiliesForPiece(piece)` in
+`fiberTaxonomy.js` — both intake surfaces call it, neither computes grouping or filtering itself,
+and `FIBER_FAMILY_LABELS` keeps the headings identical across them. A coat now sees **24 chips in 7
+labelled groups** instead of a flat wall of 35; the jewellery values are gone from garments, and
+`down` sits under a **Warm / insulating** heading rather than unmarked in the middle of the wall.
+
+**`accessory` alone was too coarse**, and the first version of this got it wrong by treating the
+category as jewellery-capable. It is a catch-all covering belts, bags, hats, scarves, watches,
+glasses and gloves — offering `pearl` and `enamel` on a scarf is the same defect as offering them
+on a coat, just less obvious. Measured: jewellery-family values appear on the wardrobe's **8 jewelry
+pieces** (stone, metal, glass, pearl, shell) and on **none** of its belts, bags, glasses or scarves.
+
+So the projection is subtype-aware. Jewellery-specific values (`stone`, `ceramic`, `glass`,
+`pearl`, `crystal`, `enamel`) show only for `accessory_subtype: jewelry`; hardware values (`metal`,
+`wood`, `horn`, `shell`, `resin`) stay available to every accessory, because the tagger prompt
+itself describes them as "buttons, buckles, and hardware". Jewelry 35, other accessories 29,
+garments 24. Implemented as a **filter, not a family split**, so the canonical `FIBER_VALUES`
+ordering that the tagger prompt and `VALID_FIBERS` both project is untouched.
 
 **Consequence copy from a canonical registry.** `FIELD_CONSEQUENCE` in `attributes.js`, keyed by
 field, explicitly **not** by `GATE_CRITICAL_FIELDS` — that list is an implementation concern and
@@ -808,8 +820,14 @@ populated; a field with no entry renders nothing, because generic filler is wors
 `warmthCalibrationEvidenceState(form) === 'thermally_ambiguous'`, never by a local heavy+synthetic
 heuristic:
 
-> The recorded materials don't say how warm this is. For a lined, padded or quilted piece, the fill
-> is usually what decides — and it's often only on the care label.
+> The recorded materials don't say how warm this is. Padded or quilted pieces may contain
+> insulation that isn't visible; the care label can identify it.
+
+An earlier draft said "for a lined, padded or quilted piece, the fill is usually what decides."
+**Lining does not imply fill** — a lined wool coat may have a thin acetate lining and take
+essentially all its warmth from the shell. That sentence turned an evidence warning into a
+clothing-physics rule the app has no business asserting. A test now fails if the copy mentions
+lining.
 
 It deliberately does **not** say "this garment is non-insulating." The app has established no such
 thing, and claiming it would contradict §12. A test asserts the rendered copy never makes that
@@ -827,6 +845,12 @@ Two defects the checks caught that a visual pass would also have shown: `.form-h
 `.form-subgroup` were used in §11.4's completeness control **and never defined in any stylesheet**,
 and the family label was written at a hard-coded `10px`, which the typography ratchet rejects. Both
 fixed in `src/App.css` against the design tokens.
+
+### 15.2 Presentation parity
+
+`BatchAdd` now renders the same grouped, filtered projection as `PieceForm`. Its **values** were
+already single-sourced from §7.1 — this was a missing UI projection, not a second ownership hole,
+and one field looking different on the two intake surfaces is the whole defect.
 
 ## 16. Remaining
 

@@ -5,7 +5,7 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY, fiberFamiliesForPiece } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
 import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE } from '../styling-engine/attributes.js'
 import { warmthCalibrationEvidenceState, proposedWarmthLevel } from '../styling-engine/warmthCalibration.js'
@@ -304,28 +304,38 @@ test('warmth calibration: unverified is not the same as uncharacterized', () => 
   assert.equal(proposedWarmthLevel({ fabric_category: 'knit', fiber_content: ['wool'] }), null)
 })
 
-test('the editor projects fibre chips from taxonomy metadata and keeps no local copy', () => {
-  // §7.5. The screenshot that started this showed a coat being offered pearl, enamel, horn and
-  // ceramic in a flat wall of 35 chips with `down` unmarked in the middle. Grouping and filtering
-  // are now projections of FIBER_FAMILIES / FIBER_FAMILY_APPLICABILITY.
-  const groups = category => Object.entries(FIBER_FAMILIES)
-    .filter(([family]) => (FIBER_FAMILY_APPLICABILITY[family] || []).includes(category))
+test('both intake surfaces project fibre chips from one canonical function', () => {
+  // §7.5 + the presentation-parity follow-up. The screenshot that started this showed a coat being
+  // offered pearl, enamel, horn and ceramic in a flat wall of 35 chips with `down` unmarked in the
+  // middle. Grouping AND the per-category filter are now one function both forms call.
+  const count = piece => fiberFamiliesForPiece(piece).reduce((n, [, v]) => n + v.length, 0)
 
-  const outerwear = groups('outerwear')
-  const shown = outerwear.flatMap(([, values]) => values)
+  const coat = fiberFamiliesForPiece({ category: 'outerwear' })
+  const shown = coat.flatMap(([, values]) => values)
   assert.equal(shown.length, 24, 'a coat sees 24 chips, not all 35')
   for (const jewelleryOnly of FIBER_FAMILIES.jewelry_material) {
     assert.ok(!shown.includes(jewelleryOnly), `${jewelleryOnly} must not be offered on a coat`)
   }
   assert.ok(shown.includes('down'), 'and down must still be there — under a labelled warm family')
-  assert.deepEqual(outerwear.find(([f]) => f === 'insulating')[1], FIBER_FAMILIES.insulating)
+  assert.deepEqual(coat.find(([f]) => f === 'insulating')[1], FIBER_FAMILIES.insulating)
 
-  // Accessories keep the full list, which is the point of the applicability metadata.
-  assert.equal(groups('accessory').flatMap(([, v]) => v).length, 35)
+  // `accessory` is a catch-all, so category alone is too coarse: offering pearl/enamel on a scarf
+  // is the same defect as offering them on a coat. Real usage backs this — jewellery-family values
+  // appear on the wardrobe's 8 jewelry pieces and on none of its belts, bags, glasses or scarves.
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'jewelry' }), 35)
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'scarf' }), 29)
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'belt' }), 29)
+  const scarfHardware = fiberFamiliesForPiece({ category: 'accessory', accessory_subtype: 'scarf' })
+    .find(([f]) => f === 'jewelry_material')[1]
+  assert.deepEqual(scarfHardware, ['metal', 'wood', 'horn', 'shell', 'resin'],
+    'buckles and hardware stay available; jewellery accents do not')
 
-  const source = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
-  assert.match(source, /FIBER_FAMILY_APPLICABILITY/)
-  assert.ok(!/const FIBER_OPTIONS\s*=\s*\[/.test(source), 'no local fibre list may reappear')
+  for (const file of ['src/components/PieceForm.jsx', 'src/components/BatchAdd.jsx']) {
+    const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8')
+    assert.match(source, /fiberFamiliesForPiece\(form\)/, `${file} must use the canonical projection`)
+    assert.match(source, /FIBER_FAMILY_LABELS/, `${file} must not invent its own family headings`)
+    assert.ok(!/const FIBER_OPTIONS\s*=/.test(source), `${file} must keep no local fibre list`)
+  }
 })
 
 test('the editor warning claims ambiguity, never that a garment is non-insulating', () => {
@@ -338,6 +348,8 @@ test('the editor warning claims ambiguity, never that a garment is non-insulatin
   const warning = source.slice(source.indexOf('data-piece-field="fiber_content_ambiguous"'))
     .slice(0, source.slice(source.indexOf('data-piece-field="fiber_content_ambiguous"')).indexOf('</div>'))
   assert.match(warning, /don’t say how warm this is/)
+  assert.ok(!/lined/i.test(warning),
+    'a lining does not imply a fill — a lined wool coat gets its warmth from the shell')
   assert.ok(!/not insulating|non-insulating/i.test(warning),
     'the rendered copy must not claim a thermal verdict the app has not established')
 

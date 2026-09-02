@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
-import { FIBER_OPTIONS_ORDER } from '../../styling-engine/fiberTaxonomy.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -26,8 +26,6 @@ const VISUAL_WEIGHT_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'chunky', label: 'Chunky' },
 ]
-// Canonical vocabulary and render order both owned by fiberTaxonomy.js — do not re-list here.
-const FIBER_OPTIONS = FIBER_OPTIONS_ORDER
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
   { value: 'low', label: 'Low' },
@@ -797,18 +795,26 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
 
         <div className="form-group">
           <FieldLabel field="fiber_content">{form.category === 'shoes' || form.category === 'accessory' ? 'Material Properties' : 'Fiber Content'}</FieldLabel>
-          <div className="chip-grid">
-            {FIBER_OPTIONS.map(fib => (
-              <button
-                key={fib}
-                className={`chip-toggle ${form.fiber_content && form.fiber_content.includes(fib) ? 'active' : ''}`}
-                onClick={() => toggleArr('fiber_content', fib)}
-                style={{ textTransform: 'capitalize' }}
-              >
-                {fib}
-              </button>
-            ))}
-          </div>
+          {/* Presentation parity with PieceForm — same canonical projection, same headings. The
+              values were already single-sourced; only the grouping and the per-category filter
+              were missing here, which made one field look different on the two intake surfaces. */}
+          {fiberFamiliesForPiece(form).map(([family, values]) => (
+            <div key={family} className="fiber-family-group">
+              <span className="form-hint fiber-family-label">{FIBER_FAMILY_LABELS[family]}</span>
+              <div className="chip-grid">
+                {values.map(fib => (
+                  <button
+                    key={fib}
+                    className={`chip-toggle ${form.fiber_content && form.fiber_content.includes(fib) ? 'active' : ''}`}
+                    onClick={() => toggleArr('fiber_content', fib)}
+                    style={{ textTransform: 'capitalize' }}
+                  >
+                    {fib}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {form.category === 'shoes' && (

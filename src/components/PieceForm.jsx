@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
-import { FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY } from '../../styling-engine/fiberTaxonomy.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
 import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -364,25 +364,6 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pending
 // not values the person chose — same set buildWardrobePieceTruthText refuses to
 // print. There is nothing to clear, so don't offer to.
 const CHIP_UNSET_VALUES = new Set(['none', 'unknown', 'n/a'])
-
-const FIBER_FAMILY_LABELS = {
-  plant_cellulose: 'Plant fibres',
-  filament_protein: 'Silk',
-  insulating: 'Warm / insulating',
-  regenerated_cellulose: 'Regenerated cellulose',
-  synthetic: 'Synthetics',
-  constructed_textile: 'Leather & constructed textiles',
-  jewelry_material: 'Jewellery & hardware',
-  unresolved: 'Not determinable',
-}
-
-// Which families this category may use, straight from the canonical applicability metadata — the
-// UI keeps no second taxonomy of its own.
-function fiberFamilyGroups(category) {
-  return Object.entries(FIBER_FAMILIES).filter(([family]) =>
-    (FIBER_FAMILY_APPLICABILITY[family] || []).includes(category)
-  )
-}
 
 // Says what a field decides, in the owner's terms. Renders nothing for a field with no entry —
 // generic filler would be worse than silence. `gate` stays as an internal marker on the label and
@@ -1512,7 +1493,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 headings and no filtering, so a coat offered pearl/enamel/horn/ceramic and `down`
                 — the value that actually decides warmth — sat unmarked in the middle of the wall.
                 The family order already existed in the array and was destroyed by the render. */}
-            {fiberFamilyGroups(cat).map(([family, values]) => (
+            {fiberFamiliesForPiece(form).map(([family, values]) => (
               <div key={family} className="fiber-family-group">
                 <span className="form-hint fiber-family-label">{FIBER_FAMILY_LABELS[family]}</span>
                 <ChipRow
@@ -1537,8 +1518,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                  piece for warmth. Driven by the shared calibration state, never by a local
                  heavy+synthetic heuristic in this component. */
               <div className="form-warning" data-piece-field="fiber_content_ambiguous">
-                The recorded materials don’t say how warm this is. For a lined, padded or quilted
-                piece, the fill is usually what decides — and it’s often only on the care label.
+                The recorded materials don’t say how warm this is. Padded or quilted pieces may
+                contain insulation that isn’t visible; the care label can identify it.
               </div>
             )}
             <div className="form-subgroup" data-piece-field="fiber_content_completeness">
