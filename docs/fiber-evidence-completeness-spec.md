@@ -511,15 +511,52 @@ rules, the round trip through the real route, rejection of out-of-enum values, a
 motivated the whole thing: two pieces with byte-identical `fiber_content`, one asserting
 `complete` and one left `unknown`, with completeness the only thing separating them.
 
+### 11.6 Tagger emission of `partial` — **DONE 2026-09-01**
+
+Ruled in: the tagger gains a new **factual output**, known-incomplete fibre composition. It still
+cannot assert completeness. Without this the system could represent `partial` while the main
+automated intake path was unable to populate it, even where the photo itself establishes
+incompleteness.
+
+The puffer is that case exactly. A photograph can establish that a baffled, filled construction
+exists and that the fill's composition is not identifiable — which is all `partial` claims. The
+model is never asked what the fill *is*.
+
+The schema contract is deliberately narrow:
+
+> `"partial|unknown"` — use `partial` **only** when the image gives positive evidence that
+> additional material components exist whose composition cannot be identified: visible lining,
+> padding, quilting or baffles, fill, or clearly distinct unidentified material panels. Otherwise
+> `unknown`. Never emit `complete`. Do not use `partial` merely because you are unsure, and do not
+> assume it by category.
+
+The last sentence is load-bearing. "Use partial when unsure" or "for coats, assume partial" would
+collapse `partial` back into `unknown` and undo §11.1. A test asserts that wording survives.
+
+`'complete'` is not in the tagger's permitted vocabulary, and `normalizeFiberCompleteness()`
+downgrades it at the boundary if one is emitted anyway — belt and braces, since the prompt is the
+weaker of the two guarantees.
+
+**The snapshot was updated deliberately, not re-frozen.** `test/prompt_equivalence.test.js` already
+carries dated accepted deltas for exactly this purpose, and this change was recorded the same way,
+leaving `prompts_yuna_snapshot.json` untouched as a byte-level ratchet. Recorded as: *the tagger
+gains a new factual output — known-incomplete fibre composition; it still cannot assert
+completeness.*
+
+### 11.7 What is NOT verified
+
+The four fixtures are asserted at the layer this repo can decide: the **disposition** of whatever
+the tagger emits. Whether the model actually returns `partial` for a quilted coat and `unknown` for
+a plain tee is model behaviour, and confirming it needs one real, billed tagging run against those
+photos. It is not asserted, and the test says so in place rather than letting a green suite imply
+it. Recommend re-tagging the puffer as the single-piece check when that spend is worth it.
+
 ## 12. Remaining
 
 - **The verdict layer (§5).** `fiberEvidenceCompleteness(piece)` now has a real fact to read
   instead of inferring one. Its thermal consumer is the point of the exercise: a `complete` "no
   insulating fibres" is evidence, an `unknown` one is not. Acceptance criterion 8 still binds —
   neither may become hard invalidity.
-- **Tagger emission of `partial`.** The rules permit it and the guard is in place, but the prompt
-  does not ask for it, so §7.4's instruction has no field to land in yet. Note the cost: this
-  changes the tagger schema, so `test/fixtures/prompts_yuna_snapshot.json` needs a deliberate,
-  documented update — it is currently a byte-for-byte gate.
+- ~~**Tagger emission of `partial`.**~~ **DONE 2026-09-01** — see §11.6.
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

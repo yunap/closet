@@ -72,6 +72,25 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible — a shearling or fleece collar, a visibly fuzzy or quilted interior, a pile lining at the opening. Record it as 'wool' (shearling reads as wool here), 'fleece', or 'down' as appropriate. This is the only place a boot's warmth is recorded: fabric_weight is null for shoes and fabric_category describes the UPPER, so a lined winter boot and a thin flat are otherwise identical to the engine. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
       )
     }
+    // 2026-09-01: the tagger gains a new FACTUAL OUTPUT — known-incomplete fibre composition.
+    // It still cannot assert completeness: 'complete' is not in its permitted vocabulary, and
+    // normalizeFiberCompleteness() downgrades it to 'unknown' at the boundary if it emits one
+    // anyway. Before this, the system could represent partial composition but the main automated
+    // intake path could not populate it, even where the photo itself establishes incompleteness —
+    // a visibly quilted coat whose shell is identifiable and whose fill is not. Deliberately
+    // narrow: positive visual evidence of unidentifiable components only, never "when unsure" and
+    // never by category, either of which would dilute partial back into unknown.
+    // See docs/fiber-evidence-completeness-spec.md §11.2 and §12.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        "    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: [\"unknown\"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.",
+        "    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: [\"unknown\"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.\n    5. Completeness is a separate answer from composition. A quilted or filled coat whose shell you can identify but whose fill you cannot is fiber_content: [\"polyester\"] with fiber_content_completeness: \"partial\" \u2014 you are not being asked what the fill is, only to state that the list you can give does not describe the whole garment. A plain cotton tee with nothing hidden is \"unknown\", not \"complete\": you did not verify that nothing is hidden, you simply saw nothing suggesting otherwise."
+      )
+      expected = expected.replace(
+        "  \"formality\":",
+        "  \"fiber_content_completeness\": \"partial|unknown \u2014 whether the fiber_content list above describes the WHOLE garment. Use 'partial' ONLY when the image gives positive evidence that additional material components exist whose composition cannot be identified: visible lining, padding, quilting or baffles, fill, or clearly distinct unidentified material panels. Otherwise use 'unknown'. Never emit 'complete' \u2014 a photograph cannot verify that nothing is hidden, and only a person reading a care label can assert that. 'unknown' means completeness was not established; 'partial' means the list is positively known not to describe the whole garment. Do not use 'partial' merely because you are unsure, and do not assume it by category.\",\n  \"formality\":"
+      )
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern

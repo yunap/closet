@@ -147,7 +147,7 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES, fiberContentNormalization } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, fiberContentNormalization, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -545,6 +545,9 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     const fiberNormalization = fiberContentNormalization(tags.fiber_content)
     tags.fiber_content = fiberNormalization.values
     tags.fiber_taxonomy_gaps = fiberNormalization.invalid
+    // Writer rule at the boundary: photo tagging may state known-incomplete, never verified-complete.
+    tags.fiber_content_completeness =
+      normalizeFiberCompleteness(tags.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
     tags.formality = normalizeFormality(tags.formality)
     tags.heel_height = normalizeHeelHeight(tags.heel_height)
     tags.walk_support = normalizeWalkSupport(tags.walk_support)
