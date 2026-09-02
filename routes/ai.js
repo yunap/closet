@@ -520,9 +520,12 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     // truncation once during screening and dismissed it as run-to-run noise after a single clean
     // repeat — correct about the variance, wrong to leave the headroom unchanged.
     //
-    // Output tokens are billed as produced, so a higher ceiling costs nothing unless it is used:
-    // at Gemini 3.1's $1.50/M output, even a full 4000-token response is $0.006.
-    maxTokens: 4000,
+    // Raised to 3000, not 4000. The ceiling protects against unusual variance; it must not
+    // subsidize a verbose output contract. The same investigation found and fixed the actual
+    // source of the bulk — real_wear_notes was filled 4.9/5 on average with unbounded prose, and
+    // _confidence rated ten fields inapplicable to the garment's own category. Clean outputs sit
+    // at 1600-1700, so 3000 is slack rather than a new normal.
+    maxTokens: 3000,
     ...(model ? { model } : {}),
     ...(providerOverride ? { providerOverride } : {}),
     messages: [{
@@ -1555,10 +1558,12 @@ router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
 
     const raw = await askStylist({
       system: EXTRACT_PIECES_SYSTEM,
-      // Raised with the tagger's own cap 2026-09-02 and for the same reason, with more headroom:
-      // this emits the same expanded per-garment schema MULTIPLE times from one photo, so it is
-      // structurally more exposed to the cap than the single-piece path that actually truncated.
-      maxTokens: 5000,
+      // Left at 3000 deliberately. An earlier version of this change raised it to 5000 by analogy
+      // with the single-piece truncation — "same schema, therefore more exposed" — which is not
+      // evidence. This endpoint's output scales with the NUMBER of garments in the photo, so it
+      // needs a sizing rule rather than a borrowed constant, and ai_call_log contains ZERO calls
+      // from this flow to size one from. Measure it before moving it.
+      maxTokens: 3000,
       // Vision garment extraction — same job as tagPieceWithProvider, just multi-piece from one
       // photo, so it uses the tagger's own config rather than the general stylist one.
       providerOverride: taggerProviderOverride,

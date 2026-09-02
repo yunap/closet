@@ -807,39 +807,92 @@ pure model output.
 - **10 screening cases plus one production call** is not a powered study. It is enough to justify
   a reversible default on one wardrobe; it is not enough to bound a rare-failure rate.
 
-### 6f. Truncation at the token cap — found in live use, 2026-09-02
+### 6f. Truncation at the token cap — a verbose output contract, not a low ceiling (2026-09-02)
 
-The first real tagging session after §6e's switch hit the tagger's `maxTokens` cap and failed:
+The first real tagging session after §6e's switch failed:
 
 ```text
 Model response hit the token cap (maxTokens: 2500) and was truncated before valid JSON completed
 ```
 
-Measured against `ai_call_log`, output tokens on the old cap:
+Output tokens from `ai_call_log` against the old cap:
 
 ```text
 claude-haiku-4-5       1735    69%
 claude-sonnet-4-6      1662    66%
 gemini-3.1-flash-lite  1571    63%
-gemini-3.1-flash-lite  2496   100%   ← truncated mid-JSON, same schema, same model
+gemini-3.1-flash-lite  2496   100%   truncated mid-JSON, same schema, same model
 ```
 
-**1571 → 2496 on identical work is the finding.** The cap was not marginally low; it sat inside the
-model's ordinary output variance. Two things moved into that margin at once — the schema gained two
-output fields (`fiber_content_completeness`, `insulating_layer_materials`) and the default tagger
-became a markedly more verbose model.
+**The first fix was a cap raise to 4000, and it was wrong** — it protected the symptom and left the
+cause. Owner ruling: *the token ceiling should protect against unusual variance, not subsidize an
+unnecessarily verbose output contract.* Examining the schema found two real sources.
 
-**§6d saw this exact truncation during screening and dismissed it.** Its own note reads: *"a repeat
-of the identical call completed normally… ordinary run-to-run variance, not a systematic defect."*
-That was right about the variance and wrong about the consequence — a model whose output varies by
-900 tokens needs headroom, not a clean repeat. The screen measured cost and latency carefully and
-never asked how close to the ceiling the winning tier ran.
+#### The elastic block: `real_wear_notes`
 
-Raised to **4000** for single-piece tagging and **5000** for `/extract-pieces`, which emits the same
-expanded schema once per garment from one photo and is structurally more exposed. Output tokens are
-billed as produced, so a higher ceiling costs nothing unless used: a full 4000-token Gemini 3.1
-response is $0.006.
+Five sub-keys, **two specified as literally empty strings** (`drape`, `placement`) — no guidance on
+content, no length bound on any of the five. Measured across the 221 pieces carrying
+`garment_intelligence`:
 
-**Telemetry gap, unfixed:** the truncated call is recorded in `ai_call_log` with `success = 1`,
-because the provider returned 200 and the failure only appeared when the body would not parse. A
-truncation is invisible in the spend log and visible only in the app error.
+```text
+pairing_requirements    mean 1.5   max 3    (schema allows 0-4)
+failure_risks           mean 0.9   max 3    (0-4)
+formula_compatibility   mean 1.7   max 4    (0-4)
+do_not_pair_rules       mean 1.3   max 3    (0-4)
+real_wear_notes         mean 4.9   max 5    (5 sub-keys)
+```
+
+**The bounded lists were never the problem** — the model self-limits at roughly a third of its
+allowance, so tightening them would have saved almost nothing. `real_wear_notes` is filled 4.9 of 5,
+*including* `maintenance`, whose own instruction says to omit it for ordinary machine-washable
+garments. That is a prompt-contract failure rather than model variance: empty-string placeholders
+read as slots that must be answered.
+
+Every key now carries a purpose and an **8-12 word bound**, and **OMIT replaces the empty string**,
+with an explicit rule against sending empty values or the object itself when nothing applies.
+
+#### The bookkeeping: `_confidence`
+
+34 keys emitted flat with no category conditioning — while the same schema *is* category-conditional
+for `silhouette`, `fabric_category` and `length_hits_at`. A coat was rating its confidence in
+`heel_height`, `jewelry_type`, `waistband_type`, `shoe_type`, `toe_shape`, `walk_support`,
+`accessory_subtype`, `bottom_subtype`, `necklace_length` and `tuck_behavior`: **10 of 34
+inapplicable**, about 55 output tokens. Now instructed to omit inapplicable entries.
+`lowConfidenceFields` already filters by category, so an omitted entry cannot produce a spurious
+review chip — checked before changing it.
+
+A dead `outerwear_role` entry was also still in `CONFIDENCE_FIELDS` after that field's retirement
+earlier the same day.
+
+#### What was NOT cut
+
+`garment_intelligence` is the largest single block (215 tokens on a real coat) and every one of its
+eight sub-keys has live consumers — `occasion_confidence` alone has 14. It earns its size.
+
+#### The ceiling
+
+**3000 for single-piece tagging**, not 4000. Clean outputs sit at 1600-1700, so 3000 is slack rather
+than a new normal: the ceiling absorbs variance, the contract does the work.
+
+**`/extract-pieces` stays at 3000.** An earlier version of this change raised it to 5000 by analogy
+— *"same schema, therefore more exposed"* — which is not evidence. Its output scales with the number
+of garments in one photo, so it needs a sizing rule, and **`ai_call_log` holds zero calls from that
+flow** to build one from. Measure before moving it.
+
+#### Telemetry: truncation was invisible
+
+The truncated call was logged with `success = 1` — the provider returned 200 and the failure only
+surfaced when the caller could not parse the body, after the spend row was written. That made the
+very evidence needed to judge whether these bounds work unreliable.
+
+Fixed at both provider boundaries: a response whose `stopReason` is `max_tokens` is logged as a
+failure with an explicit message — `callOutcomeFromUsage` on the Gemini paths,
+`truncationOutcome` in the Anthropic/OpenAI fetch hook. The provider's own stop reason is
+authoritative, so neither needs a heuristic.
+
+#### A screening result revisited
+
+§6d hit this exact truncation and dismissed it: *"ordinary run-to-run variance, not a systematic
+defect."* Right about the variance, wrong about the consequence. The screen measured cost and
+latency carefully, and never asked how close to the ceiling the winning tier ran — nor whether the
+output contract deserved the tokens it was spending.

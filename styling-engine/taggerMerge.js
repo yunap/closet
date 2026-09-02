@@ -63,7 +63,6 @@ export const CONFIDENCE_FIELDS = [
   'tuck_behavior',
   'waistband_type',
   'needs_base',
-  'outerwear_role',
   'weather_protection'
 ]
 
