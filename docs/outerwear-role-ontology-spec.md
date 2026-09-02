@@ -50,25 +50,45 @@ protective_shell         2
 cold_weather_outerwear   3
 ```
 
-The heavy or insulating-verdict subset, which is where the boundary should be legible:
+The heavy or insulating-verdict subset, split by **who assigned the role** — a distinction the
+first draft of this section missed, and which changes what the evidence supports:
 
 ```text
+                                                     verdict      role set by
 cold_weather_outerwear
-  996765  brown long leather coat    heavy   verdict: unknown       ← no insulating evidence
-  996775  Black puffer coat          heavy   verdict: insulating
-  996866  navy quilted puffer        heavy   verdict: unknown
+  996765  brown long leather coat    heavy   unknown       OWNER (manual_overrides)
+  996775  Black puffer coat          heavy   insulating    tagger
+  996866  navy quilted puffer        heavy   unknown       tagger
 
 transition_layer
-  996867  black wool coat            heavy   verdict: insulating
-  996760  cream fleece coat          heavy   verdict: insulating
-  207     black leather zip jacket   heavy   verdict: unknown
+  996867  black wool coat            heavy   insulating    tagger
+  996760  cream fleece coat          heavy   insulating    OWNER (manual_overrides)
+  207     black leather zip jacket   heavy   unknown       tagger
 ```
 
-**Two pieces whose composition establishes nothing outrank two heavy coats whose composition
-establishes insulation.** Read as a warmth ordering this is incoherent. Read correctly, it is
-evidence that **the labels cannot be interpreted consistently under their own documented
-definition** — the assignments are not obviously wrong under a "what outdoor job" reading, and not
-obviously right under a "substantial insulation" one, because the definition asks for both.
+### 3.1 Correction: two of the six are owner rulings
+
+The two rows that looked most anomalous — a leather coat with no insulating evidence in the top
+tier, and a heavy insulating fleece coat below it — are **manually set**, not tagger output. An
+earlier draft of this spec presented all six as evidence of tagger incoherence. That was wrong.
+
+**Among tagger-authored assignments the pattern is much weaker.** Three of four are defensible
+under a "what outdoor job" reading: both puffers in the top tier, a leather zip jacket below it.
+**The single genuine anomaly is `996867`** — heavy, wool, insulating verdict, mid-thigh, filed as
+`transition_layer`.
+
+### 3.2 What the manual values *are* evidence of
+
+They are not noise, and they are not errors to correct. They are **how a human reading the same
+labels applied them**, and the two owner rulings do not follow insulation either: a non-insulated
+leather coat was placed in the top tier, and a heavy insulating fleece coat below it. Both are
+defensible under "what job does this do for me" and neither is derivable from thermal facts.
+
+So the boundary is ambiguous **to a human reader as well as to the model** — which supports §1's
+claim that the field is carrying two questions, while removing the stronger claim that the tagger
+is assigning roles incoherently. The owner should be asked what they meant by those two rulings
+before any definition is rewritten around them; they may encode exactly the "would I keep this on
+/ is this my actual winter coat" axis §6's Option B wants to separate out.
 
 ## 4. What already works and must not be disturbed
 
