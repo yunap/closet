@@ -117,6 +117,18 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         "  \"fit_on_body\": \"clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; null/omit for shoes/accessory). How the garment relates to the BODY'S CONTOURS \u2014 not how loose it is, and not its outline, which is `silhouette`. 'clings_stretchy': follows the body closely because the fabric stretches onto it (jersey, rib, knit) and the body's outline reads through. 'clings_drapey': follows the body closely because a fluid non-stretch fabric falls onto it (a silk slip, a bias cut). 'skims': shaped to the body and following its line without gripping \u2014 there is ease, but the construction itself references the body through a defined waist, darts, princess seams, shaped or elasticated side panels, or a belt or drawstring built into the design. 'hangs_straight': falls from the shoulders or waistband in a straight line, IGNORING the body's contours, with no waist definition anywhere in the construction. 'drapes': falls in soft folds AWAY from the body, its shape governed by the fabric's weight and fluidity rather than by the body. 'structured': holds its own architectural shape independently of the body \u2014 it would keep that shape off the body, through canvas, interfacing, boning, or tailoring. 'none': no meaningful relationship to body contours.\","
       )
     }
+    // 2026-09-02: the tagger gains insulating_layer_materials — a thermally functional INTERNAL
+    // layer whose material may differ from the face fabric (a coat's fill, a warm boot's lining).
+    // Without it synthetic insulation was unrepresentable: a 100%-polyester-filled leather coat
+    // recorded ["polyester","nylon","leather"], and marking its composition complete produced a
+    // confident non_insulating. Kept OUT of fiber_content, which pieceFiberBreathability reads as
+    // face-material evidence. See docs/material-role-representation-spec.md.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        "  \"formality\":",
+        "  \"insulating_layer_materials\": \"array of materials from the same canonical list, describing a thermally functional INTERNAL layer whose material differs from the face fabric \u2014 a coat's fill or wadding, a warm boot's pile/shearling lining. Omit the field entirely (null) when you cannot tell. Use ['unknown'] when construction positively shows an insulating layer \u2014 quilting, baffles, visible loft, a fuzzy or pile interior \u2014 but you cannot identify what it is made of; that is a POSITIVE answer and the common one. Name the material only when it is visually supportable (a visible shearling or fleece lining is 'wool' or 'fleece'). NEVER return an empty array: 'this garment has no insulating layer' cannot be established from a photograph, so omit the field instead. ORDINARY LINING DOES NOT COUNT \u2014 a plain lightweight polyester or acetate lining in a blazer, dress or unlined-feeling jacket is not an insulating layer and must not be recorded here. This is separate from fiber_content, which describes the FACE fabric.\"," + "\n  \"formality\":"
+      )
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern

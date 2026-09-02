@@ -438,6 +438,17 @@ function initDb(dbPath) {
     // Deliberately NOT derived from the absence of an "unknown" marker: absence means the writer
     // did not emit one, never that composition was established.
     'fiber_content_completeness TEXT DEFAULT NULL',
+    // insulating_layer_materials: JSON array, or NULL. Materials of a thermally functional INTERNAL
+    // layer whose material may differ from the face fabric — a coat's fill, a warm boot's pile
+    // lining. Deliberately separate from fiber_content, which describes the FACE fabric and is read
+    // by pieceFiberBreathability for what the fabric does against skin.
+    //   NULL         unrecorded        []   verified: no insulating layer
+    //   ['unknown']  layer exists, material unidentified (a POSITIVE answer, and the common one)
+    // NULL and [] are different facts and must stay different. Any non-empty value means insulating,
+    // because the material is recorded as OCCUPYING that role rather than being intrinsically warm —
+    // which is how a 100%-polyester-filled coat becomes representable at all.
+    // See docs/material-role-representation-spec.md.
+    'insulating_layer_materials TEXT DEFAULT NULL',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -1149,6 +1160,8 @@ export function safeJsonParse(value, fallback = null) {
 
 export const parsePiece = p => p ? ({
   ...p,
+  // NULL stays null (unrecorded) — it is a different fact from [] (verified: no insulating layer).
+  insulating_layer_materials: p.insulating_layer_materials == null ? null : safeJsonParse(p.insulating_layer_materials, null),
   colors:                JSON.parse(p.colors                || '[]'),
   occasions:             JSON.parse(p.occasions             || '[]'),
   occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
