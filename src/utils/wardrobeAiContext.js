@@ -277,8 +277,10 @@ export function buildWardrobePieceTruthText(piece = {}) {
   // Slice E: the composer/get_garment_details truth text. Same canonical values as the manifest,
   // this file's own label:value house style, and no independent gloss of what a role implies.
   const capability = outerwearCapabilityDisplay(piece)
-  const roleText = trustedFieldText(piece, 'outerwear_role', 'outerwear role', capability.role)
-  if (roleText) parts.push(roleText)
+  // outerwear_role is retired and no longer projected (docs/outerwear-role-ontology-spec.md).
+  // Legacy rows still hold values, and some are actively misleading — indoor_layer was over-applied
+  // to technical jackets — so showing them to the model would keep it reasoning from the taxonomy
+  // this arc deprecated, well after the deterministic gate stopped reading it.
   if (capability.protection) parts.push(`weather protection: ${capability.protection}`)
 
   const sleeveShapeText = piece.sleeve_length !== 'sleeveless'
@@ -423,7 +425,6 @@ export function buildWardrobeManifestLine(piece = {}) {
     // manifest is present. Putting outerwear capability anywhere else would leave it invisible on
     // the common path. Outerwear-only by construction — the readers are category-gated, so these
     // are null for everything else and the clause simply does not print.
-    capability.role ? `outerwear role ${manifestValue(piece, 'outerwear_role', capability.role)}` : '',
     capability.protection ? `protects against ${capability.protection}` : '',
     present(piece.walk_support) ? `support ${manifestValue(piece, 'walk_support', piece.walk_support)}` : '',
     pattern ? `pattern ${pattern}` : '',

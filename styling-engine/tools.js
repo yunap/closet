@@ -241,7 +241,6 @@ export function wardrobeTruthRow(p = {}) {
     // every other stable field is — this row is the ABOVE-CAP path, used exactly when there is no
     // manifest to read them from, and a fact the model can only see below the cap would be a second
     // truth surface.
-    outerwear_role: p.outerwear_role,
     weather_protection: p.weather_protection,
     notes: p.notes ? p.notes.slice(0, 120) : '',
   }
@@ -1624,8 +1623,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // Slice E: same above-cap reasoning as wardrobeTruthRow. Only the untrimmed branch —
             // when the manifest IS present, trimToJudgment returns per-request judgment only and
             // these are read from the manifest line, deliberately not re-sent per search.
-            outerwear_role: p.outerwear_role,
-            weather_protection: p.weather_protection,
+                    weather_protection: p.weather_protection,
             // docs/activity-and-roster-spec.md Part 2. footwearComfortVerdict reads these to
             // exclude pieces and they appeared in no result row, so the model could not tell a
             // high-support trail shoe from a medium-support ballet flat and inferred grip from

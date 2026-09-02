@@ -12,9 +12,13 @@ const outer = (id, name, extra) => ({
   occasions: ['casual'], season: 'all', ...extra,
 })
 
-const INDOOR_CARDIGAN = outer(1, 'cashmere cardigan', { outerwear_role: 'indoor_layer', fabric_weight: 'heavy', weather_protection: [] })
-const RAIN_SHELL = outer(2, 'rain shell', { outerwear_role: 'protective_shell', fabric_weight: 'light', weather_protection: ['rain'] })
-const WINTER_COAT = outer(3, 'wool coat', { outerwear_role: 'cold_weather_outerwear', fabric_weight: 'heavy', weather_protection: [] })
+// 2026-09-02: outerwear_role is retired. capabilityTagged is now answered by the tagger's own
+// confidence entry for weather_protection, so these fixtures carry it — what a piece tagged today
+// actually looks like. See docs/outerwear-role-ontology-spec.md.
+const TAGGED = { style_profile_json: { _confidence: { weather_protection: 'high' } } }
+const INDOOR_CARDIGAN = outer(1, 'cashmere cardigan', { ...TAGGED, fabric_weight: 'heavy', weather_protection: [] })
+const RAIN_SHELL = outer(2, 'rain shell', { ...TAGGED, fabric_weight: 'light', weather_protection: ['rain'] })
+const WINTER_COAT = outer(3, 'wool coat', { ...TAGGED, fabric_weight: 'heavy', weather_protection: [] })
 const UNTAGGED = outer(4, 'unlined jacket', { fabric_weight: 'heavy' })
 const A_TOP = { id: 5, name: 'silk tee', category: 'top', photo: '5.jpg', colors: ['white'], occasions: ['casual'], season: 'all' }
 
@@ -27,20 +31,20 @@ const poolFor = (context = {}) => evaluateAutomaticUsePiecePool({
 
 test('every decision carries canonical outerwear capability facts', () => {
   const byId = poolFor().decisionsById
-  assert.deepEqual(byId.get(1).capability, { outerwearRole: 'indoor_layer', weatherProtection: [], capabilityTagged: true })
-  assert.deepEqual(byId.get(2).capability, { outerwearRole: 'protective_shell', weatherProtection: ['rain'], capabilityTagged: true })
-  assert.deepEqual(byId.get(3).capability, { outerwearRole: 'cold_weather_outerwear', weatherProtection: [], capabilityTagged: true })
+  assert.deepEqual(byId.get(1).capability, { weatherProtection: [], capabilityTagged: true })
+  assert.deepEqual(byId.get(2).capability, { weatherProtection: ['rain'], capabilityTagged: true })
+  assert.deepEqual(byId.get(3).capability, { weatherProtection: [], capabilityTagged: true })
 })
 
 test('an untagged outerwear piece reports unknown capability, not an absent one', () => {
   const capability = poolFor().decisionsById.get(4).capability
-  assert.equal(capability.outerwearRole, null)
+  assert.equal(capability.capabilityTagged, false)
   assert.equal(capability.capabilityTagged, false)
 })
 
 test('a non-outerwear piece reports empty capability through the same category gate', () => {
   const capability = poolFor().decisionsById.get(5).capability
-  assert.deepEqual(capability, { outerwearRole: null, weatherProtection: [], capabilityTagged: false })
+  assert.deepEqual(capability, { weatherProtection: [], capabilityTagged: false })
 })
 
 // --- the [A2] boundary --------------------------------------------------------------------

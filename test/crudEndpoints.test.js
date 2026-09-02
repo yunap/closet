@@ -856,3 +856,26 @@ test('fiber_content_completeness is persisted, and only a human may assert compl
   const rejected = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: bogus })).json()
   assert.equal(rejected.fiber_content_completeness, null)
 })
+
+test('editing a legacy piece preserves its retired outerwear_role rather than wiping it', async () => {
+  // outerwear_role is retired and no form sends it any more. Without an explicit preserve, the PUT
+  // would write normalizeOuterwearRole(undefined) === null and silently erase the stored value on
+  // any legacy piece the owner merely opened and saved — the opposite of keeping the column for
+  // backward compatibility. See docs/outerwear-role-ontology-spec.md §11.3.
+  const create = new FormData()
+  create.append('name', 'legacy coat')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['black']))
+  create.append('outerwear_role', 'cold_weather_outerwear')
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.equal(created.outerwear_role, 'cold_weather_outerwear')
+
+  // A save that carries no outerwear_role at all — what the editor now sends.
+  const edit = new FormData()
+  edit.append('name', 'legacy coat renamed')
+  edit.append('category', 'outerwear')
+  edit.append('colors', JSON.stringify(['black']))
+  const updated = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: edit })).json()
+  assert.equal(updated.name, 'legacy coat renamed')
+  assert.equal(updated.outerwear_role, 'cold_weather_outerwear', 'the legacy value must survive an ordinary edit')
+})

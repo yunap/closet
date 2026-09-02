@@ -21,6 +21,7 @@
 // pool exclusion. A piece that cannot do the job alone may still belong in an outfit — a shell
 // under-insulates until you put a sweater beneath it. Only Contract C may hard-fail.
 import { pieceOuterwearRole, pieceWeatherProtection } from './attributes.js'
+import { confidenceFromProfile } from './taggerMerge.js'
 
 export const OUTERWEAR_CAPABILITY_VERDICTS = ['pass', 'insufficient', 'unknown']
 
@@ -33,12 +34,6 @@ export const OUTERWEAR_CAPABILITY_CODES = {
   HAZARD_UNKNOWN: 'outerwear_hazard_protection_unknown',
 }
 
-// Which roles can serve as the outfit's actual outer layer outdoors. indoor_layer is the whole
-// point of the field: it is real outerwear by category and contributes real warmth, but it is not
-// what you put on to walk outside in weather. Note this says nothing about how MUCH cold the layer
-// can handle — a transition_layer qualifies as outdoor-capable here and may still be too light for
-// the day. That second judgment is Contract A's, applied by Contract C.
-const OUTDOOR_CAPABLE_ROLES = new Set(['transition_layer', 'protective_shell', 'cold_weather_outerwear'])
 
 const HAZARD_MISSING_CODE = {
   rain: OUTERWEAR_CAPABILITY_CODES.RAIN_MISSING,
@@ -55,12 +50,33 @@ const HAZARD_MISSING_CODE = {
  * a per-piece pool to decide here and, by construction, nothing that could exclude a piece.
  */
 export function pieceOuterwearCapabilityFacts(piece = {}) {
-  const outerwearRole = pieceOuterwearRole(piece)
   return {
-    outerwearRole,
     weatherProtection: pieceWeatherProtection(piece),
-    capabilityTagged: outerwearRole !== null,
+    capabilityTagged: pieceWentThroughCapabilityTagging(piece),
   }
+}
+
+// "Has this piece been through capability tagging at all?" — NOT a garment fact, and deliberately
+// not one. weather_protection column-defaults to '[]', so an empty array alone cannot distinguish
+// "the tagger looked and found no protective construction" (real evidence of absence) from "nothing
+// ever asked" (no evidence at all).
+//
+// Until 2026-09-02 a populated `outerwear_role` was that proxy. The field is retired
+// (docs/outerwear-role-ontology-spec.md) and the tagger no longer emits it, so on its own it would
+// have marked every NEWLY tagged piece as never-tagged — silently turning the rain/wind hazard
+// checks into `unknown` for everything going forward. Measured while making that change; it would
+// not have failed a test.
+//
+// So: the tagger's own confidence entry for weather_protection answers it for anything tagged since
+// that field joined CONFIDENCE_FIELDS, and the legacy column answers it for older rows. Measured on
+// the real wardrobe: only 6 of 33 outerwear pieces carry the confidence entry, so dropping the
+// legacy read would have moved 27 pieces to unknown.
+//
+// The legacy column is consulted ONLY as "this row went through an earlier tagging generation".
+// Its VALUE is never read, never compared, never projected, and never treated as garment evidence.
+function pieceWentThroughCapabilityTagging(piece = {}) {
+  if (confidenceFromProfile(piece, 'weather_protection')) return true
+  return pieceOuterwearRole(piece) !== null
 }
 
 /**
@@ -76,9 +92,11 @@ export function pieceOuterwearCapabilityFacts(piece = {}) {
  * empty label. Non-outerwear pieces get null for the same reason: the readers are category-gated.
  */
 export function outerwearCapabilityDisplay(piece = {}) {
-  const { outerwearRole, weatherProtection } = pieceOuterwearCapabilityFacts(piece)
+  const { weatherProtection } = pieceOuterwearCapabilityFacts(piece)
+  // `role` was removed 2026-09-02 with the field's retirement. Projecting it would have kept
+  // showing models a deprecated taxonomy — and an actively misleading one, since indoor_layer was
+  // over-applied to technical jackets.
   return {
-    role: outerwearRole ? outerwearRole.replace(/_/g, ' ') : null,
     protection: weatherProtection.length ? weatherProtection.join('/') : null,
   }
 }
@@ -86,14 +104,12 @@ export function outerwearCapabilityDisplay(piece = {}) {
 /**
  * @param {object} piece
  * @param {object} requirement
- * @param {boolean} requirement.requireOutdoorLayer  the context needs a genuine outdoor outer layer
  * @param {string[]} requirement.requiredHazards     hazards ('rain'/'wind') the context needs covered
  * @returns {{verdict: string, findings: Array<{code, dimension, reason, evidence}>, evidence: object}}
  */
 export function evaluateOuterwearCapability(piece = {}, requirement = {}) {
-  const { requireOutdoorLayer = false, requiredHazards = [] } = requirement
-  const { outerwearRole: role, weatherProtection: protection, capabilityTagged } =
-    pieceOuterwearCapabilityFacts(piece)
+  const { requiredHazards = [] } = requirement
+  const { weatherProtection: protection, capabilityTagged } = pieceOuterwearCapabilityFacts(piece)
 
   // capabilityTagged is the proxy for "this piece has been through capability tagging at all". weather_protection
   // column-defaults to '[]', so an empty array cannot by itself distinguish "the tagger looked and
@@ -104,7 +120,7 @@ export function evaluateOuterwearCapability(piece = {}, requirement = {}) {
   // failed.
 
   const findings = []
-  const evidence = { outerwearRole: role, weatherProtection: protection, capabilityTagged }
+  const evidence = { weatherProtection: protection, capabilityTagged }
 
   const hazards = [...new Set((Array.isArray(requiredHazards) ? requiredHazards : [])
     .filter(h => h === 'rain' || h === 'wind'))]
@@ -113,11 +129,11 @@ export function evaluateOuterwearCapability(piece = {}, requirement = {}) {
     // Unknown is never insufficiency (spec §9, acceptance criterion 8). Report it once, with the
     // dimensions that could not be answered, and let the caller fall back to concrete garment
     // facts and the thermal owner.
-    if (requireOutdoorLayer || hazards.length) {
+    if (hazards.length) {
       findings.push({
         code: OUTERWEAR_CAPABILITY_CODES.UNKNOWN,
-        dimension: 'outerwear_role',
-        reason: 'this piece has no tagged outerwear capability, so its outdoor function and hazard protection are unknown — judge it from construction and thermal evidence instead',
+        dimension: 'weather_protection',
+        reason: 'this piece has never been through capability tagging, so its hazard protection is unknown — judge it from construction and thermal evidence instead',
         evidence,
       })
     }
@@ -125,16 +141,6 @@ export function evaluateOuterwearCapability(piece = {}, requirement = {}) {
   }
 
   let insufficient = false
-
-  if (requireOutdoorLayer && !OUTDOOR_CAPABLE_ROLES.has(role)) {
-    insufficient = true
-    findings.push({
-      code: OUTERWEAR_CAPABILITY_CODES.INDOOR_ROLE_INSUFFICIENT,
-      dimension: 'outerwear_role',
-      reason: `${role} is a layer meant to stay wearable indoors; it contributes warmth but does not by itself serve as the outfit's outdoor outer layer`,
-      evidence,
-    })
-  }
 
   for (const hazard of hazards) {
     if (protection.includes(hazard)) continue
