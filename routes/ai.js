@@ -395,12 +395,11 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
 // $0.0292 and 16.7s for the Haiku call ninety minutes earlier — 73% cheaper, 2.5x faster.
 // Set TAGGER_PROVIDER_OVERRIDE='anthropic' to revert without a code change.
 //
-// KNOWN GAP, see §6e: the Gemini path has NO BYOK support. assertProviderKey() says so in its own
-// error text. On a multiuser deployment every user's tagging therefore bills the operator's single
-// GEMINI_API_KEY, and a deployment without that key fails at tagging outright — which is the app's
-// core onboarding path. Tagging is a per-signup cost the cost spec's §1 explicitly frames as paid
-// on the user's own key. This default is correct for the owner's single-user dev pair and is NOT
-// yet safe for the multiuser platform.
+// BYOK: fine. Gemini resolves keys through lib/apiKeys.js's resolveKey('gemini', userId) — the
+// same per-user-then-installation path as Anthropic and OpenAI, with a working Settings field. An
+// earlier note here called that a blocker, having read it off a stale error string rather than the
+// code; retracted in §6e. Tagging still bills the user's own key where they have set one, which is
+// what the cost spec's §1 assumes.
 const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || 'gemini'
 const TAGGER_MODEL_OVERRIDE = process.env.TAGGER_MODEL_OVERRIDE || 'gemini-3.1-flash-lite'
 const taggerProviderOverride = TAGGER_PROVIDER_OVERRIDE

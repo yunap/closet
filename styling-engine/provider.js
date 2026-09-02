@@ -824,7 +824,11 @@ export function assertProviderKey(target = null) {
   }
   const provider = target?.provider || AI_PROVIDER
   if (provider === 'gemini' && !resolveGeminiKey()) {
-    const err = new Error('No Gemini API key available — set GEMINI_API_KEY (experimental path, no BYOK yet).')
+    // Was a hand-written string claiming "experimental path, no BYOK yet" — stale since Stage D
+    // gave Gemini the same per-user resolution as the other two (see resolveGeminiKey's note
+    // below). It told a user to set an env var when the actual fix is adding a key in Settings,
+    // and it was still being read as evidence of a missing capability on 2026-09-02.
+    const err = new Error(noKeyErrorMessage('gemini'))
     err.code = 'no_api_key'
     throw err
   }
