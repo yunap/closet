@@ -4,7 +4,8 @@
 (§6b) and warm/anchored (§6c) tagging — adopt `claude-haiku-4-5` for normal tagging. A follow-up
 screen (§6d, 2026-08-27) evaluated Gemini 3.5/3.1 Flash-Lite as cheaper alternatives to Haiku on the
 same tagger contract — both screened as viable, with 3.1 Flash-Lite the stronger candidate on cost.
-**No routing decision has been made** for Gemini; §6d is a screening result, not an adoption. The
+~~**No routing decision has been made** for Gemini; §6d is a screening result, not an adoption.~~
+**Superseded 2026-09-02 — see §6e: Gemini 3.1 Flash-Lite is now the tagger default.** The
 import-crop distribution is the one arm still untested for any tier (§6b). Phases 0/1 (caching,
 content reordering, dead-field cleanup, cost-gate fixes) were independently implemented between
 this spec's authoring and the Phase 2 run; see `docs/tagger-audit-findings.md`. Phases 3/4 remain
@@ -736,3 +737,68 @@ bucket (38 corrections → 31 near-unique anchors). Revisit after cold start is 
   regression is confined to fields the decision rule accepted.
 - Re-running a captured piece produces byte-identical output at lower cost (Phase 1 only).
 - Both cost gates report within 10% of measured spend.
+
+---
+
+## 6e. Adoption — Gemini 3.1 Flash-Lite becomes the tagger default (2026-09-02)
+
+**Owner decision.** §6d screened; this adopts. `TAGGER_PROVIDER_OVERRIDE` in `routes/ai.js` now
+defaults to `'gemini'` rather than `''`, so tagging routes to `gemini-3.1-flash-lite` with no env
+var set. Reverting is still a one-variable change: `TAGGER_PROVIDER_OVERRIDE=anthropic`.
+
+### What §6d measured, and why 3.1 rather than 3.5
+
+At the real production input shape (hanger + worn):
+
+| | Haiku | Gemini 3.5 Flash-Lite | **Gemini 3.1 Flash-Lite** |
+|---|---|---|---|
+| success | 4/4 | 4/4 | **8/8** |
+| cost/garment | $0.0124 | $0.0064 (48% cheaper) | **$0.0043 (65% cheaper)** |
+| latency | ~19.2s | ~25.9s, one 83s outlier | **~7.3s, no outliers** |
+
+3.1 is both cheaper and faster than 3.5, with no latency outliers — it is the deliberate choice,
+not a stale default. (An earlier note in this session called it drift, on the grounds that `/ask`
+uses 3.5. That was wrong: the stylist and the tagger were benchmarked separately and reached
+different tiers for different reasons.)
+
+### Production evidence, not a benchmark
+
+First real tagging call after the switch, from `ai_call_log`:
+
+```text
+06:55:22  gemini-3.1-flash-lite  tag_piece      in 22,298  out 1,571  $0.0079  6.6s
+05:09:44  claude-haiku-4-5       unattributed   in  3,186  out 1,735  $0.0292  16.7s
+```
+
+**73% cheaper and 2.5x faster** on the same wardrobe, ninety minutes apart. Latency landed on
+§6d's ~7.3s prediction.
+
+Two things that benchmark did not show:
+
+- **The Haiku call cost 2.4x §6d's figure** ($0.0292 vs $0.0124) on a *third* of the input tokens.
+  Cheap input, expensive bill — the Anthropic cache-write pattern. The real production gap is
+  therefore wider than the screen suggested, in Gemini's favour.
+- **Gemini used 7x the input tokens** (22,298 vs 3,186) and still cost a quarter as much. Input
+  volume is what prompt caching would otherwise attack, so the Phase 0/1 caching work is worth
+  less on this path than it was on Anthropic.
+
+Quality on that call was correct on every field this session's two specs added: `fit_on_body:
+skims` on a tailored coat (the fabric-stiffness default correctly overridden by visible shaping),
+`fiber_content: ["wool","unknown"]` with `fiber_content_completeness: partial`, and a
+`thermal material verdict` of `insulating` scoring it `very warm`. `manual_overrides` was empty —
+pure model output.
+
+### What this adoption does NOT resolve
+
+- **BYOK — the blocking gap for the multiuser platform.** The Gemini path has no BYOK support;
+  `assertProviderKey()` says so in its own error text (*"experimental path, no BYOK yet"*). So on
+  a multiuser deployment every user's tagging bills the **operator's** single `GEMINI_API_KEY`, and
+  a deployment without that key fails at tagging outright — the app's core onboarding path. §1 of
+  this spec frames tagging as a per-signup cost *"paid on the user's own key (BYOK, spec 33)"*.
+  **This default is correct for the owner's single-user dev pair and is not yet safe to ship to
+  the multiuser platform.** Gemini BYOK is the prerequisite, and it is not written yet.
+- **The import-crop distribution is still untested on any tier.** §6 called it *"the one that
+  decides adoption"*; §6d did not cover it and neither does this. Adoption here rests on the
+  add/edit/retag path only.
+- **10 screening cases plus one production call** is not a powered study. It is enough to justify
+  a reversible default on one wardrobe; it is not enough to bound a rare-failure rate.

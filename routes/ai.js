@@ -387,11 +387,21 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
 }
 
 // Real routing (plan: quizzical-foraging-boot, Stage F) — env-controlled, reversible without a
-// code change. Unset (the default on a fresh checkout / real dev pair): TAGGER_PROVIDER_OVERRIDE
-// is '', so tagPieceWithProvider's own internal Haiku default applies exactly as before. Set it to
-// 'gemini' to route new tagging to the tier this session's §6d benchmark found strongest on cost
-// and failure rate (docs/tagger-cost-spec.md §6d).
-const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || ''
+// code change.
+//
+// DEFAULT CHANGED 2026-09-02 (owner decision): tagging now routes to Gemini 3.1 Flash-Lite, the
+// tier docs/tagger-cost-spec.md §6d benchmarked strongest on cost and failure rate and §6e adopts.
+// Measured in production on the owner's own wardrobe: $0.0079 and 6.6s per garment, against
+// $0.0292 and 16.7s for the Haiku call ninety minutes earlier — 73% cheaper, 2.5x faster.
+// Set TAGGER_PROVIDER_OVERRIDE='anthropic' to revert without a code change.
+//
+// KNOWN GAP, see §6e: the Gemini path has NO BYOK support. assertProviderKey() says so in its own
+// error text. On a multiuser deployment every user's tagging therefore bills the operator's single
+// GEMINI_API_KEY, and a deployment without that key fails at tagging outright — which is the app's
+// core onboarding path. Tagging is a per-signup cost the cost spec's §1 explicitly frames as paid
+// on the user's own key. This default is correct for the owner's single-user dev pair and is NOT
+// yet safe for the multiuser platform.
+const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || 'gemini'
 const TAGGER_MODEL_OVERRIDE = process.env.TAGGER_MODEL_OVERRIDE || 'gemini-3.1-flash-lite'
 const taggerProviderOverride = TAGGER_PROVIDER_OVERRIDE
   ? { provider: TAGGER_PROVIDER_OVERRIDE, model: TAGGER_MODEL_OVERRIDE }
