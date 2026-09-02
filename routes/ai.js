@@ -57,7 +57,8 @@ import {
   pieceMatchesFootwear,
   pieceRequiresBaseLayer,
   pieceVisualDetailPolicy,
-  SLEEVE_SHAPE_VALUES
+  SLEEVE_SHAPE_VALUES,
+  FIT_ON_BODY_SCHEMA_DESCRIPTION,
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
@@ -1562,7 +1563,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "silhouette": "Valid values depend on category — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed|a_line|pencil|full|slip|straight|pleated|wrap.",
       "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only). Never 'heel' — heel_height covers that. 'slip_on' is a closure-free shoe (no laces/buckle/zip) that isn't a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
       "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only)",
-      "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; null/omit for shoes/accessory). This photo IS a worn photo — judge fit and drape directly from how the garment sits on the body here, the same authority a dedicated worn photo would carry.",
+      "fit_on_body": "${FIT_ON_BODY_SCHEMA_DESCRIPTION} This photo IS a worn photo — judge fit and drape directly from how the garment sits on the body here, the same authority a dedicated worn photo would carry.",
       "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only; null/omit for non-tops). Judge from the garment's own cut, fit, and design intent as shown in this worn photo: fitted or semi-fitted through the body -> tucks_anywhere; loose/relaxed fit that would need a belt or structured waistband to sit cleanly -> tucks_with_structure; peplum/tunic length, or a hem/silhouette clearly meant to be seen rather than tucked away -> wear_over_only. Whether the garment happens to be tucked or untucked in this specific photo is evidence, not the whole answer — an untucked top in this photo can still tuck cleanly if its cut supports it.",
       "waistband_type": "structured_high_waist|structured_mid_waist|structured_low_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
       "fabric_category": "Valid values depend on category — top/bottom/dress/outerwear -> jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|organza|lace|crochet|jacquard|wool|cashmere|boucle|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other; shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper; woven is for raffia/straw, not knits)|woven|synthetic|textile|rubber|other; accessory -> leather|suede|metal|stone|straw|canvas|synthetic|textile|rubber|wood|ceramic|glass|horn|shell|resin|pearl|crystal|enamel|other. Never use the clothing list for a shoe or accessory piece.",

@@ -1,26 +1,41 @@
 # Spec — defining `fit_on_body`
 
-**Status:** Proposed 2026-09-02. Written after a live retag tagged a visibly waisted quilted
+**Status:** Implemented 2026-09-02, **with its diagnosis corrected during implementation** — see
+§1. One live retag remains to confirm the model acts on the change. Proposed 2026-09-02. Written after a live retag tagged a visibly waisted quilted
 jacket (`996866`) as `hangs_straight`. **Route:** [docs/README.md](README.md). Follows the
 house pattern set by the sleeve taxonomy — see
 [garment-field-reference.md](garment-field-reference.md) → *"Sleeve taxonomy: functional volume,
 not fashion names (2026-08-26)"*.
 
-## 1. The gap
+## 1. The cause — corrected during implementation
 
-`fit_on_body` is asked for as a bare pipe-list with **no definitions at all**:
+**This spec was first written on a false premise, and the correction is the useful part.**
+
+The original §1 said `fit_on_body` was asked for as a bare pipe-list with *no definitions at all*,
+and proposed adding some. That was wrong. Implementing it surfaced two guidance blocks the survey
+had missed, and the second is the actual cause:
 
 ```text
-"fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none"
+- Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.
+
+2. Fabric & Drape:
+   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body.
+     Fit matches: "structured" or "hangs_straight".
+   - Fluid/Soft (ribbed knit, silk, gauze): Conforms to body contours. Fit matches: "skims" or "drapes".
 ```
 
-Seven values, zero semantics. Every comparable construction field — `silhouette`, `sleeve_shape`,
-`neckline`, `hem_finish`, `tuck_behavior` — was given definitions or a category-conditional
-vocabulary in the 2026-08 taxonomy passes. `fit_on_body` was not, and its row in the field
-reference is the shortest in the table: source of truth `prompts.js` schema, nothing else.
+The first line is a bare restatement carrying no semantics — and it silently omits `none`, which
+the enum has. But the second **maps fabric stiffness directly onto a fit value.** A quilted nylon
+shell reads as a stiff fabric, so `hangs_straight` was the answer the prompt asked for. **The model
+obeyed a wrong rule rather than misreading a photo.**
 
-The model is being asked to choose between seven near-synonyms with no statement of what
-distinguishes them.
+Fabric stiffness and body relationship are different axes. A stiff fabric can be cut to the waist —
+a tailored wool coat, a denim jacket with darts, this quilted jacket with shaped side panels. The
+old rule made that combination unreachable.
+
+This is why the repo's standing habit is to check intent before calling something a gap: the fix
+for "no guidance exists" (add some) is not the fix for "the guidance is wrong" (correct it, then
+add). Both are now done, but only the second addresses the incident.
 
 ## 2. What it produced
 
@@ -154,10 +169,17 @@ tagger says nothing, and should.
 
 ## 6. Cost and verification
 
-**Prompt change.** This edits the tagger schema, so `test/fixtures/prompts_yuna_snapshot.json`
-needs a deliberate accepted delta in `prompt_equivalence.test.js`, recorded the way the fibre
-completeness change was. Recorded as: *`fit_on_body` gains definitions; the value list is
-unchanged.*
+**Prompt change — done.** Four accepted deltas recorded in `prompt_equivalence.test.js` with their
+rationale, leaving `prompts_yuna_snapshot.json` frozen: the two Fabric & Drape lines (stiffness
+becomes a stated default that shaping overrides), the `Fit on Body` guidance line, and the schema
+description. Recorded as: *`fit_on_body` gains definitions; the value list is unchanged.*
+
+**Ownership.** `FIT_ON_BODY_VALUES` and `FIT_ON_BODY_SCHEMA_DESCRIPTION` live in `attributes.js`,
+and both photo-derived producers project them — the tagger and `/extract-pieces`, which keeps its
+own worn-photo authority sentence on top. A test fails if either restates the definitions inline.
+
+**Tests.** Every value must be defined, not merely listed; the three disambiguations must survive;
+and stiffness must no longer decide the fit value outright.
 
 **No migration, no backfill.** The enum is untouched — only its description. Existing rows keep
 working, and nothing is retagged automatically.
@@ -171,8 +193,9 @@ working, and nothing is retagged automatically.
                                                  disagreeing with 207 for no stated reason
 ```
 
-Two billed tags. If `996866` still returns `hangs_straight` after the definitions land, the
-problem is not the vocabulary and this spec is wrong about the cause.
+Two billed tags, **still outstanding.** If `996866` still returns `hangs_straight`, the problem is
+neither the vocabulary nor the fabric rule, and this spec is wrong about the cause — which is a
+clean falsification rather than an ambiguous one.
 
 ## 7. Not proposed
 

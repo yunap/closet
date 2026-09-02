@@ -91,6 +91,32 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         "  \"fiber_content_completeness\": \"partial|unknown \u2014 whether the fiber_content list above describes the WHOLE garment. Use 'partial' ONLY when the image gives positive evidence that additional material components exist whose composition cannot be identified: visible lining, padding, quilting or baffles, fill, or clearly distinct unidentified material panels. Otherwise use 'unknown'. Never emit 'complete' \u2014 a photograph cannot verify that nothing is hidden, and only a person reading a care label can assert that. 'unknown' means completeness was not established; 'partial' means the list is positively known not to describe the whole garment. Do not use 'partial' merely because you are unsure, and do not assume it by category.\",\n  \"formality\":"
       )
     }
+    // 2026-09-02: fit_on_body gains definitions. The value list is UNCHANGED — only its description
+    // and the guidance around it. Prompted by a live retag calling a visibly waisted quilted jacket
+    // "hangs_straight": the model had seen its shaped side panels and recorded them as "texture
+    // contrast". The cause was not missing guidance but WRONG guidance — the Fabric & Drape block
+    // mapped fabric stiffness straight onto a fit value ("Fit matches: structured or
+    // hangs_straight"), so a quilted nylon shell was being classified correctly per instructions.
+    // Fabric stiffness and body relationship are different axes; stiffness is now a stated default
+    // that visible shaping overrides. See docs/fit-on-body-definitions-spec.md.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        "   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit matches: \"structured\" or \"hangs_straight\".",
+        "   - Structured/Stiff (denim, twill, canvas, heavy cotton, quilted/padded shells): Holds its own shape away from the body. Fit DEFAULTS to \"structured\" or \"hangs_straight\" \u2014 but this is a fallback for an unshaped garment, not a rule. Fabric stiffness and body relationship are different axes: a stiff fabric can still be cut to the waist, and visible shaping overrides this default (see Fit On Body below)."
+      )
+      expected = expected.replace(
+        "   - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit matches: \"skims\" or \"drapes\" (never \"structured\").",
+        "   - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit defaults to \"skims\" or \"drapes\" (never \"structured\")."
+      )
+      expected = expected.replace(
+        "- Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.",
+        "- Fit on Body: how the garment relates to the BODY'S CONTOURS. Not how loose it is, and not its outline, which is silhouette. Three questions decide it, and the value list alone is not enough. (1) \"skims\" vs \"hangs_straight\": ask whether there is WAIST DEFINITION. Any shaping device \u2014 darts, princess seams, shaped or elasticated side panels, a peplum, a belt or drawstring built into the design \u2014 means the garment references the body, so it is \"skims\". Choose \"hangs_straight\" only when the garment falls straight from the shoulders or waistband with nothing drawing it in. (2) PADDING IS NOT STRUCTURE: a quilted or filled garment is padded, not architecturally structured, and its bulk is already recorded in fabric_weight and visual_weight \u2014 judge a puffer by whether it is shaped to the waist. (3) fit_on_body is NOT silhouette: they are independent, and \"silhouette\": \"structured\" with \"fit_on_body\": \"skims\" is a normal, correct combination for a tailored waisted coat. Do not copy one field into the other. Where a WORN PHOTO exists it is the authority here \u2014 it is the only view that shows the relationship to an actual body. Use \"none\" when the garment has no meaningful relationship to body contours."
+      )
+      expected = expected.replace(
+        "  \"fit_on_body\": \"clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none\",",
+        "  \"fit_on_body\": \"clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; null/omit for shoes/accessory). How the garment relates to the BODY'S CONTOURS \u2014 not how loose it is, and not its outline, which is `silhouette`. 'clings_stretchy': follows the body closely because the fabric stretches onto it (jersey, rib, knit) and the body's outline reads through. 'clings_drapey': follows the body closely because a fluid non-stretch fabric falls onto it (a silk slip, a bias cut). 'skims': shaped to the body and following its line without gripping \u2014 there is ease, but the construction itself references the body through a defined waist, darts, princess seams, shaped or elasticated side panels, or a belt or drawstring built into the design. 'hangs_straight': falls from the shoulders or waistband in a straight line, IGNORING the body's contours, with no waist definition anywhere in the construction. 'drapes': falls in soft folds AWAY from the body, its shape governed by the fabric's weight and fluidity rather than by the body. 'structured': holds its own architectural shape independently of the body \u2014 it would keep that shape off the body, through canvas, interfacing, boning, or tailoring. 'none': no meaningful relationship to body contours.\","
+      )
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern

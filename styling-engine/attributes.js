@@ -33,6 +33,36 @@ export const FIELD_CONSEQUENCE = {
   fiber_content_completeness: 'Lets the app tell "no warm fibres recorded" apart from "not checked"',
 }
 
+// Canonical fit_on_body vocabulary and the description the model is given for it — ONE source,
+// projected by both photo-derived producers (the tagger in prompts.js and /extract-pieces).
+//
+// Until 2026-09-02 this field was asked for as a bare pipe-list with no semantics at all, while
+// every comparable construction field got definitions in the 2026-08 taxonomy passes. A live retag
+// then called a visibly waisted quilted jacket `hangs_straight`, having seen its shaped side panels
+// and recorded them as "texture contrast". See docs/fit-on-body-definitions-spec.md.
+//
+// The axis is: how does this garment relate to the BODY'S CONTOURS? Not how loose it is, and not
+// what shape it is — `silhouette` already owns outline.
+export const FIT_ON_BODY_VALUES = [
+  'clings_stretchy', 'clings_drapey', 'skims', 'hangs_straight', 'drapes', 'structured', 'none',
+]
+
+export const FIT_ON_BODY_SCHEMA_DESCRIPTION =
+  "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; " +
+  "null/omit for shoes/accessory). How the garment relates to the BODY'S CONTOURS — not how loose " +
+  "it is, and not its outline, which is `silhouette`. 'clings_stretchy': follows the body closely " +
+  "because the fabric stretches onto it (jersey, rib, knit) and the body's outline reads through. " +
+  "'clings_drapey': follows the body closely because a fluid non-stretch fabric falls onto it (a " +
+  "silk slip, a bias cut). 'skims': shaped to the body and following its line without gripping — " +
+  "there is ease, but the construction itself references the body through a defined waist, darts, " +
+  "princess seams, shaped or elasticated side panels, or a belt or drawstring built into the " +
+  "design. 'hangs_straight': falls from the shoulders or waistband in a straight line, IGNORING " +
+  "the body's contours, with no waist definition anywhere in the construction. 'drapes': falls in " +
+  "soft folds AWAY from the body, its shape governed by the fabric's weight and fluidity rather " +
+  "than by the body. 'structured': holds its own architectural shape independently of the body — " +
+  "it would keep that shape off the body, through canvas, interfacing, boning, or tailoring. " +
+  "'none': no meaningful relationship to body contours."
+
 export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
 // Canonical sleeve-shape taxonomy: a functional sleeve-VOLUME classification answering "where does
