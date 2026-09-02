@@ -217,7 +217,32 @@ Two of §12's own tests in the fibre spec had to change: they asserted `complete
 place rather than silently adjusted, and four new tests added — the layer verdict, the
 absent-vs-empty gate, the tagger's inability to assert `[]`, and breathability isolation.
 
-**Not done:** no editor control for the field yet, so today only the tagger can populate it. The
-manual path accepts it and preserves `NULL` vs `[]`, but nothing in the UI offers the choice —
-`[]` in particular is a claim only a person can make, and there is currently no way for them to
-make it. That is the next slice.
+### 7.1 Editor control — **DONE 2026-09-02**
+
+The gap this section recorded is closed. `PieceForm` now asks, on outerwear and shoes:
+
+> **Is there an insulating layer inside — fill or a warm lining?**
+> `Yes` · `No, nothing inside` · `Not sure`
+>
+> and when Yes: **What is it made of? Leave blank if you can't tell.**
+
+The question deliberately does **not** say "padding". Padding is construction, not necessarily
+insulation — a padded shoulder or a quilted decorative panel is neither a fill nor a warm lining,
+and offering it as a reason to answer Yes would manufacture false positives in the field's own
+terms. The tagger may still *use* visible quilting and loft as evidence that an insulating layer
+exists (§3.2); the owner-facing question asks about the fact being stored, not the evidence for it.
+
+The three choices map to the three stored states — `["unknown"]` or named materials · `[]` ·
+`NULL` — and the second row's options are projected from `FIBER_FAMILIES.insulating` plus
+`FIBER_FAMILIES.synthetic`, so **polyester is offerable**, which is the case the field exists for.
+
+Transition behaviour, pinned by test: choosing *Yes* with nothing named stores `["unknown"]` (the
+honest positive, and the common answer); switching back to *Yes* keeps materials already named;
+choosing *No* discards them, as it must, since it is an assertion that there is nothing there.
+
+**This is what makes `non_insulating` reachable at all.** A tagger may never assert `[]`, so until
+a person could say "nothing inside", the negative branch had no route in production.
+
+Scoped to outerwear and shoes — the two cases §2 identifies. A quilted top or vest in another
+category cannot be answered yet; noted rather than silently unsupported. `BatchAdd` does not carry
+the control either, matching how the completeness control was scoped.

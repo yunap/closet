@@ -34,6 +34,7 @@ export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
 export const FIELD_CONSEQUENCE = {
   fiber_content: 'Affects warmth and weather suitability',
   fiber_content_completeness: 'Lets the app tell "no warm fibres recorded" apart from "not checked"',
+  insulating_layer_materials: 'A padded or lined piece is warm because of what is inside it, which a photo cannot see',
 }
 
 // Canonical fit_on_body vocabulary and the description the model is given for it — ONE source,
