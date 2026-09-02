@@ -428,3 +428,39 @@ test('fiber_content keeps its own job — breathability is untouched by the new 
   assert.equal(pieceFiberBreathability(coat), pieceFiberBreathability({ fiber_content: ['cotton'] }),
     'recording a down fill must not change what the face fabric does against skin')
 })
+
+test('the editor control exposes all three insulating-layer states', () => {
+  // Until this existed only the tagger could write the field, and a tagger may never assert [] —
+  // so non_insulating was unreachable in production. The control is what makes the negative branch
+  // reachable at all. See material-role-representation-spec.md §3.0.
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
+  assert.match(source, /data-piece-field="insulating_layer_materials"/)
+  assert.match(source, /function insulatingLayerChoice/)
+  assert.match(source, /function insulatingLayerForChoice/)
+
+  // The three-way mapping, exercised as the component does it.
+  const choice = v => !Array.isArray(v) ? 'unrecorded' : (v.length ? 'yes' : 'none')
+  const forChoice = (c, cur) => c === 'unrecorded' ? null : c === 'none' ? [] : (Array.isArray(cur) && cur.length ? cur : ['unknown'])
+  assert.equal(choice(null), 'unrecorded')
+  assert.equal(choice([]), 'none')
+  assert.equal(choice(['unknown']), 'yes')
+  assert.deepEqual(forChoice('none', ['down']), [], 'ruling it out discards named materials, as it must')
+  assert.deepEqual(forChoice('yes', null), ['unknown'], 'Yes with nothing named is the honest positive')
+  assert.deepEqual(forChoice('yes', ['down']), ['down'], 'switching back keeps what was already named')
+  assert.equal(forChoice('unrecorded', ['down']), null)
+
+  // Offered materials are projected, not re-listed — polyester must be offerable, since synthetic
+  // fill is the case the whole field exists for.
+  assert.match(source, /FIBER_FAMILIES\.insulating, \.\.\.FIBER_FAMILIES\.synthetic/)
+  assert.ok(FIBER_FAMILIES.synthetic.includes('polyester'))
+  assert.ok(!/const INSULATING_LAYER_MATERIAL_OPTIONS = \['/.test(source), 'no hand-listed material array')
+})
+
+test('answering the control makes non_insulating reachable', () => {
+  // The gap recorded when the field shipped: nothing in the UI could assert []. This is the
+  // end-to-end proof that the negative branch now has a route.
+  const tee = { fiber_content: ['cotton'], fiber_content_completeness: 'complete' }
+  assert.equal(thermalMaterialVerdict(tee), 'unknown')
+  assert.equal(thermalMaterialVerdict({ ...tee, insulating_layer_materials: [] }), 'non_insulating')
+  assert.equal(thermalMaterialVerdict({ ...tee, insulating_layer_materials: ['polyester'] }), 'insulating')
+})

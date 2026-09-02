@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
-import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS, FIBER_FAMILIES } from '../../styling-engine/fiberTaxonomy.js'
 import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -364,6 +364,28 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pending
 // not values the person chose — same set buildWardrobePieceTruthText refuses to
 // print. There is nothing to clear, so don't offer to.
 const CHIP_UNSET_VALUES = new Set(['none', 'unknown', 'n/a'])
+
+// The insulating layer is a coat's fill or a warm boot's lining, so the control is offered where
+// those exist. A t-shirt has no interior layer to ask about.
+const INSULATING_LAYER_CATEGORIES = ['outerwear', 'shoes']
+
+// Offered materials: the warm family plus the synthetics real fill is actually made of. Projected
+// from the canonical taxonomy rather than re-listed — polyester wadding is why this field exists.
+const INSULATING_LAYER_MATERIAL_OPTIONS = [...FIBER_FAMILIES.insulating, ...FIBER_FAMILIES.synthetic]
+
+// null / [] / non-empty are three different stored facts; the control shows them as three choices.
+function insulatingLayerChoice(value) {
+  if (!Array.isArray(value)) return 'unrecorded'
+  return value.length ? 'yes' : 'none'
+}
+
+function insulatingLayerForChoice(choice, current) {
+  if (choice === 'unrecorded') return null
+  if (choice === 'none') return []
+  // Switching to "yes" keeps any materials already named, and otherwise records the honest
+  // positive: a layer is there, contents unidentified.
+  return Array.isArray(current) && current.length ? current : ['unknown']
+}
 
 // Says what a field decides, in the owner's terms. Renders nothing for a field with no entry —
 // generic filler would be worse than silence. `gate` stays as an internal marker on the label and
@@ -1527,6 +1549,39 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               <div className="form-warning" data-piece-field="fiber_content_ambiguous">
                 The recorded materials don’t say how warm this is. Padded or quilted pieces may
                 contain insulation that isn’t visible; the care label can identify it.
+              </div>
+            )}
+            {INSULATING_LAYER_CATEGORIES.includes(cat) && (
+              /* The one claim only a person can make. A photograph can show that an insulating
+                 layer exists; it cannot show that one is absent, so the tagger may never write []
+                 — which is why non_insulating was unreachable until this control existed.
+                 Three stored states, asked in the owner's terms:
+                   Not recorded → null   ·   None → []   ·   Yes → ["unknown"] or named materials
+                 See docs/material-role-representation-spec.md §3.0. */
+              <div className="form-subgroup" data-piece-field="insulating_layer_materials">
+                <span className="form-hint">Is there insulation inside — fill, padding, or a warm lining?</span>
+                <FieldConsequence field="insulating_layer_materials" />
+                <ChipRow
+                  options={[
+                    { value: 'yes', label: 'Yes' },
+                    { value: 'none', label: 'No, nothing inside' },
+                    { value: 'unrecorded', label: 'Not sure' },
+                  ]}
+                  value={insulatingLayerChoice(form.insulating_layer_materials)}
+                  onChange={choice => set('insulating_layer_materials', insulatingLayerForChoice(choice, form.insulating_layer_materials))}
+                  clearable={false}
+                />
+                {insulatingLayerChoice(form.insulating_layer_materials) === 'yes' && (
+                  <>
+                    <span className="form-hint">What is it made of? Leave blank if you can’t tell.</span>
+                    <ChipRow
+                      options={INSULATING_LAYER_MATERIAL_OPTIONS}
+                      value={(form.insulating_layer_materials || []).filter(m => m !== 'unknown')}
+                      onChange={picked => set('insulating_layer_materials', picked.length ? picked : ['unknown'])}
+                      multi
+                    />
+                  </>
+                )}
               </div>
             )}
             <div className="form-subgroup" data-piece-field="fiber_content_completeness">
