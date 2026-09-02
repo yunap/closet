@@ -1,6 +1,7 @@
 # Spec — fiber evidence completeness and its canonical owner
 
-**Status:** Proposed 2026-09-01, **amended the same day** after review. §6's derivation was
+**Status:** Implemented and verified 2026-09-02. Every section is shipped; the tagger contract is
+confirmed against live model output (§16). Proposed 2026-09-01, **amended the same day** after review. §6's derivation was
 too strong and is corrected below; §8's condition is now answered by measurement rather than
 left as a suspicion; two new required corrections (§9, §10) came out of that audit. Written in response to a review of the garment-editor
 proposal that followed the black-puffer tagging incident. **Route:**
@@ -852,43 +853,43 @@ fixed in `src/App.css` against the design tokens.
 already single-sourced from §7.1 — this was a missing UI projection, not a second ownership hole,
 and one field looking different on the two intake surfaces is the whole defect.
 
-## 16. The live tag — INCONCLUSIVE, and why
+## 16. The live tag — **PASS 2026-09-02**
 
-Ran on `996866 navy quilted puffer jacket with ribbed side panels`, tagged 2026-09-02 03:36 by
-`claude-haiku-4-5` through the real dev pair. Result:
+Run on `996866 navy quilted puffer jacket with ribbed side panels` — a piece with the exact visual
+condition the contract targets and, crucially, **no manual overrides**, so nothing human masks the
+model's own answer.
+
+The first attempt was inconclusive through a bug of ours, recorded here because the failure mode
+matters more than the result. It stored `unknown`, which looked exactly like the model declining —
+but `PieceForm` had no `applyTagValue` for `fiber_content_completeness` and `BatchAdd`'s tag→form
+mapping had no entry, so the answer was discarded before the save. A `partial` and a refusal
+produce byte-identical rows.
+
+That is the `[R1]` shape — produced at the source, dropped at the consumer — **reproduced while
+building the spec whose purpose is closing it.** §14's producer census proved every producer
+*writes* the fact correctly; it never asked whether the client path *carries* it. Both forms now
+do, with a test asserting every tagger-requested fibre field reaches the form.
+
+**After the fix, retagged:**
 
 ```text
-fiber_content              ["polyester","nylon"]
-fiber_content_completeness unknown          ← expected: partial
-composition evidence       unknown
-thermal material verdict   unknown
+fiber_content              ["polyester","nylon"]   ← no invented fill
+fiber_content_completeness partial                 ← the contract honoured
+manual_overrides           []                      ← pure model output
+composition evidence       partial
+thermal material verdict   unknown                 ← partial + no insulating fibre stays unknown
 calibration evidence       thermally_ambiguous
 warmth level (proposed)    — not assignable
 ```
 
-The prompt was live: port 3001 is held by a server started 20:33, after the schema change
-committed at 19:36, from this working tree.
+All three pass conditions met: it recognised the quilted construction, stated the list does not
+describe the whole garment, and **did not invent a fill material**. The narrow contract holds — the
+model said "incomplete", not "down".
 
-**But the test proves nothing about the model, because the intake forms were dropping the answer.**
-`PieceForm` had no `applyTagValue` for `fiber_content_completeness`, and `BatchAdd`'s tag→form
-mapping had no entry, so whatever the tagger returned was discarded before the save. A `partial`
-and a declined answer produce byte-identical rows.
-
-This is the `[R1]` shape — a fact produced at the source and dropped at the consumer — **reproduced
-while building the spec whose entire purpose is closing it.** The §14 producer census enumerated
-who *writes* the fact and proved every producer obeys the contract; it never asked whether the
-client path *carries* it. That was the gap.
-
-Both forms now carry it, with a test asserting each tagger-requested field reaches the form.
-
-**What the run does show, and it is worth keeping:** the model clearly perceived the insulation and
-described it in prose — `reads_as` "chevron baffling", notes "substantial insulation… true
-cold-weather outer layer", `visual_roles: cold_weather_layer`, `coverage: full-insulating`,
-`outerwear_role: cold_weather_outerwear` — while `fiber_content` recorded only the shell. That is
-the exact evidence-shape §1 describes, now observed on a clean piece with no manual overrides. The
-calibration correctly refused to assign a warmth level rather than scoring it as heavy denim.
-
-**Still to run:** one retag of 996866 to get the actual answer. Nothing else is outstanding.
+The downstream chain then behaves exactly as designed. `partial` + no insulating fibre yields
+`unknown`, **not** `non_insulating` — the asymmetry from §12 holding on live model output. And the
+calibration refuses to assign a warmth level rather than scoring a puffer like heavy denim, which
+is the failure that started this arc.
 
 ## 17. Remaining
 
