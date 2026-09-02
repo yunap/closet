@@ -78,3 +78,51 @@ export const FIBER_FAMILY_BY_VALUE = Object.fromEntries(
 
 // Derived, not hand-kept: "which fibres trap body heat" is the definition of the insulating family.
 export const INSULATING_FIBERS = new Set(FIBER_FAMILIES.insulating)
+
+// lyocell is the generic fibre name; tencel is its branded form, and this app stores one concept
+// for both. Remapped before validation rather than treated as a distinct value.
+export const FIBER_SYNONYMS = { lyocell: 'tencel' }
+
+const FIBER_CANONICAL_INDEX = new Map(FIBER_VALUES.map((v, i) => [v, i]))
+
+// THE normalizer for this field. Lives with the taxonomy, not in either write path: routes/crud.js
+// (manual edit) and taggerMerge.js (tagger output) are adapters that call it, so the same logical
+// input persists the same bytes whichever wrote it. See docs/fiber-evidence-completeness-spec.md §10.
+//
+// Contract:
+//   - empty/missing input  → [], on BOTH paths. Not ['unknown']: that is an assertion of
+//     uncertainty, and nothing about an empty input says anyone looked. It also matters
+//     operationally — isPopulated(['unknown']) is true, so the old tagger-side default silently
+//     suppressed fiber_content's own gate-critical review chip. Same choice, for the same reason,
+//     that normalizeWeatherProtection() already documents.
+//   - out-of-vocabulary tokens are NOT rewritten to 'unknown'. Invalid evidence and honest
+//     uncertainty are different states and the responsibility census requires they stay distinct;
+//     collapsing them turned a spelling failure into a valid-looking answer. They are dropped from
+//     the stored value and returned separately so a caller can queue them for review.
+//   - 'unknown' alongside resolved fibres is PRESERVED — it is the partial-evidence marker.
+//   - deterministic: deduped and emitted in canonical taxonomy order, so ['down','polyester'] and
+//     ['polyester','down'] store identically.
+//
+// Deliberately does NOT infer completeness or thermal sufficiency. Those are §5's verdict layer,
+// and deriving them here would put semantics back inside the write path.
+export function fiberContentNormalization(value) {
+  const raw = Array.isArray(value) ? value : []
+  const seen = new Set()
+  const invalid = []
+  for (const entry of raw) {
+    const token = String(entry ?? '').toLowerCase().trim()
+    if (!token) continue
+    const canonical = FIBER_SYNONYMS[token] || token
+    if (!FIBER_CANONICAL_INDEX.has(canonical)) {
+      if (!invalid.includes(token)) invalid.push(token)
+      continue
+    }
+    seen.add(canonical)
+  }
+  const values = [...seen].sort((a, b) => FIBER_CANONICAL_INDEX.get(a) - FIBER_CANONICAL_INDEX.get(b))
+  return { values, invalid }
+}
+
+export function normalizeFiberContent(value = []) {
+  return fiberContentNormalization(value).values
+}

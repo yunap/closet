@@ -753,3 +753,48 @@ test('weather_protection round-trips as a multi-select array and drops unrecogni
 
   await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
 })
+
+test('fiber_content: both write paths canonicalize identically and flag invalid materials', async () => {
+  // docs/fiber-evidence-completeness-spec.md §10. Before this, the manual edit path stored
+  // fiber_content verbatim while the tagger path normalized it — the one omission in an UPDATE
+  // that already normalized nine other enums — so [] vs ['unknown'] recorded which code wrote the
+  // row rather than anything about the garment.
+  const create = new FormData()
+  create.append('name', 'fiber contract coat')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['black']))
+  // Unordered, duplicated, wrong case, one synonym, one material that does not exist.
+  create.append('fiber_content', JSON.stringify(['Nylon', 'polyester', 'nylon', 'lyocell', 'unobtainium']))
+
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.deepEqual(created.fiber_content, ['tencel', 'polyester', 'nylon'],
+    'stored in canonical taxonomy order, deduped and case-folded')
+  assert.ok(!created.fiber_content.includes('unknown'),
+    'an unrecognised material must not be rewritten into valid uncertainty')
+
+  const queued = db.prepare(`
+    SELECT description, payload FROM todos
+    WHERE linked_piece_id = ? AND field = 'fiber_content' AND completed = 0
+  `).all(created.id)
+  assert.equal(queued.length, 1, 'the dropped material surfaces for review instead of vanishing')
+  assert.equal(JSON.parse(queued[0].payload).fiber, 'unobtainium')
+
+  // An empty submission stores [], not ['unknown'] — so missingGateFields still reports
+  // fiber_content as missing rather than the row looking populated.
+  const emptied = new FormData()
+  emptied.append('name', 'fiber contract coat')
+  emptied.append('category', 'outerwear')
+  emptied.append('colors', JSON.stringify(['black']))
+  emptied.append('fiber_content', JSON.stringify([]))
+  const updated = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: emptied })).json()
+  assert.deepEqual(updated.fiber_content, [])
+
+  // Partial evidence survives a round trip through the manual path untouched.
+  const partial = new FormData()
+  partial.append('name', 'fiber contract coat')
+  partial.append('category', 'outerwear')
+  partial.append('colors', JSON.stringify(['black']))
+  partial.append('fiber_content', JSON.stringify(['unknown', 'cotton']))
+  const kept = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: partial })).json()
+  assert.deepEqual(kept.fiber_content, ['cotton', 'unknown'])
+})

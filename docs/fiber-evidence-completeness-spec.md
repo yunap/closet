@@ -364,21 +364,74 @@ An unrecognised value should be rejected or flagged for review, not silently rew
 honest-looking admission of uncertainty. This also removes the one case that muddied §6: a coerced
 value currently lands in a list looking exactly like a deliberate partial marker.
 
-## 10. Required correction — `fiber_content` has two write paths with different semantics
+## 10. One normalizer, both write paths as adapters — **DONE 2026-09-01**
 
-Found while auditing §8, and it undermines the `[] → unknown` half of §6 if left alone.
+Found while auditing §8. `fiber_content` had two write paths with different semantics:
 
-- **Tagger merge** goes through `normalizeFiberContent()`, which returns `["unknown"]` for empty
-  input.
-- **Manual edit** does not. `routes/crud.js` writes `fiber_content||'[]'` verbatim — in the same
-  `UPDATE` statement where `fabric_category`, `formality`, `heel_height`, `walk_support`,
-  `accessory_subtype`, `jewelry_type`, `necklace_length`, `bottom_subtype`, `outerwear_role` and
-  `weather_protection` are all normalized. `fiber_content` is the omission.
+- **Tagger merge** went through `normalizeFiberContent()`, which returned `["unknown"]` for empty
+  input and rewrote any unrecognised token to `"unknown"`.
+- **Manual edit** went through neither. `routes/crud.js` wrote `fiber_content||'[]'` verbatim — the
+  one omission in an `UPDATE` that already normalized `fabric_category`, `formality`,
+  `heel_height`, `walk_support`, `accessory_subtype`, `jewelry_type`, `necklace_length`,
+  `bottom_subtype`, `outerwear_role` and `weather_protection` beside it.
 
-So `[]` versus `["unknown"]` is decided by **which path last wrote the row**, not by anything
-anyone knows about the garment. That is why the four `[]` pieces (§2) exist at all despite a
-normalizer that should make the state unreachable. Both routes must share one normalizer before
-any verdict is derived from the distinction between them.
+So `[]` versus `["unknown"]` recorded **which code last wrote the row**, not anything about the
+garment — which is why the four `[]` pieces in §2 exist despite a normalizer that should make the
+state unreachable.
+
+### 10.1 The contract
+
+`fiberContentNormalization(input) → { values, invalid }` lives in `fiberTaxonomy.js`, with the
+taxonomy and field semantics. `routes/crud.js` and `taggerMerge.js` are adapters that call it;
+neither owns write semantics any more. `normalizeFiberContent()` remains as a thin wrapper so
+existing importers are unaffected.
+
+| rule | behaviour |
+|---|---|
+| empty / missing / non-array | `[]` on **both** paths |
+| out-of-vocabulary token | dropped from `values`, returned in `invalid` — **never** `"unknown"` |
+| `"unknown"` beside resolved fibres | preserved; it is the partial-evidence marker |
+| duplicates, casing, whitespace | deduped, folded, trimmed |
+| ordering | canonical taxonomy order, so `["down","polyester"]` and `["polyester","down"]` store identically |
+| synonyms | `lyocell → tencel`, remapped before validation |
+| completeness / warmth | **not inferred here.** That is §5's verdict layer; putting it in the write path is what §5 exists to prevent |
+
+### 10.2 Why empty normalizes to `[]` rather than `["unknown"]`
+
+`["unknown"]` is an *assertion* that someone looked and could not tell. Nothing about an empty
+input supports making that claim on the writer's behalf — the same "do not manufacture a fact"
+rule §6 turns on.
+
+It also matters operationally, which decided it: **`isPopulated(["unknown"])` is `true`**, and
+`fiber_content` is gate-critical. The old tagger-side default therefore suppressed this field's own
+review chip — a piece with no fibre evidence looked populated and never surfaced for attention.
+`normalizeWeatherProtection()` already documents the same choice for the same reason.
+
+This is the one deliberate behaviour change in §10. It applies to future writes only; the 23
+existing `["unknown"]` rows are untouched, since normalization runs on write.
+
+### 10.3 Invalid tokens are surfaced, not just returned
+
+Returning `invalid` and reading it nowhere would be the `[R1]` shape this arc keeps fixing, so it
+has a consumer. `queueFiberTaxonomyReviews()` in `lib/colorTaxonomyReview.js` files a
+`retag-suggestion` todo against the piece, reusing the identical mechanism and todo shape that
+already handles unsupported colours — *"unsupported material 'x'. It was not added to the
+garment."* Wired into both `routes/crud.js` write sites.
+
+Still unwired: the tagger's own call at `routes/ai.js:542`, which is the likelier source of an
+invented material. Recorded rather than silently left.
+
+### 10.4 Evidence
+
+Full suite **1745 tests, 2 failures — the same 2 that fail at `HEAD`**. Seven tests added:
+
+- `test/fiberTaxonomy.test.js` (new) — the case table, including a direct assertion that the
+  manual-edit and tagger-merge paths agree for every input that used to diverge.
+- `test/crudEndpoints.test.js` — end-to-end through the real route: canonical ordering, the review
+  todo actually being filed, `[]` surviving as `[]`, and partial evidence surviving a round trip.
+- `test/taggerMerge.test.js` — an existing assertion **corrected**. It expected
+  `['wool', 'unknown', 'linen']` from a submission containing `'mystery fiber'`, encoding the
+  collapse of invalid evidence into valid uncertainty as intended behaviour.
 
 ## 11. Open ruling
 

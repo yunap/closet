@@ -1,14 +1,9 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
-import { FIBER_VALUES } from './fiberTaxonomy.js'
+import { normalizeFiberContent } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
-// Derived from the canonical taxonomy — see fiberTaxonomy.js for why the vocabulary lives there.
-const VALID_FIBERS = new Set(FIBER_VALUES)
-// lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
-// stored concept for both — remap before validating rather than treating them as distinct values.
-const FIBER_SYNONYMS = { lyocell: 'tencel' }
 const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
 const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
@@ -80,15 +75,9 @@ export function normalizeConfidenceMap(value = {}, fields = CONFIDENCE_FIELDS) {
   }))
 }
 
-export function normalizeFiberContent(value = []) {
-  const raw = Array.isArray(value) ? value : []
-  const normalized = raw
-    .map(v => String(v || '').toLowerCase().trim())
-    .map(v => FIBER_SYNONYMS[v] || v)
-    .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
-    .filter(Boolean)
-  return [...new Set(normalized.length ? normalized : ['unknown'])]
-}
+// Re-exported so existing importers keep working; the normalizer itself lives with the taxonomy
+// (fiberTaxonomy.js) rather than in this write path. See fiber-evidence-completeness-spec.md §10.
+export { normalizeFiberContent }
 
 function normalizeEnumValue(value, validValues) {
   const normalized = String(value || '').toLowerCase().trim()
