@@ -5,9 +5,9 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY, fiberFamiliesForPiece } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY, fiberFamiliesForPiece, normalizeInsulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
-import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE } from '../styling-engine/attributes.js'
+import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE, pieceFiberBreathability } from '../styling-engine/attributes.js'
 import { warmthCalibrationEvidenceState, proposedWarmthLevel } from '../styling-engine/warmthCalibration.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
@@ -183,8 +183,12 @@ test('thermalMaterialVerdict: positive evidence is decisive, negative evidence i
   // record. A negative reading only settles it when the composition is known complete — the black
   // puffer's ["polyester","nylon"] was TRUE about its shell and lining, and concluding "not
   // insulated" from it is the error this chain exists to prevent.
+  // insulating_layer_materials: [] means "verified: no insulating layer". Since 2026-09-02 the
+  // negative branch needs BOTH that and a complete face composition — see
+  // material-role-representation-spec.md. These cases assert the layer is ruled out so they keep
+  // testing the fibre logic rather than the new gate.
   const v = (fiber_content, fiber_content_completeness) =>
-    thermalMaterialVerdict({ fiber_content, fiber_content_completeness })
+    thermalMaterialVerdict({ fiber_content, fiber_content_completeness, insulating_layer_materials: [] })
 
   assert.equal(v(['down'], 'partial'), 'insulating')
   assert.equal(v(['wool'], 'unknown'), 'insulating')
@@ -212,7 +216,7 @@ test('positive evidence includes fabric_category, which completeness never overr
 test('the two verdicts answer different questions and neither leaks into the other', () => {
   // "complete cotton" and "partial list containing down" are the pair that makes one combined
   // verdict impossible: they disagree on composition and on warmth, in opposite directions.
-  const completeCotton = { fiber_content: ['cotton'], fiber_content_completeness: 'complete' }
+  const completeCotton = { fiber_content: ['cotton'], fiber_content_completeness: 'complete', insulating_layer_materials: [] }
   const partialDown = { fiber_content: ['polyester', 'down'], fiber_content_completeness: 'partial' }
 
   assert.equal(compositionEvidenceState(completeCotton), 'complete')
@@ -378,4 +382,49 @@ test('both intake forms carry the tagger completeness answer through to the save
   for (const field of ['fiber_content', 'fiber_content_completeness']) {
     assert.match(pieceForm, new RegExp(`applyTagValue\\(next, '${field}'`))
   }
+})
+
+test('an insulating LAYER settles the verdict whatever its fibres are', () => {
+  // 996765, the brown leather coat: lined and filled with 100% polyester. Its composition was
+  // already fully recorded — nothing was missing — but polyester is not in INSULATING_FIBERS, so
+  // marking it complete produced a confident non_insulating about an insulated coat. The engine
+  // never claims polyester is intrinsically warm; it reads that polyester OCCUPIES the
+  // insulating-layer role. See material-role-representation-spec.md.
+  const coat = { fiber_content: ['polyester', 'nylon', 'leather'], fabric_category: 'leather' }
+  assert.equal(thermalMaterialVerdict(coat), 'unknown', 'layer unrecorded')
+  assert.equal(thermalMaterialVerdict({ ...coat, fiber_content_completeness: 'complete' }), 'unknown',
+    'complete composition alone must NOT produce a negative — this was the false negative')
+  assert.equal(thermalMaterialVerdict({ ...coat, insulating_layer_materials: ['polyester'] }), 'insulating')
+
+  // ['unknown'] is a POSITIVE claim: a layer is there, its material unidentified. A quilted coat is
+  // insulated whether or not we know what is inside it.
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['polyester', 'nylon'], insulating_layer_materials: ['unknown'] }), 'insulating')
+})
+
+test('the negative branch needs the layer explicitly ruled out, not merely absent', () => {
+  const tee = { fiber_content: ['cotton'], fiber_content_completeness: 'complete' }
+  assert.equal(thermalMaterialVerdict(tee), 'unknown', 'absent is not empty')
+  assert.equal(thermalMaterialVerdict({ ...tee, insulating_layer_materials: [] }), 'non_insulating')
+  // Incomplete face composition still blocks a negative even with the layer ruled out.
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'], insulating_layer_materials: [] }), 'unknown')
+})
+
+test('a photograph may assert an insulating layer exists, never that one is absent', () => {
+  const n = normalizeInsulatingLayerMaterials
+  assert.equal(n(undefined, { source: 'tagger' }), null)
+  assert.deepEqual(n([], { source: 'tagger' }), null, 'a tagger asserting [] is downgraded to unrecorded')
+  assert.deepEqual(n([], { source: 'manual' }), [], 'only a person can rule the layer out')
+  assert.deepEqual(n(['unknown'], { source: 'tagger' }), ['unknown'])
+  assert.deepEqual(n(['Wool', ' shearling'], { source: 'tagger' }), ['wool'], 'unknown vocab dropped, wool kept')
+  assert.deepEqual(n(['bogus'], { source: 'tagger' }), ['unknown'],
+    'a positive observation must not collapse to nothing because its material was misspelled')
+})
+
+test('fiber_content keeps its own job — breathability is untouched by the new field', () => {
+  // The reason this is a separate field rather than {fiber, role} entries inside fiber_content:
+  // pieceFiberBreathability reads that array as FACE-material evidence, and 14 outerwear pieces
+  // have breathable shell fibres a fill entry would have diluted.
+  const coat = { fiber_content: ['cotton'], insulating_layer_materials: ['down'] }
+  assert.equal(pieceFiberBreathability(coat), pieceFiberBreathability({ fiber_content: ['cotton'] }),
+    'recording a down fill must not change what the face fabric does against skin')
 })

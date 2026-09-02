@@ -235,3 +235,65 @@ export const FIBER_FAMILY_LABELS = {
   jewelry_material: 'Jewellery & hardware',
   unresolved: 'Not determinable',
 }
+
+// ── The insulating layer ─────────────────────────────────────────────────────────────────────
+//
+// Materials of a thermally functional internal layer whose material may differ from the face
+// fabric: a coat's fill, a warm boot's lining. Kept OUT of fiber_content, which has its own job as
+// face-material evidence — pieceFiberBreathability() reads it to ask what the fabric does against
+// skin, and 14 outerwear pieces have breathable shell fibres a fill entry would dilute.
+//
+// States, all distinct and all meaningful:
+//   null          presence/composition unrecorded
+//   []            explicitly verified: there is no insulating layer
+//   ['unknown']   an insulating layer definitely exists; material unidentified
+//   ['polyester'] an insulating layer exists, of polyester
+//
+// The name matters. This is not "fill" — naming it for one of its two cases would force exceptions
+// like "a shearling lining counts as fill". And it makes the thermal rule true by definition: the
+// engine never claims polyester is intrinsically warm, it reads that polyester OCCUPIES the
+// insulating-layer role. See docs/material-role-representation-spec.md.
+//
+// ORDINARY LINING DOES NOT BELONG HERE. A plain polyester or acetate lining in a blazer is not an
+// insulating layer. Recording one would make every lined garment read as insulated — the failure
+// this field exists to prevent, inverted.
+
+// Writer rules. A photograph can establish that an insulating layer EXISTS — quilting, baffles,
+// visible loft, a pile lining — and usually cannot identify what it is made of. It can never
+// establish ABSENCE: "there is no fill in here" is not observable from outside, so a tagger
+// asserting [] is downgraded to null (unrecorded). Only a person, or a care label, can say [].
+export function normalizeInsulatingLayerMaterials(value, { source = 'manual' } = {}) {
+  if (value === undefined || value === null) return null
+  if (!Array.isArray(value)) return null
+  if (!value.length) return source === 'tagger' ? null : []
+  const { values } = fiberContentNormalization(value)
+  // Everything dropped as out-of-vocabulary still means "a layer is there" — do not silently
+  // collapse a positive observation into nothing because its material was misspelled.
+  return values.length ? values : ['unknown']
+}
+
+// Reads the stored fact. Returns null when unrecorded, so callers can tell it from an explicit [].
+export function insulatingLayerMaterials(piece = {}) {
+  const raw = piece?.insulating_layer_materials
+  if (raw === undefined || raw === null) return null
+  if (Array.isArray(raw)) return raw
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export const INSULATING_LAYER_SCHEMA_DESCRIPTION =
+  "array of materials from the same canonical list, describing a thermally functional INTERNAL " +
+  "layer whose material differs from the face fabric — a coat's fill or wadding, a warm boot's " +
+  "pile/shearling lining. Omit the field entirely (null) when you cannot tell. Use ['unknown'] " +
+  "when construction positively shows an insulating layer — quilting, baffles, visible loft, a " +
+  "fuzzy or pile interior — but you cannot identify what it is made of; that is a POSITIVE " +
+  "answer and the common one. Name the material only when it is visually supportable (a visible " +
+  "shearling or fleece lining is 'wool' or 'fleece'). NEVER return an empty array: 'this garment " +
+  "has no insulating layer' cannot be established from a photograph, so omit the field instead. " +
+  "ORDINARY LINING DOES NOT COUNT — a plain lightweight polyester or acetate lining in a blazer, " +
+  "dress or unlined-feeling jacket is not an insulating layer and must not be recorded here. " +
+  "This is separate from fiber_content, which describes the FACE fabric."
