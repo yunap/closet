@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
+import { FIBER_OPTIONS_ORDER } from '../../styling-engine/fiberTaxonomy.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 
@@ -49,14 +50,8 @@ const NEEDS_BASE_OPTIONS = [
   { value: 'no', label: 'wearable alone (checked)' },
 ]
 
-const FIBER_OPTIONS = [
-  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim', 'tweed',
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
-  'pearl', 'crystal', 'enamel', 'unknown'
-]
+// Canonical vocabulary and render order both owned by fiberTaxonomy.js — do not re-list here.
+const FIBER_OPTIONS = FIBER_OPTIONS_ORDER
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
   { value: 'low', label: 'Low' },

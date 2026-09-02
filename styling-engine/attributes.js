@@ -2,11 +2,17 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
+import { INSULATING_FIBERS } from './fiberTaxonomy.js'
 
-export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
-  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown']
-export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'])
+export {
+  ALL_PIECE_CATEGORIES,
+  FIBER_FAMILIES,
+  FIBER_FAMILY_APPLICABILITY,
+  FIBER_FAMILY_BY_VALUE,
+  FIBER_VALUES,
+  FIBER_OPTIONS_ORDER,
+  INSULATING_FIBERS,
+} from './fiberTaxonomy.js'
 export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
 export const OUTERWEAR_ROLE_VALUES = ['indoor_layer', 'transition_layer', 'protective_shell', 'cold_weather_outerwear']
 export const WEATHER_PROTECTION_VALUES = ['rain', 'wind']

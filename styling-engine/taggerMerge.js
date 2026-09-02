@@ -1,18 +1,11 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
+import { FIBER_VALUES } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
-const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
-  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'hemp',
-  // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
-  // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
-  // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
-  // Jewelry-specific materials — pearl/crystal/enamel don't fit any of the above (not stone,
-  // not glass, not metal) but are common enough jewelry materials to need their own value.
-  'pearl', 'crystal', 'enamel', 'unknown'])
+// Derived from the canonical taxonomy — see fiberTaxonomy.js for why the vocabulary lives there.
+const VALID_FIBERS = new Set(FIBER_VALUES)
 // lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
 // stored concept for both — remap before validating rather than treating them as distinct values.
 const FIBER_SYNONYMS = { lyocell: 'tencel' }

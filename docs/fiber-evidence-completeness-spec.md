@@ -116,25 +116,64 @@ there — an out-of-list value does not null out visibly, it becomes `"unknown"`
 from an honest admission of uncertainty. The `fiber_content` row also cites `FIBER_OPTIONS` (a UI
 constant) as source of truth. Both need correcting alongside this work.
 
-## 4. The vocabulary has four copies
+## 4. The vocabulary had six copies, and one had already drifted — **RESOLVED 2026-09-01**
 
-| copy | location | role |
+The first draft of this section said "four copies, and they currently agree." Both halves were
+wrong. Implementing §7.1 found six:
+
+| copy | location | state before |
 |---|---|---|
-| `FIBER_OPTIONS` | `src/components/PieceForm.jsx:52` | edit-dialog chips |
-| `FIBER_OPTIONS` | `src/components/BatchAdd.jsx:28` | intake-review chips |
-| inline enum text | `styling-engine/prompts.js:988` | tagger schema |
-| `VALID_FIBERS` | `styling-engine/taggerMerge.js:6` | write-path validation |
+| `FIBER_OPTIONS` | `src/components/PieceForm.jsx:52` | 35 values |
+| `FIBER_OPTIONS` | `src/components/BatchAdd.jsx:28` | 35 values |
+| inline enum text | `styling-engine/prompts.js:988` | 35 values |
+| inline enum text | `routes/ai.js:1544` (the `/extract-pieces` duplicate) | 35 values |
+| `VALID_FIBERS` | `styling-engine/taggerMerge.js:6` | 35 values |
+| `FIBER_VALUES` | `styling-engine/attributes.js:6` | **22 values — 13 behind** |
 
-**They currently agree** — all 35 values, verified by diff. The drift risk is structural, not yet
-realised, and this should not be oversold as a live defect. What *is* live is that
-`prompts.js:988` carries several hundred words of genuine domain semantics (which materials belong
-to jewellery; that footwear linings are the only place a boot's warmth is recorded) that exist
-**only** inside a prompt string, invisible to the user and unavailable to any other consumer.
+The five live copies agreed. The sixth, `FIBER_VALUES`, was exported and **imported by nothing**,
+and had silently fallen 13 values behind: no `hemp`, no `tweed`, and none of the eleven jewellery
+materials. It drifted precisely because nothing consumed it, which is what an unowned vocabulary
+looks like in the window *before* it causes a visible bug. Had any consumer been pointed at it —
+the obvious thing for a future change to do, since it has the canonical-looking name — every
+jewellery piece and every tweed garment would have failed validation into `"unknown"`.
 
-The repo already has the pattern for fixing this. `SLEEVE_SHAPE_VALUES` / `SLEEVE_SHAPE_OPTIONS`
-in `styling-engine/attributes.js` (2026-08-26) is a canonical vocabulary owner from which "the
-tagger schema, PieceForm, and BatchAdd all derive … rather than keeping their own copy." Fibre
-vocabulary should follow it. This is precedent, not invention.
+So the drift risk was not hypothetical after all. It was already realised, in the one copy that
+happened to be inert.
+
+### 4.1 What replaced them
+
+`styling-engine/fiberTaxonomy.js` — a dependency-free leaf module, extracted rather than added to
+`attributes.js` because `attributes.js` imports `confidenceFromProfile` from `taggerMerge.js`, so
+`taggerMerge` cannot import `attributes` back without a cycle. Same extraction, for the same
+reason, as `thermal.js` earlier in this arc.
+
+It owns the vocabulary as ordered **family blocks** (`plant_cellulose`, `filament_protein`,
+`insulating`, `regenerated_cellulose`, `synthetic`, `constructed_textile`, `jewelry_material`,
+`unresolved`). The two orderings in use turned out to be permutations of the same blocks, so
+neither is hand-kept:
+
+```text
+FIBER_VALUES         insulating-first   → tagger prompt (both copies) + VALID_FIBERS
+FIBER_OPTIONS_ORDER  plant-first        → both intake forms
+```
+
+`INSULATING_FIBERS` is now derived from `FIBER_FAMILIES.insulating` rather than maintained beside
+it — "which fibres trap body heat" is the definition of that family, not a second list.
+`FIBER_FAMILY_APPLICABILITY` is carried for §7.5's category filtering and is deliberately unread:
+§7.1 is behaviour-preserving.
+
+### 4.2 Evidence it changed nothing
+
+- **`prompt_equivalence` passes.** It already checks `TAG_PIECE_PROMPT` byte-for-byte against a
+  frozen pre-refactor fixture, so the tagger prompt is proven unchanged rather than assumed.
+- The `routes/ai.js` copy is outside that fixture, so its rendered `fiber_content` line was
+  compared byte-for-byte against the same line at `HEAD` — identical.
+- **Full suite: 1738 tests, 2 failures — the same 2 that fail at `HEAD` (1736 tests).** Verified by
+  running the suite in a detached worktree at `HEAD`, not by memory of which failures are known.
+- Two tests added: one asserting no consumer re-lists the vocabulary, one pinning both orderings
+  and the insulating family to the literals that shipped. `test/batchAdd.test.js`'s existing
+  source-text assertion changed from "a local array exists" to "it derives from the canonical
+  order" — the assertion it should always have been.
 
 ## 5. Ownership chain
 
@@ -204,7 +243,7 @@ gate-critical field for missing user-consequence metadata; do not let the list o
 
 ## 7. The work
 
-### 7.1 Canonical fibre vocabulary — `styling-engine/attributes.js`
+### 7.1 Canonical fibre vocabulary — **DONE**, see §4.1
 
 Following the `SLEEVE_SHAPE_OPTIONS` precedent, one exported table carrying value, label, family,
 and applicability:
