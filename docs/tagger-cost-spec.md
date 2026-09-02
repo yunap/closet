@@ -790,13 +790,17 @@ pure model output.
 
 ### What this adoption does NOT resolve
 
-- **BYOK — the blocking gap for the multiuser platform.** The Gemini path has no BYOK support;
-  `assertProviderKey()` says so in its own error text (*"experimental path, no BYOK yet"*). So on
-  a multiuser deployment every user's tagging bills the **operator's** single `GEMINI_API_KEY`, and
-  a deployment without that key fails at tagging outright — the app's core onboarding path. §1 of
-  this spec frames tagging as a per-signup cost *"paid on the user's own key (BYOK, spec 33)"*.
-  **This default is correct for the owner's single-user dev pair and is not yet safe to ship to
-  the multiuser platform.** Gemini BYOK is the prerequisite, and it is not written yet.
+- ~~**BYOK — the blocking gap for the multiuser platform.**~~ **RETRACTED 2026-09-02, same day.**
+  This section originally called Gemini BYOK a shipping blocker. That was **wrong**, and how it
+  went wrong is worth keeping: the claim was read off the error string in `assertProviderKey()` —
+  *"experimental path, no BYOK yet"* — rather than off the code path. `resolveGeminiKey()` is
+  `resolveKey('gemini', userId)`, the identical per-user-then-installation resolution Anthropic and
+  OpenAI use, and the Settings screen has had a working Gemini key field all along. The error
+  string was stale from before Stage D, and `provider.js`'s own comment above `resolveGeminiKey`
+  said so. **Gemini BYOK works; this adoption carries no BYOK gap.** The stale message has been
+  replaced with `noKeyErrorMessage('gemini')`, matching the other two providers — it had been
+  telling users to set an env var when the actual fix is adding a key in Settings.
+
 - **The import-crop distribution is still untested on any tier.** §6 called it *"the one that
   decides adoption"*; §6d did not cover it and neither does this. Adoption here rests on the
   add/edit/retag path only.
