@@ -449,6 +449,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
     fiber_content_completeness: piece?.fiber_content_completeness || 'unknown',
+    insulating_layer_materials: piece?.insulating_layer_materials ?? null,
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
     walk_support:       piece?.walk_support       || null,
@@ -689,6 +690,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       // the fix for it. A live tag of piece 996866 (a visibly quilted puffer) stored 'unknown'
       // and looked like the model declining, when the form had simply never carried the field.
       applyTagValue(next, 'fiber_content_completeness', tags.fiber_content_completeness)
+      applyTagValue(next, 'insulating_layer_materials', tags.insulating_layer_materials)
       applyTagValue(next, 'formality', tags.formality)
       applyTagValue(next, 'heel_height', tags.heel_height)
       applyTagValue(next, 'walk_support', tags.walk_support)

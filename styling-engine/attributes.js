@@ -2,11 +2,14 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
-import { INSULATING_FIBERS, compositionEvidenceState } from './fiberTaxonomy.js'
+import { INSULATING_FIBERS, compositionEvidenceState, insulatingLayerMaterials } from './fiberTaxonomy.js'
 
 export {
   ALL_PIECE_CATEGORIES,
   compositionEvidenceState,
+  insulatingLayerMaterials,
+  normalizeInsulatingLayerMaterials,
+  INSULATING_LAYER_SCHEMA_DESCRIPTION,
   FIBER_FAMILIES,
   FIBER_FAMILY_APPLICABILITY,
   FIBER_FAMILY_BY_VALUE,
@@ -567,8 +570,20 @@ function hasPositiveInsulatingEvidence(p) {
 // insulating, and always was. Completeness describes the FIBRE record only, so it gates the
 // negative branch and never overrides a positive fabric_category.
 export function thermalMaterialVerdict(p = {}) {
+  // An insulating LAYER settles it outright, whatever its fibres are. Nobody fills a garment with
+  // a material chosen not to insulate — loft is the mechanism, and polyester wadding works for the
+  // same structural reason down does. The engine is not claiming polyester is intrinsically warm;
+  // it is reading that polyester occupies the insulating-layer role. This is what made a
+  // 100%-polyester-filled leather coat unrepresentable before.
+  const layer = insulatingLayerMaterials(p)
+  if (layer && layer.length) return 'insulating'
   if (hasPositiveInsulatingEvidence(p)) return 'insulating'
-  return compositionEvidenceState(p) === 'complete' ? 'non_insulating' : 'unknown'
+  // The negative branch now needs BOTH: a complete face composition and an explicit "no insulating
+  // layer". Absent is not empty — a piece nobody has answered the layer question for stays
+  // unknown, because that is the case that produced a confident false negative on 996765.
+  const compositionComplete = compositionEvidenceState(p) === 'complete'
+  const layerRuledOut = Array.isArray(layer) && layer.length === 0
+  return compositionComplete && layerRuledOut ? 'non_insulating' : 'unknown'
 }
 
 // Compatibility wrapper, deliberately kept while its six consumers are migrated one at a time.
