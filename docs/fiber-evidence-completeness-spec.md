@@ -662,7 +662,64 @@ a verified composition yet, so nothing has earned a decisive negative. The branc
 owner answers the editor control. `994060` (a wool scarf recorded as `["wool","unknown"]`) is the
 live proof of the asymmetry — a partial record returning `insulating`.
 
-## 13. Remaining
+## 13. Warmth calibration migrated — **DONE 2026-09-01**, with one finding
+
+The candidate scale in `scratch/inspect_piece.js` asked `pieceHasInsulatingMaterial()` and then
+hand-rolled its own "is the composition unresolved?" test from the raw fibre list. That local
+heuristic is the question §12 now owns, so it is gone rather than kept in sync. The three-way rule:
+
+```text
+insulating      → substance + 2
+non_insulating  → substance alone, decisively
+unknown         → NOT coerced to the old false
+```
+
+**The puffer now scores `very warm`.** It scored `UNKNOWN` when this arc began — that piece was the
+whole reason for it.
+
+### 13.1 The finding: a third fact was hiding in the old heuristic
+
+Re-running the distribution, as the review required, showed the migration **as specified breaks the
+scale**:
+
+```text
+level                    before  after(naive)  after(fixed)
+very light                   78            78            78
+light                       112             0           105
+moderate                     22             0            19
+warm                         30            30            30
+very warm                     4             4             4
+UNKNOWN (no fabric_weight)   17            17            17
+UNKNOWN (composition)         5           139            15
+```
+
+Treating every unverified composition as unscoreable moved **134 of 268 pieces (52%)** into UNKNOWN
+— medium cotton tees, linen and silk blouses, knit tops. Those are not ambiguous garments.
+
+The old `NONCOMMITTAL_FABRIC` set was carrying a real physical fact that neither verdict owns:
+**does this construction admit material you cannot see?** A knit, a denim jacket, a leather coat is
+what it looks like — there is no cavity for a fill to hide in, so an unverified composition changes
+nothing about its warmth. A heavy piece tagged only `synthetic` or `technical/performance` is the
+opposite: that value describes a face fabric and says nothing about what sits behind it. Measured
+on the real wardrobe, the medium/heavy population is dominated by `knit` (39), `cotton` (29),
+`leather` (16), `denim` (11); the genuinely ambiguous categories total **16**.
+
+**This is what the puffer actually exploited.** `["polyester","nylon"]` was not suspicious as a
+fibre list. It was suspicious because a HEAVY garment whose `fabric_category` is `synthetic` is
+exactly the shape that can be hiding a fill.
+
+So it is named and owned — `fabricAdmitsHiddenMaterial()` in `attributes.js` — rather than left as
+a hand-kept Set in a scratch file. Deliberately **not** folded into `thermalMaterialVerdict()`:
+that verdict answers what the evidence establishes, this answers whether more evidence could
+plausibly exist. A consumer deciding "is it worth refusing to score this?" combines the two.
+
+The resulting UNKNOWN band is 15 pieces and holds the right ones — including `990441 grey layered
+zip jacket`, one of the four the original editor critique flagged, and `207 black leather zip
+jacket` (heavy, `synthetic`, plausibly lined). It also holds a few shoes and accessories that no
+warmth scale should be scoring at all; those are excluded by category elsewhere and are not
+addressed here.
+
+## 14. Remaining
 
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

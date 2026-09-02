@@ -7,7 +7,7 @@ import path from 'node:path'
 import assert from 'node:assert'
 import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
-import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial } from '../styling-engine/attributes.js'
+import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, fabricAdmitsHiddenMaterial } from '../styling-engine/attributes.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 
@@ -258,4 +258,39 @@ test('no caller infers thermal-material truth directly from fiber_content', () =
         `${rel} tests INSULATING_FIBERS directly — use thermalMaterialVerdict() instead`)
     }
   }
+})
+
+test('994060: the real-wardrobe fixture for the asymmetry, pinned permanently', () => {
+  // A wool scarf recorded as ["wool","unknown"] — an actual row in the owner's wardrobe, kept here
+  // deliberately rather than as a synthetic case. It is the semantic heart of the verdict layer:
+  // a PARTIAL record still yields a decisive positive, while the inverse never yields a decisive
+  // negative. If a future change makes this return 'unknown', the asymmetry has been lost.
+  const scarf = { fiber_content: ['wool', 'unknown'], fiber_content_completeness: 'partial' }
+  assert.equal(compositionEvidenceState(scarf), 'partial')
+  assert.equal(thermalMaterialVerdict(scarf), 'insulating')
+
+  // The inverse, same completeness, no insulating material: never decisive.
+  const hoodie = { fiber_content: ['polyester', 'spandex', 'unknown'], fiber_content_completeness: 'partial' }
+  assert.equal(compositionEvidenceState(hoodie), 'partial')
+  assert.equal(thermalMaterialVerdict(hoodie), 'unknown')
+})
+
+test('fabricAdmitsHiddenMaterial separates "unverified" from "could be hiding something"', () => {
+  // The third fact, kept out of thermalMaterialVerdict deliberately. Without it, the warmth
+  // calibration refused to score 134 of 268 pieces; with it, 15.
+  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'synthetic' }), true)
+  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'technical/performance' }), true)
+  assert.equal(fabricAdmitsHiddenMaterial({ fabric_category: 'other' }), true)
+  assert.equal(fabricAdmitsHiddenMaterial({}), true, 'an untagged fabric_category cannot rule it out')
+
+  // Single-layer constructions: what you see is what it is.
+  for (const fabric_category of ['knit', 'cotton', 'denim', 'leather', 'jersey', 'linen', 'silk']) {
+    assert.equal(fabricAdmitsHiddenMaterial({ fabric_category }), false, `${fabric_category} has no cavity for a fill`)
+  }
+
+  // It answers a different question from the verdict and must not be read as one.
+  const puffer = { fiber_content: ['polyester', 'nylon'], fabric_weight: 'heavy', fabric_category: 'synthetic' }
+  assert.equal(thermalMaterialVerdict(puffer), 'unknown')
+  assert.equal(fabricAdmitsHiddenMaterial(puffer), true,
+    'heavy + synthetic is exactly the shape that can hide a fill — what the puffer exploited')
 })

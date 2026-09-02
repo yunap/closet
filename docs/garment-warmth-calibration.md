@@ -1,5 +1,13 @@
 # Findings — candidate ordered warmth representation
 
+> **Amended 2026-09-01.** The scale now consumes `thermalMaterialVerdict()` rather than a boolean,
+> and its "composition unresolved" test — previously hand-rolled from the fibre list — is replaced
+> by the owned verdicts. Re-measuring exposed a third fact the old heuristic was silently carrying:
+> `fabricAdmitsHiddenMaterial()`. Without it the migrated scale refuses to score 134 of 268 pieces
+> instead of 15. See [fiber-evidence-completeness-spec.md](fiber-evidence-completeness-spec.md) §13.
+> **The puffer, which this document recorded as landing in UNKNOWN, now scores `very warm`.**
+
+
 **Status:** active — Slice 1 step two, 2026-09-01. **No code. No weather input. No demand mapping.**
 **Route:** [docs/README.md](README.md). Follows
 [garment-warmth-evidence-map.md](garment-warmth-evidence-map.md); feeds
