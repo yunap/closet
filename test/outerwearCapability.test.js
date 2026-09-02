@@ -12,20 +12,26 @@ import { pieceWeatherScores } from '../styling-engine/rules.js'
 
 const outer = (o) => ({ category: 'outerwear', ...o })
 
-const CASHMERE_CARDIGAN = outer({
-  id: 1, name: 'heavy cashmere cardigan', outerwear_role: 'indoor_layer',
+// 2026-09-02: outerwear_role is retired (docs/outerwear-role-ontology-spec.md). "Has this piece
+// been through capability tagging?" is now answered by the tagger's own confidence entry for
+// weather_protection, with the legacy column still consulted for older rows — so these fixtures
+// carry the confidence entry, which is what a piece tagged today actually looks like.
+const tagged = (o) => outer({ style_profile_json: { _confidence: { weather_protection: 'high' } }, ...o })
+
+const CASHMERE_CARDIGAN = tagged({
+  id: 1, name: 'heavy cashmere cardigan',
   fabric_weight: 'heavy', fiber_content: ['cashmere'], weather_protection: [],
 })
-const RAIN_SHELL = outer({
-  id: 2, name: 'light rain shell', outerwear_role: 'protective_shell',
+const RAIN_SHELL = tagged({
+  id: 2, name: 'light rain shell',
   fabric_weight: 'light', fiber_content: ['polyester'], weather_protection: ['rain'],
 })
-const WOOL_COAT = outer({
-  id: 3, name: 'heavy wool coat', outerwear_role: 'cold_weather_outerwear',
+const WOOL_COAT = tagged({
+  id: 3, name: 'heavy wool coat',
   fabric_weight: 'heavy', fiber_content: ['wool'], weather_protection: [],
 })
-const WINDBREAKER = outer({
-  id: 4, name: 'windbreaker', outerwear_role: 'protective_shell',
+const WINDBREAKER = tagged({
+  id: 4, name: 'windbreaker',
   fabric_weight: 'light', fiber_content: ['nylon'], weather_protection: ['wind'],
 })
 const UNTAGGED_LINED_JACKET = outer({
@@ -37,13 +43,17 @@ const UNTAGGED_LINED_JACKET = outer({
 // against the REAL thermal owner, not a restatement of this module's own logic — if these two ever
 // collapse into one another, this is the test that fails.
 
-test('a heavy cashmere cardigan is thermally warm AND an indoor layer — both facts hold at once', () => {
+test('a heavy cashmere cardigan is thermally warm, and Contract B says nothing about layering', () => {
+  // The spec's central claim, restated for the retired role. Contract B no longer answers "can this
+  // be the outdoor layer" at all — that question moved to Contract C, where the temperature is
+  // known (docs/outerwear-role-ontology-spec.md). What remains here is hazard capability, and a
+  // cashmere cardigan simply has none, which is not the same as being unfit to wear outside.
   const thermal = pieceWeatherScores(CASHMERE_CARDIGAN)
   assert.ok(thermal.cold > 0, 'the thermal owner must still see real cold-weather value here')
 
-  const capability = evaluateOuterwearCapability(CASHMERE_CARDIGAN, { requireOutdoorLayer: true })
-  assert.equal(capability.verdict, 'insufficient')
-  assert.deepEqual(capability.findings.map(f => f.code), [OUTERWEAR_CAPABILITY_CODES.INDOOR_ROLE_INSUFFICIENT])
+  assert.equal(evaluateOuterwearCapability(CASHMERE_CARDIGAN, {}).verdict, 'pass',
+    'with no hazard asked, this module never volunteers a verdict')
+  assert.equal(evaluateOuterwearCapability(CASHMERE_CARDIGAN, { requiredHazards: ['rain'] }).verdict, 'insufficient')
 })
 
 test('a light rain shell is thermally light AND carries real rain capability', () => {
@@ -70,16 +80,18 @@ test('a windbreaker covers wind but not rain — the two hazards never imply eac
   assert.deepEqual(rain.findings.map(f => f.code), [OUTERWEAR_CAPABILITY_CODES.RAIN_MISSING])
 })
 
-test('a protective shell satisfies the outdoor-layer requirement without implying warmth', () => {
-  // Contract C's job is to notice the shell needs insulation underneath. Contract B's job is only
-  // to say the shell is a legitimate outer layer — it must not reach for thermal reasoning here.
-  assert.equal(evaluateOuterwearCapability(WINDBREAKER, { requireOutdoorLayer: true }).verdict, 'pass')
+test('a windbreaker covers its hazard without implying warmth', () => {
+  // Was "a protective shell satisfies the outdoor-layer requirement". That requirement is retired
+  // with outerwear_role; what survives is the orthogonality it was really testing — hazard cover
+  // says nothing about warmth.
+  assert.equal(evaluateOuterwearCapability(WINDBREAKER, { requiredHazards: ['wind'] }).verdict, 'pass')
+  assert.ok(pieceWeatherScores(WINDBREAKER).cold <= 0, 'and it must not read as warm')
 })
 
 // --- Missing metadata is unknown, never invalidity ------------------------------------------
 
 test('an untagged outerwear piece is unknown, not insufficient', () => {
-  const result = evaluateOuterwearCapability(UNTAGGED_LINED_JACKET, { requireOutdoorLayer: true })
+  const result = evaluateOuterwearCapability(UNTAGGED_LINED_JACKET, { requiredHazards: ['rain'] })
   assert.equal(result.verdict, 'unknown')
   assert.deepEqual(result.findings.map(f => f.code), [OUTERWEAR_CAPABILITY_CODES.UNKNOWN])
   assert.equal(result.evidence.capabilityTagged, false)
@@ -145,7 +157,7 @@ test('every piece that cannot do the job alone still reports evidence, not exclu
   // shape that makes that possible: an `insufficient` verdict always names WHY, so a caller can
   // treat it as ranking/annotation input instead of a gate.
   const cases = [
-    [CASHMERE_CARDIGAN, { requireOutdoorLayer: true }],
+    [CASHMERE_CARDIGAN, { requiredHazards: ['rain'] }],
     [RAIN_SHELL, { requiredHazards: ['wind'] }],
     [WOOL_COAT, { requiredHazards: ['rain'] }],
   ]

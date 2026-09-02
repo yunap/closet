@@ -13,6 +13,12 @@ import { _planWorkbenchPieceLineForTests as planWorkbenchPieceLine } from '../st
 import { outerwearCapabilityDisplay } from '../styling-engine/outerwearCapability.js'
 
 // Slice E of docs/outerwear-weather-consolidation-spec.md — the canonical facts reach the model.
+//
+// REWRITTEN 2026-09-02. These tests used to assert that `outerwear_role` reached every model-facing
+// surface. The field is retired (docs/outerwear-role-ontology-spec.md), and legacy values are not
+// merely obsolete but actively misleading — `indoor_layer` was over-applied to technical jackets.
+// So the file now pins the INVERSE invariant on the same four surfaces: the role never reaches a
+// model or a cache key, while weather_protection still does.
 
 const COAT = {
   id: 1, name: 'wool coat', category: 'outerwear', outerwear_role: 'cold_weather_outerwear',
@@ -22,60 +28,55 @@ const CARDIGAN = { id: 2, name: 'cashmere cardigan', category: 'outerwear', oute
 const UNTAGGED = { id: 3, name: 'unlined jacket', category: 'outerwear' }
 const TEE = { id: 4, name: 'silk tee', category: 'top', outerwear_role: 'cold_weather_outerwear', weather_protection: ['rain'] }
 
-test('the shared display helper is the only place these values are worded', () => {
-  assert.deepEqual(outerwearCapabilityDisplay(COAT), { role: 'cold weather outerwear', protection: 'rain/wind' })
-  assert.deepEqual(outerwearCapabilityDisplay(CARDIGAN), { role: 'indoor layer', protection: null })
-  assert.deepEqual(outerwearCapabilityDisplay(UNTAGGED), { role: null, protection: null })
+test('weather protection is worded in exactly one place, and the retired role nowhere', () => {
+  assert.deepEqual(outerwearCapabilityDisplay(COAT), { protection: 'rain/wind' })
+  assert.deepEqual(outerwearCapabilityDisplay(CARDIGAN), { protection: null })
+  assert.deepEqual(outerwearCapabilityDisplay(UNTAGGED), { protection: null })
+  assert.ok(!('role' in outerwearCapabilityDisplay(COAT)), 'the display helper must not expose a role at all')
 })
 
-test('the manifest line carries capability — the one home for stable garment truth', () => {
-  // docs/search-payload-spec.md option B: when the manifest is present, search rows carry only
-  // per-request judgment. A fact that is not here is invisible on the common path.
-  const line = buildWardrobeManifestLine(COAT)
-  assert.match(line, /outerwear role cold weather outerwear/)
-  assert.match(line, /protects against rain\/wind/)
-})
-
-test('the composing-prompt truth text carries capability', () => {
-  const text = buildWardrobePieceTruthText(COAT)
-  assert.match(text, /outerwear role: cold weather outerwear/)
-  assert.match(text, /weather protection: rain\/wind/)
-})
-
-test('the above-cap truth row carries the raw canonical values', () => {
+test('the retired role reaches no model-facing surface, on a piece that still stores one', () => {
+  // COAT and CARDIGAN both carry legacy outerwear_role values in storage. Every projection must
+  // ignore them — this is the invariant that makes the retirement real rather than nominal.
+  const surfaces = {
+    'manifest line': buildWardrobeManifestLine(COAT),
+    'truth text': buildWardrobePieceTruthText(COAT),
+    'plan workbench line': planWorkbenchPieceLine(COAT),
+    'manifest line (cardigan)': buildWardrobeManifestLine(CARDIGAN),
+    'truth text (cardigan)': buildWardrobePieceTruthText(CARDIGAN),
+    'plan workbench line (cardigan)': planWorkbenchPieceLine(CARDIGAN),
+  }
+  for (const [name, text] of Object.entries(surfaces)) {
+    assert.doesNotMatch(String(text), /outerwear.?role/i, `${name} still projects the retired role`)
+    assert.doesNotMatch(String(text), /indoor.?layer|transition.?layer|protective.?shell|cold.?weather.?outerwear/i,
+      `${name} still projects a retired role VALUE`)
+  }
   const row = wardrobeTruthRow(COAT)
-  assert.equal(row.outerwear_role, 'cold_weather_outerwear')
-  assert.deepEqual(row.weather_protection, ['rain', 'wind'])
+  assert.ok(!('outerwear_role' in row), 'the tool row still carries the retired field')
 })
 
-test('an indoor layer is projected as itself, with no gloss of what it implies', () => {
-  const line = buildWardrobeManifestLine(CARDIGAN)
-  assert.match(line, /outerwear role indoor layer/)
-  assert.doesNotMatch(line, /protects against/, 'an empty hazard list prints no clause at all')
-  // The projections must not editorialise — no "not suitable for", no "keep indoors", nothing that
-  // duplicates Contract B's judgment in prose the code does not own.
-  assert.doesNotMatch(line, /not suitable|indoors only|do not wear/i)
-  assert.doesNotMatch(buildWardrobePieceTruthText(CARDIGAN), /not suitable|indoors only|do not wear/i)
+test('the plan workbench cache identity no longer includes the retired role', () => {
+  // It participated in cache semantics, so two pieces differing only by a legacy role used to key
+  // differently. Pinned because a stale cache would outlive the field itself.
+  const line = planWorkbenchPieceLine(COAT)
+  assert.doesNotMatch(line, /outerwear_role:/)
+  assert.match(line, /weather_protection:rain\/wind/)
+})
+
+test('weather protection still reaches every surface it did before', () => {
+  assert.match(buildWardrobeManifestLine(COAT), /protects against rain\/wind/)
+  assert.match(buildWardrobePieceTruthText(COAT), /weather protection: rain\/wind/)
+  assert.match(planWorkbenchPieceLine(COAT), /weather_protection:rain\/wind/)
+  assert.deepEqual(wardrobeTruthRow(COAT).weather_protection, ['rain', 'wind'])
 })
 
 test('an untagged outerwear piece prints no capability clause rather than an empty label', () => {
   assert.doesNotMatch(buildWardrobeManifestLine(UNTAGGED), /outerwear role|protects against/)
   assert.doesNotMatch(buildWardrobePieceTruthText(UNTAGGED), /outerwear role|weather protection/)
-})
-
-test('the plan workbench line carries capability through the same shared helper', () => {
-  // The workbench writes its own compact key:value line instead of reusing the truth text, so it is
-  // the one model-facing surface that had to be wired explicitly rather than inheriting.
-  const line = planWorkbenchPieceLine(COAT)
-  assert.match(line, /outerwear_role:cold_weather_outerwear/)
-  assert.match(line, /weather_protection:rain\/wind/)
   assert.doesNotMatch(planWorkbenchPieceLine(UNTAGGED), /outerwear_role|weather_protection/)
-  assert.doesNotMatch(planWorkbenchPieceLine(TEE), /outerwear_role|weather_protection/)
 })
 
-test('a stray role on a non-outerwear piece never reaches the model', () => {
-  // The category gate lives in the readers, so every projection inherits it for free — which is the
-  // point of routing all three through one helper.
-  assert.doesNotMatch(buildWardrobeManifestLine(TEE), /outerwear role|protects against/)
-  assert.doesNotMatch(buildWardrobePieceTruthText(TEE), /outerwear role|weather protection/)
+test('a stray legacy role on a non-outerwear piece never reaches the model', () => {
+  assert.doesNotMatch(buildWardrobeManifestLine(TEE), /outerwear role|cold.?weather.?outerwear/i)
+  assert.doesNotMatch(buildWardrobePieceTruthText(TEE), /outerwear role|cold.?weather.?outerwear/i)
 })

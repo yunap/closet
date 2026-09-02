@@ -366,6 +366,13 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
   const final_tagger_version = tagger_version === undefined ? existing.tagger_version : tagger_version
   const final_tag_provider = tag_provider === undefined ? existing.tag_provider : tag_provider
   const final_tag_model = tag_model === undefined ? existing.tag_model : tag_model
+  // outerwear_role is retired: no form sends it any more. Without this the PUT would write
+  // normalizeOuterwearRole(undefined) === null and WIPE the stored value on any legacy piece the
+  // owner merely opened and saved — which is the opposite of keeping the column for backward
+  // compatibility. Same preserve-on-absent pattern as tagger_version/tag_provider above.
+  const final_outerwear_role = outerwear_role === undefined
+    ? existing.outerwear_role
+    : normalizeOuterwearRole(outerwear_role)
   const existingManualOverrides = normalizeManualOverrides(existing.manual_overrides)
   const finalManualOverrides = manual_overrides === undefined ? existingManualOverrides : normalizeManualOverrides(manual_overrides)
   const existingProfile = safeJsonParse(existing.style_profile_json, {}) || {}
@@ -404,7 +411,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    normalizeFabricCategory(fabric_category, category), fabric_weight||null, visual_weight||null, JSON.stringify(fiberNormalization.values), normalizeFiberCompleteness(fiber_content_completeness, { source: 'manual' }), insulatingLayerForWrite(insulating_layer_materials), normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, normalizeOuterwearRole(outerwear_role), JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
+    normalizeFabricCategory(fabric_category, category), fabric_weight||null, visual_weight||null, JSON.stringify(fiberNormalization.values), normalizeFiberCompleteness(fiber_content_completeness, { source: 'manual' }), insulatingLayerForWrite(insulating_layer_materials), normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null, final_outerwear_role, JSON.stringify(normalizeWeatherProtection(safeJsonParse(weather_protection, []))),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, final_tag_provider||'', final_tag_model||'', finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)

@@ -297,16 +297,53 @@ measurement was.
 
 ### 11.3 Field removal — scope
 
-**Stopped producing it:** both tagger schemas (`prompts.js`, `routes/ai.js`), its `_confidence`
-entry, and its guidance paragraph. Four accepted prompt deltas recorded; the snapshot stays frozen.
+Owner ruling: retirement must include model-facing and cache-facing surfaces, not just tagging and
+editing. Legacy values are not merely obsolete — some are **actively misleading**, since
+`indoor_layer` was over-applied to technical jackets (§7.2). Leaving them in prompts would let the
+stylist keep reasoning from the taxonomy this arc deprecated during candidate selection and
+explanation, long after the deterministic gate stopped reading it.
 
-**Stopped editing it:** the controls in `PieceForm` and `BatchAdd`, including the tooltip that
-explained the four values.
+**The invariant:** `outerwear_role` may remain in legacy storage, but it is no longer produced,
+editable, projected to models, used in cache semantics, or treated as garment evidence anywhere.
 
-**Kept:** the column, `normalizeOuterwearRole`, `pieceOuterwearRole`, and the passthroughs in
-`tools.js` / `wardrobeAiContext.js`. Legacy rows keep their value and it still reaches prompts as
-historical garment text; nothing is destroyed and nothing is retagged.
+| | |
+|---|---|
+| stop producing | both tagger schemas, the `_confidence` entry, the guidance paragraph |
+| stop editing | the controls in `PieceForm` and `BatchAdd`, including the four-value tooltip |
+| stop projecting | `wardrobeAiContext` manifest line + truth text, `tools.js` truth rows (×2), and `outerwearCapabilityDisplay`, which no longer returns a `role` at all |
+| stop caching | the `outerwear_role:` term in `outfitSetPlanner`'s plan-workbench line, which is a cache identity |
+| stop judging | `requireOutdoorLayer` and `OUTDOOR_CAPABLE_ROLES` deleted from Contract B |
+| keep | the column, `normalizeOuterwearRole`, `pieceOuterwearRole` — legacy rows readable, nothing destroyed, nothing retagged |
 
-Removing it from tagging without removing it from the editor was rejected: this repo already ruled
-(the outerwear `neckline` fix) that a value stored and fed to the stylist with no way for the owner
-to see or correct it is a defect in itself.
+### 11.4 Two defects the removal exposed
+
+Neither would have failed a test, and both were found by tracing consumers rather than by the suite.
+
+**1. The hazard gate would have silently switched off for every new piece.** `capabilityTagged` —
+"has this piece been through capability tagging at all" — used a populated `outerwear_role` as its
+proxy, because `weather_protection` column-defaults to `'[]'` and cannot by itself separate "the
+tagger looked and found nothing" from "nothing ever asked". With the tagger no longer emitting a
+role, every newly tagged piece would have read as never-tagged, short-circuiting the rain/wind
+checks to `unknown` forever.
+
+Replaced with the tagger's own confidence entry for `weather_protection`, falling back to the
+legacy column for older rows. Measured: only **6 of 33** outerwear pieces carry that confidence
+entry, so dropping the legacy read alone would have moved 27 pieces to `unknown`. The legacy column
+is consulted **only** as "this row went through an earlier tagging generation" — its value is never
+read, compared, or projected, which keeps the §11.3 invariant intact.
+
+**2. Editing a legacy piece would have wiped its stored role.** The `PUT` handler wrote
+`normalizeOuterwearRole(outerwear_role)`, and with no form sending the field that resolves to
+`null`. Opening and saving any legacy outerwear piece would have erased the value the same commit
+promised to keep. Now preserved on absence, matching the pattern already used for
+`tagger_version`/`tag_provider`, and pinned by a CRUD round-trip test.
+
+### 11.5 Tests
+
+`outerwearCapabilityProjection.test.js` is **inverted rather than deleted**: it used to assert the
+role reached all four model-facing surfaces, and now asserts it reaches none of them — on fixtures
+that still carry legacy values in storage — while `weather_protection` still reaches all four. That
+is the invariant in executable form.
+
+Contract B's own tests moved from `requireOutdoorLayer` to hazard requirements, with the
+orthogonality claim restated: Contract B no longer answers "can this be the outdoor layer" at all.
