@@ -684,6 +684,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       applyTagValue(next, 'opacity', tags.opacity)
       applyTagValue(next, 'needs_base', tags.needs_base)
       applyTagValue(next, 'fiber_content', tags.fiber_content)
+      // Without this the tagger's completeness answer is produced and then dropped here — the
+      // exact propagated-but-unread failure this spec exists to close, reproduced while building
+      // the fix for it. A live tag of piece 996866 (a visibly quilted puffer) stored 'unknown'
+      // and looked like the model declining, when the form had simply never carried the field.
+      applyTagValue(next, 'fiber_content_completeness', tags.fiber_content_completeness)
       applyTagValue(next, 'formality', tags.formality)
       applyTagValue(next, 'heel_height', tags.heel_height)
       applyTagValue(next, 'walk_support', tags.walk_support)

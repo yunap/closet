@@ -852,7 +852,45 @@ fixed in `src/App.css` against the design tokens.
 already single-sourced from §7.1 — this was a missing UI projection, not a second ownership hole,
 and one field looking different on the two intake surfaces is the whole defect.
 
-## 16. Remaining
+## 16. The live tag — INCONCLUSIVE, and why
+
+Ran on `996866 navy quilted puffer jacket with ribbed side panels`, tagged 2026-09-02 03:36 by
+`claude-haiku-4-5` through the real dev pair. Result:
+
+```text
+fiber_content              ["polyester","nylon"]
+fiber_content_completeness unknown          ← expected: partial
+composition evidence       unknown
+thermal material verdict   unknown
+calibration evidence       thermally_ambiguous
+warmth level (proposed)    — not assignable
+```
+
+The prompt was live: port 3001 is held by a server started 20:33, after the schema change
+committed at 19:36, from this working tree.
+
+**But the test proves nothing about the model, because the intake forms were dropping the answer.**
+`PieceForm` had no `applyTagValue` for `fiber_content_completeness`, and `BatchAdd`'s tag→form
+mapping had no entry, so whatever the tagger returned was discarded before the save. A `partial`
+and a declined answer produce byte-identical rows.
+
+This is the `[R1]` shape — a fact produced at the source and dropped at the consumer — **reproduced
+while building the spec whose entire purpose is closing it.** The §14 producer census enumerated
+who *writes* the fact and proved every producer obeys the contract; it never asked whether the
+client path *carries* it. That was the gap.
+
+Both forms now carry it, with a test asserting each tagger-requested field reaches the form.
+
+**What the run does show, and it is worth keeping:** the model clearly perceived the insulation and
+described it in prose — `reads_as` "chevron baffling", notes "substantial insulation… true
+cold-weather outer layer", `visual_roles: cold_weather_layer`, `coverage: full-insulating`,
+`outerwear_role: cold_weather_outerwear` — while `fiber_content` recorded only the shell. That is
+the exact evidence-shape §1 describes, now observed on a clean piece with no manual overrides. The
+calibration correctly refused to assign a warmth level rather than scoring it as heavy denim.
+
+**Still to run:** one retag of 996866 to get the actual answer. Nothing else is outstanding.
+
+## 17. Remaining
 
 - **UI projections (§7.5).** Family grouping, category filtering, consequence copy, and the
   incompleteness warning — now driveable from the shared verdict rather than editor-local rules.

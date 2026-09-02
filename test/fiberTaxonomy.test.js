@@ -357,3 +357,25 @@ test('the editor warning claims ambiguity, never that a garment is non-insulatin
   assert.match(source, /FIELD_CONSEQUENCE\[field\]/)
   assert.equal(FIELD_CONSEQUENCE.fiber_content, 'Affects warmth and weather suitability')
 })
+
+test('both intake forms carry the tagger completeness answer through to the save', () => {
+  // Regression guard for a real miss. The producer census (§14) enumerated who WRITES the fact and
+  // proved every producer obeys the contract — but not that the client path carries it. A live tag
+  // of a visibly quilted puffer (996866) stored 'unknown', which looked exactly like the model
+  // declining to answer; the tag response was in fact being discarded by the intake forms.
+  // Indistinguishable from the outside, which is what made it worth a test rather than a fix.
+  const pieceForm = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
+  const batchAdd = fs.readFileSync(path.join(process.cwd(), 'src/components/BatchAdd.jsx'), 'utf8')
+
+  assert.match(pieceForm, /applyTagValue\(next, 'fiber_content_completeness', tags\.fiber_content_completeness\)/)
+  assert.match(batchAdd, /fiber_content_completeness: tags\.fiber_content_completeness \|\| 'unknown'/)
+  // Both submit by iterating the form object, so presence in the blank form is what makes it send.
+  assert.match(batchAdd, /fiber_content_completeness: 'unknown'/)
+  assert.match(pieceForm, /fiber_content_completeness: piece\?\.fiber_content_completeness \|\| 'unknown'/)
+
+  // Every field the tagger is asked for should reach the form. fiber_content already did; this is
+  // the one that did not.
+  for (const field of ['fiber_content', 'fiber_content_completeness']) {
+    assert.match(pieceForm, new RegExp(`applyTagValue\\(next, '${field}'`))
+  }
+})
