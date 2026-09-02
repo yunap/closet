@@ -221,10 +221,16 @@ absent-vs-empty gate, the tagger's inability to assert `[]`, and breathability i
 
 The gap this section recorded is closed. `PieceForm` now asks, on outerwear and shoes:
 
-> **Is there insulation inside — fill, padding, or a warm lining?**
+> **Is there an insulating layer inside — fill or a warm lining?**
 > `Yes` · `No, nothing inside` · `Not sure`
 >
 > and when Yes: **What is it made of? Leave blank if you can't tell.**
+
+The question deliberately does **not** say "padding". Padding is construction, not necessarily
+insulation — a padded shoulder or a quilted decorative panel is neither a fill nor a warm lining,
+and offering it as a reason to answer Yes would manufacture false positives in the field's own
+terms. The tagger may still *use* visible quilting and loft as evidence that an insulating layer
+exists (§3.2); the owner-facing question asks about the fact being stored, not the evidence for it.
 
 The three choices map to the three stored states — `["unknown"]` or named materials · `[]` ·
 `NULL` — and the second row's options are projected from `FIBER_FAMILIES.insulating` plus

@@ -1559,7 +1559,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                    Not recorded → null   ·   None → []   ·   Yes → ["unknown"] or named materials
                  See docs/material-role-representation-spec.md §3.0. */
               <div className="form-subgroup" data-piece-field="insulating_layer_materials">
-                <span className="form-hint">Is there insulation inside — fill, padding, or a warm lining?</span>
+                <span className="form-hint">Is there an insulating layer inside — fill or a warm lining?</span>
                 <FieldConsequence field="insulating_layer_materials" />
                 <ChipRow
                   options={[
