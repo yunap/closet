@@ -1,21 +1,9 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
+import { normalizeFiberContent, normalizeFiberCompleteness } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
-const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
-  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'hemp',
-  // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
-  // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
-  // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
-  // Jewelry-specific materials — pearl/crystal/enamel don't fit any of the above (not stone,
-  // not glass, not metal) but are common enough jewelry materials to need their own value.
-  'pearl', 'crystal', 'enamel', 'unknown'])
-// lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
-// stored concept for both — remap before validating rather than treating them as distinct values.
-const FIBER_SYNONYMS = { lyocell: 'tencel' }
 const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
 const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
@@ -87,15 +75,9 @@ export function normalizeConfidenceMap(value = {}, fields = CONFIDENCE_FIELDS) {
   }))
 }
 
-export function normalizeFiberContent(value = []) {
-  const raw = Array.isArray(value) ? value : []
-  const normalized = raw
-    .map(v => String(v || '').toLowerCase().trim())
-    .map(v => FIBER_SYNONYMS[v] || v)
-    .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
-    .filter(Boolean)
-  return [...new Set(normalized.length ? normalized : ['unknown'])]
-}
+// Re-exported so existing importers keep working; the normalizer itself lives with the taxonomy
+// (fiberTaxonomy.js) rather than in this write path. See fiber-evidence-completeness-spec.md §10.
+export { normalizeFiberContent }
 
 function normalizeEnumValue(value, validValues) {
   const normalized = String(value || '').toLowerCase().trim()
@@ -356,6 +338,13 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const patch = { ...tags }
   delete patch.color_taxonomy_gaps
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
+  // The tagger does not emit completeness today. This guard is here so that if it ever does, the
+  // writer rule applies at the boundary rather than being remembered later: photo-only inference
+  // cannot see a lining or a fill, so it may never assert 'complete'. See fiberTaxonomy.js.
+  if ('fiber_content_completeness' in patch) {
+    patch.fiber_content_completeness =
+      normalizeFiberCompleteness(patch.fiber_content_completeness, { source: 'tagger' })
+  }
   // Category-aware: a retag may change the category in the same patch, so validate against the
   // incoming category when there is one and fall back to the stored one.
   if ('fabric_category' in patch) patch.fabric_category = normalizeFabricCategory(patch.fabric_category, patch.category ?? existingPiece.category)

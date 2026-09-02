@@ -428,10 +428,42 @@ function initDb(dbPath) {
     // provider/model naming. Empty string for pieces tagged before this column existed.
     'tag_provider TEXT DEFAULT ""',
     'tag_model TEXT DEFAULT ""',
+    // fiber_content_completeness: unknown | partial | complete. Whether the recorded composition
+    // is the WHOLE composition — a separate, irreducible fact from fiber_content (what materials
+    // are recorded) and from manual_overrides/confidence (who owns the value). The black puffer
+    // is why: ["polyester","nylon"] was correct for its shell and lining and silent about a down
+    // fill, and after the owner transcribed the care label the corrected value is byte-identical
+    // in storage to an unverified photo guess. Neither provenance mechanism can tell those apart,
+    // which is what justified a fact of its own — see docs/fiber-evidence-completeness-spec.md §8.
+    // Deliberately NOT derived from the absence of an "unknown" marker: absence means the writer
+    // did not emit one, never that composition was established.
+    'fiber_content_completeness TEXT DEFAULT NULL',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
   })
+
+  // One-time seed for fiber_content_completeness. Legacy rows start at 'unknown' — completeness
+  // was never established for them, and inventing 'complete' for a row that merely lacks an
+  // uncertainty marker is the inference this column exists to prevent.
+  //
+  // The one exception is rows that carry explicit existing evidence of incompleteness: an
+  // "unknown" sitting ALONGSIDE resolved fibres is the writer stating "plus something I could not
+  // identify". That is a statement, not an absence, so it seeds 'partial'. A bare ["unknown"] is
+  // not — it says nothing was resolved, which is 'unknown', not "known to be incomplete".
+  try {
+    db.exec(`
+      UPDATE pieces SET fiber_content_completeness = 'partial'
+      WHERE fiber_content_completeness IS NULL
+        AND fiber_content LIKE '%"unknown"%'
+        AND json_valid(fiber_content)
+        AND json_array_length(fiber_content) > 1
+    `)
+    db.exec(`
+      UPDATE pieces SET fiber_content_completeness = 'unknown'
+      WHERE fiber_content_completeness IS NULL
+    `)
+  } catch {}
 
   // One-time backfill: sleeve_type -> sleeve_length / sleeve_shape split. The old
   // enum conflated two axes (sleeveless/cap/short/3-4/long/none are lengths;

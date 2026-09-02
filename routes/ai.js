@@ -6,7 +6,7 @@ import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { colorTaggerInstruction, sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
-import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
+import { queueColorTaxonomyReviews, queueFiberTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, normalizeOuterwearRole, normalizeWeatherProtection, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
@@ -57,7 +57,8 @@ import {
   pieceMatchesFootwear,
   pieceRequiresBaseLayer,
   pieceVisualDetailPolicy,
-  SLEEVE_SHAPE_VALUES
+  SLEEVE_SHAPE_VALUES,
+  FIT_ON_BODY_SCHEMA_DESCRIPTION,
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
@@ -147,6 +148,7 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
+import { FIBER_VALUES, FIBER_FAMILIES, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeFiberCompleteness } from '../styling-engine/fiberTaxonomy.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -385,11 +387,21 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
 }
 
 // Real routing (plan: quizzical-foraging-boot, Stage F) — env-controlled, reversible without a
-// code change. Unset (the default on a fresh checkout / real dev pair): TAGGER_PROVIDER_OVERRIDE
-// is '', so tagPieceWithProvider's own internal Haiku default applies exactly as before. Set it to
-// 'gemini' to route new tagging to the tier this session's §6d benchmark found strongest on cost
-// and failure rate (docs/tagger-cost-spec.md §6d).
-const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || ''
+// code change.
+//
+// DEFAULT CHANGED 2026-09-02 (owner decision): tagging now routes to Gemini 3.1 Flash-Lite, the
+// tier docs/tagger-cost-spec.md §6d benchmarked strongest on cost and failure rate and §6e adopts.
+// Measured in production on the owner's own wardrobe: $0.0079 and 6.6s per garment, against
+// $0.0292 and 16.7s for the Haiku call ninety minutes earlier — 73% cheaper, 2.5x faster.
+// Set TAGGER_PROVIDER_OVERRIDE='anthropic' to revert without a code change.
+//
+// KNOWN GAP, see §6e: the Gemini path has NO BYOK support. assertProviderKey() says so in its own
+// error text. On a multiuser deployment every user's tagging therefore bills the operator's single
+// GEMINI_API_KEY, and a deployment without that key fails at tagging outright — which is the app's
+// core onboarding path. Tagging is a per-signup cost the cost spec's §1 explicitly frames as paid
+// on the user's own key. This default is correct for the owner's single-user dev pair and is NOT
+// yet safe for the multiuser platform.
+const TAGGER_PROVIDER_OVERRIDE = process.env.TAGGER_PROVIDER_OVERRIDE || 'gemini'
 const TAGGER_MODEL_OVERRIDE = process.env.TAGGER_MODEL_OVERRIDE || 'gemini-3.1-flash-lite'
 const taggerProviderOverride = TAGGER_PROVIDER_OVERRIDE
   ? { provider: TAGGER_PROVIDER_OVERRIDE, model: TAGGER_MODEL_OVERRIDE }
@@ -538,7 +550,15 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     tags.tag_model = usage?.model || ''
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})
     const photoProperties = normalizePhotoProperties(tags.photo_properties || tags.style_profile_json?.photo_properties || {})
-    tags.fiber_content = normalizeFiberContent(tags.fiber_content)
+    // Invalid materials are dropped, not rewritten to 'unknown', and the dropped tokens ride out
+    // on the result so a caller with db access can queue them — same shape as color_taxonomy_gaps.
+    // See docs/fiber-evidence-completeness-spec.md §10.3.
+    const fiberNormalization = fiberContentNormalization(tags.fiber_content)
+    tags.fiber_content = fiberNormalization.values
+    tags.fiber_taxonomy_gaps = fiberNormalization.invalid
+    // Writer rule at the boundary: photo tagging may state known-incomplete, never verified-complete.
+    tags.fiber_content_completeness =
+      normalizeFiberCompleteness(tags.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
     tags.formality = normalizeFormality(tags.formality)
     tags.heel_height = normalizeHeelHeight(tags.heel_height)
     tags.walk_support = normalizeWalkSupport(tags.walk_support)
@@ -1485,6 +1505,29 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 
 
 // ── AI Tagging endpoints ───────────────────────────────────────────────────────
+// /extract-pieces is a second photo-derived producer of fiber_content, so it obeys the same writer
+// contract as the tagger rather than being a loophole where a material list arrives with its
+// completeness silently unspecified. It returns pieces the client may later save, and until now it
+// returned parseModelJson(raw) untouched — no fibre normalization at all, so invalid materials and
+// casing/duplicate noise reached the client and any taxonomy gap was lost before crud could see it.
+//
+// Permitted states here are the photo-derived ones: unknown | partial, never complete.
+function applyFiberWriterContract(result) {
+  const pieces = Array.isArray(result?.pieces) ? result.pieces
+    : Array.isArray(result) ? result
+    : null
+  if (!pieces) return result
+  for (const piece of pieces) {
+    if (!piece || typeof piece !== 'object') continue
+    const { values, invalid } = fiberContentNormalization(piece.fiber_content)
+    piece.fiber_content = values
+    piece.fiber_taxonomy_gaps = invalid
+    piece.fiber_content_completeness =
+      normalizeFiberCompleteness(piece.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
+  }
+  return result
+}
+
 router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No photo provided' })
   const filePath = path.join(userUploadsDir(), req.file.filename)
@@ -1530,7 +1573,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "silhouette": "Valid values depend on category — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed|a_line|pencil|full|slip|straight|pleated|wrap.",
       "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only). Never 'heel' — heel_height covers that. 'slip_on' is a closure-free shoe (no laces/buckle/zip) that isn't a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
       "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only)",
-      "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; null/omit for shoes/accessory). This photo IS a worn photo — judge fit and drape directly from how the garment sits on the body here, the same authority a dedicated worn photo would carry.",
+      "fit_on_body": "${FIT_ON_BODY_SCHEMA_DESCRIPTION} This photo IS a worn photo — judge fit and drape directly from how the garment sits on the body here, the same authority a dedicated worn photo would carry.",
       "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only; null/omit for non-tops). Judge from the garment's own cut, fit, and design intent as shown in this worn photo: fitted or semi-fitted through the body -> tucks_anywhere; loose/relaxed fit that would need a belt or structured waistband to sit cleanly -> tucks_with_structure; peplum/tunic length, or a hem/silhouette clearly meant to be seen rather than tucked away -> wear_over_only. Whether the garment happens to be tucked or untucked in this specific photo is evidence, not the whole answer — an untucked top in this photo can still tuck cleanly if its cut supports it.",
       "waistband_type": "structured_high_waist|structured_mid_waist|structured_low_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
       "fabric_category": "Valid values depend on category — top/bottom/dress/outerwear -> jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|organza|lace|crochet|jacquard|wool|cashmere|boucle|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other; shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper; woven is for raffia/straw, not knits)|woven|synthetic|textile|rubber|other; accessory -> leather|suede|metal|stone|straw|canvas|synthetic|textile|rubber|wood|ceramic|glass|horn|shell|resin|pearl|crystal|enamel|other. Never use the clothing list for a shoe or accessory piece.",
@@ -1541,7 +1584,8 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "needs_base": "yes|no|null (omit unless clearly a construction that cannot be worn alone against skin — conservative default is null, not 'no')",
       "outerwear_role": "indoor_layer|transition_layer|protective_shell|cold_weather_outerwear|null (outerwear only; null/omit for non-outerwear, and null when evidence is insufficient — do not guess). Functional judgment of what job this garment can do as an OUTER layer outdoors, independent of fabric weight: indoor_layer = modest warmth/styling layer, no real outdoor protection; transition_layer = primary outer layer for mild/cool conditions, not a true shell or winter coat; protective_shell = built to block wind/rain rather than insulate, can be thermally light; cold_weather_outerwear = genuine cold-weather layer with substantial insulation. Do not infer from fabric weight, wool, nylon, or the words coat/jacket/cardigan alone.",
       "weather_protection": "array, 0-2 values from: rain, wind (outerwear only; empty array for non-outerwear or when evidence is insufficient — an empty array is common and normal, not a gap). SEPARATE from outerwear_role — a protective_shell is not automatically both, a transition/cold-weather piece is not automatically empty. Include 'rain' only with genuine construction evidence (coated/sealed face fabric, built as a rain shell) — nylon/polyester fiber alone is not evidence. Include 'wind' only with genuine construction evidence (tight wind-blocking weave, built as a windbreaker) — heavy fabric weight or wool alone is not evidence. A windbreaker is typically ['wind'] only; a raincoat is typically ['rain'] only.",
-      "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, hemp, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, tweed, metal, stone, wood, ceramic, glass, horn, shell, resin, pearl, crystal, enamel, unknown. metal/stone/wood/ceramic/glass/horn/shell/resin/pearl/crystal/enamel are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible (a shearling or fleece collar, a visibly fuzzy or quilted interior) — record it as 'wool', 'fleece', or 'down'. It is the only place a boot's warmth is recorded, since fabric_weight is null for shoes and fabric_category describes the upper. Only when you can see it; never inferred from the word 'boot' or 'winter'. Use 'unknown' if not determinable."],
+      "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: ${FIBER_VALUES.join(', ')}. ${FIBER_FAMILIES.jewelry_material.join('/')} are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible (a shearling or fleece collar, a visibly fuzzy or quilted interior) — record it as 'wool', 'fleece', or 'down'. It is the only place a boot's warmth is recorded, since fabric_weight is null for shoes and fabric_category describes the upper. Only when you can see it; never inferred from the word 'boot' or 'winter'. Use 'unknown' if not determinable."],
+      "fiber_content_completeness": "${FIBER_COMPLETENESS_SCHEMA_DESCRIPTION}",
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
       "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)"
@@ -1553,7 +1597,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
     })
 
     console.log('RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
-    res.json(parseModelJson(raw))
+    res.json(applyFiberWriterContract(parseModelJson(raw)))
   } catch (err) {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
     console.error('Extract pieces error:', err)
@@ -1653,6 +1697,11 @@ const tagExistingHandler = async (req, res) => {
       pieceId: piece.id,
       pieceName: piece.name,
       colors: unknown,
+    })
+    queueFiberTaxonomyReviews(db, {
+      pieceId: piece.id,
+      pieceName: piece.name,
+      fibers: tags.fiber_taxonomy_gaps || [],
     })
     tags.tag_state = tagStateForTaggerResult(tags, {
       photo: Boolean(photoFile || piece.photo),

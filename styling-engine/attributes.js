@@ -2,16 +2,67 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
+import { INSULATING_FIBERS, compositionEvidenceState } from './fiberTaxonomy.js'
 
-export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
-  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown']
-export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'])
+export {
+  ALL_PIECE_CATEGORIES,
+  compositionEvidenceState,
+  FIBER_FAMILIES,
+  FIBER_FAMILY_APPLICABILITY,
+  FIBER_FAMILY_BY_VALUE,
+  FIBER_VALUES,
+  FIBER_OPTIONS_ORDER,
+  INSULATING_FIBERS,
+} from './fiberTaxonomy.js'
 export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
 export const OUTERWEAR_ROLE_VALUES = ['indoor_layer', 'transition_layer', 'protective_shell', 'cold_weather_outerwear']
 export const WEATHER_PROTECTION_VALUES = ['rain', 'wind']
 export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
+// What a field actually DECIDES, in the owner's terms — the registry the editor projects.
+//
+// Deliberately NOT keyed off GATE_CRITICAL_FIELDS. That list is an implementation concern (which
+// fields the intake review chases) and does not define any field's user-facing meaning; letting it
+// own this text would quietly make it a second field-semantics registry. A field's consequence
+// belongs with its own definition, and this is the lookup point.
+//
+// Only the fibre fields are populated so far — the rest is a follow-up audit, not an omission to
+// paper over with generic copy. A field with no entry renders no consequence line.
+export const FIELD_CONSEQUENCE = {
+  fiber_content: 'Affects warmth and weather suitability',
+  fiber_content_completeness: 'Lets the app tell "no warm fibres recorded" apart from "not checked"',
+}
+
+// Canonical fit_on_body vocabulary and the description the model is given for it — ONE source,
+// projected by both photo-derived producers (the tagger in prompts.js and /extract-pieces).
+//
+// Until 2026-09-02 this field was asked for as a bare pipe-list with no semantics at all, while
+// every comparable construction field got definitions in the 2026-08 taxonomy passes. A live retag
+// then called a visibly waisted quilted jacket `hangs_straight`, having seen its shaped side panels
+// and recorded them as "texture contrast". See docs/fit-on-body-definitions-spec.md.
+//
+// The axis is: how does this garment relate to the BODY'S CONTOURS? Not how loose it is, and not
+// what shape it is — `silhouette` already owns outline.
+export const FIT_ON_BODY_VALUES = [
+  'clings_stretchy', 'clings_drapey', 'skims', 'hangs_straight', 'drapes', 'structured', 'none',
+]
+
+export const FIT_ON_BODY_SCHEMA_DESCRIPTION =
+  "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none (clothing only; " +
+  "null/omit for shoes/accessory). How the garment relates to the BODY'S CONTOURS — not how loose " +
+  "it is, and not its outline, which is `silhouette`. 'clings_stretchy': follows the body closely " +
+  "because the fabric stretches onto it (jersey, rib, knit) and the body's outline reads through. " +
+  "'clings_drapey': follows the body closely because a fluid non-stretch fabric falls onto it (a " +
+  "silk slip, a bias cut). 'skims': shaped to the body and following its line without gripping — " +
+  "there is ease, but the construction itself references the body through a defined waist, darts, " +
+  "princess seams, shaped or elasticated side panels, or a belt or drawstring built into the " +
+  "design. 'hangs_straight': falls from the shoulders or waistband in a straight line, IGNORING " +
+  "the body's contours, with no waist definition anywhere in the construction. 'drapes': falls in " +
+  "soft folds AWAY from the body, its shape governed by the fabric's weight and fluidity rather " +
+  "than by the body. 'structured': holds its own architectural shape independently of the body — " +
+  "it would keep that shape off the body, through canvas, interfacing, boning, or tailoring. " +
+  "'none': no meaningful relationship to body contours."
+
 export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
 // Canonical sleeve-shape taxonomy: a functional sleeve-VOLUME classification answering "where does
@@ -489,10 +540,44 @@ export function pieceHemCoverage(p) {
 // Checking fiber_content alone silently missed those — this checks both, so a piece needs only
 // ONE of the two fields to correctly name the material.
 const INSULATING_FABRIC_CATEGORIES = new Set(['wool', 'cashmere', 'fleece', 'tweed', 'corduroy', 'shearling', 'flannel', 'sweatshirt fleece'])
-export function pieceHasInsulatingMaterial(p) {
+function hasPositiveInsulatingEvidence(p) {
   const fibers = Array.isArray(p?.fiber_content) ? p.fiber_content : []
   if (fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))) return true
   return INSULATING_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())
+}
+
+// Verdict 2 of 2, and the canonical owner of "what does the recorded material evidence establish
+// thermally?" — see compositionEvidenceState() in fiberTaxonomy.js for the other half.
+//
+//   any completeness  + insulating evidence  → insulating
+//   complete          + no insulating fibre  → non_insulating
+//   partial/unknown   + no insulating fibre  → unknown
+//
+// The asymmetry is the point. POSITIVE evidence is decisive even from a partial record — a list
+// containing 'down' establishes insulation whether or not anything else is missing. NEGATIVE
+// evidence is decisive only when the composition is complete: the black puffer's
+// ["polyester","nylon"] was a true statement about its shell and lining, and reading "therefore
+// not insulated" off it was the error this whole chain exists to prevent.
+//
+// Deliberately NOT a strength scale. It is a narrow factual verdict; the ordinal warmth
+// calibration consumes it alongside fabric_weight/fabric_category rather than living here.
+//
+// Note that positive evidence includes fabric_category (fleece, shearling, wool...), not just
+// fiber_content — a cardigan tagged fiber_content ["unknown"] with fabric_category 'fleece' is
+// insulating, and always was. Completeness describes the FIBRE record only, so it gates the
+// negative branch and never overrides a positive fabric_category.
+export function thermalMaterialVerdict(p = {}) {
+  if (hasPositiveInsulatingEvidence(p)) return 'insulating'
+  return compositionEvidenceState(p) === 'complete' ? 'non_insulating' : 'unknown'
+}
+
+// Compatibility wrapper, deliberately kept while its six consumers are migrated one at a time.
+// It has always meant "is there positive insulating evidence?", so it is exactly
+// `verdict === 'insulating'` — false has never asserted non-insulating, and this wrapper must not
+// start doing so. Migrating a caller means deciding what IT should do with 'unknown', which is a
+// per-caller judgement, not a rename. Delete this once no consumer remains.
+export function pieceHasInsulatingMaterial(p) {
+  return thermalMaterialVerdict(p) === 'insulating'
 }
 
 // Wet-exposure suitability is physical garment truth, not taste. Keep this reader

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -24,14 +25,6 @@ const VISUAL_WEIGHT_OPTIONS = [
   { value: 'slim', label: 'Slim' },
   { value: 'medium', label: 'Medium' },
   { value: 'chunky', label: 'Chunky' },
-]
-const FIBER_OPTIONS = [
-  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim', 'tweed',
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
-  'pearl', 'crystal', 'enamel', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -88,7 +81,7 @@ function emptyForm() {
     name: '', category: 'top', colors: [], occasions: [], season: 'year-round', notes: '', status: 'active',
     pattern_type: null, pattern_scale: null, pattern_complexity: null, reads_as: '',
     hem_finish: null, neckline: null, sleeve_length: null, sleeve_shape: null, length_hits_at: null,
-    silhouette: null, fabric_category: null, fabric_weight: null, visual_weight: null, opacity: null, needs_base: null, fiber_content: [],
+    silhouette: null, fabric_category: null, fabric_weight: null, visual_weight: null, opacity: null, needs_base: null, fiber_content: [], fiber_content_completeness: 'unknown',
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
@@ -599,6 +592,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
         if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
       })
       fd.append('color_taxonomy_gaps', JSON.stringify(item.tags?.color_taxonomy_gaps || []))
+      fd.append('fiber_taxonomy_gaps', JSON.stringify(item.tags?.fiber_taxonomy_gaps || []))
       fd.append('photo', item.file)
       if (item.wornFile) {
         fd.append('worn_photo', item.wornFile)
@@ -801,18 +795,26 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
 
         <div className="form-group">
           <FieldLabel field="fiber_content">{form.category === 'shoes' || form.category === 'accessory' ? 'Material Properties' : 'Fiber Content'}</FieldLabel>
-          <div className="chip-grid">
-            {FIBER_OPTIONS.map(fib => (
-              <button
-                key={fib}
-                className={`chip-toggle ${form.fiber_content && form.fiber_content.includes(fib) ? 'active' : ''}`}
-                onClick={() => toggleArr('fiber_content', fib)}
-                style={{ textTransform: 'capitalize' }}
-              >
-                {fib}
-              </button>
-            ))}
-          </div>
+          {/* Presentation parity with PieceForm — same canonical projection, same headings. The
+              values were already single-sourced; only the grouping and the per-category filter
+              were missing here, which made one field look different on the two intake surfaces. */}
+          {fiberFamiliesForPiece(form).map(([family, values]) => (
+            <div key={family} className="fiber-family-group">
+              <span className="form-hint fiber-family-label">{FIBER_FAMILY_LABELS[family]}</span>
+              <div className="chip-grid">
+                {values.map(fib => (
+                  <button
+                    key={fib}
+                    className={`chip-toggle ${form.fiber_content && form.fiber_content.includes(fib) ? 'active' : ''}`}
+                    onClick={() => toggleArr('fiber_content', fib)}
+                    style={{ textTransform: 'capitalize' }}
+                  >
+                    {fib}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {form.category === 'shoes' && (
@@ -1434,6 +1436,7 @@ export default function BatchAdd({ onDone }) {
             stretch:            tags.stretch            || null,
             needs_base:         tags.needs_base         || null,
             fiber_content:      tags.fiber_content      || [],
+            fiber_content_completeness: tags.fiber_content_completeness || 'unknown',
             formality:          tags.formality          || null,
             heel_height:        tags.heel_height        || null,
             walk_support:       tags.walk_support       || null,

@@ -753,3 +753,106 @@ test('weather_protection round-trips as a multi-select array and drops unrecogni
 
   await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
 })
+
+test('fiber_content: both write paths canonicalize identically and flag invalid materials', async () => {
+  // docs/fiber-evidence-completeness-spec.md §10. Before this, the manual edit path stored
+  // fiber_content verbatim while the tagger path normalized it — the one omission in an UPDATE
+  // that already normalized nine other enums — so [] vs ['unknown'] recorded which code wrote the
+  // row rather than anything about the garment.
+  const create = new FormData()
+  create.append('name', 'fiber contract coat')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['black']))
+  // Unordered, duplicated, wrong case, one synonym, one material that does not exist.
+  create.append('fiber_content', JSON.stringify(['Nylon', 'polyester', 'nylon', 'lyocell', 'unobtainium']))
+
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.deepEqual(created.fiber_content, ['tencel', 'polyester', 'nylon'],
+    'stored in canonical taxonomy order, deduped and case-folded')
+  assert.ok(!created.fiber_content.includes('unknown'),
+    'an unrecognised material must not be rewritten into valid uncertainty')
+
+  const queued = db.prepare(`
+    SELECT description, payload FROM todos
+    WHERE linked_piece_id = ? AND field = 'fiber_content' AND completed = 0
+  `).all(created.id)
+  assert.equal(queued.length, 1, 'the dropped material surfaces for review instead of vanishing')
+  assert.equal(JSON.parse(queued[0].payload).fiber, 'unobtainium')
+
+  // An empty submission stores [], not ['unknown'] — so missingGateFields still reports
+  // fiber_content as missing rather than the row looking populated.
+  const emptied = new FormData()
+  emptied.append('name', 'fiber contract coat')
+  emptied.append('category', 'outerwear')
+  emptied.append('colors', JSON.stringify(['black']))
+  emptied.append('fiber_content', JSON.stringify([]))
+  const updated = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: emptied })).json()
+  assert.deepEqual(updated.fiber_content, [])
+
+  // Partial evidence survives a round trip through the manual path untouched.
+  const partial = new FormData()
+  partial.append('name', 'fiber contract coat')
+  partial.append('category', 'outerwear')
+  partial.append('colors', JSON.stringify(['black']))
+  partial.append('fiber_content', JSON.stringify(['unknown', 'cotton']))
+  const kept = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: partial })).json()
+  assert.deepEqual(kept.fiber_content, ['cotton', 'unknown'])
+})
+
+test('fiber gaps the tagger dropped before the client saw them still reach the review queue', async () => {
+  // The new-piece flow: routes/ai.js drops an invalid material during tagging, so it is already
+  // gone from fiber_content by the time the form posts. Without forwarding, that evidence would
+  // vanish — the piece is created cleanly and nobody learns the tagger invented a material.
+  // Mirrors how color_taxonomy_gaps has always been carried. Spec §10.3.
+  const fd = new FormData()
+  fd.append('name', 'tagger gap coat')
+  fd.append('category', 'outerwear')
+  fd.append('colors', JSON.stringify(['black']))
+  fd.append('fiber_content', JSON.stringify(['polyester']))
+  fd.append('fiber_taxonomy_gaps', JSON.stringify(['lycra']))
+
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })).json()
+  assert.deepEqual(created.fiber_content, ['polyester'])
+
+  const queued = db.prepare(`
+    SELECT payload FROM todos WHERE linked_piece_id = ? AND field = 'fiber_content' AND completed = 0
+  `).all(created.id)
+  assert.equal(queued.length, 1)
+  assert.equal(JSON.parse(queued[0].payload).fiber, 'lycra')
+})
+
+test('fiber_content_completeness is persisted, and only a human may assert complete', async () => {
+  // docs/fiber-evidence-completeness-spec.md §11. The fact exists because a care-label
+  // transcription and an unverified photo guess are byte-identical in fiber_content, and neither
+  // manual_overrides nor tagger confidence can tell them apart.
+  const create = new FormData()
+  create.append('name', 'completeness coat')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['black']))
+  create.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
+  create.append('fiber_content_completeness', 'complete')
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.equal(created.fiber_content_completeness, 'complete',
+    'a person confirming the composition is the canonical path that can assert complete')
+
+  // The same fibre list with completeness unstated stays unknown — never promoted by the absence
+  // of an uncertainty marker.
+  const unstated = new FormData()
+  unstated.append('name', 'guessed coat')
+  unstated.append('category', 'outerwear')
+  unstated.append('colors', JSON.stringify(['black']))
+  unstated.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
+  const guessed = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: unstated })).json()
+  assert.equal(guessed.fiber_content_completeness, null)
+  assert.deepEqual(guessed.fiber_content, created.fiber_content,
+    'identical fibre lists — completeness is the only thing separating them, which is the point')
+
+  // Nonsense is rejected rather than stored.
+  const bogus = new FormData()
+  bogus.append('name', 'completeness coat')
+  bogus.append('category', 'outerwear')
+  bogus.append('colors', JSON.stringify(['black']))
+  bogus.append('fiber_content_completeness', 'mostly')
+  const rejected = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: bogus })).json()
+  assert.equal(rejected.fiber_content_completeness, null)
+})

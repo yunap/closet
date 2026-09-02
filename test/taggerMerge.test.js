@@ -64,7 +64,11 @@ test('applyTaggerResult normalizes fiber content to canonical values', () => {
     }
   )
 
-  assert.deepEqual(merged.fiber_content, ['wool', 'unknown', 'linen'])
+  // 'mystery fiber' is DROPPED, not rewritten to 'unknown'. This assertion used to expect
+  // ['wool', 'unknown', 'linen'] — it encoded the collapse of invalid evidence into valid
+  // uncertainty that fiber-evidence-completeness-spec.md §9 removes. Output is in canonical
+  // taxonomy order, so the same set of fibres stores identically whatever order it arrived in.
+  assert.deepEqual(merged.fiber_content, ['wool', 'linen'])
   assert.equal(merged.style_profile_json._confidence.fiber_content, 'medium')
 })
 

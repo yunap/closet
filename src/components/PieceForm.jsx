@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
-import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
+import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
+import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 
@@ -49,14 +51,6 @@ const NEEDS_BASE_OPTIONS = [
   { value: 'no', label: 'wearable alone (checked)' },
 ]
 
-const FIBER_OPTIONS = [
-  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim', 'tweed',
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
-  'pearl', 'crystal', 'enamel', 'unknown'
-]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
   { value: 'low', label: 'Low' },
@@ -371,6 +365,15 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pending
 // print. There is nothing to clear, so don't offer to.
 const CHIP_UNSET_VALUES = new Set(['none', 'unknown', 'n/a'])
 
+// Says what a field decides, in the owner's terms. Renders nothing for a field with no entry —
+// generic filler would be worse than silence. `gate` stays as an internal marker on the label and
+// is never the thing that carries meaning to the user.
+function FieldConsequence({ field }) {
+  const text = FIELD_CONSEQUENCE[field]
+  if (!text) return null
+  return <div className="form-hint field-consequence">{text}</div>
+}
+
 function ChipRow({ options, value, onChange, multi = false, label, labelledBy, clearable = true }) {
   const hasValue = clearable && !multi &&
     value !== null && value !== undefined && value !== '' &&
@@ -445,6 +448,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     opacity:            piece?.opacity            || null,
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
+    fiber_content_completeness: piece?.fiber_content_completeness || 'unknown',
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
     walk_support:       piece?.walk_support       || null,
@@ -543,6 +547,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [tagVerdictNote, setTagVerdictNote] = useState('')
   const [tagVerdictSaved, setTagVerdictSaved] = useState(false)
   const [colorTaxonomyGaps, setColorTaxonomyGaps] = useState([])
+  const [fiberTaxonomyGaps, setFiberTaxonomyGaps] = useState([])
   const dialogRef = useRef(null)
   const stylistControlsRef = useRef(null)
   const garmentCharacterRef = useRef(null)
@@ -641,6 +646,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
       const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
+      setFiberTaxonomyGaps(Array.isArray(tags.fiber_taxonomy_gaps) ? tags.fiber_taxonomy_gaps : [])
       setColorTaxonomyGaps(taxonomyGaps)
       // Compute the diff synchronously against the current form state, then set it directly —
       // NOT inside a setForm functional updater. React does not invoke a functional updater
@@ -678,6 +684,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       applyTagValue(next, 'opacity', tags.opacity)
       applyTagValue(next, 'needs_base', tags.needs_base)
       applyTagValue(next, 'fiber_content', tags.fiber_content)
+      // Without this the tagger's completeness answer is produced and then dropped here — the
+      // exact propagated-but-unread failure this spec exists to close, reproduced while building
+      // the fix for it. A live tag of piece 996866 (a visibly quilted puffer) stored 'unknown'
+      // and looked like the model declining, when the form had simply never carried the field.
+      applyTagValue(next, 'fiber_content_completeness', tags.fiber_content_completeness)
       applyTagValue(next, 'formality', tags.formality)
       applyTagValue(next, 'heel_height', tags.heel_height)
       applyTagValue(next, 'walk_support', tags.walk_support)
@@ -765,6 +776,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     fd.append('manual_overrides', JSON.stringify(manualOverrides))
     fd.append('resolved_retag_suggestion_ids', JSON.stringify(retagSuggestions.map(suggestion => suggestion.id)))
     fd.append('color_taxonomy_gaps', JSON.stringify(colorTaxonomyGaps))
+    fd.append('fiber_taxonomy_gaps', JSON.stringify(fiberTaxonomyGaps))
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
     if (wornFile)     fd.append('worn_photo', wornFile)
@@ -1480,7 +1492,54 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
           <div className="form-group" data-piece-field="fiber_content">
             <FieldLabel field="fiber_content">{cat === 'shoes' || cat === 'accessory' ? 'Material properties' : 'Fiber content'}</FieldLabel>
-            <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
+            <FieldConsequence field="fiber_content" />
+            {/* Projection only: the grouping and the per-category filter both come from
+                fiberTaxonomy.js. Before this the row was a flat wrap of all 35 chips with no
+                headings and no filtering, so a coat offered pearl/enamel/horn/ceramic and `down`
+                — the value that actually decides warmth — sat unmarked in the middle of the wall.
+                The family order already existed in the array and was destroyed by the render. */}
+            {fiberFamiliesForPiece(form).map(([family, values]) => (
+              <div key={family} className="fiber-family-group">
+                <span className="form-hint fiber-family-label">{FIBER_FAMILY_LABELS[family]}</span>
+                <ChipRow
+                  options={values}
+                  value={form.fiber_content}
+                  onChange={v => set('fiber_content', v)}
+                  multi
+                />
+              </div>
+            ))}
+            {/* Completeness is a separate stored fact, not something read off the list above: a
+                shell-only reading and a care-label transcription look identical once stored, and
+                only a person can tell them apart. Asked in the user's terms rather than the
+                internal unknown/partial/complete vocabulary. "Not sure" preserves an existing
+                'partial' — that is a stronger statement than "not established" and answering this
+                control should never quietly discard it. See
+                docs/fiber-evidence-completeness-spec.md §11. */}
+            {warmthCalibrationEvidenceState(form) === 'thermally_ambiguous' && (
+              /* Deliberately NOT "this garment is non-insulating" — the app has established no
+                 such thing, and saying so would contradict everything the verdict layer proves.
+                 The claim is only that the recorded material evidence does not characterize this
+                 piece for warmth. Driven by the shared calibration state, never by a local
+                 heavy+synthetic heuristic in this component. */
+              <div className="form-warning" data-piece-field="fiber_content_ambiguous">
+                The recorded materials don’t say how warm this is. Padded or quilted pieces may
+                contain insulation that isn’t visible; the care label can identify it.
+              </div>
+            )}
+            <div className="form-subgroup" data-piece-field="fiber_content_completeness">
+              <span className="form-hint">Is this the complete material composition?</span>
+              <FieldConsequence field="fiber_content_completeness" />
+              <ChipRow
+                options={[
+                  { value: 'complete', label: 'Yes' },
+                  { value: form.fiber_content_completeness === 'partial' ? 'partial' : 'unknown', label: 'Not sure' },
+                ]}
+                value={form.fiber_content_completeness || 'unknown'}
+                onChange={v => set('fiber_content_completeness', v)}
+                clearable={false}
+              />
+            </div>
           </div>
 
           {fabricConfig.showStretch && (
