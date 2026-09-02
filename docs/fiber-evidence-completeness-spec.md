@@ -36,9 +36,9 @@ what a photo-based tagger can honestly produce.
 | state | count | meaning |
 |---|---|---|
 | `[]` | 4 | nothing recorded (3 shoes + `996768 Duster`) |
-| `["unknown"]` | 24 | explicitly unresolved |
+| `["unknown"]` | 23 | explicitly unresolved |
 | resolved fibres **+** `"unknown"` | 10 | **partial — already being written** |
-| resolved fibres only | 230 | presented as complete |
+| resolved fibres only | 231 | presented as complete |
 | `fiber_content` in `manual_overrides` | 140 | provenance machinery is real and heavily used |
 
 The 10 partial rows:
@@ -72,27 +72,30 @@ That is the `[R1]` shape this arc has already fixed three times: a fact recorded
 and dropped at the consumer. Had the puffer been tagged with the trailing `"unknown"`, the
 information needed to catch it would have been present in the row — and still ignored.
 
-### 2.2 Correction: the puffer's current stored state
+### 2.2 The puffer today, and a measurement error worth recording
 
-An earlier claim in this session — that the puffer had dropped out of the warning set *because
-`down` had been added to it* — was wrong on both halves. Its stored state today is:
+After the care label was read, the owner corrected the piece by hand:
 
 ```text
 996775  Black puffer coat   outerwear   heavy   fabric_category: synthetic
-        fiber_content    : ["unknown"]
+        fiber_content    : ["polyester","nylon","down"]
         manual_overrides : [... "fiber_content" ...]
-        style_profile_json confidence: {}   (empty)
 ```
 
-**No piece in the wardrobe records `down`** — not in `wardrobe.db`, not in the sandbox DB. The
-edit did not reach either database. The write path is not at fault: `PieceForm.jsx:763`
-serializes the array with `JSON.stringify` and `routes/crud.js` stores it verbatim, so a saved
-`down` would have persisted. Worth the owner re-checking where that edit went; nothing here can
-determine it, and this spec does not guess.
+It is the only piece in the wardrobe recording `down`, and it is now the sharpest illustration of
+§6. This value is **genuinely complete** — transcribed from a photographed care label listing
+shell, lining and fill — and it is **byte-identical in storage** to an unverified photo guess.
+Nothing distinguishes the two. The owner has already done the work completeness requires, and
+there is nowhere to record that they did it.
 
-The state that *is* recorded is the more interesting one, and it is the counterexample §8 needed:
-**the one garment in this wardrobe whose full composition is documented on a photographed care
-label stores `["unknown"]`, manually pinned.** The care-label facts have nowhere to land.
+**Measurement error recorded, per the repo's habit of recording corrections rather than quietly
+adjusting.** An intermediate version of this spec claimed no piece recorded `down` and that the
+edit had not landed. That was wrong: `wardrobe.db` was copied without its `-wal` sidecar, so the
+read returned a checkpoint several hours stale while the edit sat committed in the WAL. Three
+existing scripts (`measure_freeform_turns.js`, `report_ai_spend.js`,
+`report_freeform_threads.js`) already copy `-wal`/`-shm` alongside the main file;
+[database-safety.md](database-safety.md) did not say to, and now does.
+The distribution in §2 is measured WAL-inclusive.
 
 ## 3. `"unknown"` is currently overloaded three ways
 
@@ -274,18 +277,24 @@ authoritative provenance mechanism can express that the composition was actually
 complete.* That is now audited rather than suspected.
 
 **`manual_overrides` cannot express it.** It records that a human owns the current value, not that
-they established every shell/lining/fill component. The wardrobe contains **5 direct
-counterexamples** — pieces whose `fiber_content` is manually pinned *and* unresolved or partial.
-The puffer is one: `manual_overrides` asserts human ownership of the value `["unknown"]`. A
-mechanism that is simultaneously true and uninformative about completeness cannot be the
-completeness fact.
+they established every shell/lining/fill component. The wardrobe contains **4 direct
+counterexamples** — pieces whose `fiber_content` is manually pinned *and* still partial
+(`151 Apple skirt`, `202 pink tweed pointed heels`, `362 woven straw crossbody bag`,
+`994060 multi-colored botanical scarf`). Each asserts human ownership of a value that openly
+admits it is incomplete. A mechanism that is simultaneously true and uninformative about
+completeness cannot be the completeness fact.
+
+The puffer makes the same point from the opposite direction, and more forcefully. Its
+`fiber_content` is manually pinned *and* genuinely complete, transcribed from a care label. Both
+it and a photo-derived guess carry the identical `manual_overrides` entry. The flag is true in
+both cases, so it separates nothing.
 
 **Tagger confidence cannot express it.** Confidence is confidence in the emitted answer, not
 completeness of inaccessible construction — the prompt itself says to emit medium/high "when
 fiber, category, and drape agree", none of which can see a fill. And manual pinning sets
-confidence to `manual`, which would decorate the puffer's `["unknown"]` with the *highest*
-available authority. The puffer's `style_profile_json` confidence map is in fact empty, so there
-is not even a value to reinterpret.
+confidence to `manual` regardless — the same value for a label transcription and for an
+unexamined photo read. The puffer's `style_profile_json` confidence map is in fact empty, so
+there is not even a value to reinterpret.
 
 **Conclusion:** neither mechanism answers "was the complete material composition established?", so
 a small persisted completeness/source fact does earn its keep — reached from the semantic
