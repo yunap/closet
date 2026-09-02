@@ -1,6 +1,6 @@
 # Spec — what `outerwear_role` is supposed to own
 
-**Status:** Active ruling, 2026-09-02, **no implementation**. Conclusion: `outerwear_role` is deprecated
+**Status:** Implemented 2026-09-02 — see §11. Ruling recorded the same day. Conclusion: `outerwear_role` is deprecated
 with **no replacement tag** — outdoor adequacy is a contextual verdict, not a garment fact. Two
 earlier positions in this document were superseded during the discussion and are kept visible
 (§6, §6.1) because the reasoning is the point. **Route:**
@@ -247,3 +247,66 @@ oversight.
 - **No change to `weather_protection`** or its independence from role (§4). A shell is
   `garmentKind` + `weather_protection`; it does not need a role value of its own.
 - **No new consumer** until the screen in §8 says the fact is reliably taggable.
+
+## 11. Implementation — **DONE 2026-09-02**
+
+### 11.1 The replacement judgment
+
+`outerLayerSevereColdAdequacy(piece)` in `outfitEnvironmentalAdequacy.js`, sorting a layer into the
+same three buckets the role did so the surrounding severity ladder is unchanged.
+`SEVERE_COLD_SYSTEM_COLD_FLOOR` still does all the quantitative work.
+
+**Construction is tested before thermal evidence, and that ordering was measured rather than
+assumed.** A first version asked thermal evidence first and moved **23 of 33** outerwear pieces
+between buckets — sending cashmere cardigans to `adequate` for 28°F outdoor exposure, exactly what
+the old gate existed to prevent. Insulating *material* is not the claim "built to be the layer you
+go outside in": a wool cardigan is warm and is still not a coat.
+
+```text
+see-through opacity            → insufficient   (same bar as the cool tier, same reason)
+cardigan / vest                → insufficient   (positive construction evidence)
+not coat / jacket              → unknown
+insulating verdict             → adequate
+weather_protection present     → adequate       ("a shell over real insulation passes")
+heavy                          → adequate
+non_insulating verdict         → insufficient
+otherwise                      → unknown
+```
+
+### 11.2 Measured behaviour change
+
+**27 of 33 outerwear pieces keep their bucket. Six move, all in safe directions:**
+
+```text
+250     insufficient → adequate   charcoal tweed cropped jacket   insulating verdict
+159     adequate     → unknown    gray jacket                     no warmth or barrier evidence
+184     insufficient → unknown    patchwork knit buttoned top
+990358  insufficient → unknown    navy technical hoodie
+990441  insufficient → unknown    grey layered zip jacket
+996768  insufficient → unknown    Duster
+```
+
+Four of the six are `insufficient → unknown` — the branch **stops hard-failing** outfits over
+pieces §7.2 already measured as probably mis-tagged. Nothing gains a hard-fail it did not have.
+
+**A measurement error is recorded here rather than quietly fixed:** the first run of this
+comparison reported 4 real coats losing their capability, which looked like a serious regression.
+The harness had passed raw DB rows, so `weather_protection` was an unparsed JSON string and read as
+empty. Re-run through `parsePiece`, those coats stay `adequate`. The rule was never wrong; the
+measurement was.
+
+### 11.3 Field removal — scope
+
+**Stopped producing it:** both tagger schemas (`prompts.js`, `routes/ai.js`), its `_confidence`
+entry, and its guidance paragraph. Four accepted prompt deltas recorded; the snapshot stays frozen.
+
+**Stopped editing it:** the controls in `PieceForm` and `BatchAdd`, including the tooltip that
+explained the four values.
+
+**Kept:** the column, `normalizeOuterwearRole`, `pieceOuterwearRole`, and the passthroughs in
+`tools.js` / `wardrobeAiContext.js`. Legacy rows keep their value and it still reaches prompts as
+historical garment text; nothing is destroyed and nothing is retagged.
+
+Removing it from tagging without removing it from the editor was rejected: this repo already ruled
+(the outerwear `neckline` fix) that a value stored and fed to the stylist with no way for the owner
+to see or correct it is a defect in itself.
