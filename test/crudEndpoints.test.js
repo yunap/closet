@@ -798,3 +798,25 @@ test('fiber_content: both write paths canonicalize identically and flag invalid 
   const kept = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: partial })).json()
   assert.deepEqual(kept.fiber_content, ['cotton', 'unknown'])
 })
+
+test('fiber gaps the tagger dropped before the client saw them still reach the review queue', async () => {
+  // The new-piece flow: routes/ai.js drops an invalid material during tagging, so it is already
+  // gone from fiber_content by the time the form posts. Without forwarding, that evidence would
+  // vanish — the piece is created cleanly and nobody learns the tagger invented a material.
+  // Mirrors how color_taxonomy_gaps has always been carried. Spec §10.3.
+  const fd = new FormData()
+  fd.append('name', 'tagger gap coat')
+  fd.append('category', 'outerwear')
+  fd.append('colors', JSON.stringify(['black']))
+  fd.append('fiber_content', JSON.stringify(['polyester']))
+  fd.append('fiber_taxonomy_gaps', JSON.stringify(['lycra']))
+
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })).json()
+  assert.deepEqual(created.fiber_content, ['polyester'])
+
+  const queued = db.prepare(`
+    SELECT payload FROM todos WHERE linked_piece_id = ? AND field = 'fiber_content' AND completed = 0
+  `).all(created.id)
+  assert.equal(queued.length, 1)
+  assert.equal(JSON.parse(queued[0].payload).fiber, 'lycra')
+})

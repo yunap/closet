@@ -418,8 +418,19 @@ has a consumer. `queueFiberTaxonomyReviews()` in `lib/colorTaxonomyReview.js` fi
 already handles unsupported colours — *"unsupported material 'x'. It was not added to the
 garment."* Wired into both `routes/crud.js` write sites.
 
-Still unwired: the tagger's own call at `routes/ai.js:542`, which is the likelier source of an
-invented material. Recorded rather than silently left.
+The tagger's own path is wired too, and it is the likelier source of an invented material.
+`tagPieceWithProvider()` drops the invalid token and returns it as `tags.fiber_taxonomy_gaps`,
+exactly mirroring `sanitizeTaggerColors`'s `color_taxonomy_gaps`. Two routes consume it:
+
+- **Retag an existing piece** — `routes/ai.js` queues immediately, beside the colour queue; it has
+  both `db` and the piece id.
+- **Tag a new piece** — there is no piece yet, so the gap rides out in the tag response, both
+  intake forms forward it on save, and `routes/crud.js` queues it together with anything it
+  detected itself. Without that hop the evidence would vanish silently: the invalid material is
+  already gone from `fiber_content` before the form ever posts, so the piece would be created
+  cleanly and nobody would learn the tagger invented a material.
+
+`tagPieceWithProvider()` stays free of `db` — it reports, the routes write. #3 is closed.
 
 ### 10.4 Evidence
 

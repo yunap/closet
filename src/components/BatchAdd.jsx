@@ -594,6 +594,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
         if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
       })
       fd.append('color_taxonomy_gaps', JSON.stringify(item.tags?.color_taxonomy_gaps || []))
+      fd.append('fiber_taxonomy_gaps', JSON.stringify(item.tags?.fiber_taxonomy_gaps || []))
       fd.append('photo', item.file)
       if (item.wornFile) {
         fd.append('worn_photo', item.wornFile)

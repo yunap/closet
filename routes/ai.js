@@ -6,7 +6,7 @@ import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { colorTaggerInstruction, sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
-import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
+import { queueColorTaxonomyReviews, queueFiberTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, normalizeOuterwearRole, normalizeWeatherProtection, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
@@ -147,7 +147,7 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, fiberContentNormalization } from '../styling-engine/fiberTaxonomy.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -539,7 +539,12 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     tags.tag_model = usage?.model || ''
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})
     const photoProperties = normalizePhotoProperties(tags.photo_properties || tags.style_profile_json?.photo_properties || {})
-    tags.fiber_content = normalizeFiberContent(tags.fiber_content)
+    // Invalid materials are dropped, not rewritten to 'unknown', and the dropped tokens ride out
+    // on the result so a caller with db access can queue them — same shape as color_taxonomy_gaps.
+    // See docs/fiber-evidence-completeness-spec.md §10.3.
+    const fiberNormalization = fiberContentNormalization(tags.fiber_content)
+    tags.fiber_content = fiberNormalization.values
+    tags.fiber_taxonomy_gaps = fiberNormalization.invalid
     tags.formality = normalizeFormality(tags.formality)
     tags.heel_height = normalizeHeelHeight(tags.heel_height)
     tags.walk_support = normalizeWalkSupport(tags.walk_support)
@@ -1654,6 +1659,11 @@ const tagExistingHandler = async (req, res) => {
       pieceId: piece.id,
       pieceName: piece.name,
       colors: unknown,
+    })
+    queueFiberTaxonomyReviews(db, {
+      pieceId: piece.id,
+      pieceName: piece.name,
+      fibers: tags.fiber_taxonomy_gaps || [],
     })
     tags.tag_state = tagStateForTaggerResult(tags, {
       photo: Boolean(photoFile || piece.photo),

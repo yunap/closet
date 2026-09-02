@@ -538,6 +538,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [tagVerdictNote, setTagVerdictNote] = useState('')
   const [tagVerdictSaved, setTagVerdictSaved] = useState(false)
   const [colorTaxonomyGaps, setColorTaxonomyGaps] = useState([])
+  const [fiberTaxonomyGaps, setFiberTaxonomyGaps] = useState([])
   const dialogRef = useRef(null)
   const stylistControlsRef = useRef(null)
   const garmentCharacterRef = useRef(null)
@@ -636,6 +637,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
       const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
+      setFiberTaxonomyGaps(Array.isArray(tags.fiber_taxonomy_gaps) ? tags.fiber_taxonomy_gaps : [])
       setColorTaxonomyGaps(taxonomyGaps)
       // Compute the diff synchronously against the current form state, then set it directly —
       // NOT inside a setForm functional updater. React does not invoke a functional updater
@@ -760,6 +762,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     fd.append('manual_overrides', JSON.stringify(manualOverrides))
     fd.append('resolved_retag_suggestion_ids', JSON.stringify(retagSuggestions.map(suggestion => suggestion.id)))
     fd.append('color_taxonomy_gaps', JSON.stringify(colorTaxonomyGaps))
+    fd.append('fiber_taxonomy_gaps', JSON.stringify(fiberTaxonomyGaps))
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
     if (wornFile)     fd.append('worn_photo', wornFile)
