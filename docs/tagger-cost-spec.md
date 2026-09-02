@@ -896,3 +896,30 @@ authoritative, so neither needs a heuristic.
 defect."* Right about the variance, wrong about the consequence. The screen measured cost and
 latency carefully, and never asked how close to the ceiling the winning tier ran — nor whether the
 output contract deserved the tokens it was spending.
+
+#### Acceptance check for the retag
+
+`scratch/check_tagger_output_budget.js` (read-only) reports the six measurements this review asked
+for, against their pre-change baselines:
+
+```bash
+WARDROBE_ALLOW_LIVE_DB=1 node scratch/check_tagger_output_budget.js --id 996867
+```
+
+```text
+  measurement                   now                    before the change
+  output tokens                 1571                   1571 clean / 2496 truncated
+  real_wear_notes keys          5                      4.9 of 5 on average
+  real_wear_notes words         34                     unbounded; ~8-12 each now
+  confidence keys               35                     34, ten inapplicable on a coat
+  stop reason                   (not recorded)         was never recorded at all
+  parse succeeded               yes                    truncation logged as success
+```
+
+Those are the **pre-change values**, captured before any retag — the baseline to beat, not a result.
+The bar is not merely "it did not truncate": `real_wear_notes` should drop below 5 keys and well
+under ~34 words, `confidence keys` should fall by roughly ten on a coat, and total output should sit
+comfortably under 3000 with a recorded stop reason of `end_turn`.
+
+`stop reason` reads "(not recorded)" on historical rows because it was not logged until this change;
+new calls carry it in the log context.

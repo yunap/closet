@@ -1249,7 +1249,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
-    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
     return { text, usage }
   }
 
@@ -1341,7 +1341,7 @@ export async function askStylistStructuredWithUsage({
       .map(o => (o.content || []).filter(c => c.type === 'text').map(c => c.text).join(''))
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
-    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: geminiModalityContext(interaction) })
+    await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1855,7 +1855,9 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
   await logAiCall({
     provider: 'gemini', model, callKind, usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false,
     toolNames: functionCalls.map(fc => fc.name).filter(Boolean).join(','),
-    context: geminiModalityContext(interaction),
+    // The provider's finish reason, recorded so a truncation is measurable and not merely
+    // inferable from the failure flag. See docs/tagger-cost-spec.md §6f.
+    context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null },
   })
   // Restored to match the documented contract (2026-08-30 review correction): the earlier version
   // of this line dropped the status check on the mistaken belief that 'requires_action' was
