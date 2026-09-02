@@ -1,6 +1,6 @@
 # Spec — what `outerwear_role` is supposed to own
 
-**Status:** Ruled 2026-09-02, **no implementation**. Conclusion: `outerwear_role` is deprecated
+**Status:** Active ruling, 2026-09-02, **no implementation**. Conclusion: `outerwear_role` is deprecated
 with **no replacement tag** — outdoor adequacy is a contextual verdict, not a garment fact. Two
 earlier positions in this document were superseded during the discussion and are kept visible
 (§6, §6.1) because the reasoning is the point. **Route:**
