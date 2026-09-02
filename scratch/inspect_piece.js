@@ -1,15 +1,73 @@
 import { db, parsePiece, safeJsonParse } from '../db.js'
+import {
+  pieceHasInsulatingMaterial,
+  pieceHasVentilatedFootwearMaterial,
+  pieceHasWetSensitiveFootwearMaterial,
+  pieceOuterwearRole,
+  pieceWeatherProtection,
+  wardrobeCategoryGroup,
+} from '../styling-engine/attributes.js'
+import { pieceWeatherScores } from '../styling-engine/thermal.js'
+import { evaluateOuterwearCapability } from '../styling-engine/outerwearCapability.js'
+
+// The candidate warmth scale from docs/garment-warmth-calibration.md §2. Duplicated here by hand
+// because that is still a findings-stage proposal with no module to import from; delete this block
+// and read the real one once Slice 1 ships.
+const NONCOMMITTAL_FABRIC = new Set(['synthetic', 'other', 'technical/performance', ''])
+const SUBSTANCE = { light: 0, medium: 1, heavy: 2 }
+function proposedWarmthLevel(piece) {
+  const fabric = String(piece.fabric_category || '').toLowerCase().trim()
+  const substance = SUBSTANCE[piece.fabric_weight] ?? null
+  if (substance === null) return 'UNKNOWN (no fabric_weight)'
+  const fibres = (Array.isArray(piece.fiber_content) ? piece.fiber_content : []).map(f => String(f).toLowerCase())
+  const unresolved = fibres.length === 0 || (fibres.length === 1 && fibres[0] === 'unknown')
+  const insulating = pieceHasInsulatingMaterial(piece)
+  if (!insulating && substance >= 1 && NONCOMMITTAL_FABRIC.has(fabric) && unresolved) {
+    return 'UNKNOWN (substantial, fill/fibre unresolved)'
+  }
+  return ['very light', 'light', 'moderate', 'warm', 'very warm'][Math.min(4, substance + (insulating ? 2 : 0))]
+}
+
+// What the engine CONCLUDES from the stored facts above it. Added 2026-09-01: the puffer
+// investigation needed the tags and their consequences side by side — a garment whose
+// fiber_content read ["polyester","nylon"] looked correctly tagged while scoring the same warmth as
+// heavy denim, and only the derived line made that visible.
+function printDerived(piece) {
+  const group = wardrobeCategoryGroup(piece)
+  const scores = pieceWeatherScores(piece)
+  const line = (k, v) => console.log(`${String(k).padEnd(26)}${v}`)
+  console.log('\n=== Derived: what the engine concludes ===')
+  line('thermal evidence', scores.evidence ? 'present' : 'null  <- nothing known about warmth')
+  line('cold / heat score', `${scores.cold} / ${scores.heat}`)
+  line('insulating material', pieceHasInsulatingMaterial(piece))
+  line('warmth level (proposed)', proposedWarmthLevel(piece))
+  if (group === 'outerwear') {
+    line('outerwear role', pieceOuterwearRole(piece) ?? 'null (unknown)')
+    line('weather protection', JSON.stringify(pieceWeatherProtection(piece)))
+    line('as outdoor layer', evaluateOuterwearCapability(piece, { requireOutdoorLayer: true }).verdict)
+  }
+  if (group === 'shoes') {
+    line('absorbent upper', pieceHasWetSensitiveFootwearMaterial(piece))
+    line('ventilated upper', pieceHasVentilatedFootwearMaterial(piece))
+  }
+}
 
 function usage() {
   console.log(`Usage:
-  npm run inspect:piece -- --id 123
+  WARDROBE_ALLOW_LIVE_DB=1 npm run inspect:piece -- --id 123
   npm run inspect:piece -- --search "emerald green"
   npm run inspect:piece -- "emerald green"
 
 Options:
   --id <id>          Print one piece by database id.
   --search <text>   Search name/read fields and print matching ids.
-  --json            Print compact JSON only for the selected piece.`)
+  --json            Print compact JSON only for the selected piece.
+
+Reads the live wardrobe.db through db.js, so it needs WARDROBE_ALLOW_LIVE_DB=1
+(docs/database-safety.md) or WARDROBE_DB_PATH pointing at a copy. It only reads.
+
+Prints the stored tags AND the verdicts derived from them, so a tag and its
+consequences can be compared side by side.`)
 }
 
 function argValue(args, name) {
@@ -71,6 +129,8 @@ function printPiece(row, { jsonOnly = false } = {}) {
     'recommendation_status',
     'role_permission'
   ].forEach(field => console.log(`${field}: ${piece[field] ?? '-'}`))
+
+  printDerived(piece)
 
   console.log('\n=== Notes ===')
   console.log(piece.notes || '-')

@@ -97,7 +97,38 @@ Two properties worth noting, both correct:
   trench wins.
 * **Leather sits at `moderate`**, above light jackets and below knits. Substantial, not insulating.
 
-## 4. The pinned case: the puffer
+## 4. The pinned case: the puffer — **resolved 2026-09-01, and how it resolved matters**
+
+> **Correction.** §4 below was written when the coat's fill was recorded as `["unknown"]` and the
+> owner had described it as synthetic. Its care label reads **60% duck down / 40% waterfowl
+> feathers**; the *shell and lining* are polyester. The owner added `down` to `fiber_content`, and
+> the whole chain moved:
+>
+> ```text
+> fiber_content ["unknown"]                  → UNKNOWN     cold 14   honest
+> fiber_content ["polyester","nylon"]        → moderate    cold 17   CONFIDENTLY WRONG — ties with heavy denim
+> fiber_content ["polyester","nylon","down"] → very warm   cold 23   correct
+> ```
+>
+> §12.1 row 3 (`puffer > cardigan` in genuine cold) now holds, earned from `down` being an
+> insulating fibre rather than from the word *puffer*. The representation in §2 needed no change.
+>
+> **Three findings from that sequence, one of which corrects §4.1:**
+>
+> 1. **`down` was never missing from the schema.** It is in `INSULATING_FIBERS` and in the piece
+>    editor's chip list. §4.1's conclusion — that a new "is this filled?" field was the
+>    highest-leverage gap — **was wrong**. The field existed; the *information* did not.
+> 2. **Fill is a care-label fact, not a photo fact.** The middle row above was produced by a
+>    re-tag from a good hanger photo, which correctly read a shiny polyester shell and could not see
+>    inside. The garment went from `tag_state: fully_tagged` and honestly unplaceable to
+>    `fully_tagged` and confidently wrong. **The middle state is worse than the first**, and no
+>    photo-based tagging pass can avoid it.
+> 3. **The owner's correction pinned itself.** `manual_overrides` now contains `fiber_content`, so a
+>    future retag cannot overwrite it — the mechanism from
+>    [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) Appendix B
+>    working as intended.
+
+## 4bis. The original analysis, retained
 
 ```text
 dark blue bootcut denim jeans     → moderate
