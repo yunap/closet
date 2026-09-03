@@ -1152,3 +1152,72 @@ A scope note worth keeping: producers and readers are different sets, and confla
 the work. Read against the success condition — *none derive thermal authority from flags* — several
 producer sites need no change at all, because a profile without temperatures simply yields no band
 opinion. **Unknown is a valid migration outcome, not a gap to close.**
+
+
+---
+
+## 19. PR B — ranking / model-evidence migration (§8 step 2)
+
+The first user-visible behaviour change in this arc. `styling-engine/rules.js`,
+`test/thermalRankingMigration.test.js`.
+
+### 19.1 The composition invariant, pinned before anything else
+
+> **Thermal demand informs wardrobe ranking and model evidence before outfit generation. It must not
+> deterministically choose the outfit or collapse stylistic diversity; the model remains responsible
+> for composition.**
+
+Everything below is a *score adjustment*. Nothing here excludes a garment, and overshoot is a
+ranking penalty by construction (§5.5).
+
+### 19.2 What was migrated
+
+**`weatherFitForPiece`** — the cold branch was `else if (weatherProfile?.isCold && cold !== 0)`, so
+`isCold` decided whether graded warmth reasoning existed **at all**. At 65/47 it is false, the ranker
+said nothing, and a down puffer ranked like a light jacket. Now reads `requiredThermalBand`, and
+ranking keys on **`distance`** rather than `fit` — using `fit` alone scored every garment inside the
+uncertainty band identically, turning the band into an equivalence class (§16.2 repeating one layer
+down).
+
+**`piecePriorityForMission`** — gated on `isHot || isCold`, so between the extremes piece priority
+carried no thermal signal. The call is now unconditional; it returns 0 when there is nothing to say.
+
+**`scoreWholeWardrobeCandidate`** — the outfit-level branch was `else if (weather.isCold)`, the same
+blind spot at ensemble level. Now band-driven, with the ensemble warm-layer floor conditioned on
+demand rather than on the flag.
+
+**A latent defect the migration itself introduced**, found and fixed here: that function filtered on
+the literal reason string `'cold weather: lightweight fabric'` to restrict the light-piece penalty to
+bottoms and dresses. The band renamed the reason, so **the filter had silently stopped matching** and
+the penalty was applying to every category. Re-expressed against the band's undershoot signal.
+
+### 19.3 Acceptance
+
+```text
+Vienna 65/47          cardigan ranks ahead of the puffer
+                      with the slot's exposure: light jacket > cardigan > puffer
+genuinely cold 30/20  puffer > cardigan > light jacket        the ordering reverses
+overshoot             the puffer scores low and stays available, never excluded
+unknown               no thermal opinion — not a good one, not a bad one
+no isCold switch      asserted at source: weatherFitForPiece may not read the flag
+non_thermal census    4, unchanged
+```
+
+```text
+census  thermal_demand 18 -> 15    non_thermal 4 -> 4
+suite   1832 tests, 1830 pass, same 2 pre-existing failures
+```
+
+### 19.4 Scope — why the other rules.js sites are NOT in this PR
+
+Eight thermal readers remain in `rules.js`, and none is ranking:
+
+* **The roster's step-3 gate** (`afterStep3.push`, ~3032-3092) **excludes** pieces from the candidate
+  pool. That is validity, and the migration order puts ranking before validity deliberately — a rank
+  change cannot make an outfit invalid, which is what makes this step the low-risk one.
+* **`wholeWardrobePieceTrustDecision`**'s `weather: { cold }` feeds `ownerConstraintApplies` — an
+  owner-rule projection, §8 step 4.
+* **`missingWeatherGateField`** uses cold as a proxy for "this field now matters". §6 already
+  classifies it as *"unclear, needs its own analysis"*; it is not folded in here.
+
+The remaining 7 are `outfitEnvironmentalAdequacy.js`, which is §8 step 3 and deliberately untouched.
