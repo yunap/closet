@@ -3677,7 +3677,10 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   })
   assert.ok(Array.isArray(bottoms))
   const linen = bottoms.find(p => p.id === seeded.bottom)
-  assert.equal(linen.weatherFit, 'lightweight - good for heat')
+  // FACTS, not a verdict (docs/search-propose-signal-inventory.md): the light linen's own warmth
+  // fact, not a "good for heat" label computed against this call's weather. The model judges fit
+  // itself; search_wardrobe states what the garment is.
+  assert.match(linen.thermal, /warmth:/)
   assert.equal(bottoms.some(p => p.id === seeded.jeans), false, 'compose mode excludes the hard hot-weather failure')
 
   const explainedBottoms = await executeTool('search_wardrobe', {
@@ -3687,7 +3690,7 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
     intent: 'explain',
   })
   const denim = explainedBottoms.find(p => p.id === seeded.jeans)
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat', 'explain mode preserves the rejected piece and annotation')
+  assert.match(denim.thermal, /warmth:/, 'explain mode preserves the rejected piece and its thermal facts')
 
   const hikingShoes = await executeTool('search_wardrobe', {
     category: 'shoes',
@@ -3781,8 +3784,12 @@ test('executeTool search_wardrobe uses a structured toolContext weather profile 
 
   const linen = bottoms.find(p => p.id === seeded.bottom)
   const denim = bottoms.find(p => p.id === seeded.jeans)
-  assert.equal(linen.weatherFit, 'lightweight - good for heat')
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
+  // The behavior under test is that resolution completes using toolContext's weatherProfile when
+  // the model's own call omits weather args — not a verdict text (docs/search-propose-signal-
+  // inventory.md removed weatherFit). Both pieces resolving with their thermal facts intact proves
+  // the toolContext-sourced profile reached stylingContext rather than the call short-circuiting.
+  assert.match(linen.thermal, /warmth:/)
+  assert.match(denim.thermal, /warmth:/)
 })
 
 test('freeform eligibility evaluates current season against the resolved request date', async () => {
@@ -6215,8 +6222,10 @@ test('search_wardrobe trims to judgment only when the manifest is actually in th
   const full = withoutManifest.find(p => p.id)
   assert.ok(trimmed && full)
 
-  // Trimmed: judgment plus the join key into the manifest.
-  assert.ok('ruleFit' in trimmed && 'weatherFit' in trimmed, 'per-request judgment always survives')
+  // Trimmed: per-request info plus the join key into the manifest. weatherFit is gone
+  // (docs/search-propose-signal-inventory.md); its replacement, `thermal`, is null for shoes (the
+  // category this test searches), so it is not asserted here.
+  assert.ok('ruleFit' in trimmed, 'per-request judgment always survives')
   assert.equal(trimmed.silhouette, undefined, 'stable truth is left to the cached manifest')
   assert.equal(trimmed.fabric_category, undefined)
   assert.equal(trimmed.occasions, undefined)

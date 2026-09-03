@@ -5,7 +5,7 @@
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, thermalFactsForPieceLine, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
 import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
@@ -209,7 +209,8 @@ function shouldBroadenSparseOccasionSearch(occasion = '') {
 // The full stable-truth row a retrieval tool hands back. Extracted so `search_wardrobe` and
 // `wardrobe_coverage` return garments under ONE contract: a coverage answer that judged a piece from
 // a different field set than a search would have is a second truth surface, and this codebase has
-// paid for those before. Judgment fields (weatherFit/ruleFit) are per-request and stay with search.
+// paid for those before. Per-request fields (thermal facts, ruleFit) stay with search — this row is
+// stable truth only, independent of any turn's occasion/weather.
 export function wardrobeTruthRow(p = {}) {
   return {
     id: p.id,
@@ -790,7 +791,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a weatherFit and a ruleFit tier: honour them. Use weatherFit to keep heavy fabrics off hot daytime looks and reserve heavier pieces for cool-evening layers.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, insulation, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode.",
     input_schema: {
       type: "object",
       properties: {
@@ -1393,7 +1394,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             ? explicitlyOccasionCompatible
             : beforeOccasionFilter
           if (!explicitlyOccasionCompatible.length) {
-            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
+            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
           }
         }
         const automaticGateFiltered = !searchEligibility ? automaticGatePool : automaticGatePool.filter(p => {
@@ -1428,7 +1429,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               filtered = occasionQueryFiltered
             } else {
               filtered = beforeOccasionQueryFilter
-              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
+              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
             }
           } else {
             filtered = filtered.filter(p =>
@@ -1450,22 +1451,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         
         let results = filtered
-        // One shared resolver owns stated/live/saved/heuristic weather precedence and records
-        // provenance. Search remains retrieval policy; it does not gain a complete-outfit gate.
-        // MIGRATED (§8 step 5). This was gated on `isHot || isCold`, which made it THE decision about
-        // whether the model hears any thermal evidence for the garments it is choosing between. At
-        // 65/47 neither flag fires, so search results carried no weatherFit at all and the model
-        // composed with nothing to go on — §6's defect on the EVIDENCE side rather than ranking.
-        //
-        // weatherFitForPiece now reads the band and returns 0 with no adjustments when there is
-        // nothing to say, so the gate is unnecessary: labels appear whenever a temperature exists,
-        // and a garment whose placement is unknown contributes no adjustment and so gets no label.
-        const weatherFits = results.map(p => weatherFitForPiece(p, resolvedWeather))
-        if (weatherFits.some(fit => fit.adjustments.length)) {
-          results = results
-            .map((p, i) => ({ ...p, weatherFit: weatherFits[i].label, weatherFitScore: weatherFits[i].score }))
-            .sort((a, b) => (b.weatherFitScore || 0) - (a.weatherFitScore || 0))
-        }
+        // FACTS, not a verdict (docs/search-propose-signal-inventory.md). This used to attach a
+        // weatherFit label/score computed from the resolved conditions and SORT results by that
+        // score — a derived judgment delivered by position, the same defect already removed from
+        // the plan path. thermalFactsForPieceLine states what the garment IS (warmth, insulation,
+        // interior construction, season, removability); the model judges fit against the resolved
+        // conditions itself, which the turn's system/thread context already carries. No sort here:
+        // order is retrieval order, not a delivered opinion.
+        results = results.map(p => ({ ...p, thermalFacts: thermalFactsForPieceLine(p) }))
 
         if (requestText) {
           results = results.filter(p => {
@@ -1608,7 +1601,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               id: p.id,
               name: p.name,          // kept: the model cites pieces by name in its prose
               category: p.category,  // kept: cheap, and searches are often cross-category
-              weatherFit: p.weatherFit,
+              thermal: p.thermalFacts || undefined,
               ruleFit: p.ruleFit,
               ruleFitLabel: p.ruleFitLabel,
               notes: p.notes ? p.notes.slice(0, 120) : '',
@@ -1649,7 +1642,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             length_hits_at: p.length_hits_at,
             hem_finish: p.hem_finish,
             tuck_behavior: p.tuck_behavior,
-            weatherFit: p.weatherFit,
+            thermal: p.thermalFacts || undefined,
             ruleFit: p.ruleFit,
             ruleFitLabel: p.ruleFitLabel,
             notes: p.notes ? p.notes.slice(0, 120) : '',
@@ -2320,7 +2313,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
             const ruleFit = (occasionProfile || activityProfile)
               ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
               : { tier: 'neutral', label: '' }
-            const weatherFit = weatherFitForPiece(piece, resolvedWeather)
             const occasionScore = pieceOccasionCompatible(piece, resolvedOccasion) ? 12 : 0
             const newnessScore = currentIdSet.has(Number(piece.id)) ? -20 : 0
             const queryScore = slotSwapQueryScore(piece, query)
@@ -2329,9 +2321,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
               piece,
               trust,
               ruleFit,
-              weatherFit,
               colorScore,
-              score: newnessScore + occasionScore + queryScore + colorScore + (weatherFit.score || 0) - ((tierRank[ruleFit.tier] ?? 1) * 8)
+              // No thermal term (docs/search-propose-signal-inventory.md): weatherFit.score used to
+              // be the single largest weighted term here — larger than any factual bonus above —
+              // which made this candidate ranking a second, hidden stylist. Mechanical diversity/
+              // newness/query/color signals stay; thermal fit is the model's judgment to make.
+              score: newnessScore + occasionScore + queryScore + colorScore - ((tierRank[ruleFit.tier] ?? 1) * 8)
             }
           })
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
@@ -2391,7 +2386,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               swappedIn: { id: Number(replacement.id), name: replacement.name },
               colorPreference: color ? { requested: color, matched: candidate.colorScore > 0, score: candidate.colorScore } : null,
               ruleFit: candidate.ruleFit.label || candidate.ruleFit.tier,
-              weatherFit: candidate.weatherFit.label
+              thermal: thermalFactsForPieceLine(replacement) || undefined
             },
             engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
             previewOnly: true

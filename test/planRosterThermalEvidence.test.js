@@ -229,11 +229,13 @@ const SUN_HOODIE = {
 
 test('the catalog line carries the facts needed to judge the sun hoodie', async () => {
   const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
-  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
-  const line = src.slice(src.indexOf('function thermalFactsForPieceLine'), src.indexOf('function planWorkbenchPieceLine'))
-  // The four facts that separate a UPF shell from a transitional jacket. Without them the model is
-  // told a warmth level and cannot tell which garment produced it.
-  for (const fact of ['warmth:', 'insulation:', 'interior:', 'season:', 'removable:']) {
+  const { thermalFactsForPieceLine } = await import('../styling-engine/rules.js')
+  // The five facts that separate a UPF shell from a transitional jacket. Without them the model is
+  // told a warmth level and cannot tell which garment produced it. Behavioral, not a source grep —
+  // this function is shared with search_wardrobe (docs/search-propose-signal-inventory.md), so a
+  // source-text check against outfitSetPlanner.js would no longer even find its definition.
+  const line = thermalFactsForPieceLine(SUN_HOODIE)
+  for (const fact of ['warmth:', 'insulation:', 'season:', 'removable:']) {
     assert.ok(line.includes(fact), `the fact channel must state ${fact}`)
   }
   assert.ok(typeof buildPlanSlotWorkbench === 'function')

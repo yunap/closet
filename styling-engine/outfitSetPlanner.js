@@ -38,6 +38,7 @@ import {
   getAcceptedFeedbackSynthesisMemory,
   getOwnerRuleNotes,
   weatherFitForPiece,
+  thermalFactsForPieceLine,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
@@ -70,9 +71,7 @@ import {
   shoeCoverage,
   sleeveCoverage,
   pieceRequiresBaseLayer,
-  thermalMaterialVerdict,
 } from './attributes.js'
-import { interiorConstruction } from './fiberTaxonomy.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
@@ -2519,28 +2518,7 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
 // Exported under a test-only alias: the line itself is internal, but Slice E's cross-projection
 // parity fixture has to prove capability reaches THIS surface too, not just the shared truth text.
 export { planWorkbenchPieceLine as _planWorkbenchPieceLineForTests }
-// The engine's thermal reading of a garment, stated as the facts it is made of rather than as a
-// verdict about a slot. `insulation` distinguishes THREE states on purpose: an explicitly empty
-// insulating-layer list means verified-none, a null one means nobody ever asked, and they must not
-// collapse — 23 of this wardrobe's outerwear pieces are unasked and 7 are verified. The navy sun
-// hoodie is the case that made this matter: unrecorded insulation read as a little insulation,
-// placing it `light` and therefore level with a transitional jacket.
-function thermalFactsForPieceLine(piece = {}) {
-  const group = wardrobeCategoryGroup(piece)
-  if (group === 'shoes' || group === 'accessory') return ''
-  const bits = []
-  const warmth = garmentWarmthLevel(piece)
-  bits.push(`warmth:${warmth || 'not established'}`)
-  const verdict = thermalMaterialVerdict(piece)
-  bits.push(`insulation:${verdict === 'insulating' ? 'insulated' : verdict === 'non_insulating' ? 'none' : 'not recorded'}`)
-  // Through the canonical reader, never the raw column: a flow reading the stored field directly
-  // is a second thermal authority forming (interiorConstruction.test.js ratchet H).
-  const interior = interiorConstruction(piece)
-  if (interior && interior !== 'unknown') bits.push(`interior:${interior}`)
-  if (piece.season) bits.push(`season:${piece.season}`)
-  if (group === 'outerwear') bits.push('removable:yes')
-  return bits.join(' | ')
-}
+// thermalFactsForPieceLine moved to rules.js — shared with search_wardrobe (docs/search-propose-signal-inventory.md), not a second copy under a different name.
 
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''

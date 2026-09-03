@@ -66,8 +66,10 @@ import {
   pieceMatchesFootwear,
   pieceMatchesPieceName,
   necklineWarmth,
-  sleeveCoverage
+  sleeveCoverage,
+  thermalMaterialVerdict
 } from './attributes.js'
+import { interiorConstruction } from './fiberTaxonomy.js'
 
 export function isStyleSelectedQuestion(question = '') {
   const q = String(question).toLowerCase()
@@ -176,6 +178,42 @@ export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js
 
 export { pieceWeatherEvidence, pieceWeatherScores } from './thermal.js'
 import { pieceWeatherScores } from './thermal.js'
+
+// The shared thermal FACT channel (docs/search-propose-signal-inventory.md). Any model-facing
+// surface that used to read weatherFitForPiece's verdict — search_wardrobe, suggest_slot_swaps —
+// reads this instead. One function, reused verbatim, so this is not a second judgment vocabulary
+// under a different name: the plan path (styling-engine/outfitSetPlanner.js) calls this exact
+// export too.
+//
+// `insulation` distinguishes three states deliberately — verified-none, never-asked, and insulated
+// — because collapsing "nobody asked" into "verified none" is exactly how an unrecorded sun hoodie
+// read as a real cool-weather layer (docs/model-facing-signal-inventory.md's founding case).
+export function thermalFactsForPiece(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return null
+  const verdict = thermalMaterialVerdict(piece)
+  const interior = interiorConstruction(piece)
+  return {
+    warmth: garmentWarmthLevel(piece) || null,
+    insulation: verdict === 'insulating' ? 'insulated' : verdict === 'non_insulating' ? 'none' : 'not recorded',
+    interior: interior && interior !== 'unknown' ? interior : null,
+    season: piece.season || null,
+    removable: group === 'outerwear' ? true : null,
+  }
+}
+
+export function thermalFactsForPieceLine(piece = {}) {
+  const facts = thermalFactsForPiece(piece)
+  if (!facts) return ''
+  const bits = [
+    `warmth:${facts.warmth || 'not established'}`,
+    `insulation:${facts.insulation}`,
+  ]
+  if (facts.interior) bits.push(`interior:${facts.interior}`)
+  if (facts.season) bits.push(`season:${facts.season}`)
+  if (facts.removable) bits.push('removable:yes')
+  return bits.join(' | ')
+}
 
 export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure = null } = {}) {
   const adjustments = []
