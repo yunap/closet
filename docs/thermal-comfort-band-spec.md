@@ -1013,3 +1013,66 @@ Exertion shifts are ordinal steps, never a metabolic rate.
   aggregation and is the one pinned case still unmet.
 * **The migration (§8 steps 2-6).** Nothing consumes any of this. `thermal_demand` is still 20.
 * **`isWeatherFiltered`** (§8.1) still holds binary authority.
+
+
+---
+
+## 17. Slice 4 — outfit thermal contribution (2026-09-03)
+
+`styling-engine/outfitThermalContribution.js`, `test/outfitThermalContribution.test.js` (6 tests,
+one per gate criterion). **No production consumers.** §9.2's "nothing owns it" is now answered, and
+the research/design core of this spec is complete.
+
+### 17.1 The gate
+
+```text
+1. row 2 passes                       PASS  mild base + cardigan adaptable; heavy base + puffer not
+2. base vs removable distinguishable  PASS  returned as separate fields, never blended
+3. ordinal levels not summed          PASS  bounded one-step combination; result is a LEVEL
+4. unknown preserved, not zeroed      PASS  unplaceable base -> null + unknown.base, never a level
+5. puffer usable as the only layer    PASS  overshoot ranks, never excludes
+6. no non-thermal semantics absorbed  PASS  source-level ratchet on rain/footwear/capability
+```
+
+### 17.2 Row 2 is not a total — it is range coverage
+
+The reframing that made it tractable. *"A mild base plus a removable layer beats a permanently warm
+base"* is not a claim that one outfit is warmer. It is that the layered outfit answers **both ends**
+of a variable exposure — the cold end with the layer on, the warm end with it off — while a
+permanently heavy outfit answers only the cold end and is stranded overshooting the warm one.
+
+Comparing totals cannot express that. Comparing range coverage can, **and needs no arithmetic at
+all.** `outfitCoversRange` reports both ends separately and never returns a verdict.
+
+### 17.3 What the anchors licensed, and what they did not
+
+The ensemble entries measure layering directly:
+
+```text
+Trousers, long-sleeve shirt            0.61
+Jacket, Trousers, long-sleeve shirt    0.96      adding a jacket: +0.35
+Single-breasted coat (thin), alone     0.36      ~= its own garment value
+```
+
+Layering is approximately additive **in clo** — §11.4 already recorded ASHRAE permitting that as a
+practical estimate. It is **not** additive in ordinal level, because the levels span different clo
+widths. What this licenses is a bounded ordinal step: a real second layer moves the outfit one level
+above the warmer component. Never a sum, never unbounded.
+
+**The step turns on the WEAKER component**, and the clo evidence is why: trousers+long-sleeve (0.61)
+plus a jacket reaches 0.96 because both are substantial, while a thin tee (0.08) under the same
+jacket reaches 0.44 — barely above the jacket alone. A first version keyed on the removable layer
+alone and pushed a light top under a knit cardigan to `very warm`: puffer territory, from a cardigan.
+
+### 17.4 The design core is complete
+
+```text
+exposure.js                    conditions encountered + exertion + mode      SHIPPED (#305)
+garmentWarmth.js               per-garment ordinal placement                 §14
+thermalDemand.js               requiredThermalBand + compareThermalFit       §16
+outfitThermalContribution.js   base / removable / withLayer / unknown        §17
+```
+
+All five §12.1 pinned rows now hold. **Nothing consumes any of it** — `thermal_demand` is still 20,
+and `isWeatherFiltered` still holds binary authority (§8.1). What remains is the §8 migration, which
+is where user-visible behaviour changes for the first time.
