@@ -1,7 +1,9 @@
 # Spec — decomposing `isCold` into a thermal comfort band
 
-**Status:** active — audit and design, 2026-09-01. **No code.** Thresholds deliberately not chosen
-(§6).
+**Status:** active — audit and design. **Revised Slice 1 complete 2026-09-03 (§13): measurement
+only, still no production code.** Thresholds deliberately not chosen (§6), and the demand mapping is
+**not** chosen — §13 found the candidate ordinal scale internally inconsistent, so §12's gate has not
+been cleared. Verifier: `node scratch/measure_warmth_placement.mjs`.
 **Route:** [docs/README.md](README.md). Supersedes the *authority* of `isCold`, `transitIsCold` and
 `isColdSevere`; amends [cold-severity-spec.md](cold-severity-spec.md) and
 [cool-weather-tier-spec.md](cool-weather-tier-spec.md) §8, which required this audit.
@@ -608,3 +610,132 @@ which a new representation must not inherit.
 
 **Only after those orderings hold** does the demand mapping get chosen. That is the point at which
 this stops being "what Fahrenheit threshold fixes this card" and becomes a temperature model.
+
+
+---
+
+## 13. Revised Slice 1 findings — measured 2026-09-03
+
+`node scratch/measure_warmth_placement.mjs` (deterministic, DB copy, no model calls). Run against
+the real wardrobe after PR #304 and #305 landed. **No production code was written.**
+
+§12 asked one question: can Closet's existing garment facts reliably place garments into a small
+ordered warmth representation? **The facts can. The candidate formula cannot.** Those are different
+answers and the distinction is the whole finding.
+
+### 13.1 Coverage — the facts are sufficient
+
+```text
+active pieces 271 · clothing in thermal scope 213
+placed 204/213 = 95.8%      all five levels used, largest holds 39.7%
+unplaced 9                  all thermally_ambiguous
+```
+
+Placement is not blocked by missing data. §12's first question is answered yes.
+
+### 13.2 Consistency — the candidate formula is not usable
+
+`proposedWarmthLevel` (`warmthCalibration.js`) is `fabric_weight` + an insulating-material bonus.
+Compared pairwise against `pieceWeatherScores().cold` — both built from the same stored facts:
+
+```text
+comparable pairs 13,740     agree 12,779 (93.0%)     INVERTED 961 (7.0%)
+```
+
+The inversions are systematic, not noise. **The levels are not monotonic against the evidence:**
+
+```text
+very light  n=74  cold -16 ..  1   median  -8
+light       n=81  cold  -8 .. 10   median   0
+moderate    n=11  cold  14 .. 19   median  14     <-- ABOVE "warm"
+warm        n=30  cold  -2 .. 15   median  12
+very warm   n= 8  cold   6 .. 23   median  22
+```
+
+`moderate` sits above `warm`. A scale whose own level order contradicts the evidence it is built
+from cannot carry a demand comparison.
+
+**The cause is a missing input, not a bad coefficient.** `proposedWarmthLevel` never reads coverage.
+Five sleeveless garments are placed `warm` while scoring `cold <= 2`:
+
+```text
+Cream wool shell               sleeveless   cold  -2   → "warm"
+black crochet lace tank top    sleeveless   cold  -2   → "warm"
+Brown shell                    sleeveless   cold  -2   → "warm"
+textured taupe scoop neck top  sleeveless   cold  -2   → "warm"
+colorblock ribbed knit sheath  sleeveless   cold   2   → "warm"
+```
+
+A wool tank satisfying a `warm` demand is the failure this arc exists to prevent, arriving from the
+supply side instead of the demand side. §10.1 already pointed at the fix: **treat
+`pieceWeatherEvidence`'s structured terms as the reusable input.** They read mass, material,
+coverage, neckline, sleeves and exposure; the ordinal placement must consume them rather than
+re-deriving warmth from two fields.
+
+### 13.3 Pinned case 6 fails today, at scale
+
+> *unknown garment evidence → **unknown**, never "neutral warmth"*
+
+```text
+material verdicts   insulating 38 · non_insulating 4 · unknown 171
+garments with UNKNOWN material evidence that still receive a warmth level: 162
+```
+
+**79% of all placements come from `fabric_weight` alone with no material evidence.** The current
+formula treats absent evidence as a real level. Any demand mapping laid on top would inherit that,
+and §5.6's "unknown is never inadequacy" would be violated by the supply side before the demand side
+ever ran. This is §10.3's latent collision, confirmed live.
+
+### 13.4 Layer placement needs no new field
+
+§12's second question — the **minimum** information to distinguish base warmth from removable
+warmth:
+
+```text
+category = outerwear    34 pieces     THE available signal
+needs_base              6 of 213      populated too sparsely to use
+outerwear_role          deprecated    ratified: replace, do not rescue
+garment kind            no column     does not exist
+```
+
+`wardrobeCategoryGroup(p) === 'outerwear'` is one bit and it is sufficient: a cardigan is outerwear
+and removable, a heavy sweater is a top and is base warmth. **Recommendation: add nothing.** The
+minimum is already stored, and pinned case 2 (mild base + removable layer beats a permanently heavy
+base) is expressible with it.
+
+### 13.5 Reference anchors — ordinal, never a unit
+
+§11.8 stands: published insulation data places garments into levels; Closet never claims `clo`.
+Approximate single-garment reference values from the standard tables §11 already cites:
+
+```text
+sleeveless top / tank     ~0.06-0.10      light trousers        ~0.15-0.20
+t-shirt                   ~0.08           heavy trousers        ~0.24-0.28
+long-sleeve shirt/blouse  ~0.20-0.25      light jacket          ~0.25-0.36
+thin sweater              ~0.20-0.25      insulated/heavy coat  ~0.50-0.70
+thick sweater             ~0.35
+```
+
+**These are approximate and reproduced from the standard tables rather than a primary source
+consulted here; verify against ASHRAE 55 / ISO 9920 before treating any boundary as authoritative.**
+Their use is ordinal: they show a sleeveless top and a thick sweater differ by roughly 4-5x, which is
+the separation the placement must reproduce and which the current formula collapses.
+
+### 13.6 Conclusion, and what Slice 2 is
+
+The orderings in §12.1 do **not** hold today: rows 1/3 are supportable (puffer `very warm` cold 23
+vs cardigan `warm` cold 12 are distinguishable and correctly ordered), row 2 is expressible via
+§13.4, row 4 is now suppliable by `exposure.js`'s `exertion`, but **row 6 fails outright** and the
+scale carrying rows 1/3 is internally inconsistent (§13.2).
+
+Per §12, **the demand mapping is not chosen yet.** Slice 2 is:
+
+1. Rebuild ordinal placement on `pieceWeatherEvidence`'s structured terms, so coverage is read.
+2. Return `unknown` when material evidence is unknown and substance alone cannot carry the level —
+   pinned case 6 becomes a test, not an aspiration.
+3. Re-run `measure_warmth_placement.mjs`: **inversions must approach zero and the level medians must
+   be monotonic.** That is the mechanical gate on proceeding to demand mapping.
+4. Only then choose the demand mapping.
+
+`proposedWarmthLevel` has no production consumer, so all of this is behaviour-neutral until the
+migration in §8.
