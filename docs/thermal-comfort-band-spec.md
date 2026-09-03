@@ -1335,4 +1335,65 @@ flag, but three of the four are presence/capability contracts, and step 3 alread
 presence and amount are genuinely different questions. If that is right, the honest end state is a
 smaller `thermal_demand` target plus a reclassification — not zero.
 
-No code was written for step 4.
+### 21.1 Ruling — keep the contracts independent, and change the completion criterion
+
+Owner ruling 2026-09-03, closest to (c) with one qualification.
+
+**Keep the parallel contracts independent of the thermal band.** Mapping the band's ordinal levels
+onto them merely because both once read `isCold` would recreate the master-boolean problem in a new
+form. **But do not preserve their 24-hour-trough thresholds forever either** — they may eventually
+earn their own trigger calibration from relevant exposure conditions. That calibration is its own
+semantic problem and must not be obtained by translating `moderate/warm/very warm` into booleans.
+
+```text
+ExposureContext
+   ├── thermal demand              -> amount / fit / overshoot / undershoot
+   ├── removable-layer trigger     -> presence / adaptability
+   ├── transit coverage trigger    -> removable sleeve-bearing coverage
+   └── outdoor-capability trigger  -> appropriate outerwear capability
+```
+
+**`thermal_demand == 0` is retired as the completion criterion.** It assumed every member of that
+class carried obsolete thermal-demand authority; the census classified by **which flag a site reads**
+rather than **what question it answers**, and steps 3-4 showed that assumption was too broad.
+
+```text
+DONE = no consumer derives thermal AMOUNT from legacy cold flags,
+       AND no independent contract derives its semantics from the band.
+```
+
+### 21.2 The reclassified census
+
+`scratch/census_thermal_demand_consumers.mjs`, revised to classify by question answered:
+
+```text
+projection         16    display, prompt, owner-rule and metadata surfaces — migrated separately
+producer           15    builds/propagates the profile — legacy authority eventually derived
+parallel_contract  13    presence / adaptability / coverage / capability — legacy trigger allowed
+                         for now, must have NAMED independent ownership, must never take band
+                         semantics
+non_thermal         4    footwear / rain — independent, and must NOT fall to zero
+thermal_amount      2    <- the real remaining target
+```
+
+**Reclassifying surfaced two sites PR B missed.** `rules.js:3251` and `3268` are heavy-fabric cold
+bonuses and light-fabric penalties inside `buildVisualComposerRoster` — the amount question applied
+to scoring clothes, and squarely in PR B's stated scope. They were skipped because the *enclosing
+function* is a roster builder, so an owner-level classification hid them. That is the same lesson as
+the reason-string bug: classify by what the code decides, not by where it sits.
+
+Two census-tool corrections were needed to reach this, both recorded in the script. The context rules
+guarded on the retired `thermal_demand` class, so every footwear site stayed `parallel_contract` and
+**`non_thermal` fell to zero** — the exact alarm that class exists to raise, fired by the tool rather
+than the code. And the thermal-amount rule matched the flag line, where the bonus sits two lines
+below the guard, so it had to become windowed.
+
+### 21.3 What is actually left
+
+* **`thermal_amount` (2)** — `rules.js:3251`, `3268`. A genuine PR B remainder; migrate next.
+* **`parallel_contract` (13)** — each needs *named independent ownership* recorded, not a band
+  trigger. That naming is the step-4 work, and it is documentation plus boundaries rather than a
+  behaviour migration.
+* **`projection` (16)** and **`producer` (15)** — steps 5-6, unchanged.
+
+No code was written for step 4's original premise.
