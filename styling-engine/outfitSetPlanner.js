@@ -3096,7 +3096,7 @@ function suppressedReasonMap(suppressedPieces = []) {
   return map
 }
 
-function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
+function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '' } = {}) {
   const id = Number(piece.id)
   let score = 0
   if (anchorIds.has(id)) score += 100000
@@ -3114,16 +3114,31 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(),
   if (slotFloor !== null && pieceRank !== null) {
     score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
   }
-  if (fabricWeight(piece) === 'light') score += 5
+  // SELECTION IS WHERE THE ROSTER IS DECIDED, so thermal and season fit have to be read HERE.
+  // Ordering the roster afterwards (orderByThermalFit) sorts a bag whose contents are already
+  // fixed — thread_1788427130315 offered four outer layers per slot and not one of them was the
+  // trench, the plaid jacket, the olive jacket or either wool vest. The model picked the best of a
+  // bad bag and got blamed for it.
+  //
+  // The blanket `+5 for light fabric` that used to sit here is gone: it was a season-blind thumb on
+  // the scale that, against a 4-piece outerwear quota, floated a sheer shrug and two knit cardigans
+  // over every real coat on a 48°F October morning. Fabric weight only means "cooler" relative to
+  // conditions, which is precisely what these advisories say and a bare tag cannot.
+  //
+  // Weighted ×4 to sit alongside the occasion (+35) and register (+20) terms rather than under
+  // them. Advisory, still: this changes what is OFFERED, never what is allowed — every gate-eligible
+  // piece remains eligible, and the model can still reach past the ordering.
+  score += thermalFitPieceAdvisory(piece, weatherProfile, exposure).score * 4
+  score += seasonFitPieceAdvisory(piece, calendarSeason).score * 4
   score += extremeHeatPieceAdvisory(piece, weatherProfile).score
   score += activeMovementPieceAdvisory(piece, activeMovement).score
   score += operationalEasePieceAdvisory(piece, operationalEase).score
   return score
 }
 
-export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
+export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '', limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
   const scored = allowedPieces
-    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase }) }))
+    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure, calendarSeason }) }))
     .sort((a, b) => b.score - a.score || Number(b.piece.id || 0) - Number(a.piece.id || 0) || a.index - b.index)
   const selected = []
   const seen = new Set()
@@ -3599,7 +3614,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
-    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })
+    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })
     const shownPieces = workbenchSelection.pieces
     const workbenchCoverage = workbenchSelection.report
     const targetOutfits = workbenchCoverage.complete

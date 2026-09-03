@@ -205,3 +205,47 @@ test('an indoor destination sizes the coat for the trip, not the gallery', () =>
   assert.equal(thermalFitPieceAdvisory(TRENCH, w, museum).tier, 'preferred')
   assert.equal(thermalFitPieceAdvisory(FLEECE, w, museum).tier, 'workable')
 })
+
+// Selection, not ordering, decides the roster. thread_1788427130315 offered four outer layers per
+// slot and not one was a real jacket — orderByThermalFit was sorting a bag already emptied of them.
+test('roster selection offers thermally appropriate layers, not the lightest ones', async () => {
+  const { selectPlanWorkbenchPieces } = await import('../styling-engine/outfitSetPlanner.js')
+  const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
+  const w = W(65, 48)
+  const exposure = EXP(w, 'hiking')
+  const pool = [
+    PUFFER, TRENCH,
+    { id: 10, category: 'outerwear', fabric_weight: 'light', fiber_content: ['acrylic'], interior_construction: 'unlined' },
+    { id: 11, category: 'outerwear', fabric_weight: 'light', fiber_content: ['nylon'], interior_construction: 'unlined' },
+    { id: 12, category: 'outerwear', fabric_weight: 'light', fiber_content: ['polyester'], interior_construction: 'unlined' },
+    { id: 13, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['wool'], interior_construction: 'full_lining' },
+  ]
+  const slot = { label: 'Nature Walks', activity: 'hiking', environment: 'outdoor', occasion: 'casual', stylingContext: { occasion: 'casual', calendarSeason: 'fall' } }
+  const selected = selectPlanWorkbenchPieces(pool, slot, { weatherProfile: w, exposure, calendarSeason: 'fall' })
+    .pieces.filter(p => wardrobeCategoryGroup(p) === 'outerwear')
+  const ids = selected.map(p => Number(p.id))
+  // The outerwear quota is 4 — the two proportionate layers must make the cut, ahead of three
+  // interchangeable light ones.
+  assert.ok(ids.includes(2), 'the trench must be offered')
+  assert.ok(ids.includes(13), 'the lined wool jacket must be offered')
+  const scoreOf = p => thermalFitPieceAdvisory(p, w, exposure).score
+  assert.ok(scoreOf(TRENCH) > scoreOf(pool[2]), 'a proportionate layer must outrank a light one here')
+})
+
+// An indoor destination excuses the BASE, never the trip (§5.7). resolveSlotWeather stores the
+// outside temperature under transit* and omits highF/lowF, so reading only highF/lowF declared the
+// conditions UNKNOWN and silenced the whole thermal model on museum days.
+test('an indoor slot still knows the weather it travels through', () => {
+  const t = W(65, 48)
+  const indoorProfile = {
+    isHot: false, isCold: false, isIndoor: true,
+    transitIsCold: t.isCold, transitHighF: t.highF, transitLowF: t.lowF, weatherSource: t.source,
+  }
+  const exposure = resolveExposureContext({ activity: 'walking', environment: 'indoor' }, indoorProfile)
+  assert.equal(exposure.conditions.known, true, 'the trip has known weather even when the destination is heated')
+  const demand = requiredThermalBand(exposure)
+  assert.equal(demand.level, 'light', 'the heated base stays light')
+  assert.equal(demand.layer.level, 'moderate', 'the coat answers to the walk there')
+  assert.equal(thermalFitPieceAdvisory(PUFFER, indoorProfile, exposure).tier, 'discouraged',
+    'a museum day must have something to say about a down puffer')
+})
