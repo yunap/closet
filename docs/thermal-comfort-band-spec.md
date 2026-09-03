@@ -1284,3 +1284,55 @@ from the band even though the contracts stay separate — steps 4-6, not this on
 ```text
 census  thermal_demand 15 (unchanged)   non_thermal 4    suite 1839 tests, 1837 pass, 2 pre-existing
 ```
+
+
+---
+
+## 21. §8 step 4 — measured first, and it needs a ruling
+
+Step 4's premise is that the remaining contracts (removability, transit coverage, outdoor
+capability, owner-rule projection) keep their own questions while their **triggers** move from flags
+to the band. Measured against real thresholds before writing any of it:
+
+```text
+high/low   legacy(cool, cold, severe)            band demand
+75/60      cool=false cold=false severe=false    moderate
+70/55      cool=true  cold=false severe=false    moderate
+65/50      cool=true  cold=false severe=false    warm        <- band fires COLD where legacy did not
+65/45      cool=true  cold=true  severe=false    warm
+58/44      cool=true  cold=true  severe=false    warm
+50/40      cool=true  cold=true  severe=false    very warm   <- band fires SEVERE where legacy did not
+42/38      cool=true  cold=true  severe=true     very warm
+30/20      cool=true  cold=true  severe=true     very warm
+```
+
+**The obvious mapping broadens every tier.** `moderate → cool`, `warm → cold`,
+`very warm → severe` would require a removable layer at **75/60** and an outdoor-capable layer at
+**50/40** — strictly more demanding than today, in the direction this arc exists to move away from.
+Shipping it would trade "the warmest coat is always safest" for "every day needs more than it did",
+which is the same failure wearing different clothes.
+
+**Why the scales do not line up.** The legacy tiers are thresholds on the 24-hour trough. The band's
+levels are demands on the *waking exposure window*, which sits ~35% of the diurnal range above that
+trough (§10.4), and they additionally shift with exertion. Two different quantities; a 1:1 mapping
+between them was never going to hold.
+
+**This is a product-semantic decision, not a mechanical migration** — §10.1's escalation bar. Three
+shapes, none chosen here:
+
+* **(a) Calibrate the mapping** so each contract fires where it fires today, then let it drift only
+  deliberately. Preserves behaviour; the boundaries become a stated calibration like
+  `SEDENTARY_DEMAND_F` (§16.3).
+* **(b) Accept the broadening for some contracts and not others.** A removable layer at 70/55 is
+  defensible; an outdoor-capable coat at 50/40 is not.
+* **(c) Leave these contracts on their thresholds.** They are not thermal-amount questions —
+  "is there something to put on" is a *presence* question, and §20.1 already established presence
+  and amount as different. That would mean `thermal_demand` never reaches 0, and the census's
+  completion test needs restating instead.
+
+**(c) deserves real weight.** The census counts these as `thermal_demand` because they read a cold
+flag, but three of the four are presence/capability contracts, and step 3 already found that
+presence and amount are genuinely different questions. If that is right, the honest end state is a
+smaller `thermal_demand` target plus a reclassification — not zero.
+
+No code was written for step 4.
