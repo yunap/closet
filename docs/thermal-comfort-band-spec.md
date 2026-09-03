@@ -681,10 +681,28 @@ material verdicts   insulating 38 · non_insulating 4 · unknown 171
 garments with UNKNOWN material evidence that still receive a warmth level: 162
 ```
 
-**79% of all placements come from `fabric_weight` alone with no material evidence.** The current
-formula treats absent evidence as a real level. Any demand mapping laid on top would inherit that,
-and §5.6's "unknown is never inadequacy" would be violated by the supply side before the demand side
-ever ran. This is §10.3's latent collision, confirmed live.
+**CORRECTION, same day, before building to this.** The first version of this section called all 162
+a violation — "79% of placements come from `fabric_weight` alone". That conflates *unknown material
+verdict* with *unknown evidence*, and it is too strong. Split by substance:
+
+```text
+light        74     unknown material cannot move a light piece far — placement is well founded,
+                    and warmthCalibration.js's own comment already says exactly this
+medium       78  ┐  unknown material CAN move these several levels
+heavy        10  ┘  → 88 of 204 placements (43%) are genuinely at risk, not 79%
+```
+
+The finding survives at 43% and is sharper for being narrower. Within the at-risk band the failures
+are real and legible — `mustard knit sweater`, medium, no material evidence, placed **`light`**. A
+knit sweater is not light, and nothing in the record says otherwise.
+
+Note what that example actually shows: a **data gap**, not a formula gap. The formula placed it
+correctly given what it was told. Slice 2 must therefore make the at-risk band return `unknown`
+rather than inventing a level for it — §5.6's "unknown is never inadequacy" enforced on the supply
+side — and must not pretend the fix recovers the missing fibre data.
+
+The existing `thermally_ambiguous` state was reaching for this predicate and fires on only 9 pieces,
+because it keys on a `fabric_category` allowlist rather than on the evidence itself.
 
 ### 13.4 Layer placement needs no new field
 
