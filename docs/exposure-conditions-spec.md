@@ -1,7 +1,8 @@
 # Spec — relevant exposure conditions
 
-**Status:** **Ratified 2026-09-03** (owner, on the ownership/consolidation review). No
-implementation yet. **No human stop/go checkpoint is required** — see §10.1. **Route:**
+**Status:** **Ratified 2026-09-03.** **Slices 1-2 implemented** — `styling-engine/exposure.js` and
+`test/exposureContext.test.js`; **case A passes**. **Steps 3-5 blocked on two owner rulings** (§10.3):
+`requiredThermalBand` does not exist, and no clock information exists in any typed field. **No human stop/go checkpoint is required** — see §10.1. **Route:**
 [docs/README.md](README.md).
 
 **Supplies the input [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md) §9.1 declares
@@ -546,6 +547,74 @@ column-0-only owner match with a 900-line lookback (a relaxed version reported l
 flipping a producer to `non_thermal`); and next-line matching for the prompt-requirement switches.
 Re-run after each migration step — `thermal_demand` falling to zero is the migration's completion
 test.
+
+## 10.3 Slice 2 complete; steps 3-5 blocked, with reasons
+
+**Slice 2 shipped.** `styling-engine/exposure.js` is the canonical owner; `test/exposureContext.test.js`
+carries 10 acceptance tests including **case A, which passes**. Museum, hike and indoor dinner resolve
+to materially different exposure contexts from the same date, location and forecast:
+
+```text
+museum   exertion walking   sustained_outdoor    transit false
+hike     exertion hiking    sustained_outdoor    transit false
+dinner   exertion none      indoor_destination   transit true
+```
+
+The divergence comes only from `activity` and `environment` — all three share `highF 65 / lowF 47`,
+asserted, so nothing is smuggled in through the weather. **Defect 1 is fixed.** `conditions.coarse`
+is `true` and a test fails if it is ever reported otherwise, so **defect 2 remains live and visible**.
+
+### Blocking finding 1 — `requiredThermalBand` does not exist
+
+Step 3 seams into it; steps 5 and case B consume it. It is unimplemented: zero references in code,
+and [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md) is **"No code. Thresholds
+deliberately not chosen (§6)"**.
+
+Building it means choosing the scale (band spec §11.8 sketches an ordinal one anchored to published
+insulation data), the thresholds (§6, deliberately open), and how far exertion shifts demand (§8.2
+here, explicitly left to the band's calibration). **This spec's §7 forbids exactly that**, and doing
+it anyway would be one spec quietly deciding another's open questions.
+
+Per §10.1 that is a genuinely new product-semantic decision. **Owner ruling needed.**
+
+### Blocking finding 2 — no clock information exists anywhere
+
+§8.4 is answered, and the answer has two halves.
+
+**Hourly data is available but never requested.** The live forecast asks Open-Meteo for
+`daily=temperature_2m_max,temperature_2m_min`. The provider supports `hourly=temperature_2m`; the URL
+does not ask for it. So §4.2's top tier is a query change, not a provider limitation — cheap.
+
+**But nothing says which hours the outfit is worn.** A search for any typed clock field —
+`time`, `start_time`, `hour`, `time_of_day`, `daypart` — across the engine and routes returns exactly
+one hit: the comment in `weather.js` acknowledging the gap. A slot carries a `date`, never a time.
+
+This falsifies an assumption in §4.1 of this spec, which said *"the fixed assumption is the fallback,
+not the design centre."* For **exertion and exposure mode** that held — they are declared on 52 of 53
+real plan turns. For **conditions** it does not: there is no time information to derive a window
+from, so a stated assumption is the only available path, and it is therefore the design centre for
+this variable whether or not that is comfortable.
+
+The owner deferred the fixed-hours question on the grounds that the plan might already know enough.
+The census now shows it does not. **That deferral is resolved by evidence rather than prematurely,
+and the question returns as a real ruling**, with two shapes:
+
+* **(a) A stated assumption per exposure mode** — e.g. `sustained_outdoor` samples daytime hours,
+  an `indoor_destination`'s transit samples the shoulders. One constant, disclosed, and the
+  `ExposureContext` can already carry it honestly via `coarse` and `unknownFields`.
+* **(b) A new typed slot field** for the exposure window, which the model fills like `activity` and
+  `environment`. Higher fidelity, but it is a schema, prompt and tagging change with a token cost,
+  and it asks the model for something users rarely state.
+
+Recommendation: **(a) first**, because it is reversible, disclosable, and makes the hourly query
+immediately useful; **(b) only if measurement shows the assumption is wrong often enough to matter**.
+Not decided here.
+
+### What remains unblocked
+
+Nothing further. Step 4 needs finding 2 ruled; steps 3, 5 and case B need finding 1. Slices 1 and 2
+are complete, green, and independently useful: the exposure owner exists, is consumed by nothing yet,
+and changes no behaviour — an additive, provable no-op in the sense AGENTS.md principle 6 requires.
 
 ## 11. Why this is worth doing as architecture
 
