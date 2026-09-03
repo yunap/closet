@@ -231,7 +231,9 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('treat the layer as an add-on to the Current outfit set, not as a standalone outfit'))
   assert.ok(STYLIST_SYSTEM.includes('Never count a layer-only entry such as "wool shell + loafers" as an outfit'))
   assert.ok(STYLIST_SYSTEM.includes("Use 'generate_outfits' only when the user explicitly asks the system to compose fresh visual card options from scratch"))
-  assert.ok(STYLIST_SYSTEM.includes('weatherFit'))
+  // weatherFit removed from the prompt (docs/search-propose-signal-inventory.md) along with the
+  // field it referred to; the replacement fact channel is asserted instead.
+  assert.ok(STYLIST_SYSTEM.includes('thermal facts'))
   assert.ok(STYLIST_SYSTEM.includes('ruleFit'))
   assert.ok(STYLIST_SYSTEM.includes('If an established styling context is provided for this thread'))
   assert.ok(STYLIST_SYSTEM.includes('A fresh explicit request overrides the established context'))
