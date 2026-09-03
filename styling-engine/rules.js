@@ -9,6 +9,11 @@ export { parsePiece }
 import { autoStylingTrustDecision, buildWardrobePieceTruthText, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
+// The thermal band (docs/thermal-comfort-band-spec.md §8 migration). Ranking reads the band rather
+// than `isCold`, which used to decide whether graded thermal reasoning existed at all.
+import { resolveExposureContext } from './exposure.js'
+import { requiredThermalBand, compareThermalFit } from './thermalDemand.js'
+import { garmentWarmthLevel } from './garmentWarmth.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
@@ -172,7 +177,7 @@ export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js
 export { pieceWeatherEvidence, pieceWeatherScores } from './thermal.js'
 import { pieceWeatherScores } from './thermal.js'
 
-export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
+export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure = null } = {}) {
   const adjustments = []
   // fabric_weight/coverage/bareness/insulating-material on a shoe or accessory describe
   // construction (a chunky-heel sandal tagged 'heavy'), not body-thermal insulation — an
@@ -185,7 +190,7 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
     return { score: 0, label: 'neutral', adjustments }
   }
 
-  const { heat, cold } = pieceWeatherScores(piece)
+  const { heat } = pieceWeatherScores(piece)
 
   if (weatherProfile?.isHot && heat !== 0) {
     adjustments.push({
@@ -193,11 +198,39 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
       label: heat > 0 ? 'lightweight - good for heat' : 'heavy - too warm for the heat',
       reason: heat > 0 ? 'hot weather: lightweight fabric' : 'hot weather: heavy fabric',
     })
-  } else if (weatherProfile?.isCold && cold !== 0) {
+  }
+
+  // ── COLD SIDE: migrated to the thermal band (§8 step 2 of thermal-comfort-band-spec.md) ──
+  //
+  // This branch used to be `else if (weatherProfile?.isCold && cold !== 0)`. That made `isCold` the
+  // switch deciding whether graded thermal reasoning existed AT ALL — §6's named defect — so on a
+  // 65/47 day nothing was said about warmth and a down puffer ranked exactly like a light jacket.
+  // That is the Vienna failure, in the ranker.
+  //
+  // The band always has an opinion. Where a slot is known its exposure is passed in; where ranking
+  // happens in a slot-less retrieval context, resolveExposureContext degrades honestly to `unknown`
+  // exertion and mode rather than asserting stillness, and the demand is still graded.
+  const exposureContext = exposure || resolveExposureContext({}, weatherProfile)
+  const demand = requiredThermalBand(exposureContext)
+  const fit = compareThermalFit(garmentWarmthLevel(piece), demand)
+  if (demand.level && fit.fit !== 'unknown') {
+    // RANKING READS `distance`, NOT `fit`. Using fit alone made every garment inside the
+    // uncertainty band score identically — on a 65/47 day a puffer, a cardigan and a light jacket
+    // all came out "adequate", which is the band becoming a giant equivalence class and losing
+    // exactly the preference the migration exists to create. `fit` answers validity under
+    // uncertainty; `distance` answers preference within it (§16.2).
+    //
+    // Overshoot RANKS, it never excludes (§5.5): a wardrobe whose only layer is a heavy coat still
+    // gets dressed. Magnitudes stay modest — this is preference; validity belongs to outfit adequacy.
+    const off = Math.abs(fit.distance ?? 0)
+    const score = Math.max(-8, 4 - 4 * off)
+    const label = off === 0 ? 'well matched to the conditions'
+      : (fit.distance > 0 ? 'warmer than these conditions call for'
+        : 'lighter than these conditions call for')
     adjustments.push({
-      score: cold,
-      label: cold > 0 ? 'heavy - good for cool weather' : 'lightweight - needs layering',
-      reason: cold > 0 ? 'cold weather: heavy fabric' : 'cold weather: lightweight fabric',
+      score,
+      label,
+      reason: `thermal band: demand ${demand.level}${demand.certain ? '' : ' (estimated window)'}, garment ${garmentWarmthLevel(piece)}`,
     })
   }
 
@@ -2215,7 +2248,11 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
   // graded weather-fit assessment, pieceWeatherScores) instead of recomputing fabric_weight/
   // coverage independently; this used to duplicate a slightly different, since-corrected version
   // of that same scoring.
-  if (weatherProfile && (weatherProfile.isHot || weatherProfile.isCold)) {
+  // MIGRATED (§8 step 2). This used to be gated on `isHot || isCold`, so on a 65/47 day neither
+  // fired and piece priority carried no thermal signal at all — §6's defect, one layer up from
+  // weatherFitForPiece. The call is now unconditional: it returns 0 when there is nothing to say,
+  // and the band supplies a graded opinion wherever a temperature exists.
+  if (weatherProfile) {
     score += weatherFitForPiece(piece, weatherProfile).score
   }
 
@@ -3689,27 +3726,43 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     if (pieces.some(p => wardrobeCategoryGroup(p) === 'outerwear')) {
       add(-30, 'hot weather: penalize outerwear/layering')
     }
-  } else if (weather.isCold) {
+  } else {
+    // MIGRATED (§8 step 2). Previously `else if (weather.isCold)`, so between the two temperature
+    // extremes this scored nothing — the 65/47 blind spot at outfit level. Now the band decides:
+    // where it has no opinion, weatherFitForPiece returns 0 and this is inert.
+    const outfitDemand = requiredThermalBand(resolveExposureContext({}, weather))
     for (const piece of pieces) {
       const fit = weatherFitForPiece(piece, weather)
       for (const adjustment of fit.adjustments) {
-        if (adjustment.reason === 'cold weather: lightweight fabric') {
+        // A LIGHT piece undershooting matters on a bottom or a dress and not on a top, because a
+        // top gets layered over. That carve-out used to key on the reason string
+        // 'cold weather: lightweight fabric', which the band migration renamed — so the filter had
+        // silently stopped matching and the penalty was applying to every category. Re-expressed
+        // against the band's own signal rather than against prose.
+        const isUndershoot = String(adjustment.label || '').startsWith('lighter than')
+        if (isUndershoot) {
           const catGroup = wardrobeCategoryGroup(piece)
           if (catGroup !== 'bottom' && catGroup !== 'dress') continue
         }
         add(adjustment.score, adjustment.reason)
       }
     }
-    const hasWarmLayer = pieces.some(piece => {
-      const catGroup = wardrobeCategoryGroup(piece)
-      if (catGroup === 'top' || catGroup === 'outerwear' || catGroup === 'dress') {
-        const weight = pieceFabricWeight(piece)
-        return weight === 'medium' || weight === 'heavy'
+    // The ensemble floor, now conditioned on demand rather than on `isCold`. Reading fabric_weight
+    // directly is left as-is: outfitThermalContribution owns the ensemble properly and wiring it in
+    // belongs to §8 step 3, not to this ranking slice.
+    const demandsWarmth = outfitDemand.level && ['warm', 'very warm'].includes(outfitDemand.level)
+    if (demandsWarmth) {
+      const hasWarmLayer = pieces.some(piece => {
+        const catGroup = wardrobeCategoryGroup(piece)
+        if (catGroup === 'top' || catGroup === 'outerwear' || catGroup === 'dress') {
+          const weight = pieceFabricWeight(piece)
+          return weight === 'medium' || weight === 'heavy'
+        }
+        return false
+      })
+      if (!hasWarmLayer) {
+        add(-14, 'cold weather: no warm layer in ensemble')
       }
-      return false
-    })
-    if (!hasWarmLayer) {
-      add(-14, 'cold weather: no warm layer in ensemble')
     }
   }
 

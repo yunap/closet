@@ -17,6 +17,17 @@ const { db, parsePiece } = await import('../db.js')
 const { seedDemoWardrobe } = await import('../demoWardrobe.js')
 seedDemoWardrobe(db)
 const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, pieceHeatSuitability, pieceWeatherScores, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { validateUserWeather, resolveWeatherContext } = await import('../styling-engine/weather.js')
+
+// Structured weather, as production supplies it after the §18.4 migration. A FLAG-ONLY profile
+// ({ isCold: true } with no temperatures) can no longer produce a thermal ranking — `isCold`
+// deciding whether graded warmth reasoning exists at all is the authority being retired
+// (thermal-comfort-band-spec.md §6, §18). Cold-side assertions use this; the HOT side is left
+// flag-only, since this migration covers cold authority only.
+const structuredCold = (high_f, low_f) => {
+  const r = resolveWeatherContext({ userWeather: validateUserWeather({ high_f, low_f }) })
+  return { ...r.temperature, resolvedWeatherContext: r }
+}
 const { evaluateAutomaticUsePiecePool } = await import('../styling-engine/eligibility.js')
 const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight, pieceWarmthTier, pieceHasOcclusiveFit, pieceFiberBreathability, pieceOcclusiveFitDegree, pieceExposureDegree } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -99,7 +110,7 @@ test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weathe
 })
 
 test('weatherFitForPiece is neutral for shoes and accessories regardless of fabric_weight', () => {
-  const cold = weatherProfileFromContext({ season: 'winter, 30F' })
+  const cold = { ...structuredCold(38, 30), isCold: true }
   assert.equal(cold.isCold, true)
   const hot = weatherProfileFromContext({ season: 'highs 80-90F' })
   assert.equal(hot.isHot, true)
@@ -118,10 +129,22 @@ test('weatherFitForPiece is neutral for shoes and accessories regardless of fabr
     }
   }
 
-  // A garment in the same weight/material tier is unaffected — still scored normally.
+  // A garment in the same weight/material tier is unaffected — still SCORED, where the shoe and the
+  // scarf are not. That is this test's actual claim: the shoes/accessory exemption must not leak
+  // into clothing.
+  //
+  // The assertion is "it is scored", not "it scores positive". Under the band a heavy wool sweater
+  // ALONE at 38/30 sits a level below demand and nets 0 — which is right, you would want a coat —
+  // so a positive-sign assertion would be encoding the retired model, where any warm garment earned
+  // a cold-weather bonus regardless of whether it met the conditions.
   const woolSweater = { id: 4, name: 'wool sweater', category: 'top', fabric_category: 'wool', fabric_weight: 'heavy', fiber_content: ['wool'] }
-  assert.ok(weatherFitForPiece(woolSweater, cold).score > 0)
-  assert.ok(weatherFitForPiece(woolSweater, hot).score < 0)
+  assert.ok(weatherFitForPiece(woolSweater, cold).adjustments.length > 0, 'clothing is scored in the cold')
+  assert.ok(weatherFitForPiece(woolSweater, hot).score < 0, 'and is over-warm for heat')
+
+  // And it IS preferred over a light garment on the same cold day — the ordering survives even
+  // though neither reaches the demand.
+  const lightTee = { id: 5, name: 'cotton tee', category: 'top', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' }
+  assert.ok(weatherFitForPiece(woolSweater, cold).score > weatherFitForPiece(lightTee, cold).score)
 })
 
 test('weatherProfileFromContext treats indoor season as weather-agnostic even with hot mood text', () => {
@@ -1029,7 +1052,12 @@ test('weatherFitForPiece: real-world regression — skin-tight technical legging
   assert.ok(looseTopHot > leggingsHot + 10, 'the loose breathable piece must score well above the occlusive synthetic one')
   // Cold-weather scoring is untouched by fit_on_body/breathability — a light fabric still needs
   // layering in the cold regardless of how close it sits to skin or how it breathes.
-  assert.ok(weatherFitForPiece(leggings, { isCold: true }).score < 0)
+  // Migrated to structured weather (§18.4): a flag-only `{ isCold: true }` now carries no thermal
+  // authority, which is the retired behaviour rather than a regression. The surviving claim is that
+  // a LIGHT garment undershoots a genuinely cold day.
+  assert.ok(weatherFitForPiece(leggings, structuredCold(38, 30)).score < 0)
+  assert.equal(weatherFitForPiece(leggings, { isCold: true }).score, 0,
+    'a flag-only profile carries no thermal authority any more')
 })
 
 test('pieceHeatSuitability: a practical hot/cold/versatile readout built on weatherFitForPiece\'s own scores', () => {
