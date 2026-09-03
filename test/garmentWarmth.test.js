@@ -1,0 +1,99 @@
+// Slice 2 of docs/thermal-comfort-band-spec.md — the ordinal warmth PLACEMENT.
+// No production consumers: this is §8 step 1, a pure function with behaviour unchanged.
+import test from 'node:test'
+import assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import { garmentWarmthLevel, warmthPlacementState, warmthIsRemovable, WARMTH_LEVELS } from '../styling-engine/garmentWarmth.js'
+
+const at = l => WARMTH_LEVELS.indexOf(l)
+const G = {
+  puffer: { category: 'outerwear', fabric_weight: 'heavy', insulating_layer_materials: ['down'], sleeve_length: 'long' },
+  cardigan: { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'knit', fiber_content: ['wool'], sleeve_length: 'long' },
+  unlinedJacket: { category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' },
+  woolShellBare: { category: 'top', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'sleeveless' },
+  woolSweater: { category: 'top', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'long' },
+  tee: { category: 'top', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' },
+  linenDress: { category: 'dress', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless' },
+}
+
+test('gate 1 — unknown material evidence stays unknown WHERE IT CAN MOVE THE LEVEL', () => {
+  // §12.1 row 6, and §13.3 as corrected. The old formula placed 88 medium/heavy garments with no
+  // material evidence, including a knit sweater at `light`.
+  const mediumUnknown = { category: 'outerwear', fabric_weight: 'medium', fiber_content: ['unknown'] }
+  assert.equal(warmthPlacementState(mediumUnknown), 'material_unestablished')
+  assert.equal(garmentWarmthLevel(mediumUnknown), null, 'unknown must never become a level')
+
+  const heavyUnknown = { category: 'outerwear', fabric_weight: 'heavy', fiber_content: ['unknown'] }
+  assert.equal(garmentWarmthLevel(heavyUnknown), null)
+
+  // A LIGHT garment with unknown material is still placeable. RATIFIED by criterion 4b (§15.4):
+  // the verified ASHRAE-55 table shows coverage outweighs substance ~4x, so a light garment's
+  // unstated material can move it about one narrow band while its cut moves it across the scale.
+  // The exception depends on coverage being read — it was NOT defensible under the old formula.
+  assert.equal(warmthPlacementState({ category: 'top', fabric_weight: 'light', fiber_content: ['unknown'] }), 'placeable')
+})
+
+test('gate 2 — coverage is represented, and a bare cut is decisive', () => {
+  // The headline Slice 1 failure: a sleeveless wool shell placed `warm` by a formula that never
+  // read coverage, while the evidence layer scored it -2.
+  assert.ok(at(garmentWarmthLevel(G.woolShellBare)) < at(garmentWarmthLevel(G.woolSweater)),
+    'the same wool, bare, must sit below the long-sleeved version')
+  assert.equal(garmentWarmthLevel(G.woolShellBare), 'light')
+  assert.equal(garmentWarmthLevel(G.linenDress), 'very light')
+})
+
+test('gate 3 — the pinned orderings are supportable', () => {
+  // §12.1 rows 1 and 3 need the representation to make these DISTINGUISHABLE and correctly ordered
+  // by absolute warmth. Which one wins on a given day is the demand mapping's job, not this one's.
+  assert.ok(at(garmentWarmthLevel(G.puffer)) > at(garmentWarmthLevel(G.cardigan)),
+    'a down puffer is absolutely warmer than a knit cardigan')
+  assert.ok(at(garmentWarmthLevel(G.cardigan)) > at(garmentWarmthLevel(G.unlinedJacket)),
+    'and an insulating cardigan above an unlined cotton jacket')
+
+  // Secondary coverage must not outweigh a fabric-weight class. A first attempt gave sleeves, hem
+  // and neckline a full step each, and a medium fleece with a warm collar tied the down puffer.
+  const fleeceCollared = { category: 'outerwear', fabric_weight: 'medium', fabric_category: 'fleece', sleeve_length: 'long', neckline: 'turtleneck' }
+  assert.ok(at(garmentWarmthLevel(fleeceCollared)) < at(garmentWarmthLevel(G.puffer)),
+    'a medium fleece must not reach a heavy down coat on collar and sleeves alone')
+})
+
+test('gate 5 — cold is a diagnostic comparator, never a dependency', () => {
+  // Owner ruling 2026-09-03. Fitting this scale to pieceWeatherScores().cold would promote the
+  // score §10.1 disqualified — no temperature anchor, no meaningful zero — into the oracle.
+  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/garmentWarmth.js'), 'utf8')
+  const live = src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+  for (const banned of ['pieceWeatherScores', 'pieceWeatherEvidence', 'thermal.js']) {
+    assert.ok(!live.some(l => l.includes(banned)),
+      `garmentWarmth.js must not consume ${banned} — it reads the same facts independently`)
+  }
+})
+
+test('base vs removable needs no new field', () => {
+  // §13.4: category=outerwear is the one available bit and is sufficient. needs_base is populated
+  // on 6 of 213 pieces, outerwear_role is deprecated, and no garment-kind column exists.
+  assert.equal(warmthIsRemovable(G.cardigan), true)
+  assert.equal(warmthIsRemovable(G.puffer), true)
+  assert.equal(warmthIsRemovable(G.woolSweater), false, 'a heavy sweater is base warmth, not a layer')
+  assert.equal(warmthIsRemovable(G.tee), false)
+})
+
+test('shoes and accessories stay out of thermal scope', () => {
+  // fabric_weight there describes construction substance, not body insulation — the boundary
+  // pieceWarmthTier already draws.
+  assert.equal(warmthPlacementState({ category: 'shoes', fabric_weight: 'heavy' }), 'out_of_scope')
+  assert.equal(garmentWarmthLevel({ category: 'accessory', fabric_weight: 'heavy' }), null)
+})
+
+test('no substance means no placement', () => {
+  assert.equal(warmthPlacementState({ category: 'top' }), 'no_substance')
+  assert.equal(garmentWarmthLevel({ category: 'top' }), null)
+})
+
+test('this is the supply half only — it states no demand and no threshold', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/garmentWarmth.js'), 'utf8')
+  const live = src.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  for (const banned of ['isCold', 'needsRemovableCoolLayer', 'requiredThermalBand', 'highF', 'lowF']) {
+    assert.ok(!live.includes(banned), `placement must not reference ${banned}`)
+  }
+})

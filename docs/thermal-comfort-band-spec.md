@@ -1,7 +1,9 @@
 # Spec — decomposing `isCold` into a thermal comfort band
 
-**Status:** active — audit and design, 2026-09-01. **No code.** Thresholds deliberately not chosen
-(§6).
+**Status:** active — audit and design. **Revised Slice 1 complete 2026-09-03 (§13): measurement
+only, still no production code.** Thresholds deliberately not chosen (§6), and the demand mapping is
+**not** chosen — §13 found the candidate ordinal scale internally inconsistent, so §12's gate has not
+been cleared. Verifier: `node scratch/measure_warmth_placement.mjs`.
 **Route:** [docs/README.md](README.md). Supersedes the *authority* of `isCold`, `transitIsCold` and
 `isColdSevere`; amends [cold-severity-spec.md](cold-severity-spec.md) and
 [cool-weather-tier-spec.md](cool-weather-tier-spec.md) §8, which required this audit.
@@ -608,3 +610,469 @@ which a new representation must not inherit.
 
 **Only after those orderings hold** does the demand mapping get chosen. That is the point at which
 this stops being "what Fahrenheit threshold fixes this card" and becomes a temperature model.
+
+
+---
+
+## 13. Revised Slice 1 findings — measured 2026-09-03
+
+`node scratch/measure_warmth_placement.mjs` (deterministic, DB copy, no model calls). Run against
+the real wardrobe after PR #304 and #305 landed. **No production code was written.**
+
+§12 asked one question: can Closet's existing garment facts reliably place garments into a small
+ordered warmth representation? **The facts can. The candidate formula cannot.** Those are different
+answers and the distinction is the whole finding.
+
+### 13.1 Coverage — the facts are sufficient
+
+```text
+active pieces 271 · clothing in thermal scope 213
+placed 204/213 = 95.8%      all five levels used, largest holds 39.7%
+unplaced 9                  all thermally_ambiguous
+```
+
+Placement is not blocked by missing data. §12's first question is answered yes.
+
+### 13.2 Consistency — the candidate formula is not usable
+
+`proposedWarmthLevel` (`warmthCalibration.js`) is `fabric_weight` + an insulating-material bonus.
+Compared pairwise against `pieceWeatherScores().cold` — both built from the same stored facts:
+
+```text
+comparable pairs 13,740     agree 12,779 (93.0%)     INVERTED 961 (7.0%)
+```
+
+The inversions are systematic, not noise. **The levels are not monotonic against the evidence:**
+
+```text
+very light  n=74  cold -16 ..  1   median  -8
+light       n=81  cold  -8 .. 10   median   0
+moderate    n=11  cold  14 .. 19   median  14     <-- ABOVE "warm"
+warm        n=30  cold  -2 .. 15   median  12
+very warm   n= 8  cold   6 .. 23   median  22
+```
+
+`moderate` sits above `warm`. A scale whose own level order contradicts the evidence it is built
+from cannot carry a demand comparison.
+
+**The cause is a missing input, not a bad coefficient.** `proposedWarmthLevel` never reads coverage.
+Five sleeveless garments are placed `warm` while scoring `cold <= 2`:
+
+```text
+Cream wool shell               sleeveless   cold  -2   → "warm"
+black crochet lace tank top    sleeveless   cold  -2   → "warm"
+Brown shell                    sleeveless   cold  -2   → "warm"
+textured taupe scoop neck top  sleeveless   cold  -2   → "warm"
+colorblock ribbed knit sheath  sleeveless   cold   2   → "warm"
+```
+
+A wool tank satisfying a `warm` demand is the failure this arc exists to prevent, arriving from the
+supply side instead of the demand side. §10.1 already pointed at the fix: **treat
+`pieceWeatherEvidence`'s structured terms as the reusable input.** They read mass, material,
+coverage, neckline, sleeves and exposure; the ordinal placement must consume them rather than
+re-deriving warmth from two fields.
+
+### 13.3 Pinned case 6 fails today, at scale
+
+> *unknown garment evidence → **unknown**, never "neutral warmth"*
+
+```text
+material verdicts   insulating 38 · non_insulating 4 · unknown 171
+garments with UNKNOWN material evidence that still receive a warmth level: 162
+```
+
+**CORRECTION, same day, before building to this.** The first version of this section called all 162
+a violation — "79% of placements come from `fabric_weight` alone". That conflates *unknown material
+verdict* with *unknown evidence*, and it is too strong. Split by substance:
+
+```text
+light        74     unknown material cannot move a light piece far — placement is well founded,
+                    and warmthCalibration.js's own comment already says exactly this
+medium       78  ┐  unknown material CAN move these several levels
+heavy        10  ┘  → 88 of 204 placements (43%) are genuinely at risk, not 79%
+```
+
+The finding survives at 43% and is sharper for being narrower. Within the at-risk band the failures
+are real and legible — `mustard knit sweater`, medium, no material evidence, placed **`light`**. A
+knit sweater is not light, and nothing in the record says otherwise.
+
+Note what that example actually shows: a **data gap**, not a formula gap. The formula placed it
+correctly given what it was told. Slice 2 must therefore make the at-risk band return `unknown`
+rather than inventing a level for it — §5.6's "unknown is never inadequacy" enforced on the supply
+side — and must not pretend the fix recovers the missing fibre data.
+
+The existing `thermally_ambiguous` state was reaching for this predicate and fires on only 9 pieces,
+because it keys on a `fabric_category` allowlist rather than on the evidence itself.
+
+### 13.4 Layer placement needs no new field
+
+§12's second question — the **minimum** information to distinguish base warmth from removable
+warmth:
+
+```text
+category = outerwear    34 pieces     THE available signal
+needs_base              6 of 213      populated too sparsely to use
+outerwear_role          deprecated    ratified: replace, do not rescue
+garment kind            no column     does not exist
+```
+
+`wardrobeCategoryGroup(p) === 'outerwear'` is one bit and it is sufficient: a cardigan is outerwear
+and removable, a heavy sweater is a top and is base warmth. **Recommendation: add nothing.** The
+minimum is already stored, and pinned case 2 (mild base + removable layer beats a permanently heavy
+base) is expressible with it.
+
+### 13.5 Reference anchors — ordinal, never a unit
+
+§11.8 stands: published insulation data places garments into levels; Closet never claims `clo`.
+Approximate single-garment reference values from the standard tables §11 already cites:
+
+**SUPERSEDED 2026-09-03 by the verified table in §15.** The approximate values first recorded here
+were close at the low and middle of the range and **wrong at the top**: they gave an insulated coat
+`~0.50-0.70` where the verified table's heaviest entry is `0.48`. Read §15, not this paragraph.
+
+Their use was and remains ordinal: a sleeveless top and a thick long-sleeved garment differ by
+roughly 4-5x, which is the separation the placement must reproduce and which the old formula
+collapsed.
+
+### 13.6 Conclusion, and what Slice 2 is
+
+The orderings in §12.1 do **not** hold today: rows 1/3 are supportable (puffer `very warm` cold 23
+vs cardigan `warm` cold 12 are distinguishable and correctly ordered), row 2 is expressible via
+§13.4, row 4 is now suppliable by `exposure.js`'s `exertion`, but **row 6 fails outright** and the
+scale carrying rows 1/3 is internally inconsistent (§13.2).
+
+Per §12, **the demand mapping is not chosen yet.** Slice 2 is:
+
+1. Rebuild ordinal placement on `pieceWeatherEvidence`'s structured terms, so coverage is read.
+2. Return `unknown` when material evidence is unknown and substance alone cannot carry the level —
+   pinned case 6 becomes a test, not an aspiration.
+3. Verify the §13.5 anchors against the primary ASHRAE 55 / ISO 9920 material before any boundary is
+   treated as authoritative. Ordinary calibration work, not a checkpoint.
+4. Only then choose the demand mapping.
+
+#### Slice 2's acceptance gate
+
+Corrected by owner ruling 2026-09-03, and the correction matters more than the rest of this section.
+
+An earlier draft of this gate read *"inversions must approach zero and the level medians must be
+monotonic"* — measured against `pieceWeatherScores().cold`. **That is wrong, and would have quietly
+undone §10.1.** That section concluded `cold` is good evidence and **not** a calibrated warmth unit:
+no temperature anchor, no meaningful zero, weights tuned historically for ranking. A Slice 2 that
+optimises the new representation until it agrees with `cold` promotes the old score to the oracle —
+canonizing the very scale this spec disqualified.
+
+The gate is therefore:
+
+```text
+1. Unknown material evidence stays unknown WHERE IT CAN MOVE THE LEVEL.
+2. Coverage is explicitly represented.
+3. Pinned real-garment orderings hold (§12.1).
+4. Published reference anchors verify BOTH:
+     a. level ordering and boundaries
+     b. the evidence-sufficiency boundary — when fabric_weight alone is enough
+        to place, and when unknown material must force unknown
+5. pieceWeatherScores().cold is a DIAGNOSTIC disagreement signal, never the target to fit.
+```
+
+**Criterion 1 is deliberately narrower than "unknown stays unknown", and this is the canonical
+wording.** The implementation returns `null` for medium/heavy garments with unknown material and
+still places light ones. That exception may well be right — a light garment's unstated material
+cannot lift it far — **but it is a calibration claim, not something Slice 1 proved**, so criterion 4b
+now has to support it before it is ratified. A reader who sees a light unknown garment receive a
+level is looking at an unratified exception, not a broken invariant.
+
+Keep measuring the disagreement — a large one is worth investigating — but zero inversions against
+`cold` is neither necessary nor desirable. If the new representation places a sleeveless wool shell
+at `light`/`moderate` while `cold` says `-2`, that may be evidence **the old score is wrong in a
+different way**, not evidence the new scale should move toward `-2`. Monotonic medians against `cold`
+remain a useful sanity check and are not a definition of success.
+
+`proposedWarmthLevel` has no production consumer, so all of this is behaviour-neutral until the
+migration in §8.
+
+
+---
+
+## 14. Slice 2 — ordinal placement rebuilt (2026-09-03)
+
+`styling-engine/garmentWarmth.js`, `test/garmentWarmth.test.js` (8 tests), verifier
+`node scratch/compare_warmth_placement.mjs`. **No production consumers** — §8 step 1: pure functions
+first, behaviour unchanged. `proposedWarmthLevel` is superseded but untouched, and neither has a
+caller.
+
+### 14.1 The gate, against §13.6's five criteria
+
+```text
+1. unknown stays unknown        PASS   at-risk garments still placed: 0  (old formula: 88)
+   where it can move the level
+2. coverage represented         PASS   sleeveless wool shell: warm -> light
+3. pinned orderings hold        PASS   puffer > cardigan > unlined jacket, on real rows
+4a. anchors verify boundaries   PASS through `warm`; `very warm` accepted as an explicitly
+                                       unanchored ordinal extension (§15.5)
+4b. evidence sufficiency        PASS   coverage outweighs substance ~4x (§15.4)
+5. cold as diagnostic only      OBSERVED, not optimised: 2.7% disagreement (was 7.0%)
+```
+
+**Final acceptance snapshot, after anchor verification** (`compare_warmth_placement.mjs`):
+
+```text
+very light 34 · light 47 · moderate 5 · warm 25 · very warm 5
+placed 116/213 = 54.5%    material_unestablished 97
+```
+
+Anchor verification did not move any boundary, so this snapshot stands as Slice 2's acceptance
+result. **Slice 2 is ratified** — see §15.5 for how the top of the scale is treated.
+
+Criterion 5 is reported, never targeted. The improvement from 7.0% to 2.7% is a **side effect** of
+reading coverage, which `cold` also reads — not evidence of fitting, and not a success metric. A
+future change that raises disagreement while satisfying 1-4 is acceptable.
+
+### 14.2 Placement coverage falls, on purpose
+
+```text
+placed 116/213 = 54.5%      (old: 204/213 = 95.8%)
+material_unestablished 97
+```
+
+**That drop is criterion 1 being enforced, not a regression.** The 97 are medium or heavy garments
+with no material evidence — the band where "there might be something warm in here" can move a
+garment several levels. The old formula gave them a level anyway. Honest coverage of 54.5% is worth
+more to a demand comparison than confident coverage of 95.8%, and §5.6 requires it.
+
+It also names the real remedy: **97 garments are missing fibre data**, and no formula recovers that.
+This is a tagging backlog the placement now makes visible instead of papering over.
+
+### 14.3 Two calibration corrections made during the slice
+
+**Clamped index → boundaries.** The first version used the raw sum as an array index and saturated:
+a wool sweater, a knit cardigan and a down puffer all came out `very warm`, destroying the very
+separation rows 1 and 3 depend on. Inputs span roughly −3..5.5, so five levels need real boundaries.
+
+**Secondary coverage is half-steps.** Sleeves, hem and neckline first got a full step each, and a
+medium fleece with a warm collar then tied a heavy down puffer. Three secondary terms outweighing a
+fabric-weight class contradicts the §13.5 spread. A collar is not worth the difference between
+medium and heavy cloth.
+
+### 14.4 Still open
+
+* **Anchor verification** against primary ASHRAE 55 / ISO 9920 material. The §13.5 table is
+  reproduced from standard tables, not consulted at source; **the boundaries in `levelForRawScore`
+  are provisional until it lands** and must not be treated as authoritative.
+* **Demand mapping is still not chosen.** §12's gate now has 4 of 5 criteria met, with criterion 4
+  outstanding. That is the remaining precondition.
+* **Ensemble contribution** (§9.2) is untouched — this places one garment, not an outfit.
+
+
+---
+
+## 15. Criterion 4 — anchor verification (2026-09-03)
+
+### 15.1 Source, and what "verified" honestly means here
+
+ASHRAE 55 and ISO 9920 are **paywalled standards and were not obtained.** Two attempts at ASHRAE's
+own published addendum PDFs returned unusable renderings.
+
+What was obtained instead: the garment table encoded in the **CBE Thermal Comfort Tool**
+(`ElsevierSoftwareX/SOFTX_2020_242`, `static/js/global.js`), an ASHRAE-55-compliant reference
+implementation from UC Berkeley published alongside a peer-reviewed SoftwareX paper. **56 garment
+entries**, extracted programmatically rather than transcribed.
+
+That is a *compliant implementation*, not the standard itself. It is checkable, citable and vastly
+better than an unattributed web table — but the distinction should not be lost: **if a boundary ever
+turns on an exact value, buy the standard.** That is a cost decision, not an engineering one.
+
+### 15.2 The verified table (extract)
+
+```text
+0.08  T-shirt                      0.25  Long sleeve shirt (thin)
+0.10  Sleeveless vest (thin)       0.28  Sweatpants
+0.12  Sleeveless scoop-neck blouse 0.34  Long-sleeve sweat shirt
+0.14  Thin skirt                   0.36  Long sleeve shirt (thick)
+0.15  Thin trousers                0.36  Single-breasted coat (thin)
+0.17  Sleeveless vest (thick)      0.42  Double-breasted coat (thin)
+0.23  Thick skirt                  0.44  Single-breasted coat (thick)
+0.24  Thick trousers               0.48  Double-breasted coat (thick)
+```
+
+### 15.3 Criterion 4a — level ordering: PARTIALLY VERIFIED
+
+The low and middle of the scale are confirmed. The ordering
+`t-shirt < thin trousers < long-sleeve shirt < thin coat < thick coat` holds, and the 4-5x spread
+§13.5 claimed is real (`0.08` → `0.36`).
+
+**The top of Closet's scale is NOT covered.** The heaviest entry is a `0.48` double-breasted coat.
+There is no down parka, no shearling, no filled outerwear — ASHRAE 55 is an **indoor comfort**
+standard, exactly as §11.1 said of IREQ at the other end. So `very warm` (the puffers, the
+shearling jacket) sits **above everything this source can anchor**, and its boundary remains
+unverified. Recorded as a known limit, not papered over.
+
+### 15.4 Criterion 4b — evidence sufficiency: VERIFIED, with a dependency
+
+The question: is "light substance alone is enough to place, despite unknown material" defensible?
+
+```text
+SUBSTANCE axis — same garment, thin -> thick:      mean +0.089   (range +0.04 .. +0.14)
+COVERAGE axis — thin garments across types:        0.08 .. 0.36 = 4.5x
+```
+
+**Coverage dominates substance by roughly 4x.** So a light garment's unstated material can move it
+about one narrow band, while its cut moves it across most of the scale. The exception is defensible
+— **but only because Slice 2 now reads coverage.** Under the old formula, which placed on substance
+alone, light-unknown placement was *not* defensible, and that is worth stating plainly: criterion 4b
+passes as a consequence of the §14 fix, not independently of it.
+
+The physical argument does the rest: a `light` fabric_weight rules out substantial concealed
+insulation by construction. You cannot have a light garment with a down fill.
+
+**Ratified:** criterion 1's narrower wording stands, and the light-unknown exception is no longer
+provisional. The `PROVISIONAL` markers in `garmentWarmth.js` and `test/garmentWarmth.test.js` can be
+lifted for 4b — **but not for the `very warm` boundary**, which §15.3 leaves unanchored.
+
+
+### 15.5 `very warm` — an explicitly unanchored ordinal extension
+
+Owner ruling 2026-09-03, clearing Slice 2. The top bucket is accepted as unanchored rather than
+blocked on obtaining a cold-weather standard.
+
+```text
+very warm
+  = ordinal extension ABOVE the verified reference range
+  = reserved for garments with strong positive insulation evidence
+    AND sufficient substance/coverage
+  = NOT assigned a clo value
+  = boundary NOT claimed to be ASHRAE-calibrated
+```
+
+Closet never needs to claim *"this puffer corresponds to X clo."* It needs only the much weaker and
+fully supported statement: **this garment is materially warmer than the highest class our indoor
+anchors cover.** Heavy construction plus positive insulating-layer evidence is a qualitatively
+different state from the cardigans, fleeces and ordinary coats below it, and that is enough for an
+ordinal overflow bucket.
+
+Both alternatives are worse. Collapsing `very warm` into `warm` destroys exactly the puffer/cardigan
+separation pinned rows 1 and 3 depend on. Inventing a numeric anchor manufactures scientific
+precision the source does not support — §11.8's own prohibition, arriving at the top of the scale.
+
+**Corresponding constraint on the demand side.** The demand mapping must treat `very warm` as a
+**bounded ordinal ceiling**. It may say:
+
+```text
+demand = moderate · puffer = very warm   ->  substantial overshoot
+demand = very warm · puffer = candidate, cardigan = undershoot
+```
+
+It may **not** invent `very warm+`, an "extreme" tier, or numeric distances above the verified
+range. No granularity above the anchors until there is product evidence that it is needed.
+
+
+---
+
+## 16. Slice 3 — the demand mapping (2026-09-03)
+
+`styling-engine/thermalDemand.js`, `test/thermalDemand.test.js` (10 tests). **No production
+consumers** — still §8 step 1. Authorized once §15.5 cleared the `very warm` question.
+
+### 16.1 The pinned cases now hold end to end
+
+Run through `exposure.js` → `requiredThermalBand` → `compareThermalFit`:
+
+```text
+row 1  65/45 museum, walking     puffer OVERSHOOT (dist 2) · cardigan adequate (dist 1)
+row 3  30/20 outdoors, sedentary puffer adequate (dist 0)  · cardigan adequate (dist -1)
+row 4  40/28  none -> very warm · walking -> warm · hiking -> moderate
+row 5  overshoot ranks, never excludes
+row 6  unknown garment -> { fit: 'unknown' }, never neutral
+```
+
+**Rows 1 and 3 reverse on conditions alone**, which §12.1 called the decisive pair. The Vienna
+defect is resolved at the model level: on a 65/45 museum day the puffer is out-ranked, not excluded.
+
+### 16.2 Two design points worth keeping
+
+**Membership cannot express preference.** A first version returned only `fit`, and on a genuinely
+cold day the uncertainty band spans `moderate..very warm`, so a cardigan and a puffer were both
+`adequate` and row 3's ordering vanished. `compareThermalFit` now also reports `distance` from the
+band's **target**, not its edges: ranking reads `distance`, gating reads `fit`.
+
+**The indoor base is not the outdoor demand.** A first version gave a heated restaurant's base the
+outdoor demand — the Vienna error inverted, over-dressing the base instead of the outing. An indoor
+destination is an indoor-comfort problem, which is exactly the band the anchors DO cover; the
+transit window keeps its own demand and is returned separately so it cannot be blended away.
+
+### 16.3 The thresholds are a stated calibration
+
+`SEDENTARY_DEMAND_F` is not derived from a comfort equation. §11.7 refuses that apparatus, so there
+is none to derive from, and inventing one is the fake precision §11.8 prohibits. The boundaries were
+chosen so the pinned cases hold, and are written as a plain table so they can be argued with.
+Exertion shifts are ordinal steps, never a metabolic rate.
+
+### 16.4 What is still not built
+
+* **Ensemble contribution (§9.2).** This compares ONE garment against a demand. Pinned row 2 —
+  a mild base plus a removable layer beating a permanently heavy base — needs outfit-level
+  aggregation and is the one pinned case still unmet.
+* **The migration (§8 steps 2-6).** Nothing consumes any of this. `thermal_demand` is still 20.
+* **`isWeatherFiltered`** (§8.1) still holds binary authority.
+
+
+---
+
+## 17. Slice 4 — outfit thermal contribution (2026-09-03)
+
+`styling-engine/outfitThermalContribution.js`, `test/outfitThermalContribution.test.js` (6 tests,
+one per gate criterion). **No production consumers.** §9.2's "nothing owns it" is now answered, and
+the research/design core of this spec is complete.
+
+### 17.1 The gate
+
+```text
+1. row 2 passes                       PASS  mild base + cardigan adaptable; heavy base + puffer not
+2. base vs removable distinguishable  PASS  returned as separate fields, never blended
+3. ordinal levels not summed          PASS  bounded one-step combination; result is a LEVEL
+4. unknown preserved, not zeroed      PASS  unplaceable base -> null + unknown.base, never a level
+5. puffer usable as the only layer    PASS  overshoot ranks, never excludes
+6. no non-thermal semantics absorbed  PASS  source-level ratchet on rain/footwear/capability
+```
+
+### 17.2 Row 2 is not a total — it is range coverage
+
+The reframing that made it tractable. *"A mild base plus a removable layer beats a permanently warm
+base"* is not a claim that one outfit is warmer. It is that the layered outfit answers **both ends**
+of a variable exposure — the cold end with the layer on, the warm end with it off — while a
+permanently heavy outfit answers only the cold end and is stranded overshooting the warm one.
+
+Comparing totals cannot express that. Comparing range coverage can, **and needs no arithmetic at
+all.** `outfitCoversRange` reports both ends separately and never returns a verdict.
+
+### 17.3 What the anchors licensed, and what they did not
+
+The ensemble entries measure layering directly:
+
+```text
+Trousers, long-sleeve shirt            0.61
+Jacket, Trousers, long-sleeve shirt    0.96      adding a jacket: +0.35
+Single-breasted coat (thin), alone     0.36      ~= its own garment value
+```
+
+Layering is approximately additive **in clo** — §11.4 already recorded ASHRAE permitting that as a
+practical estimate. It is **not** additive in ordinal level, because the levels span different clo
+widths. What this licenses is a bounded ordinal step: a real second layer moves the outfit one level
+above the warmer component. Never a sum, never unbounded.
+
+**The step turns on the WEAKER component**, and the clo evidence is why: trousers+long-sleeve (0.61)
+plus a jacket reaches 0.96 because both are substantial, while a thin tee (0.08) under the same
+jacket reaches 0.44 — barely above the jacket alone. A first version keyed on the removable layer
+alone and pushed a light top under a knit cardigan to `very warm`: puffer territory, from a cardigan.
+
+### 17.4 The design core is complete
+
+```text
+exposure.js                    conditions encountered + exertion + mode      SHIPPED (#305)
+garmentWarmth.js               per-garment ordinal placement                 §14
+thermalDemand.js               requiredThermalBand + compareThermalFit       §16
+outfitThermalContribution.js   base / removable / withLayer / unknown        §17
+```
+
+All five §12.1 pinned rows now hold. **Nothing consumes any of it** — `thermal_demand` is still 20,
+and `isWeatherFiltered` still holds binary authority (§8.1). What remains is the §8 migration, which
+is where user-visible behaviour changes for the first time.
