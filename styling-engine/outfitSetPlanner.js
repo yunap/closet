@@ -2591,6 +2591,36 @@ export function slotRequiresOperationalEase(slot = {}) {
 //
 // EVIDENCE, NOT A GATE (§19.1). Every allowed piece stays in the roster; a supply-poor slot keeps
 // whatever it has. This only tells the model what it is choosing between.
+// CALENDAR SEASON — a separate axis from thermal, deliberately (exposure-conditions-spec §6).
+//
+// Live QA (thread_1788422794114): after the puffer was fixed, five outfits of five used a
+// `season: warm` bottom on an October trip. Every piece carries the tag and nothing read it.
+//
+// "October at 70°F does not become summer." This asks what is contextually right for the time of
+// year, NOT what is warm enough — and it must never be derived from the thermal band, which is why
+// it reads `piece.season` and the calendar directly and touches no thermal value.
+//
+// Advisory, and deliberately one-directional: an out-of-season piece is flagged, an in-season one
+// earns nothing. A warm-season linen shirt on an unusually hot October day is still wearable — the
+// owner's ruling — so this marks it rather than removing it.
+const OUT_OF_SEASON = {
+  fall: 'warm',
+  winter: 'warm',
+  summer: 'cool',
+}
+
+export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
+  const season = String(piece?.season || '').toLowerCase().trim()
+  const calendar = String(calendarSeason || '').toLowerCase().trim()
+  if (!season || season === 'year-round' || !calendar) return { tier: 'neutral', score: 0, reason: '' }
+  if (OUT_OF_SEASON[calendar] !== season) return { tier: 'neutral', score: 0, reason: '' }
+  return {
+    tier: 'discouraged',
+    score: -6,
+    reason: `tagged ${season}-season clothing; this is a ${calendar} trip`,
+  }
+}
+
 // "how much warmth do these conditions call for", as a short phrase the model can act on.
 export function slotThermalDemandLabel(exposure = null) {
   const demand = requiredThermalBand(exposure)
@@ -2599,11 +2629,22 @@ export function slotThermalDemandLabel(exposure = null) {
 }
 
 // Evidence, never a gate: every allowed piece stays, only the order changes.
-function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null) {
+//
+// Ordering combines thermal fit and calendar season; the two ADVISORIES stay separate, because they
+// answer different questions and §6 forbids deriving one from the other. Mixing them here is a
+// ranking heuristic, not a semantic merge — the model still receives both verdicts independently
+// and can override either. Without this an out-of-season pant that happens to suit the temperature
+// still led the roster, which is exactly what the live thread produced.
+function rosterFitScore(piece, weatherProfile, exposure, calendarSeason) {
+  return weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {}).score
+    + seasonFitPieceAdvisory(piece, calendarSeason).score
+}
+
+function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null, calendarSeason = '') {
   if (!weatherProfile) return pieces
   return [...pieces].sort((a, b) =>
-    weatherFitForPiece(b, weatherProfile, exposure ? { exposure } : {}).score -
-    weatherFitForPiece(a, weatherProfile, exposure ? { exposure } : {}).score)
+    rosterFitScore(b, weatherProfile, exposure, calendarSeason) -
+    rosterFitScore(a, weatherProfile, exposure, calendarSeason))
 }
 
 export function thermalFitPieceAdvisory(piece = {}, weatherProfile = {}, exposure = null) {
@@ -2692,11 +2733,12 @@ export function operationalEasePieceAdvisory(piece = {}, operationalEase = false
   return { tier: 'workable', score: -2, reason: 'heel height is unknown for an operationally easy use case' }
 }
 
-function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null } = {}) {
+function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '' } = {}) {
   return {
     id: Number(piece?.id),
     extreme_heat: extremeHeatPieceAdvisory(piece, weatherProfile),
     thermal_fit: thermalFitPieceAdvisory(piece, weatherProfile, exposure),
+    season_fit: seasonFitPieceAdvisory(piece, calendarSeason),
     movement: activeMovementPieceAdvisory(piece, activeMovement),
     operational_ease: operationalEasePieceAdvisory(piece, operationalEase)
   }
@@ -3562,7 +3604,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // ONE order for both lists. A first version ordered the ids and left the assessments in the
     // original order, so assessment[i] no longer described allowed_piece_ids[i] — a silent
     // mismatch in the very payload this fix exists to make trustworthy.
-    const thermallyOrdered = orderByThermalFit(shownPieces, weatherProfile, slotExposure)
+    const thermallyOrdered = orderByThermalFit(shownPieces, weatherProfile, slotExposure, slot.stylingContext.calendarSeason)
     workbenchSlots.push({
       id: slot.id,
       label: slot.label,
@@ -3581,7 +3623,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // how a down puffer satisfied it on a 65/48 day, seven times.
       thermal_demand: slotThermalDemandLabel(slotExposure),
       allowed_piece_ids: thermallyOrdered.map(piece => Number(piece.id)).filter(Boolean),
-      piece_assessments: thermallyOrdered.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure })),
+      calendar_season: slot.stylingContext.calendarSeason || '',
+      piece_assessments: thermallyOrdered.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
       coverage_report: workbenchCoverage,
     })

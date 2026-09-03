@@ -80,3 +80,45 @@ test('the layer requirement no longer says only that a layer is needed', () => {
   // activity, which adequacy does not receive. Two numbers that can disagree are worse than one.
   assert.ok(!/roughly \$\{demand\.level\}/.test(src))
 })
+
+// ── Calendar season — a separate axis (exposure-conditions-spec §6) ──────────────────────────
+const { seasonFitPieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
+
+test('a warm-season piece is flagged on an October trip', () => {
+  // Live QA (thread_1788422794114): five outfits of five used a season=warm bottom in October.
+  // Every piece carries the tag; nothing read it.
+  const pant = { name: 'textured mauve relaxed pants', season: 'warm' }
+  const a = seasonFitPieceAdvisory(pant, 'fall')
+  assert.equal(a.tier, 'discouraged')
+  assert.match(a.reason, /warm-season/)
+})
+
+test('season is one-directional and never a gate', () => {
+  // An out-of-season piece is flagged; an in-season one earns nothing. A warm-season linen shirt on
+  // an unusually hot October day stays wearable — it is marked, not removed.
+  assert.equal(seasonFitPieceAdvisory({ season: 'cool' }, 'fall').tier, 'neutral')
+  assert.equal(seasonFitPieceAdvisory({ season: 'year-round' }, 'fall').tier, 'neutral')
+  assert.equal(seasonFitPieceAdvisory({ season: 'warm' }, 'summer').tier, 'neutral')
+  assert.equal(seasonFitPieceAdvisory({ season: 'cool' }, 'summer').tier, 'discouraged')
+})
+
+test('season is NOT derived from the thermal band', () => {
+  // §6's boundary: October at 70°F does not become summer. This must read the calendar and the
+  // piece's own tag, never a demand level.
+  assert.equal(seasonFitPieceAdvisory({ season: 'warm' }, 'fall').tier,
+    seasonFitPieceAdvisory({ season: 'warm' }, 'winter').tier,
+    'the verdict does not change with how cold it is')
+  assert.equal(seasonFitPieceAdvisory({ season: 'warm' }, '').tier, 'neutral', 'no calendar, no claim')
+})
+
+test('the two advisories stay separate in the payload', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
+  assert.match(src, /thermal_fit: thermalFitPieceAdvisory/)
+  assert.match(src, /season_fit: seasonFitPieceAdvisory/)
+  // seasonFitPieceAdvisory must not consult any thermal value.
+  const fn = src.slice(src.indexOf('export function seasonFitPieceAdvisory'))
+    .slice(0, src.slice(src.indexOf('export function seasonFitPieceAdvisory')).indexOf('\n}\n'))
+  for (const banned of ['requiredThermalBand', 'weatherFitForPiece', 'garmentWarmthLevel', 'weatherProfile']) {
+    assert.ok(!fn.includes(banned), `season must not read ${banned}`)
+  }
+})
