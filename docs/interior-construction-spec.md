@@ -41,6 +41,30 @@ verdict.
 all remain `insulating`. The verdict is pinned to face material and fill; construction moves warmth
 only. Cases I and J exist to keep it that way.
 
+**4. Footwear follows the same material-role ownership as outerwear.** Found in review of this
+change, not before it: both tagger schemas still told the model to record a warm boot lining in
+`fiber_content` and called that field *"the only place a boot's warmth is recorded"* — the same
+role confusion being fixed for coats, left alive for shoes, and directly contradicting
+`insulating_layer_materials`' own contract, which names *"a warm boot's pile/shearling lining"*.
+
+```text
+upper / face material         → fiber_content / fabric_category
+warm fleece/shearling lining  → insulating_layer_materials
+ordinary lining               → no thermal-material claim
+```
+
+The warmth signal survives the move: a non-empty layer settles `thermalMaterialVerdict`, so a lined
+boot is still excluded from hot weather via `hotWeatherInsulationReason`. **Existing rows were not
+migrated** — two active shoes still carry a lining fibre in `fiber_content`, and the standing rule
+is to fix the representation and retag once afterwards rather than bulk-inferring.
+
+**Writer authority is enforced at the boundary, in both photo-derived producers.**
+`/extract-pieces` normalized `fiber_content` and `interior_construction` but not
+`insulating_layer_materials`, so that second producer could emit `[]` — the human-only "there is no
+insulating layer" claim — and have it survive. It is now normalized at `source: 'tagger'` like the
+main path, with a test asserting the conversion end to end rather than asserting the call is
+present. Prompt compliance is not a writer rule.
+
 **One canonical owner, checked by ratchet.** `INTERIOR_CONSTRUCTION_VALUES`, its writer rules,
 owner-facing labels and editor options all originate in `fiberTaxonomy.js`; the writer rules are
 *derived* from the value list rather than re-listed, and the editor projects the options rather than

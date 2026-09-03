@@ -61,6 +61,13 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper — knit and mesh are both permeable, pick knit when the upper is a continuous knitted fabric rather than an open perforated mesh)|woven (use woven for raffia/straw/other woven shoe materials, NOT for a knitted upper)|synthetic|textile|rubber|other'
       )
     }
+    // 2026-09-02 CORRECTION: the 2026-09-01 version of this delta routed a warm boot lining into
+    // fiber_content and called it "the only place a boot's warmth is recorded". That contradicted
+    // the material-role contract, where insulating_layer_materials owns a warm boot's pile/shearling
+    // lining and fiber_content describes the FACE — the same role confusion that was being fixed for
+    // coats, left alive for shoes. Footwear now follows the same ownership rule; the warmth signal
+    // survives the move, since a non-empty layer settles thermalMaterialVerdict.
+    //
     // 2026-09-01: footwear lining. `pieceHasInsulatingMaterial` is read BEFORE the shoe/accessory
     // exemption in hotWeatherInsulationReason, so a boot whose lining is recorded is ALREADY excluded
     // correctly in hot weather with no code change — but nothing ever recorded linings, so a
@@ -69,7 +76,7 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept.",
-        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible — a shearling or fleece collar, a visibly fuzzy or quilted interior, a pile lining at the opening. Record it as 'shearling', 'fleece', 'wool', or 'down' as appropriate — 'shearling' is its own value, not a synonym for fleece. This is the only place a boot's warmth is recorded: fabric_weight is null for shoes and fabric_category describes the UPPER, so a lined winter boot and a thin flat are otherwise identical to the engine. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
+        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR this field is the UPPER/face material ONLY. A warm interior — a shearling or fleece collar, a visibly fuzzy or pile lining at the opening — is an INSULATING LAYER and belongs in insulating_layer_materials, not here; recording it here would make the lining read as part of the upper, which is what fiber_content describes. This is the same ownership rule that applies to a coat's fill. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
       )
     }
     // 2026-09-02: `shearling` becomes a canonical insulating fibre value. It already existed as a

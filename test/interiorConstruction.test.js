@@ -6,13 +6,24 @@
 import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-import { thermalMaterialVerdict, interiorConstruction } from '../styling-engine/attributes.js'
-import { pieceWeatherScores, INTERIOR_CONSTRUCTION_DEGREE_KEYS } from '../styling-engine/thermal.js'
-import {
+
+// routes/ai.js reaches db.js transitively, so this file must isolate its database before importing
+// it — otherwise the suite runs db.js migrations against the owner's real wardrobe.db. Caught by
+// test/hermeticity_guard.test.js, which is exactly what that ratchet is for.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-interior-construction-tests-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
+const { thermalMaterialVerdict, interiorConstruction } = await import('../styling-engine/attributes.js')
+const { pieceWeatherScores, INTERIOR_CONSTRUCTION_DEGREE_KEYS } = await import('../styling-engine/thermal.js')
+const { applyFiberWriterContract } = await import('../routes/ai.js')
+const {
   INTERIOR_CONSTRUCTION_VALUES, INTERIOR_CONSTRUCTION_WRITERS,
   INTERIOR_CONSTRUCTION_LABELS, INTERIOR_CONSTRUCTION_OPTIONS,
-} from '../styling-engine/fiberTaxonomy.js'
+} = await import('../styling-engine/fiberTaxonomy.js')
 
 const OUTER = { category: 'outerwear', fabric_weight: 'medium', sleeve_length: 'long' }
 const cold = piece => pieceWeatherScores(piece).cold
@@ -209,4 +220,72 @@ test('one canonical vocabulary — no surface keeps its own construction list', 
     [...INTERIOR_CONSTRUCTION_VALUES].sort(), 'every stored value must be offerable in the editor')
   assert.deepEqual([...INTERIOR_CONSTRUCTION_DEGREE_KEYS].sort(),
     [...INTERIOR_CONSTRUCTION_VALUES].sort(), 'every stored value must have a thermal degree')
+})
+
+test('/extract-pieces enforces the insulation writer rule at the boundary, not by prompt compliance', () => {
+  // The second photo-derived producer. It normalized fiber_content and interior_construction but
+  // NOT insulating_layer_materials, so a model emitting [] there could assert "this garment has no
+  // insulating layer" — a claim only a person holding the garment can make, and the exact bypass
+  // normalizeInsulatingLayerMaterials exists to prevent. Enforced at the boundary because prompt
+  // compliance is not a guarantee.
+  const ai = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const fn = ai.slice(ai.indexOf('function applyFiberWriterContract'))
+    .slice(0, ai.slice(ai.indexOf('function applyFiberWriterContract')).indexOf('\n}\n') + 3)
+
+  assert.match(fn, /normalizeInsulatingLayerMaterials\(\s*\n?\s*piece\.insulating_layer_materials,\s*\n?\s*\{ source: 'tagger' \}/,
+    '/extract-pieces must downgrade a tagger-emitted [] to null, as the main tagging path does')
+  assert.match(fn, /normalizeInteriorConstruction\(piece\.interior_construction, \{ source: 'tagger' \}\)/)
+
+  // And the retired field leaves no stale contract prose behind.
+  const preamble = ai.slice(ai.indexOf('// ── AI Tagging endpoints'), ai.indexOf('function applyFiberWriterContract'))
+  assert.ok(!/completeness/i.test(preamble),
+    'the writer-contract comment still describes the retired completeness field')
+})
+
+test('/extract-pieces actually downgrades a tagger [] to null, end to end', () => {
+  // The behavioural half of the boundary test above. Asserting the call is present proves wiring;
+  // this proves the result.
+  const out = applyFiberWriterContract({
+    pieces: [
+      { name: 'quilted coat', fiber_content: ['Polyester'], insulating_layer_materials: [] },
+      { name: 'puffer', fiber_content: ['nylon'], insulating_layer_materials: ['down'] },
+      { name: 'reversible jacket', fiber_content: ['cotton'], interior_construction: 'unlined' },
+      { name: 'plain tee', fiber_content: ['cotton'] },
+    ],
+  })
+  const [coat, puffer, reversible, tee] = out.pieces
+
+  assert.equal(coat.insulating_layer_materials, null,
+    'a photo cannot establish that a garment has NO insulating layer — [] must not survive')
+  assert.deepEqual(puffer.insulating_layer_materials, ['down'],
+    'a positive observation is kept: the asymmetry is the point')
+  assert.equal(reversible.interior_construction, 'unknown',
+    'and a tagger-asserted unlined is downgraded the same way')
+  assert.equal(tee.insulating_layer_materials, null, 'an unanswered field stays unrecorded')
+  assert.deepEqual(coat.fiber_content, ['polyester'], 'fibre normalization still applies')
+})
+
+test('footwear obeys the same material-role ownership as outerwear', () => {
+  // The role-confusion bug, still alive for shoes after the coat fix: both tagger schemas told the
+  // model that a warm boot lining goes in fiber_content and called it "the only place a boot's
+  // warmth is recorded". That contradicts the canonical contract, where insulating_layer_materials
+  // owns "a warm boot's pile/shearling lining" and fiber_content describes the FACE.
+  const prompts = fs.readFileSync(path.join(process.cwd(), 'styling-engine/prompts.js'), 'utf8')
+  const ai = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+
+  for (const [name, src] of Object.entries({ 'prompts.js': prompts, 'routes/ai.js': ai })) {
+    assert.ok(!/only place a boot's warmth is recorded/.test(src),
+      `${name} still claims fiber_content owns footwear warmth`)
+    assert.ok(!/include the LINING\/interior material alongside the upper/.test(src),
+      `${name} still routes a warm boot lining into the face-material field`)
+    assert.match(src, /For FOOTWEAR this (field )?is the UPPER\/face material/,
+      `${name} must state the face-material rule for footwear`)
+  }
+
+  // The behavioural half: the warmth signal survives the move, so a lined boot is still excluded
+  // from hot weather — via the layer field rather than the face list.
+  const linedBoot = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather'], insulating_layer_materials: ['shearling'] }
+  const thinFlat = { category: 'shoes', fabric_category: 'leather', fiber_content: ['leather'] }
+  assert.equal(thermalMaterialVerdict(linedBoot), 'insulating')
+  assert.equal(thermalMaterialVerdict(thinFlat), 'unknown')
 })

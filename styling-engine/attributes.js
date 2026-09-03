@@ -611,9 +611,11 @@ const ABSORBENT_FOOTWEAR_MATERIALS = ['canvas', 'suede', 'nubuck', 'mesh', 'knit
 
 export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return false
-  // UPPER ONLY — deliberately does NOT read fiber_content. As of 2026-09-01 fiber_content also
-  // carries footwear LININGS (the tagger records a shearling/fleece interior there, because
-  // fabric_weight is null for shoes and fabric_category describes the upper). Reading it here would
+  // UPPER ONLY — deliberately does NOT read fiber_content. Between 2026-09-01 and 2026-09-02 the
+  // tagger was told to record footwear LININGS there; that guidance was wrong under the material-
+  // role contract and is gone, so new tags put a warm boot lining in insulating_layer_materials.
+  // EXISTING ROWS STILL CARRY LININGS IN fiber_content and were deliberately not migrated (the
+  // spec's rule is: fix the representation, retag once afterwards). Reading it here would
   // mean a shearling-lined leather boot — the single best rain boot most wardrobes own — reads as
   // "absorbent" because of a lining the weather never touches. Latent today, since no absorbent
   // FIBER is in the list; removed before the next widening arms it. Verified against the reference
