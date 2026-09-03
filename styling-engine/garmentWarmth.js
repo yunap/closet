@@ -48,6 +48,14 @@ export function warmthPlacementState(piece = {}) {
   // and refusing to place it buys nothing. On a medium or heavy one it can move it several levels —
   // 88 of 204 placements sat in that band, including a knit sweater placed `light`.
   //
+  // RATIFIED 2026-09-03 by criterion 4b (§15.4). The verified ASHRAE-55 garment table shows coverage
+  // outweighs substance by ~4x: the thin->thick step averages +0.089 clo, while thin garments span
+  // 0.08..0.36 across types. A light garment's unstated material can move it about one narrow band;
+  // its cut moves it across most of the scale.
+  //
+  // The exception holds ONLY because this file now reads coverage. Under the old substance-only
+  // formula it did not, and if coverageAdjustment is ever weakened this must be re-derived.
+  //
   // This replaces the old THERMALLY_UNCHARACTERIZED_FABRIC_CATEGORIES allowlist, which reached for
   // the same predicate through fabric_category and caught 9 pieces instead of 88.
   if (substance >= 1 && thermalMaterialVerdict(piece) === 'unknown') return 'material_unestablished'
@@ -80,11 +88,15 @@ function coverageAdjustment(piece) {
 // the puffer-vs-cardigan separation pinned rows 1 and 3 depend on. The inputs span roughly -3..7
 // (substance -1..2, insulating 0..2, coverage -2..3), so five levels need real boundaries.
 //
-// Placed against the §13.5 reference ordering rather than against `cold`: a bare top sits far below
-// a long-sleeved one of the same fabric, an insulated coat sits clearly above a knit cardigan, and
-// the gap between an uninsulated and an insulated garment of equal substance is the widest single
-// step. Pending primary-source anchor verification (§12 Slice 2 step 3) these boundaries are
-// provisional and must not be treated as authoritative.
+// Placed against the verified reference ordering (§15.2) rather than against `cold`: a bare top sits
+// far below a long-sleeved one of the same fabric, an insulated coat clearly above a knit cardigan.
+//
+// VERIFIED for the low and middle of the scale (§15.3): t-shirt 0.08 < thin trousers 0.15 <
+// long-sleeve shirt 0.25 < thin coat 0.36 < thick coat 0.48.
+//
+// THE `very warm` BOUNDARY IS STILL UNANCHORED. ASHRAE 55 is an indoor-comfort standard and its
+// heaviest entry is a 0.48 double-breasted coat — no down parka, no shearling, no filled outerwear.
+// Closet's `very warm` sits above everything that source can anchor. Do not treat it as calibrated.
 function levelForRawScore(raw) {
   if (raw <= -1) return 'very light'
   if (raw <= 1) return 'light'

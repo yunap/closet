@@ -17,7 +17,7 @@ const G = {
   linenDress: { category: 'dress', fabric_weight: 'light', fiber_content: ['linen'], sleeve_length: 'sleeveless' },
 }
 
-test('gate 1 — unknown material evidence stays unknown where it can move the level', () => {
+test('gate 1 — unknown material evidence stays unknown WHERE IT CAN MOVE THE LEVEL', () => {
   // §12.1 row 6, and §13.3 as corrected. The old formula placed 88 medium/heavy garments with no
   // material evidence, including a knit sweater at `light`.
   const mediumUnknown = { category: 'outerwear', fabric_weight: 'medium', fiber_content: ['unknown'] }
@@ -27,9 +27,10 @@ test('gate 1 — unknown material evidence stays unknown where it can move the l
   const heavyUnknown = { category: 'outerwear', fabric_weight: 'heavy', fiber_content: ['unknown'] }
   assert.equal(garmentWarmthLevel(heavyUnknown), null)
 
-  // But a LIGHT garment with unknown material is still placeable: whatever is unstated cannot lift
-  // it far enough to matter, and refusing to place it buys nothing. Over-applying the rule was the
-  // error in this section's first draft.
+  // A LIGHT garment with unknown material is still placeable. RATIFIED by criterion 4b (§15.4):
+  // the verified ASHRAE-55 table shows coverage outweighs substance ~4x, so a light garment's
+  // unstated material can move it about one narrow band while its cut moves it across the scale.
+  // The exception depends on coverage being read — it was NOT defensible under the old formula.
   assert.equal(warmthPlacementState({ category: 'top', fabric_weight: 'light', fiber_content: ['unknown'] }), 'placeable')
 })
 

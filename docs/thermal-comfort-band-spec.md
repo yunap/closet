@@ -726,18 +726,13 @@ base) is expressible with it.
 §11.8 stands: published insulation data places garments into levels; Closet never claims `clo`.
 Approximate single-garment reference values from the standard tables §11 already cites:
 
-```text
-sleeveless top / tank     ~0.06-0.10      light trousers        ~0.15-0.20
-t-shirt                   ~0.08           heavy trousers        ~0.24-0.28
-long-sleeve shirt/blouse  ~0.20-0.25      light jacket          ~0.25-0.36
-thin sweater              ~0.20-0.25      insulated/heavy coat  ~0.50-0.70
-thick sweater             ~0.35
-```
+**SUPERSEDED 2026-09-03 by the verified table in §15.** The approximate values first recorded here
+were close at the low and middle of the range and **wrong at the top**: they gave an insulated coat
+`~0.50-0.70` where the verified table's heaviest entry is `0.48`. Read §15, not this paragraph.
 
-**These are approximate and reproduced from the standard tables rather than a primary source
-consulted here; verify against ASHRAE 55 / ISO 9920 before treating any boundary as authoritative.**
-Their use is ordinal: they show a sleeveless top and a thick sweater differ by roughly 4-5x, which is
-the separation the placement must reproduce and which the current formula collapses.
+Their use was and remains ordinal: a sleeveless top and a thick long-sleeved garment differ by
+roughly 4-5x, which is the separation the placement must reproduce and which the old formula
+collapsed.
 
 ### 13.6 Conclusion, and what Slice 2 is
 
@@ -769,12 +764,22 @@ canonizing the very scale this spec disqualified.
 The gate is therefore:
 
 ```text
-1. Unknown material/thermal evidence stays unknown.
+1. Unknown material evidence stays unknown WHERE IT CAN MOVE THE LEVEL.
 2. Coverage is explicitly represented.
 3. Pinned real-garment orderings hold (§12.1).
-4. Published reference-anchor ordering holds, once the anchors are verified.
+4. Published reference anchors verify BOTH:
+     a. level ordering and boundaries
+     b. the evidence-sufficiency boundary — when fabric_weight alone is enough
+        to place, and when unknown material must force unknown
 5. pieceWeatherScores().cold is a DIAGNOSTIC disagreement signal, never the target to fit.
 ```
+
+**Criterion 1 is deliberately narrower than "unknown stays unknown", and this is the canonical
+wording.** The implementation returns `null` for medium/heavy garments with unknown material and
+still places light ones. That exception may well be right — a light garment's unstated material
+cannot lift it far — **but it is a calibration claim, not something Slice 1 proved**, so criterion 4b
+now has to support it before it is ratified. A reader who sees a light unknown garment receive a
+level is looking at an unratified exception, not a broken invariant.
 
 Keep measuring the disagreement — a large one is worth investigating — but zero inversions against
 `cold` is neither necessary nor desirable. If the new representation places a sleeveless wool shell
@@ -799,11 +804,24 @@ caller.
 
 ```text
 1. unknown stays unknown        PASS   at-risk garments still placed: 0  (old formula: 88)
+   where it can move the level
 2. coverage represented         PASS   sleeveless wool shell: warm -> light
 3. pinned orderings hold        PASS   puffer > cardigan > unlined jacket, on real rows
-4. reference-anchor ordering    PROVISIONAL — anchors not yet verified against primary sources
+4a. anchors verify boundaries   PARTIAL low/mid verified; `very warm` UNANCHORED (§15.3)
+4b. evidence sufficiency        PASS   coverage outweighs substance ~4x (§15.4)
 5. cold as diagnostic only      OBSERVED, not optimised: 2.7% disagreement (was 7.0%)
 ```
+
+**Final acceptance snapshot, after anchor verification** (`compare_warmth_placement.mjs`):
+
+```text
+very light 34 · light 47 · moderate 5 · warm 25 · very warm 5
+placed 116/213 = 54.5%    material_unestablished 97
+```
+
+Anchor verification did not move any boundary, so this snapshot stands as Slice 2's acceptance
+result. **Slice 2 is ratified except for the `very warm` boundary**, which no available source can
+anchor (§15.3).
 
 Criterion 5 is reported, never targeted. The improvement from 7.0% to 2.7% is a **side effect** of
 reading coverage, which `cold` also reads — not evidence of fitting, and not a success metric. A
@@ -843,3 +861,69 @@ medium and heavy cloth.
 * **Demand mapping is still not chosen.** §12's gate now has 4 of 5 criteria met, with criterion 4
   outstanding. That is the remaining precondition.
 * **Ensemble contribution** (§9.2) is untouched — this places one garment, not an outfit.
+
+
+---
+
+## 15. Criterion 4 — anchor verification (2026-09-03)
+
+### 15.1 Source, and what "verified" honestly means here
+
+ASHRAE 55 and ISO 9920 are **paywalled standards and were not obtained.** Two attempts at ASHRAE's
+own published addendum PDFs returned unusable renderings.
+
+What was obtained instead: the garment table encoded in the **CBE Thermal Comfort Tool**
+(`ElsevierSoftwareX/SOFTX_2020_242`, `static/js/global.js`), an ASHRAE-55-compliant reference
+implementation from UC Berkeley published alongside a peer-reviewed SoftwareX paper. **56 garment
+entries**, extracted programmatically rather than transcribed.
+
+That is a *compliant implementation*, not the standard itself. It is checkable, citable and vastly
+better than an unattributed web table — but the distinction should not be lost: **if a boundary ever
+turns on an exact value, buy the standard.** That is a cost decision, not an engineering one.
+
+### 15.2 The verified table (extract)
+
+```text
+0.08  T-shirt                      0.25  Long sleeve shirt (thin)
+0.10  Sleeveless vest (thin)       0.28  Sweatpants
+0.12  Sleeveless scoop-neck blouse 0.34  Long-sleeve sweat shirt
+0.14  Thin skirt                   0.36  Long sleeve shirt (thick)
+0.15  Thin trousers                0.36  Single-breasted coat (thin)
+0.17  Sleeveless vest (thick)      0.42  Double-breasted coat (thin)
+0.23  Thick skirt                  0.44  Single-breasted coat (thick)
+0.24  Thick trousers               0.48  Double-breasted coat (thick)
+```
+
+### 15.3 Criterion 4a — level ordering: PARTIALLY VERIFIED
+
+The low and middle of the scale are confirmed. The ordering
+`t-shirt < thin trousers < long-sleeve shirt < thin coat < thick coat` holds, and the 4-5x spread
+§13.5 claimed is real (`0.08` → `0.36`).
+
+**The top of Closet's scale is NOT covered.** The heaviest entry is a `0.48` double-breasted coat.
+There is no down parka, no shearling, no filled outerwear — ASHRAE 55 is an **indoor comfort**
+standard, exactly as §11.1 said of IREQ at the other end. So `very warm` (the puffers, the
+shearling jacket) sits **above everything this source can anchor**, and its boundary remains
+unverified. Recorded as a known limit, not papered over.
+
+### 15.4 Criterion 4b — evidence sufficiency: VERIFIED, with a dependency
+
+The question: is "light substance alone is enough to place, despite unknown material" defensible?
+
+```text
+SUBSTANCE axis — same garment, thin -> thick:      mean +0.089   (range +0.04 .. +0.14)
+COVERAGE axis — thin garments across types:        0.08 .. 0.36 = 4.5x
+```
+
+**Coverage dominates substance by roughly 4x.** So a light garment's unstated material can move it
+about one narrow band, while its cut moves it across most of the scale. The exception is defensible
+— **but only because Slice 2 now reads coverage.** Under the old formula, which placed on substance
+alone, light-unknown placement was *not* defensible, and that is worth stating plainly: criterion 4b
+passes as a consequence of the §14 fix, not independently of it.
+
+The physical argument does the rest: a `light` fabric_weight rules out substantial concealed
+insulation by construction. You cannot have a light garment with a down fill.
+
+**Ratified:** criterion 1's narrower wording stands, and the light-unknown exception is no longer
+provisional. The `PROVISIONAL` markers in `garmentWarmth.js` and `test/garmentWarmth.test.js` can be
+lifted for 4b — **but not for the `very warm` boundary**, which §15.3 leaves unanchored.
