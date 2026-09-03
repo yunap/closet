@@ -1076,3 +1076,76 @@ outfitThermalContribution.js   base / removable / withLayer / unknown        §1
 All five §12.1 pinned rows now hold. **Nothing consumes any of it** — `thermal_demand` is still 20,
 and `isWeatherFiltered` still holds binary authority (§8.1). What remains is the §8 migration, which
 is where user-visible behaviour changes for the first time.
+
+
+---
+
+## 18. Prerequisite slice — the weather contract, before any migration
+
+**PR A.** Contract cleanup only: no ranking change, no adequacy change, no behaviour broadening
+beyond removing stale thermal authority. The ranking and adequacy migrations stack on top of this as
+PR B, so that if ranking regresses later nobody has to disentangle whether the cause was the
+weather-contract repair or the migration itself.
+
+### 18.1 Explicit stated weather was losing its numbers
+
+`stylingContext.js`'s `statedWeatherProfile` took the user's **stated** weather and ran it through
+the *prose heuristic*, which parses Fahrenheit values and then discards them:
+
+```text
+"it will be 47°F"  ->  weatherProfileFromContext  ->  { isCold: true }      the number, gone
+```
+
+So a boolean was all that survived, on exactly the turns where the user was most explicit. That is
+the same authority loss [stated-weather-authority-findings.md](stated-weather-authority-findings.md)
+documents from the other direction. `validateUserWeather` already existed to parse this properly.
+
+Now:
+
+```text
+stated "65/47"  ->  validateUserWeather -> resolveWeatherContext -> highF 65 / lowF 47 + provenance
+stated "47F"    ->  high = low = 47      the temperature the user gave, NOT a synthesized envelope
+stated prose    ->  no numbers -> heuristic profile -> no structured temperature at all
+```
+
+**Three constraints, all held.** Precedence is unchanged — this branch already sat above the
+structured named-destination branch in `resolveWeatherProfile` and still does; nothing consults a
+forecast or "improves" a stated value with live data. No high/low is synthesized from vague prose:
+absent numbers means absent, which is the correct answer rather than a guessed envelope. And the
+heuristic keeps the non-thermal reads it genuinely owns — rain, wet exposure — which are parsed from
+the same prose and are not thermal (§2.1).
+
+### 18.2 A stale `isCold` mutation, provably inert
+
+```js
+if (indoorSlot) slotWeatherProfile.isCold = false     // outfitSetPlanner.js, twice
+```
+
+Hand-setting the flag was how an indoor slot avoided cold handling. Removed: `slotWeatherProfile`
+flows only into `evaluatePlannerAutomaticUsePool`, which reads `isHot` and never `isCold`. The
+mutation had no consumer left — stale authority outliving its reader, removed as a demonstrable
+no-op.
+
+### 18.3 The census moved, and the half that did not is the point
+
+```text
+thermal_demand  20 -> 17          non_thermal  4 -> 4
+```
+
+`non_thermal` holding steady is the signal worth watching: the census measures **semantic authority
+transfer**, not line deletion. If footwear or wet-weather contracts had begun dissolving into the
+band, that number would have moved and nothing else would have said so.
+
+Re-run with `node scratch/census_thermal_demand_consumers.mjs`.
+
+### 18.4 What remains, and where it belongs
+
+The remaining 17 are flag **readers**, not producers, and belong to the migration proper:
+
+* **`outfitEnvironmentalAdequacy.js` (7)** — undershoot, removable-layer and severity findings.
+* **`rules.js` (10)** — trust decision, composer roster, mission priority, whole-wardrobe scoring.
+
+A scope note worth keeping: producers and readers are different sets, and conflating them mis-sizes
+the work. Read against the success condition — *none derive thermal authority from flags* — several
+producer sites need no change at all, because a profile without temperatures simply yields no band
+opinion. **Unknown is a valid migration outcome, not a gap to close.**
