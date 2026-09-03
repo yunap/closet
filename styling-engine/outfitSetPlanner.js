@@ -2653,14 +2653,26 @@ export function thermalFitPieceAdvisory(piece = {}, weatherProfile = {}, exposur
   const fit = weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {})
   const adjustment = fit.adjustments.find(a => String(a.reason || '').startsWith('thermal band'))
   if (!adjustment) return { tier: 'neutral', score: 0, reason: '' }
+  // TIER BY DISTANCE, not by direction. The first version read only the label's direction, so every
+  // overshoot was `discouraged` and every undershoot `workable` — a distance-blind reading of an
+  // adjustment that already carries distance (rules.js scores 4 / 0 / -4 / -8 by |distance|).
+  // thread_1788425468666 is what that cost: straight-leg denim, one step over a `light` hiking
+  // demand at 65°F, was marked `discouraged` next to a down puffer three steps over. The model
+  // rightly ignored it — and a signal that cries wolf on jeans is not one worth teaching it to obey.
+  //
+  // One step out is a real preference and no more: `workable` in BOTH directions. Two or more is
+  // `discouraged`. The old asymmetry was never argued for; it just fell out of reading the label.
+  // Undershoot losing its blanket `workable` is the point, not collateral — summer clothing on an
+  // October trip is exactly a multi-step undershoot. Validity is still adequacy's job, never this
+  // advisory's: NO_WARM_LAYER_FOR_COLD remains the hard error (§5.5, presence vs amount).
   const label = String(adjustment.label || '')
-  if (label.startsWith('warmer than')) {
-    return { tier: 'discouraged', score: adjustment.score, reason: 'warmer than these conditions call for' }
-  }
-  if (label.startsWith('lighter than')) {
-    return { tier: 'workable', score: adjustment.score, reason: 'lighter than these conditions call for' }
-  }
-  return { tier: 'preferred', score: adjustment.score, reason: 'well matched to these conditions' }
+  const direction = label.startsWith('warmer than') ? 'warmer than these conditions call for'
+    : label.startsWith('lighter than') ? 'lighter than these conditions call for'
+    : ''
+  if (!direction) return { tier: 'preferred', score: adjustment.score, reason: 'well matched to these conditions' }
+  // score 0 is exactly |distance| === 1; anything further out is negative.
+  const tier = adjustment.score >= 0 ? 'workable' : 'discouraged'
+  return { tier, score: adjustment.score, reason: direction }
 }
 
 export function extremeHeatPieceAdvisory(piece = {}, weatherProfile = {}) {

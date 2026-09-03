@@ -140,3 +140,24 @@ test('the workbench documents the assessment payload and its tier vocabulary', a
   }
   assert.ok(typeof buildPlanSlotWorkbench === 'function')
 })
+
+// Distance, not direction. A distance-blind tier put straight-leg denim (one step over a `light`
+// hiking demand at 65°F) in the same bucket as a down puffer three steps over — thread_1788425468666.
+test('thermal tiers grade by distance in both directions', () => {
+  const hike = W(65, 48)
+  const hikeExp = EXP(hike, 'hiking')
+  const DENIM = { id: 3, category: 'bottom', fabric_weight: 'medium', fiber_content: ['cotton'], subcategory: 'jeans' }
+  const TEE = { id: 4, category: 'top', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' }
+
+  // One step over: a real preference, not a warning.
+  const denim = thermalFitPieceAdvisory(DENIM, hike, hikeExp)
+  assert.equal(denim.tier, 'workable', 'denim one step over a light demand must not be discouraged')
+  // Three steps over: the failure this whole arc exists for.
+  const puffer = thermalFitPieceAdvisory(PUFFER, hike, hikeExp)
+  assert.equal(puffer.tier, 'discouraged')
+  // The two must not be indistinguishable — that was the defect.
+  assert.notEqual(denim.tier, puffer.tier)
+  assert.ok(puffer.score < denim.score, 'further out must score worse')
+  // Well matched stays preferred.
+  assert.equal(thermalFitPieceAdvisory(TEE, hike, hikeExp).tier, 'preferred')
+})
