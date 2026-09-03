@@ -1449,3 +1449,68 @@ exposure conditions; none may take it from the band.
 * **`projection` (16)** and **`producer` (15)** — steps 5-6, unchanged.
 
 No code was written for step 4's original premise.
+
+
+---
+
+## 22. §8 step 5 — projection migration
+
+The other half of the composition problem: not only ranking the right garments, but ensuring the
+model *receives* graded thermal context instead of hearing nothing below a threshold.
+
+### 22.1 §8.1's pin named the wrong site
+
+That pin singled out `isWeatherFiltered` as "the last place an old-model switch could survive". It
+was the wrong target. `routes/ai.js`'s `isWeatherFiltered` gates a **disclosure sentence** —
+*"everything shown is weather-optimized"* — while the weather guidance around it is unconditional.
+
+**The real binary was `tools.js`'s search-evidence gate:**
+
+```js
+if (resolvedWeather.isHot || resolvedWeather.isCold) {   // attach weatherFit to search results
+```
+
+At 65/47 neither flag fires, so `search_wardrobe` returned **no thermal evidence at all** and the
+model composed with nothing to go on. That is §6's defect on the evidence side, and it is the one
+that actually affects composition. Correcting the pin rather than leaving it: naming a site in a spec
+does not make it the important one.
+
+### 22.2 What changed
+
+**Search evidence** — the gate is gone. `weatherFitForPiece` already returns 0 with no adjustments
+when there is nothing to say, so labels appear whenever a temperature exists and a garment whose
+placement is unknown still gets none.
+
+**The coarse label** the model reads is now computed from the band's demand, which is what §3.8
+asked for. Only the blind spot moves:
+
+```text
+75/60   legacy: mild weather    band: mild weather      unchanged
+55/45   legacy: cool weather    band: cool weather      unchanged
+38/30   legacy: cold weather    band: cold weather      unchanged
+65/47   legacy: mild weather    band: cool weather      <- the blind spot, closed
+```
+
+**This is the §21 mistake avoided.** Deriving the label from the band closes a gap without broadening
+any tier — every other row is identical. That is the difference between a projection reading the band
+and a contract being forced through it.
+
+**The disclosure** now tracks whether weather actually shaped the roster, rather than whether a flag
+fired.
+
+**Heat is untouched.** This arc migrated the cold side; `isHot` and `isExtremeHeat` keep their own
+paths, asserted by a test.
+
+### 22.3 Census
+
+```text
+projection         16 -> 12
+producer           15      unchanged — step 6
+parallel_contract  13      untouched, as ruled
+non_thermal         4      held
+thermal_amount      0      held
+suite  1844 tests, 1842 pass, same 2 pre-existing failures
+```
+
+The remaining 12 projections are display/debug evidence payloads and slot descriptions, not
+model-facing composition evidence.

@@ -1,7 +1,7 @@
 {
-  "generated": "2026-09-03T07:10:20.321Z",
+  "generated": "2026-09-03T07:16:49.620Z",
   "counts": {
-    "projection": 16,
+    "projection": 12,
     "parallel_contract": 13,
     "producer": 15,
     "non_thermal": 4
@@ -314,34 +314,6 @@
       "owner": "profileFromResolvedWeatherContext",
       "cls": "producer",
       "text": "needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),"
-    },
-    {
-      "file": "styling-engine/tools.js",
-      "line": 1453,
-      "owner": "executeToolInternal",
-      "cls": "projection",
-      "text": "if (resolvedWeather.isHot || resolvedWeather.isCold) {"
-    },
-    {
-      "file": "styling-engine/tools.js",
-      "line": 3265,
-      "owner": "",
-      "cls": "projection",
-      "text": ": (resolvedWeather.isColdSevere ? 'cold weather'"
-    },
-    {
-      "file": "styling-engine/tools.js",
-      "line": 3266,
-      "owner": "",
-      "cls": "projection",
-      "text": ": (resolvedWeather.isCold ? 'cool weather' : 'mild weather')))"
-    },
-    {
-      "file": "routes/ai.js",
-      "line": 2591,
-      "owner": "generateWholeWardrobeOutfitsVisualInternal",
-      "cls": "projection",
-      "text": "const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold"
     }
   ]
 }
