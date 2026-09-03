@@ -234,6 +234,37 @@ Choosing numbers before that split is what produced four thresholds in one day.
 Each slice ships independently and is reversible. No slice may add a new threshold without recording
 it here first.
 
+### 8.1 Two pins for this arc, from the exposure work
+
+Added 2026-09-03 on closing [exposure-conditions-spec.md](exposure-conditions-spec.md)'s PR, so this
+arc starts with them rather than rediscovering them.
+
+**`thermal_demand == 0` is the mechanical definition of done for step 6.** The exposure work's Slice
+1 census classified every live reference to the cold/cool flag family into four classes and committed
+the tool:
+
+```bash
+node scratch/census_thermal_demand_consumers.mjs     # → scratch/thermal_demand_consumer_inventory.json
+```
+
+Baseline 2026-09-03: **55 live sites — 20 `thermal_demand`, 16 `projection`, 15 `producer`, 4
+`non_thermal`.** Re-run after each slice. The migration is complete when `thermal_demand` reaches
+zero, and *only* then: a non-zero count with the band shipped means two overlapping cold models are
+live, which is the exact condition §8.6 exists to prevent. The `non_thermal` 4 must NOT fall to zero
+— footwear and wet-weather contracts stay independent, and their disappearance would mean the band
+swallowed them.
+
+**`isWeatherFiltered` must lose its threshold authority in step 5, not survive it.**
+`routes/ai.js:2591` decides whether the model hears **any** weather guidance, at a threshold
+crossing. §6 above already names this as a defect rather than a discrete consumer — *"there is no
+good reason for the model to go from hearing nothing about thermal conditions to hearing full weather
+guidance at a threshold crossing"* — and the census confirms it is live.
+
+It is classified `projection`, which makes it easy to migrate mechanically and leave binary. Do not.
+It is the last place an old-model switch could survive after every other cold flag is gone, and it
+would be invisible: the flags would all read the band while this one quietly kept deciding whether
+the band's output was mentioned at all.
+
 
 ---
 
