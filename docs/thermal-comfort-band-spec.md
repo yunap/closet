@@ -161,6 +161,17 @@ A replacement is not acceptable unless all of these hold:
    a wardrobe whose only layer is a heavy coat still uses it.
 6. **Unknown is never inadequacy** — acceptance criterion 8, violated twice in this arc already.
 7. **Transit keeps its own answer** — an indoor destination excuses the base, never the trip.
+8. **Coarse exposure conditions are consumed as uncertainty, never as measurement.** Added
+   2026-09-03 with [exposure-conditions-spec.md](exposure-conditions-spec.md)'s implementation. That
+   module now supplies `wakingLowF` — for the Vienna forecast, `53.3°F` where the old path used the
+   `47°F` pre-dawn trough. **`53.3` is a stated assumption, not a measurement**, and it arrives
+   flagged: `coarse: true` and `conditionsSource: seasonal_waking_window_estimate`.
+
+   A band that reads `53.3` as a precise figure replaces *"47°F is falsely precise"* with
+   *"53.3°F is falsely precise"* — the same defect, one step to the right. The band must read the
+   provenance and widen its demand accordingly: a coarse window is a range, and
+   `conditionsSource: unknown` is §5.6's "unknown is never inadequacy" arriving through the
+   environmental input rather than the garment one.
 
 ## 6. What is deliberately NOT decided
 
@@ -247,6 +258,12 @@ exposure in ways weather alone cannot express:
 50F · vigorous hike                    output heat changes the answer entirely
 50F · museum, outdoor transit only     two bands, one outfit
 ```
+
+**The exposure half now exists.** `resolveExposureContext` (`styling-engine/exposure.js`, shipped
+2026-09-03) supplies `exertion`, `exposureMode`, the transit split, wind, and conditions with
+provenance. It computes no warmth and no threshold — a test enforces that it contains no Fahrenheit
+constant — so this contract's demand side is still entirely unwritten and entirely this spec's.
+Consume its `coarse` / `conditionsSource` fields as uncertainty (§5.8).
 
 Passing a single blob and letting the function reach into it for exposure would repeat this arc's
 signature failure: a correct primitive fed the wrong inputs. Whether the two arrive as separate

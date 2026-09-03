@@ -129,17 +129,26 @@ envelope. Everything else is present and unconsumed.
 
 ## 3. The ownership chain
 
+Ratified 2026-09-03 as the architecture to carry forward — one semantic question per owner:
+
 ```text
-slot context            occasion · activity · environment · date · location   [EXISTS, §2]
+weather resolver          observed / estimated weather envelope          weather.js
       ↓
-relevant exposure conditions                                                  [THIS SPEC, §4]
+exposure.js               conditions likely ENCOUNTERED                  THIS SPEC — shipped
+                          + exertion + exposure mode
+                          + provenance / uncertainty
       ↓
-thermal demand band                          thermal-comfort-band-spec §9.1   [that spec, not this]
+thermal-band layer        required thermal DEMAND                        band spec — not built
       ↓
-garment thermal evidence   pieceWeatherScores / thermalMaterialVerdict        [EXISTS, PR #304]
+thermal garment/outfit    available thermal CONTRIBUTION                 per-piece shipped (#304);
+                                                                         ensemble not built
       ↓
-selection · adequacy · ranking · disclosure
+selection · adequacy      compares the two
+· ranking · disclosure
 ```
+
+Two of the five owners do not exist yet, and the two that do change no behaviour without them. That
+is the honest state, not a gap in this spec: the demand side is deliberately another document's.
 
 Two properties make this an ownership fix rather than another rule:
 
