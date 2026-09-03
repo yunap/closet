@@ -37,7 +37,10 @@ import {
   hasRejectedReference,
   getAcceptedFeedbackSynthesisMemory,
   getOwnerRuleNotes,
+  weatherFitForPiece,
 } from './rules.js'
+import { resolveExposureContext } from './exposure.js'
+import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
@@ -2578,6 +2581,47 @@ export function slotRequiresOperationalEase(slot = {}) {
   return /\b(indoor play|home base|low-key (?:home|day|days)|downtime at home)\b/.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
 }
 
+// THE PLAN PATH'S MISSING THERMAL SIGNAL (live QA, thread_1788421510368).
+//
+// planPieceAssessments carried extreme_heat, movement and operational_ease — and nothing at all for
+// cold. So on a 65/48 October week the model was told "every city/museum look needs a removable
+// layer" and handed a roster with no indication of how much layer, and put a down puffer on all
+// seven cards. The ranker already knew the puffer was 31st of 34; the plan path could not see it,
+// because nothing on this path consumed the band.
+//
+// EVIDENCE, NOT A GATE (§19.1). Every allowed piece stays in the roster; a supply-poor slot keeps
+// whatever it has. This only tells the model what it is choosing between.
+// "how much warmth do these conditions call for", as a short phrase the model can act on.
+export function slotThermalDemandLabel(exposure = null) {
+  const demand = requiredThermalBand(exposure)
+  if (!demand?.level) return ''
+  return demand.certain ? demand.level : `${demand.level} (estimated exposure window)`
+}
+
+// Evidence, never a gate: every allowed piece stays, only the order changes.
+function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null) {
+  if (!weatherProfile) return pieces
+  return [...pieces].sort((a, b) =>
+    weatherFitForPiece(b, weatherProfile, exposure ? { exposure } : {}).score -
+    weatherFitForPiece(a, weatherProfile, exposure ? { exposure } : {}).score)
+}
+
+export function thermalFitPieceAdvisory(piece = {}, weatherProfile = {}, exposure = null) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return { tier: 'neutral', score: 0, reason: '' }
+  const fit = weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {})
+  const adjustment = fit.adjustments.find(a => String(a.reason || '').startsWith('thermal band'))
+  if (!adjustment) return { tier: 'neutral', score: 0, reason: '' }
+  const label = String(adjustment.label || '')
+  if (label.startsWith('warmer than')) {
+    return { tier: 'discouraged', score: adjustment.score, reason: 'warmer than these conditions call for' }
+  }
+  if (label.startsWith('lighter than')) {
+    return { tier: 'workable', score: adjustment.score, reason: 'lighter than these conditions call for' }
+  }
+  return { tier: 'preferred', score: adjustment.score, reason: 'well matched to these conditions' }
+}
+
 export function extremeHeatPieceAdvisory(piece = {}, weatherProfile = {}) {
   if (!weatherProfile?.isExtremeHeat) return { tier: 'neutral', score: 0, reason: '' }
   const group = wardrobeCategoryGroup(piece)
@@ -2648,10 +2692,11 @@ export function operationalEasePieceAdvisory(piece = {}, operationalEase = false
   return { tier: 'workable', score: -2, reason: 'heel height is unknown for an operationally easy use case' }
 }
 
-function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
+function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null } = {}) {
   return {
     id: Number(piece?.id),
     extreme_heat: extremeHeatPieceAdvisory(piece, weatherProfile),
+    thermal_fit: thermalFitPieceAdvisory(piece, weatherProfile, exposure),
     movement: activeMovementPieceAdvisory(piece, activeMovement),
     operational_ease: operationalEasePieceAdvisory(piece, operationalEase)
   }
@@ -3470,6 +3515,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const weatherProfile = slot.stylingContext.weatherProfile
     const weatherLabel = slot.weatherLabel
+    // The slot already knows its activity and environment; this is the first time the plan path uses
+    // them thermally. Exertion and exposure mode are why a hike and an indoor dinner must not resolve
+    // to the same demand.
+    const slotExposure = resolveExposureContext(
+      { activity: slot.activity, environment: slot.environment }, weatherProfile)
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
@@ -3509,6 +3559,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
     }
     const floorRank = slotRegisterRank(slot)
+    // ONE order for both lists. A first version ordered the ids and left the assessments in the
+    // original order, so assessment[i] no longer described allowed_piece_ids[i] — a silent
+    // mismatch in the very payload this fix exists to make trustworthy.
+    const thermallyOrdered = orderByThermalFit(shownPieces, weatherProfile, slotExposure)
     workbenchSlots.push({
       id: slot.id,
       label: slot.label,
@@ -3522,8 +3576,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       styling_context: slot.stylingContext,
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
-      allowed_piece_ids: shownPieces.map(piece => Number(piece.id)).filter(Boolean),
-      piece_assessments: shownPieces.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase })),
+      // Ordered best-fitting first, and the slot states HOW MUCH warmth its conditions call for.
+      // The removable-layer requirement only ever said a layer was needed, never how much — which is
+      // how a down puffer satisfied it on a 65/48 day, seven times.
+      thermal_demand: slotThermalDemandLabel(slotExposure),
+      allowed_piece_ids: thermallyOrdered.map(piece => Number(piece.id)).filter(Boolean),
+      piece_assessments: thermallyOrdered.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
       coverage_report: workbenchCoverage,
     })

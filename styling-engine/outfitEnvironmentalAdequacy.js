@@ -160,6 +160,22 @@ function outerLayerSevereColdAdequacy(piece = {}) {
 // original wording verbatim so no existing consumer's behaviour or message changes, while the new
 // severe-cold and hazard findings — the ones a wardrobe can genuinely be unable to satisfy — carry
 // the escape hatch.
+// Adds the half this requirement never carried: not just THAT a layer is needed, but that it should
+// be proportionate. Live QA (thread_1788421510368): stated only as "something removable is needed",
+// it was satisfied by a down puffer on a 65/48 day, seven times over.
+//
+// It deliberately does NOT restate a demand level. The plan roster already gives each layer a
+// thermal_fit advisory computed from the slot's own exposure — including its ACTIVITY, which this
+// function does not receive — so naming a level here would risk contradicting it: adequacy would say
+// `warm` for a slot the roster had already scored as `moderate`. Two numbers that can disagree are
+// worse than one, so this points at the number rather than inventing a second one.
+function demandHint(weather, resolvedContext = {}) {
+  const demand = requiredThermalBand(resolveExposureContext(
+    { environment: resolvedContext.environment || 'outdoor' }, weather))
+  if (!demand?.level) return ''
+  return ' — match the layer to the conditions rather than reaching for the warmest one available; each layer carries a thermal-fit assessment'
+}
+
 function finding(code, message, { severity = 'error', evidence = {}, remedy = false } = {}) {
   return {
     code,
@@ -236,7 +252,10 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
-        corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed'),
+        // HOW MUCH, not just "a layer". Live QA (thread_1788421510368): this requirement said only
+        // that a removable layer was needed, so a down puffer satisfied it on a 65/48 day — seven
+        // times. The demand is stated so the requirement can be met proportionately.
+        corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
@@ -259,7 +278,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
-        corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back'),
+        corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
