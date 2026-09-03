@@ -214,33 +214,41 @@ test('a bare cool signal alone (no hard-cold word) stays mild, not severe: "cool
   assert.ok(!profile.isColdSevere)
 })
 
-test('composer scoring: the heavy-fabric bonus that surfaced a leather coat requires severe cold, not merely chilly (thread_1788050815289)', () => {
+test('composer scoring: a merely-chilly evening must not surface the heaviest coat (thread_1788050815289)', () => {
+  // The incident: a chilly work dinner ranked a long leather coat top, via a heavy-fabric bonus that
+  // keyed on fabric MASS. The old fix withheld that bonus unless `isColdSevere`.
+  //
+  // The band removes the need for that special case rather than re-tuning it. Ranking by FIT means a
+  // mild-cold evening (demand `warm`) penalises a `very warm` coat on its own, and the assertion is
+  // now the incident's actual intent — the coat must not win — rather than the absence of one
+  // particular bonus string. Migrated to structured weather: a flag-only profile carries no
+  // temperature, so the band correctly says nothing (§18).
   const heavyCoat = {
     id: 7201, name: 'long leather coat', category: 'outerwear', photo: 'img.jpg',
-    fabric_weight: 'heavy', occasions: '["casual"]', formality: 'everyday'
+    fabric_weight: 'heavy', fabric_category: 'leather', fiber_content: ['leather'],
+    insulating_layer_materials: ['down'], sleeve_length: 'long',
+    occasions: '["casual"]', formality: 'everyday'
   }
   const mediumJacket = {
     id: 7202, name: 'medium wool jacket', category: 'outerwear', photo: 'img.jpg',
-    fabric_weight: 'medium', occasions: '["casual"]', formality: 'everyday'
+    fabric_weight: 'medium', fabric_category: 'knit', fiber_content: ['wool'], sleeve_length: 'long',
+    occasions: '["casual"]', formality: 'everyday'
   }
-  const chilly = weatherProfileFromContext({ season: 'chilly work dinner tonight' })
-  const severe = weatherProfileFromContext({ season: 'freezing cold morning' })
-  assert.ok(!chilly.isColdSevere && chilly.isCold)
-  assert.ok(severe.isColdSevere)
+  const roster = (weather) => buildVisualComposerRoster([heavyCoat, mediumJacket], {
+    occasion: 'casual', weatherProfile: weather, includeAccessories: true
+  }).debug.relevanceAdjustments || {}
 
-  const chillyRes = buildVisualComposerRoster([heavyCoat, mediumJacket], {
-    occasion: 'casual', weatherProfile: chilly, includeAccessories: true
-  })
-  const severeRes = buildVisualComposerRoster([heavyCoat, mediumJacket], {
-    occasion: 'casual', weatherProfile: severe, includeAccessories: true
-  })
+  const chilly = roster(structuredCold(55, 45))
+  const chillyCoat = (chilly[heavyCoat.id] || []).join(' ')
+  const chillyJacket = (chilly[mediumJacket.id] || []).join(' ')
+  assert.match(chillyCoat, /warmer than the conditions/,
+    'a merely-chilly evening penalises the heaviest coat rather than rewarding it')
+  assert.match(chillyJacket, /well matched/, 'and prefers the piece that actually fits the evening')
 
-  const chillyCoatReasons = chillyRes.debug.relevanceAdjustments?.[heavyCoat.id] || []
-  const severeCoatReasons = severeRes.debug.relevanceAdjustments?.[heavyCoat.id] || []
-  assert.ok(!chillyCoatReasons.includes('cold weather: heavy fabric (+10)'),
-    'a merely-chilly evening must not give the heaviest coat the max-warmth bonus')
-  assert.ok(severeCoatReasons.includes('cold weather: heavy fabric (+10)'),
-    'severe cold still rewards the heavy coat')
+  const severe = roster(structuredCold(30, 20))
+  const severeCoat = (severe[heavyCoat.id] || []).join(' ')
+  assert.match(severeCoat, /well matched/, 'severe cold still rewards the heavy coat')
+  assert.ok(!/warmer than the conditions/.test(severeCoat))
 })
 
 test('gate metadata helpers use structured fields without text guessing', () => {

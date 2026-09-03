@@ -1284,3 +1284,168 @@ from the band even though the contracts stay separate — steps 4-6, not this on
 ```text
 census  thermal_demand 15 (unchanged)   non_thermal 4    suite 1839 tests, 1837 pass, 2 pre-existing
 ```
+
+
+---
+
+## 21. §8 step 4 — measured first, and it needs a ruling
+
+Step 4's premise is that the remaining contracts (removability, transit coverage, outdoor
+capability, owner-rule projection) keep their own questions while their **triggers** move from flags
+to the band. Measured against real thresholds before writing any of it:
+
+```text
+high/low   legacy(cool, cold, severe)            band demand
+75/60      cool=false cold=false severe=false    moderate
+70/55      cool=true  cold=false severe=false    moderate
+65/50      cool=true  cold=false severe=false    warm        <- band fires COLD where legacy did not
+65/45      cool=true  cold=true  severe=false    warm
+58/44      cool=true  cold=true  severe=false    warm
+50/40      cool=true  cold=true  severe=false    very warm   <- band fires SEVERE where legacy did not
+42/38      cool=true  cold=true  severe=true     very warm
+30/20      cool=true  cold=true  severe=true     very warm
+```
+
+**The obvious mapping broadens every tier.** `moderate → cool`, `warm → cold`,
+`very warm → severe` would require a removable layer at **75/60** and an outdoor-capable layer at
+**50/40** — strictly more demanding than today, in the direction this arc exists to move away from.
+Shipping it would trade "the warmest coat is always safest" for "every day needs more than it did",
+which is the same failure wearing different clothes.
+
+**Why the scales do not line up.** The legacy tiers are thresholds on the 24-hour trough. The band's
+levels are demands on the *waking exposure window*, which sits ~35% of the diurnal range above that
+trough (§10.4), and they additionally shift with exertion. Two different quantities; a 1:1 mapping
+between them was never going to hold.
+
+**This is a product-semantic decision, not a mechanical migration** — §10.1's escalation bar. Three
+shapes, none chosen here:
+
+* **(a) Calibrate the mapping** so each contract fires where it fires today, then let it drift only
+  deliberately. Preserves behaviour; the boundaries become a stated calibration like
+  `SEDENTARY_DEMAND_F` (§16.3).
+* **(b) Accept the broadening for some contracts and not others.** A removable layer at 70/55 is
+  defensible; an outdoor-capable coat at 50/40 is not.
+* **(c) Leave these contracts on their thresholds.** They are not thermal-amount questions —
+  "is there something to put on" is a *presence* question, and §20.1 already established presence
+  and amount as different. That would mean `thermal_demand` never reaches 0, and the census's
+  completion test needs restating instead.
+
+**(c) deserves real weight.** The census counts these as `thermal_demand` because they read a cold
+flag, but three of the four are presence/capability contracts, and step 3 already found that
+presence and amount are genuinely different questions. If that is right, the honest end state is a
+smaller `thermal_demand` target plus a reclassification — not zero.
+
+### 21.1 Ruling — keep the contracts independent, and change the completion criterion
+
+Owner ruling 2026-09-03, closest to (c) with one qualification.
+
+**Keep the parallel contracts independent of the thermal band.** Mapping the band's ordinal levels
+onto them merely because both once read `isCold` would recreate the master-boolean problem in a new
+form. **But do not preserve their 24-hour-trough thresholds forever either** — they may eventually
+earn their own trigger calibration from relevant exposure conditions. That calibration is its own
+semantic problem and must not be obtained by translating `moderate/warm/very warm` into booleans.
+
+```text
+ExposureContext
+   ├── thermal demand              -> amount / fit / overshoot / undershoot
+   ├── removable-layer trigger     -> presence / adaptability
+   ├── transit coverage trigger    -> removable sleeve-bearing coverage
+   └── outdoor-capability trigger  -> appropriate outerwear capability
+```
+
+**`thermal_demand == 0` is retired as the completion criterion.** It assumed every member of that
+class carried obsolete thermal-demand authority; the census classified by **which flag a site reads**
+rather than **what question it answers**, and steps 3-4 showed that assumption was too broad.
+
+```text
+DONE = no consumer derives thermal AMOUNT from legacy cold flags,
+       AND no independent contract derives its semantics from the band.
+```
+
+### 21.2 The reclassified census
+
+`scratch/census_thermal_demand_consumers.mjs`, revised to classify by question answered:
+
+```text
+projection         16    display, prompt, owner-rule and metadata surfaces — migrated separately
+producer           15    builds/propagates the profile — legacy authority eventually derived
+parallel_contract  13    presence / adaptability / coverage / capability — legacy trigger allowed
+                         for now, must have NAMED independent ownership, must never take band
+                         semantics
+non_thermal         4    footwear / rain — independent, and must NOT fall to zero
+thermal_amount      2    <- the real remaining target
+```
+
+**Reclassifying surfaced two sites PR B missed.** `rules.js:3251` and `3268` are heavy-fabric cold
+bonuses and light-fabric penalties inside `buildVisualComposerRoster` — the amount question applied
+to scoring clothes, and squarely in PR B's stated scope. They were skipped because the *enclosing
+function* is a roster builder, so an owner-level classification hid them. That is the same lesson as
+the reason-string bug: classify by what the code decides, not by where it sits.
+
+Two census-tool corrections were needed to reach this, both recorded in the script. The context rules
+guarded on the retired `thermal_demand` class, so every footwear site stayed `parallel_contract` and
+**`non_thermal` fell to zero** — the exact alarm that class exists to raise, fired by the tool rather
+than the code. And the thermal-amount rule matched the flag line, where the bonus sits two lines
+below the guard, so it had to become windowed.
+
+### 21.3 The last two thermal_amount readers — migrated
+
+`buildVisualComposerRoster`'s per-piece `weatherBonus` was `else if (weatherProfile.isCold)` with
+`fabric_weight` bonuses beneath it: between the two temperature extremes the roster carried no
+thermal signal, and inside the cold tier it ranked by **mass** rather than by fit.
+
+**Both original carve-outs survive, and one became unnecessary rather than re-tuned.**
+
+The undershoot penalty still applies only to bottoms and dresses — a light TOP is not a problem in
+the cold because it gets layered over, and that asymmetry has no band equivalent, so it stays an
+explicit rule.
+
+The heavy-fabric bonus used to require `isColdSevere` rather than `isCold`, because a merely-chilly
+dinner had surfaced a long leather coat as the top-ranked outerwear pick
+([cold-severity-spec.md](cold-severity-spec.md), `thread_1788050815289`). **The band removes the need
+for that guard**, and more strongly than the guard did:
+
+```text
+chilly 55/45   leather coat -10 (warmer than conditions)   wool jacket +10 (well matched)
+severe 30/20   leather coat +10 (well matched)             wool jacket  --
+```
+
+The old fix merely *withheld* a bonus. Ranking by fit actively penalises the coat and prefers the
+piece that suits the evening. The incident's regression test was rewritten to assert that intent
+under structured weather, rather than the absence of one particular bonus string.
+
+### 21.4 Acceptance — the thermal-amount migration is complete
+
+```text
+thermal_amount      2 -> 0     the migration's real completion test, now met
+parallel_contract  13 -> 13    untouched, as ruled
+non_thermal         4 ->  4    held; the guard that contracts did not dissolve into the band
+projection         16          unchanged — steps 5-6
+producer           15          unchanged — steps 5-6
+suite  1839 tests, 1837 pass, same 2 pre-existing failures
+```
+
+**No consumer derives thermal amount from a legacy cold flag any more.** What remains is projection
+and producer cleanup, plus separate future work on the independent contracts' own trigger
+calibration — which must not come from the band (§21.1).
+
+### 21.5 What is actually left
+* **`parallel_contract` (13)** — each needs *named independent ownership* recorded, not a band
+  trigger. Documentation and boundaries rather than a behaviour migration:
+
+```text
+outfitEnvironmentalAdequacy  removable-layer presence      "is there something to put on"
+outfitEnvironmentalAdequacy  transit removable presence    same question, transit window
+outfitEnvironmentalAdequacy  minimum-warmth presence       "is there a warm layer at all"
+outfitEnvironmentalAdequacy  transit sleeve coverage       "does it cover your arms"
+outfitEnvironmentalAdequacy  outdoor capability            "is this garment for outdoors"
+outfitEnvironmentalAdequacy  transit outdoor capability    same, transit window
+wholeWardrobePieceTrustDecision  cold-appropriateness      "shorts / linen / bare in the cold"
+buildVisualComposerRoster        eligibility gate          which pieces enter the roster
+```
+
+None of these asks how much insulation. Each may eventually earn its own trigger calibration from
+exposure conditions; none may take it from the band.
+* **`projection` (16)** and **`producer` (15)** — steps 5-6, unchanged.
+
+No code was written for step 4's original premise.

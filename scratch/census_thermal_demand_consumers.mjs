@@ -2,12 +2,25 @@
 // docs/exposure-conditions-spec.md §10 Slice 1 — the verification census.
 //
 // Enumerates every live reference to the cold/cool flag family outside weather.js and classifies
-// each by WHAT IT ACTUALLY DECIDES, which is what determines its migration:
+// each by THE QUESTION IT ANSWERS — revised 2026-09-03 (§21) after implementation evidence
+// falsified the original completion criterion.
 //
-//   producer        builds or propagates the profile — moves with the contract, not reclassified
-//   thermal_demand  answers "how much warmth does this context need" — MIGRATES to the band
-//   non_thermal     removability / footwear / rain — stays INDEPENDENT (spec §7, band spec §2.1)
-//   projection      display, prompt text, debug evidence — reads a DERIVED projection of the band
+// The first version classified by WHICH FLAG a site reads, and lumped everything into
+// `thermal_demand` with a `-> 0` target. Step 4 measured that assumption and it was too broad: a
+// removable-layer requirement and an outdoor-capability requirement are not ordinal warmth
+// questions, and mapping the band's levels onto them would have required a removable layer at
+// 75/60. Reading `isCold` is not the same as answering "how much warmth".
+//
+//   thermal_amount     "how much thermal contribution is appropriate" — MUST reach 0 legacy readers
+//   parallel_contract  presence / adaptability / coverage / capability — allowed to keep a legacy
+//                      trigger for now, but must have NAMED independent ownership, and must never
+//                      derive its semantics from the thermal band
+//   projection         display, prompt text, owner-rule and metadata surfaces — migrated separately
+//   non_thermal        footwear / rain — independent, and must NOT fall to zero
+//   producer           builds or propagates the profile — legacy authority eventually derived
+//
+// DONE means: no consumer derives thermal AMOUNT from legacy cold flags, and no independent
+// contract accidentally derives its semantics from the band. Not "every count is zero".
 //
 // Comments are excluded: a grep hit inside a comment is not a consumer. Deterministic, no DB, no
 // model calls. Re-run after any migration step to watch thermal_demand fall to zero.
@@ -32,14 +45,14 @@ const OWNER_CLASS = {
   savedOutfitImagePrompt: 'projection',
   isStyleSelectedQuestion: 'projection',
   executeToolInternal: 'projection',
-  wholeWardrobePieceTrustDecision: 'thermal_demand',
-  scoreWholeWardrobeCandidate: 'thermal_demand',
-  weatherFitForPiece: 'thermal_demand',
-  piecePriorityForMission: 'thermal_demand',
-  elevatedCapsuleDemands: 'thermal_demand',
-  slotGateEligiblePieces: 'thermal_demand',
-  buildVisualComposerRoster: 'thermal_demand',
-  evaluateOutfitEnvironmentalAdequacy: 'thermal_demand',
+  wholeWardrobePieceTrustDecision: 'parallel_contract',
+  scoreWholeWardrobeCandidate: 'thermal_amount',
+  weatherFitForPiece: 'thermal_amount',
+  piecePriorityForMission: 'thermal_amount',
+  elevatedCapsuleDemands: 'parallel_contract',
+  slotGateEligiblePieces: 'parallel_contract',
+  buildVisualComposerRoster: 'parallel_contract',
+  evaluateOutfitEnvironmentalAdequacy: 'parallel_contract',
   finding: 'projection',
 }
 
@@ -51,6 +64,14 @@ const OWNER_CLASS = {
 // Footwear is the clearest non-thermal contract: a shoe is wrong in the wet or the cold for reasons
 // that are not "how much insulation does this day need" (spec §7, band spec §3.6).
 const CONTEXT_RULES = [
+  // Scoring bonuses/penalties keyed on a cold flag ARE thermal amount, wherever they sit. These live
+  // inside buildVisualComposerRoster — `parallel_contract` by owner — and PR B missed them for
+  // exactly that reason: the enclosing function builds a roster, but these lines are heavy-fabric
+  // cold bonuses, which is the amount question applied to scoring clothes.
+  //
+  // Windowed, not line-matched: the guard reads the flag and the bonus lands two lines below it, so
+  // a line-level rule saw `if (isHeavy && weatherProfile.isColdSevere) {` and matched nothing.
+  [/weatherBonus\s*[+-]=/, 'thermal_amount'],
   [/\b(footwear|shoe|sneaker|boot|mesh upper|open[- ]toe|sandal|toe_shape|walk_support)\b/i, 'non_thermal'],
   [/\b(rain|waterproof|precipitation|wet)\b/i, 'non_thermal'],
 ]
@@ -103,7 +124,11 @@ const walk = dir => {
       // Context only REFINES a demand-ish site into a non-thermal contract. It must not reclassify
       // a producer or a projection: `savedOutfitImagePrompt` and `profileFromResolvedWeatherContext`
       // were both flipped to non_thermal by a stray "rain" in their neighbourhood before this guard.
-      if (cls === 'thermal_demand' || cls === 'unclassified') {
+      // Context refines a demand-ish or contract-ish site into a non-thermal one. The guard listed
+      // only the retired `thermal_demand` class after the §21 reclassification, so every footwear
+      // and wet-weather site stayed `parallel_contract` and `non_thermal` fell to ZERO — the exact
+      // alarm this class exists to raise, fired by the tool rather than by the code.
+      if (['thermal_amount', 'parallel_contract', 'unclassified'].includes(cls)) {
         const win = contextWindow(lines, i)
         for (const [re, c] of CONTEXT_RULES) if (re.test(win)) { cls = c; break }
       }
@@ -122,8 +147,12 @@ console.log(`live references (comments excluded): ${rows.length}\n`)
 for (const [k, v] of Object.entries(by).sort((a, b) => b[1] - a[1])) {
   console.log(`  ${k.padEnd(16)} ${String(v).padStart(3)}`)
 }
-console.log('\n## thermal_demand — these MIGRATE to requiredThermalBand')
-for (const r of rows.filter(r => r.cls === 'thermal_demand')) {
+console.log('\n## thermal_amount — MUST reach 0: these derive AMOUNT from legacy flags')
+for (const r of rows.filter(r => r.cls === 'thermal_amount')) {
+  console.log(`  ${(r.file + ':' + r.line).padEnd(52)} ${r.owner}`)
+}
+console.log('\n## parallel_contract — independent questions; must NOT take band semantics')
+for (const r of rows.filter(r => r.cls === 'parallel_contract')) {
   console.log(`  ${(r.file + ':' + r.line).padEnd(52)} ${r.owner}`)
 }
 console.log('\n## non_thermal — these stay INDEPENDENT (spec §7)')

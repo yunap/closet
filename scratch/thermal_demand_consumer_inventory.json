@@ -1,8 +1,8 @@
 {
-  "generated": "2026-09-03T05:30:41.905Z",
+  "generated": "2026-09-03T07:10:20.321Z",
   "counts": {
     "projection": 16,
-    "thermal_demand": 15,
+    "parallel_contract": 13,
     "producer": 15,
     "non_thermal": 4
   },
@@ -16,72 +16,72 @@
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 197,
+      "line": 205,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
       "cls": "projection",
       "text": "isCold: Boolean(weather.isCold),"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 198,
+      "line": 206,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
       "cls": "projection",
       "text": "isColdSevere: Boolean(weather.isColdSevere),"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 199,
+      "line": 207,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "transitIsColdSevere: Boolean(weather.transitIsColdSevere),"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 200,
+      "line": 208,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
       "cls": "projection",
       "text": "transitNeedsRemovableCoolLayer: Boolean(weather.transitNeedsRemovableCoolLayer),"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 228,
+      "line": 236,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 251,
+      "line": 259,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 267,
+      "line": 275,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 274,
+      "line": 350,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.transitIsCold) {"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 287,
+      "line": 363,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.isColdSevere && !indoorDestination) {"
     },
     {
       "file": "styling-engine/outfitEnvironmentalAdequacy.js",
-      "line": 337,
+      "line": 413,
       "owner": "evaluateOutfitEnvironmentalAdequacy",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weather.transitIsColdSevere) {"
     },
     {
@@ -172,14 +172,14 @@
       "file": "styling-engine/rules.js",
       "line": 2611,
       "owner": "wholeWardrobePieceTrustDecision",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "cold: Boolean(weatherProfile.isCold),"
     },
     {
       "file": "styling-engine/rules.js",
       "line": 2655,
       "owner": "wholeWardrobePieceTrustDecision",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (weatherProfile.isCold) {"
     },
     {
@@ -207,47 +207,33 @@
       "file": "styling-engine/rules.js",
       "line": 2837,
       "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "if (!isHot && !isCold) return null"
     },
     {
       "file": "styling-engine/rules.js",
       "line": 2847,
       "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "const needsCoverage = isCold && group === 'bottom' && bottomKind(piece) !== 'pants' && (pieceFabricWeight(piece) === 'me"
     },
     {
       "file": "styling-engine/rules.js",
       "line": 3036,
       "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "const isCold = weatherProfile && weatherProfile.isCold"
     },
     {
       "file": "styling-engine/rules.js",
       "line": 3096,
       "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
+      "cls": "parallel_contract",
       "text": "} else if (isCold) {"
     },
     {
       "file": "styling-engine/rules.js",
-      "line": 3251,
-      "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
-      "text": "} else if (weatherProfile && weatherProfile.isCold) {"
-    },
-    {
-      "file": "styling-engine/rules.js",
-      "line": 3268,
-      "owner": "buildVisualComposerRoster",
-      "cls": "thermal_demand",
-      "text": "if (isHeavy && weatherProfile.isColdSevere) {"
-    },
-    {
-      "file": "styling-engine/rules.js",
-      "line": 3777,
+      "line": 3793,
       "owner": "scoreWholeWardrobeCandidate",
       "cls": "non_thermal",
       "text": "if (!weather.isCold) {"
