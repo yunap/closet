@@ -101,3 +101,37 @@ test('this is the supply half only — it states no demand and no threshold', ()
     assert.ok(!live.includes(banned), `placement must not reference ${banned}`)
   }
 })
+
+test('outerwear with a known face but unrecorded interior stays UNKNOWN', () => {
+  // The case this whole arc came from, and the one a first version of the placement fix broke: the
+  // black puffer's ["polyester","nylon"] was a true, COMPLETE statement about its face and silent
+  // about the down inside. Knowing a coat's shell does not establish whether it is insulated.
+  const shellCoat = {
+    category: 'outerwear', fabric_weight: 'heavy', fabric_category: 'cotton',
+    fiber_content: ['cotton', 'nylon'], sleeve_length: 'long',
+  }
+  assert.equal(warmthPlacementState(shellCoat), 'material_unestablished')
+  assert.equal(garmentWarmthLevel(shellCoat), null)
+
+  // But an outerwear piece whose interior question IS answered places normally — `[]` makes the
+  // verdict non_insulating, a named fill makes it insulating, so neither reaches that branch.
+  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: [] }), 'moderate')
+  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: ['down'] }), 'very warm')
+})
+
+test('ordinary clothing with a recorded face fabric places — it cannot conceal a fill', () => {
+  // 80 of 97 "unplaceable" garments had perfectly good fibres. A medium cotton trouser with
+  // fiber_content ["cotton"] is KNOWN NON-INSULATING, not unknown, and refusing to place it left
+  // the roster unable to rank bottoms at all.
+  const B = (fw, cat, fib) => ({ category: 'bottom', fabric_weight: fw, fabric_category: cat, fiber_content: fib })
+  assert.equal(garmentWarmthLevel(B('medium', 'cotton', ['cotton'])), 'moderate')
+  assert.equal(garmentWarmthLevel(B('medium', 'denim', ['denim'])), 'moderate')
+  assert.equal(garmentWarmthLevel(B('medium', 'wool', ['wool'])), 'warm')
+
+  // The separation the live thread needed: a light summer pant is NOT the same as denim.
+  assert.equal(garmentWarmthLevel(B('light', 'cotton', ['cotton'])), 'light')
+  assert.equal(garmentWarmthLevel(B('light', 'linen', ['linen'])), 'light')
+
+  // Absent face evidence still blocks placement, whatever the category.
+  assert.equal(garmentWarmthLevel(B('medium', '', ['unknown'])), null)
+})

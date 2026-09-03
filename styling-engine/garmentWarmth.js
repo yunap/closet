@@ -86,8 +86,20 @@ export function warmthPlacementState(piece = {}) {
   // What genuinely blocks placement is a substantial garment whose FACE FABRIC is unrecorded, where
   // the unstated material could be anything — the black puffer's original ["polyester","nylon"]
   // shape, or a bare ["unknown"].
-  if (substance >= 1 && !hasFaceMaterialEvidence(piece) && thermalMaterialVerdict(piece) === 'unknown') {
-    return 'material_unestablished'
+  if (substance >= 1 && thermalMaterialVerdict(piece) === 'unknown') {
+    // OUTERWEAR IS THE EXCEPTION, and it is the case this entire arc came from. A coat's shell says
+    // nothing about its fill: the black puffer's ["polyester","nylon"] was a true, complete statement
+    // about its face and silent about the down inside. So for a layer, known face material is NOT
+    // enough — the interior question must be answered, and reaching here means it is not.
+    //
+    // (An outerwear piece whose layer IS answered never reaches this branch: `[]` makes the verdict
+    // non_insulating and a named fill makes it insulating. Only a genuinely unanswered coat stays
+    // unknown, which is exactly the intent.)
+    if (group === 'outerwear') return 'material_unestablished'
+    // Ordinary clothing cannot plausibly conceal a fill, so a recorded face fabric settles it.
+    // Trousers, jeans, blouses, knits: a medium cotton trouser with fiber_content ["cotton"] is
+    // known NON-INSULATING, not unknown.
+    if (!hasFaceMaterialEvidence(piece)) return 'material_unestablished'
   }
   return 'placeable'
 }
