@@ -61,6 +61,13 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'shoes -> leather|suede|nubuck|patent|canvas|mesh|knit (a knitted/flyknit upper — knit and mesh are both permeable, pick knit when the upper is a continuous knitted fabric rather than an open perforated mesh)|woven (use woven for raffia/straw/other woven shoe materials, NOT for a knitted upper)|synthetic|textile|rubber|other'
       )
     }
+    // 2026-09-02 CORRECTION: the 2026-09-01 version of this delta routed a warm boot lining into
+    // fiber_content and called it "the only place a boot's warmth is recorded". That contradicted
+    // the material-role contract, where insulating_layer_materials owns a warm boot's pile/shearling
+    // lining and fiber_content describes the FACE — the same role confusion that was being fixed for
+    // coats, left alive for shoes. Footwear now follows the same ownership rule; the warmth signal
+    // survives the move, since a non-empty layer settles thermalMaterialVerdict.
+    //
     // 2026-09-01: footwear lining. `pieceHasInsulatingMaterial` is read BEFORE the shoe/accessory
     // exemption in hotWeatherInsulationReason, so a boot whose lining is recorded is ALREADY excluded
     // correctly in hot weather with no code change — but nothing ever recorded linings, so a
@@ -69,7 +76,19 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept.",
-        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible — a shearling or fleece collar, a visibly fuzzy or quilted interior, a pile lining at the opening. Record it as 'wool' (shearling reads as wool here), 'fleece', or 'down' as appropriate. This is the only place a boot's warmth is recorded: fabric_weight is null for shoes and fabric_category describes the UPPER, so a lined winter boot and a thin flat are otherwise identical to the engine. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
+        "Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value, they are the same stored concept. For FOOTWEAR this field is the UPPER/face material ONLY. A warm interior — a shearling or fleece collar, a visibly fuzzy or pile lining at the opening — is an INSULATING LAYER and belongs in insulating_layer_materials, not here; recording it here would make the lining read as part of the upper, which is what fiber_content describes. This is the same ownership rule that applies to a coat's fill. Only when you can actually see it — do not infer a lining from the words 'boot' or 'winter', and leave it out when the interior is not visible."
+      )
+    }
+    // 2026-09-02: `shearling` becomes a canonical insulating fibre value. It already existed as a
+    // fabric_category in INSULATING_FABRIC_CATEGORIES, so the two vocabularies disagreed about a
+    // material the wardrobe actually owns — 996868's shearling lining had to be recorded as
+    // 'fleece', losing the distinction. A vocabulary fix for every user, recorded here as an
+    // accepted byte delta rather than by re-freezing the fixture.
+    // See docs/interior-construction-spec.md §4.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        'mohair, fleece, down, cotton, linen, hemp',
+        'mohair, fleece, shearling, down, cotton, linen, hemp'
       )
     }
     // 2026-09-01: the tagger gains a new FACTUAL OUTPUT — known-incomplete fibre composition.
@@ -80,15 +99,15 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     // a visibly quilted coat whose shell is identifiable and whose fill is not. Deliberately
     // narrow: positive visual evidence of unidentifiable components only, never "when unsure" and
     // never by category, either of which would dilute partial back into unknown.
-    // See docs/fiber-evidence-completeness-spec.md §11.2 and §12.
+    // See docs/interior-construction-spec.md §8.
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         "    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: [\"unknown\"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.",
-        "    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: [\"unknown\"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.\n    5. Completeness is a separate answer from composition. A quilted or filled coat whose shell you can identify but whose fill you cannot is fiber_content: [\"polyester\"] with fiber_content_completeness: \"partial\" \u2014 you are not being asked what the fill is, only to state that the list you can give does not describe the whole garment. A plain cotton tee with nothing hidden is \"unknown\", not \"complete\": you did not verify that nothing is hidden, you simply saw nothing suggesting otherwise."
+        "    4. For uncertain textile composition beyond the above — an ordinary knit, jersey, or woven top/bottom with no label and no obviously distinctive material — use fiber_content: [\"unknown\"] rather than inventing a specific fiber from appearance alone. Admitting uncertainty here is correct, not a gap to avoid.\n    5. fiber_content describes the FACE fabric. A quilted or filled coat whose shell you can identify but whose fill you cannot is fiber_content: [\"polyester\"] with insulating_layer_materials: [\"unknown\"] — the fill is recorded as a layer, not as another face fibre. Do not add a lining or fill material to fiber_content.\n  * Directives for Interior Construction: interior_construction and insulating_layer_materials are two different questions and a garment can answer both. insulating_layer_materials is for a THERMALLY FUNCTIONAL layer — fill, wadding, a fuzzy/pile/shearling lining. interior_construction is for ORDINARY construction — a plain lightweight lining, or a reversible/two-full-fabric-layer build. A plain polyester lining in a blazer is interior_construction: \"full_lining\" and is NOT an insulating layer. A reversible jacket is \"full_second_face\", not an insulating layer — this is the single most common error, and recording a second fabric face as insulation makes an unlined jacket read as a winter coat. You may only report construction you can actually see; if the interior is not visible, use \"unknown\". Never emit \"unlined\": not seeing a lining in a photograph is not evidence that there is none."
       )
       expected = expected.replace(
         "  \"formality\":",
-        "  \"fiber_content_completeness\": \"partial|unknown \u2014 whether the fiber_content list above describes the WHOLE garment. Use 'partial' ONLY when the image gives positive evidence that additional material components exist whose composition cannot be identified: visible lining, padding, quilting or baffles, fill, or clearly distinct unidentified material panels. Otherwise use 'unknown'. Never emit 'complete' \u2014 a photograph cannot verify that nothing is hidden, and only a person reading a care label can assert that. 'unknown' means completeness was not established; 'partial' means the list is positively known not to describe the whole garment. Do not use 'partial' merely because you are unsure, and do not assume it by category.\",\n  \"formality\":"
+        "  \"interior_construction\": \"unknown|partial_lining|full_lining|full_second_face — ordinary, NON-INSULATING interior construction, which is a different question from insulating_layer_materials. Use 'full_lining' when a separate ordinary lightweight lining covers most of the garment, 'partial_lining' when it covers only part, and 'full_second_face' when the garment is reversible or built from two substantial fabric faces covering the same area. Emit these ONLY with positive visual evidence of the construction; otherwise 'unknown'. NEVER emit 'unlined' — the absence of a visible lining in a photograph is not evidence that there is no lining, and only a person handling the garment can establish that. Do not record a warm/fuzzy/pile lining or a quilted fill here; that is insulating_layer_materials. Do not report the lining's fibre — it is not asked for.\",\n  \"formality\":"
       )
     }
     // 2026-09-02: fit_on_body gains definitions. The value list is UNCHANGED — only its description
@@ -126,7 +145,7 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         "  \"formality\":",
-        "  \"insulating_layer_materials\": \"array of materials from the same canonical list, describing a thermally functional INTERNAL layer whose material differs from the face fabric \u2014 a coat's fill or wadding, a warm boot's pile/shearling lining. Omit the field entirely (null) when you cannot tell. Use ['unknown'] when construction positively shows an insulating layer \u2014 quilting, baffles, visible loft, a fuzzy or pile interior \u2014 but you cannot identify what it is made of; that is a POSITIVE answer and the common one. Name the material only when it is visually supportable (a visible shearling or fleece lining is 'wool' or 'fleece'). NEVER return an empty array: 'this garment has no insulating layer' cannot be established from a photograph, so omit the field instead. ORDINARY LINING DOES NOT COUNT \u2014 a plain lightweight polyester or acetate lining in a blazer, dress or unlined-feeling jacket is not an insulating layer and must not be recorded here. This is separate from fiber_content, which describes the FACE fabric.\"," + "\n  \"formality\":"
+        "  \"insulating_layer_materials\": \"array of materials from the same canonical list, describing a thermally functional INTERNAL layer whose material differs from the face fabric \u2014 a coat's fill or wadding, a warm boot's pile/shearling lining. Omit the field entirely (null) when you cannot tell. Use ['unknown'] when construction positively shows an insulating layer \u2014 quilting, baffles, visible loft, a fuzzy or pile interior \u2014 but you cannot identify what it is made of; that is a POSITIVE answer and the common one. Name the material only when it is visually supportable (a visible shearling lining is 'shearling', a fleece one is 'fleece'). NEVER return an empty array: 'this garment has no insulating layer' cannot be established from a photograph, so omit the field instead. ORDINARY LINING DOES NOT COUNT \u2014 a plain lightweight polyester or acetate lining in a blazer, dress or unlined-feeling jacket is not an insulating layer and must not be recorded here. This is separate from fiber_content, which describes the FACE fabric.\"," + "\n  \"formality\":"
       )
     }
     // 2026-09-02: outerwear_role is deprecated (docs/outerwear-role-ontology-spec.md). The tagger

@@ -5,9 +5,9 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert'
-import { fiberContentNormalization, normalizeFiberContent, normalizeFiberCompleteness, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY, fiberFamiliesForPiece, normalizeInsulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
+import { fiberContentNormalization, normalizeFiberContent, FIBER_FAMILIES, FIBER_FAMILY_APPLICABILITY, fiberFamiliesForPiece, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction, interiorConstruction, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_OPTIONS } from '../styling-engine/fiberTaxonomy.js'
 import { applyTaggerResult } from '../styling-engine/taggerMerge.js'
-import { thermalMaterialVerdict, compositionEvidenceState, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE, pieceFiberBreathability } from '../styling-engine/attributes.js'
+import { thermalMaterialVerdict, pieceHasInsulatingMaterial, FIELD_CONSEQUENCE, pieceFiberBreathability } from '../styling-engine/attributes.js'
 import { warmthCalibrationEvidenceState, proposedWarmthLevel } from '../styling-engine/warmthCalibration.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
@@ -69,7 +69,7 @@ test('output is deterministic: deduped, case-folded, canonical order', () => {
   assert.deepEqual(normalizeFiberContent(['lyocell']), ['tencel'], 'synonym remaps before validation')
 })
 
-test('normalization infers nothing about completeness or warmth', () => {
+test('normalization infers nothing about construction or warmth', () => {
   // §10 is a storage contract. Promoting ['polyester','nylon'] to "complete", or reading warmth
   // off the absence of an insulating fibre, belongs to the verdict layer (§5) — putting either
   // here would move semantics back inside the write path.
@@ -80,154 +80,165 @@ test('normalization infers nothing about completeness or warmth', () => {
   assert.deepEqual(normalizeFiberContent(['polyester', 'nylon', 'down']), ['down', 'polyester', 'nylon'])
 })
 
-test('completeness writer rules: photo inference may never assert complete', () => {
-  // The rule the black puffer motivates. A photo cannot see a lining or a fill, so a tagger
-  // claiming 'complete' is claiming something it had no way to establish. Downgraded to
-  // 'unknown' — "not established" — rather than to 'partial', since proposing completeness is
-  // not evidence of incompleteness either.
-  assert.equal(normalizeFiberCompleteness('complete', { source: 'tagger' }), 'unknown')
-  assert.equal(normalizeFiberCompleteness('partial', { source: 'tagger' }), 'partial')
-  assert.equal(normalizeFiberCompleteness('unknown', { source: 'tagger' }), 'unknown')
-  assert.equal(normalizeFiberCompleteness('complete', { source: 'manual' }), 'complete')
-  assert.equal(normalizeFiberCompleteness('mostly', { source: 'manual' }), null)
-  assert.equal(normalizeFiberCompleteness(null, { source: 'manual' }), null)
-})
-
-test('completeness is not inferred from the fibre list', () => {
-  // Whatever the list contains, normalization of the list itself never produces a completeness
-  // claim. The two facts are stored separately precisely so one cannot masquerade as the other.
-  for (const list of [['polyester', 'nylon'], ['polyester', 'nylon', 'down'], ['cotton', 'unknown'], []]) {
+test('interior construction is never inferred from the fibre list', () => {
+  // The list normalizer yields fibres and nothing else. Construction is a separate stored fact
+  // precisely so one cannot masquerade as the other — the failure that put ['unknown'] in the
+  // insulating-layer field of a reversible jacket.
+  for (const list of [['polyester', 'nylon'], ['cotton', 'unknown'], []]) {
     const { values } = fiberContentNormalization(list)
-    assert.ok(!('completeness' in Object(values)), 'the list normalizer yields fibres only')
+    assert.ok(!('interior_construction' in Object(values)), 'the list normalizer yields fibres only')
   }
 })
 
-test('the four completeness fixtures, at the layer this repo can decide deterministically', () => {
-  // These mirror the four cases the review asked for. What is testable here is the DISPOSITION of
-  // whatever the tagger emits — the contract between the model and the store. Whether the model
-  // actually returns 'partial' for a quilted coat and 'unknown' for a plain tee is model
-  // behaviour, and confirming it needs one real (billed) tagging run against those photos; it is
-  // not asserted here and must not be assumed from these passing.
-  const fromTagger = v => normalizeFiberCompleteness(v, { source: 'tagger' })
-
-  // 1. quilted puffer, shell visible, fill identity unavailable → partial
-  assert.equal(fromTagger('partial'), 'partial')
-  // 2. plain cotton tee → unknown, NOT complete
-  assert.equal(fromTagger('unknown'), 'unknown')
-  // 3. two visible materials both identified, hidden construction not established → unknown.
-  //    The tagger cannot reach 'complete' by any route, so even if it tried, the store refuses.
-  assert.equal(fromTagger('complete'), 'unknown')
-  // 4. care-label / manual path → may assert complete
-  assert.equal(normalizeFiberCompleteness('complete', { source: 'manual' }), 'complete')
+test('interiorConstruction collapses missing, null and invalid to unknown', () => {
+  // ONE canonical state model, deliberately unlike insulating_layer_materials' null-vs-[] split:
+  // there, [] is a strong human assertion of absence. Here "no lining" and "nobody has said"
+  // differ only in provenance, which the writer rules carry.
+  assert.equal(interiorConstruction({}), 'unknown')
+  assert.equal(interiorConstruction({ interior_construction: null }), 'unknown')
+  assert.equal(interiorConstruction({ interior_construction: 'batting' }), 'unknown')
+  assert.equal(interiorConstruction({ interior_construction: 'FULL_LINING' }), 'full_lining')
+  for (const v of ['unlined', 'partial_lining', 'full_lining', 'full_second_face']) {
+    assert.equal(interiorConstruction({ interior_construction: v }), v)
+  }
 })
 
-test('the tagger prompt states the narrow partial contract and forbids complete', () => {
-  // Guards the wording against dilution: "when unsure" or "assume for coats" would collapse
-  // partial back into unknown, which is the distinction §11 exists to protect.
-  const schema = TAG_PIECE_PROMPT.split('\n').find(l => l.trim().startsWith('"fiber_content_completeness"'))
+test('a photo may establish a lining exists, never that one is absent', () => {
+  // The same asymmetry insulating_layer_materials already enforces, for the same physical reason.
+  // Absence of a visible lining is evidence of an exterior photograph, not of an unlined garment.
+  const fromTagger = v => normalizeInteriorConstruction(v, { source: 'tagger' })
+  assert.equal(fromTagger('full_lining'), 'full_lining')
+  assert.equal(fromTagger('partial_lining'), 'partial_lining')
+  assert.equal(fromTagger('full_second_face'), 'full_second_face')
+  assert.equal(fromTagger('unlined'), 'unknown', 'a tagger-asserted unlined is DOWNGRADED, not rejected')
+  assert.equal(fromTagger('nonsense'), null)
+  assert.equal(normalizeInteriorConstruction('unlined', { source: 'manual' }), 'unlined')
+})
+
+test('the tagger schema forbids unlined and separates construction from insulation', () => {
+  const schema = TAG_PIECE_PROMPT.split('\n').find(l => l.trim().startsWith('"interior_construction"'))
   assert.ok(schema, 'the tagger schema must ask for the field')
-  assert.match(schema, /partial\|unknown/)
-  assert.match(schema, /Never emit 'complete'/)
-  assert.match(schema, /positive evidence/)
-  assert.match(schema, /Do not use 'partial' merely because you are unsure/)
-  assert.match(schema, /do not assume it by category/)
-  assert.ok(!/\bcomplete\|/.test(schema), "'complete' must not appear as a permitted enum value")
+  assert.match(schema, /NEVER emit 'unlined'/)
+  assert.match(schema, /positive visual evidence/)
+  assert.ok(!/unlined\|/.test(schema), "'unlined' must not appear as a permitted enum value")
+  assert.match(schema, /insulating_layer_materials/)
+  assert.match(schema, /NON-INSULATING/)
 })
 
-test('every photo-derived producer of fiber_content obeys the completeness writer contract', () => {
-  // Architectural acceptance test. `/extract-pieces` was a loophole for exactly one reason: it
-  // produces fiber_content and nobody had asked whether it was a writer. This enumerates the
-  // producers and pins each one's disposition, so the next path of that shape has to declare
-  // itself rather than being found later.
-  //
-  // The rule: a producer either emits completeness under the canonical writer contract, or is
-  // documented as incapable of asserting it with the downstream state defaulting to 'unknown'.
+test('every photo-derived producer obeys the interior-construction writer contract', () => {
+  // Architectural acceptance test, inherited from the completeness census: a producer either emits
+  // the field under the canonical writer contract, or is documented as incapable of asserting it.
   const read = f => fs.readFileSync(path.join(process.cwd(), f), 'utf8')
   const ai = read('routes/ai.js')
   const crud = read('routes/crud.js')
   const prompts = read('styling-engine/prompts.js')
 
-  // 1. The tagger (tagPieceWithProvider). Asks for the field, and normalizes at source 'tagger'.
-  assert.match(prompts, /"fiber_content_completeness": "\$\{FIBER_COMPLETENESS_SCHEMA_DESCRIPTION\}"/)
-  assert.match(ai, /tags\.fiber_content_completeness\s*=\s*\n?\s*normalizeFiberCompleteness\(tags\.fiber_content_completeness, \{ source: 'tagger' \}\)/)
-
-  // 2. /extract-pieces. Same schema projection, same source, applied to every returned piece.
-  assert.equal((ai.match(/"fiber_content_completeness": "\$\{FIBER_COMPLETENESS_SCHEMA_DESCRIPTION\}"/g) || []).length, 1)
+  assert.match(prompts, /"interior_construction": "\$\{INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION\}"/)
+  assert.match(ai, /tags\.interior_construction\s*=\s*\n?\s*normalizeInteriorConstruction\(tags\.interior_construction, \{ source: 'tagger' \}\)/)
+  assert.equal((ai.match(/"interior_construction": "\$\{INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION\}"/g) || []).length, 1)
   assert.match(ai, /function applyFiberWriterContract/)
-  assert.match(ai, /res\.json\(applyFiberWriterContract\(parseModelJson\(raw\)\)\)/)
+  assert.equal((crud.match(/normalizeInteriorConstruction\(interior_construction, \{ source: 'manual' \}\)/g) || []).length, 2)
 
-  // 3. Manual edit (both crud write paths), the only writer permitted to assert 'complete'.
-  assert.equal((crud.match(/normalizeFiberCompleteness\(fiber_content_completeness, \{ source: 'manual' \}\)/g) || []).length, 2)
-
-  // Neither photo-derived schema may offer 'complete' as a value the model can pick.
-  assert.ok(!FIBER_COMPLETENESS_SCHEMA_DESCRIPTION.includes('complete|'))
-  assert.ok(!FIBER_COMPLETENESS_SCHEMA_DESCRIPTION.includes('|complete'))
-
-  // The description has ONE source. A second inline copy is the §7.1 failure repeating itself.
   for (const [name, text] of Object.entries({ 'routes/ai.js': ai, 'styling-engine/prompts.js': prompts })) {
-    assert.ok(!text.includes('whether the fiber_content list above describes the WHOLE garment'),
-      `${name} restates the completeness contract instead of projecting FIBER_COMPLETENESS_SCHEMA_DESCRIPTION`)
+    assert.ok(!text.includes('ordinary, NON-INSULATING interior construction, which is a different question'),
+      `${name} restates the construction contract instead of projecting the canonical description`)
   }
-
-  // Documented as NOT producers, so their absence above is a decision rather than an oversight:
-  //   styling-engine/mockAiHandler.js — a provider-level mock. Its canned fiber_content is
-  //     returned THROUGH tagPieceWithProvider, so it lands on the tagger's boundary normalization
-  //     like any real provider response and cannot bypass the contract.
-  //   src/components/{PieceForm,BatchAdd}.jsx — clients. They post to crud, which is writer 3.
-  //   routes/importer.js — calls tagPieceWithProvider, inheriting writer 1.
-  assert.match(read('routes/importer.js'), /tagPieceWithProvider/)
+  assert.ok(!INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION.includes('unlined|'))
 })
 
-test('thermalMaterialVerdict: positive evidence is decisive, negative evidence is not', () => {
-  // The asymmetry, pinned. Positive insulating evidence settles the question even from a partial
-  // record. A negative reading only settles it when the composition is known complete — the black
-  // puffer's ["polyester","nylon"] was TRUE about its shell and lining, and concluding "not
-  // insulated" from it is the error this chain exists to prevent.
-  // insulating_layer_materials: [] means "verified: no insulating layer". Since 2026-09-02 the
-  // negative branch needs BOTH that and a complete face composition — see
-  // material-role-representation-spec.md. These cases assert the layer is ruled out so they keep
-  // testing the fibre logic rather than the new gate.
-  const v = (fiber_content, fiber_content_completeness) =>
-    thermalMaterialVerdict({ fiber_content, fiber_content_completeness, insulating_layer_materials: [] })
-
-  assert.equal(v(['down'], 'partial'), 'insulating')
-  assert.equal(v(['wool'], 'unknown'), 'insulating')
-  assert.equal(v(['cotton'], 'complete'), 'non_insulating')
-  assert.equal(v(['polyester', 'nylon'], 'complete'), 'non_insulating')
-  assert.equal(v(['polyester', 'nylon'], 'unknown'), 'unknown')
-  assert.equal(v(['polyester', 'nylon'], 'partial'), 'unknown')
-  assert.equal(v([], 'unknown'), 'unknown')
-  assert.equal(v(['unknown'], 'unknown'), 'unknown')
-
-  // The puffer, before and after its care label was read. Same garment, same fibres once the fill
-  // is recorded — the difference is entirely in what was established.
-  assert.equal(v(['polyester', 'nylon'], 'unknown'), 'unknown')
-  assert.equal(v(['polyester', 'nylon', 'down'], 'unknown'), 'insulating')
+test('fiber_content_completeness is gone from every production surface', () => {
+  // The retirement, asserted rather than assumed. Measured before removal: 'complete' was set on
+  // ZERO of 268 active pieces, so the branch it gated had never executed, and 'partial' had no
+  // semantic readers. See docs/interior-construction-spec.md §5.
+  const read = f => fs.readFileSync(path.join(process.cwd(), f), 'utf8')
+  for (const f of ['routes/ai.js', 'routes/crud.js', 'styling-engine/prompts.js',
+                   'styling-engine/attributes.js', 'styling-engine/taggerMerge.js',
+                   'src/components/PieceForm.jsx', 'src/components/BatchAdd.jsx']) {
+    const live = read(f).split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+    assert.ok(!live.some(l => l.includes('fiber_content_completeness')),
+      `${f} still reads or writes the retired completeness field`)
+  }
+  const taxonomyLive = read('styling-engine/fiberTaxonomy.js').split('\n').filter(l => !l.trim().startsWith('//'))
+  assert.ok(!taxonomyLive.some(l => l.includes('partialComposition')),
+    'partial must not be re-derived as a combined abstraction (the tombstone comment naming it is fine)')
 })
 
-test('positive evidence includes fabric_category, which completeness never overrides', () => {
+test('thermalMaterialVerdict: positive evidence is decisive, and the layer alone rules it out', () => {
+  // The asymmetry is the point. POSITIVE evidence settles the verdict from any record — a list
+  // containing 'down' establishes insulation whether or not anything else is missing. NEGATIVE
+  // evidence needs insulating_layer_materials: [], which is a human-only write.
+  //
+  // ACTIVATION, 2026-09-02: the negative branch used to ALSO require
+  // fiber_content_completeness === 'complete'. That field was retired after measurement showed
+  // 'complete' had never been set on a single piece, so this branch had never once executed.
+  // These assertions are the first time non_insulating is reachable at all.
+  const v = fiber_content => thermalMaterialVerdict({ fiber_content, insulating_layer_materials: [] })
+
+  assert.equal(v(['down']), 'insulating')
+  assert.equal(v(['wool']), 'insulating')
+  assert.equal(v(['cotton']), 'non_insulating')
+  assert.equal(v(['polyester', 'nylon']), 'non_insulating')
+  assert.equal(v([]), 'non_insulating', 'the owner ruled the layer out and no warm fibre is recorded')
+  assert.equal(v(['unknown']), 'non_insulating')
+
+  // Without the layer answer, nothing is decided either way. Absent is not empty.
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['polyester', 'nylon'] }), 'unknown')
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'] }), 'unknown')
+
+  // The puffer, before and after its fill was recorded. Same shell fibres; the difference is
+  // entirely in what the layer field says.
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['polyester', 'nylon'] }), 'unknown')
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['polyester', 'nylon'], insulating_layer_materials: ['down'] }), 'insulating')
+})
+
+test('construction never reaches the verdict, in either direction', () => {
+  // The spec's central separation (§6). An ordinary lining or a reversible second face is real
+  // thermal mass and belongs in the SCORE; it must never make a garment read as insulated, and
+  // equally must never gate the negative branch. 996764 is why: a reversible jacket recorded as
+  // ['unknown'] insulation read `insulating` and scored like a winter coat.
+  for (const c of ['unknown', 'unlined', 'partial_lining', 'full_lining', 'full_second_face']) {
+    assert.equal(
+      thermalMaterialVerdict({ fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: c }),
+      'non_insulating',
+      `construction ${c} must not change a settled negative verdict`)
+    assert.equal(
+      thermalMaterialVerdict({ fiber_content: ['wool'], insulating_layer_materials: [], interior_construction: c }),
+      'insulating',
+      `construction ${c} must not change a settled positive verdict`)
+    assert.equal(
+      thermalMaterialVerdict({ fiber_content: ['cotton'], interior_construction: c }),
+      'unknown',
+      `construction ${c} must not manufacture a verdict where the layer is unanswered`)
+  }
+})
+
+test('positive evidence includes fabric_category, which nothing else overrides', () => {
   // completeness describes the FIBRE record only. A cardigan tagged fiber_content ["unknown"] with
   // fabric_category 'fleece' is insulating and always was; gating that on a fibre-record fact
   // would be a silent regression at every existing caller.
   assert.equal(thermalMaterialVerdict({ fiber_content: ['unknown'], fabric_category: 'fleece' }), 'insulating')
-  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'], fabric_category: 'shearling', fiber_content_completeness: 'complete' }), 'insulating')
+  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'], fabric_category: 'shearling', insulating_layer_materials: [] }), 'insulating',
+    'an explicitly ruled-out FILL never overrides a warm FACE fabric — 250 and 996762 in the real wardrobe')
 })
 
-test('the two verdicts answer different questions and neither leaks into the other', () => {
-  // "complete cotton" and "partial list containing down" are the pair that makes one combined
-  // verdict impossible: they disagree on composition and on warmth, in opposite directions.
-  const completeCotton = { fiber_content: ['cotton'], fiber_content_completeness: 'complete', insulating_layer_materials: [] }
-  const partialDown = { fiber_content: ['polyester', 'down'], fiber_content_completeness: 'partial' }
+test('the two material facts answer different questions and neither leaks into the other', () => {
+  // fiber_content describes the FACE fabric; insulating_layer_materials describes a thermally
+  // functional layer. The pair that makes one combined field impossible: a cotton garment with the
+  // fill ruled out, and a polyester one whose fill is down. They disagree in opposite directions.
+  const cottonNoFill = { fiber_content: ['cotton'], insulating_layer_materials: [] }
+  const polyesterDownFill = { fiber_content: ['polyester'], insulating_layer_materials: ['down'] }
 
-  assert.equal(compositionEvidenceState(completeCotton), 'complete')
-  assert.equal(thermalMaterialVerdict(completeCotton), 'non_insulating')
-  assert.equal(compositionEvidenceState(partialDown), 'partial')
-  assert.equal(thermalMaterialVerdict(partialDown), 'insulating')
+  assert.equal(thermalMaterialVerdict(cottonNoFill), 'non_insulating')
+  assert.equal(thermalMaterialVerdict(polyesterDownFill), 'insulating')
 
-  // compositionEvidenceState reads the stored fact and never re-derives it from the list.
-  assert.equal(compositionEvidenceState({ fiber_content: ['cotton', 'unknown'] }), 'unknown',
-    'an unanswered row is unknown, whatever its fibre list looks like')
-  assert.equal(compositionEvidenceState({ fiber_content_completeness: 'nonsense' }), 'unknown')
+  // 996765: lined AND filled. Both facts survive; neither is thrown away to record the other.
+  const linedAndFilled = {
+    fiber_content: ['leather'], fabric_category: 'leather',
+    interior_construction: 'full_lining', insulating_layer_materials: ['down'],
+  }
+  assert.equal(interiorConstruction(linedAndFilled), 'full_lining')
+  assert.deepEqual(linedAndFilled.insulating_layer_materials, ['down'])
+  assert.equal(thermalMaterialVerdict(linedAndFilled), 'insulating')
 })
 
 test('pieceHasInsulatingMaterial stays exactly verdict === insulating while callers migrate', () => {
@@ -270,14 +281,14 @@ test('994060: the real-wardrobe fixture for the asymmetry, pinned permanently', 
   // deliberately rather than as a synthetic case. It is the semantic heart of the verdict layer:
   // a PARTIAL record still yields a decisive positive, while the inverse never yields a decisive
   // negative. If a future change makes this return 'unknown', the asymmetry has been lost.
-  const scarf = { fiber_content: ['wool', 'unknown'], fiber_content_completeness: 'partial' }
-  assert.equal(compositionEvidenceState(scarf), 'partial')
-  assert.equal(thermalMaterialVerdict(scarf), 'insulating')
+  const scarf = { fiber_content: ['wool', 'unknown'] }
+  assert.equal(thermalMaterialVerdict(scarf), 'insulating',
+    'a partial record still yields a decisive POSITIVE — wool is in the list')
 
-  // The inverse, same completeness, no insulating material: never decisive.
-  const hoodie = { fiber_content: ['polyester', 'spandex', 'unknown'], fiber_content_completeness: 'partial' }
-  assert.equal(compositionEvidenceState(hoodie), 'partial')
-  assert.equal(thermalMaterialVerdict(hoodie), 'unknown')
+  // The inverse, no insulating material and no ruled-out layer: never decisive.
+  const hoodie = { fiber_content: ['polyester', 'spandex', 'unknown'] }
+  assert.equal(thermalMaterialVerdict(hoodie), 'unknown',
+    'no insulating fibre and no ruled-out layer stays unknown, never a confident negative')
 })
 
 test('warmth calibration: unverified is not the same as uncharacterized', () => {
@@ -310,13 +321,13 @@ test('warmth calibration: unverified is not the same as uncharacterized', () => 
 
 test('both intake surfaces project fibre chips from one canonical function', () => {
   // §7.5 + the presentation-parity follow-up. The screenshot that started this showed a coat being
-  // offered pearl, enamel, horn and ceramic in a flat wall of 35 chips with `down` unmarked in the
+  // offered pearl, enamel, horn and ceramic in a flat wall of 36 chips with `down` unmarked in the
   // middle. Grouping AND the per-category filter are now one function both forms call.
   const count = piece => fiberFamiliesForPiece(piece).reduce((n, [, v]) => n + v.length, 0)
 
   const coat = fiberFamiliesForPiece({ category: 'outerwear' })
   const shown = coat.flatMap(([, values]) => values)
-  assert.equal(shown.length, 24, 'a coat sees 24 chips, not all 35')
+  assert.equal(shown.length, 25, 'a coat sees 25 chips, not all 36')
   for (const jewelleryOnly of FIBER_FAMILIES.jewelry_material) {
     assert.ok(!shown.includes(jewelleryOnly), `${jewelleryOnly} must not be offered on a coat`)
   }
@@ -326,9 +337,9 @@ test('both intake surfaces project fibre chips from one canonical function', () 
   // `accessory` is a catch-all, so category alone is too coarse: offering pearl/enamel on a scarf
   // is the same defect as offering them on a coat. Real usage backs this — jewellery-family values
   // appear on the wardrobe's 8 jewelry pieces and on none of its belts, bags, glasses or scarves.
-  assert.equal(count({ category: 'accessory', accessory_subtype: 'jewelry' }), 35)
-  assert.equal(count({ category: 'accessory', accessory_subtype: 'scarf' }), 29)
-  assert.equal(count({ category: 'accessory', accessory_subtype: 'belt' }), 29)
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'jewelry' }), 36)
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'scarf' }), 30)
+  assert.equal(count({ category: 'accessory', accessory_subtype: 'belt' }), 30)
   const scarfHardware = fiberFamiliesForPiece({ category: 'accessory', accessory_subtype: 'scarf' })
     .find(([f]) => f === 'jewelry_material')[1]
   assert.deepEqual(scarfHardware, ['metal', 'wood', 'horn', 'shell', 'resin'],
@@ -362,25 +373,37 @@ test('the editor warning claims ambiguity, never that a garment is non-insulatin
   assert.equal(FIELD_CONSEQUENCE.fiber_content, 'Affects warmth and weather suitability')
 })
 
-test('both intake forms carry the tagger completeness answer through to the save', () => {
-  // Regression guard for a real miss. The producer census (§14) enumerated who WRITES the fact and
-  // proved every producer obeys the contract — but not that the client path carries it. A live tag
-  // of a visibly quilted puffer (996866) stored 'unknown', which looked exactly like the model
-  // declining to answer; the tag response was in fact being discarded by the intake forms.
-  // Indistinguishable from the outside, which is what made it worth a test rather than a fix.
+test('both intake forms carry the tagger construction answer through to the save', () => {
+  // Regression guard inherited from a real miss on the field this replaces. The producer census
+  // proves every producer WRITES the fact; it does not prove the client path carries it. A live
+  // tag of a visibly quilted puffer once stored 'unknown' because the intake forms discarded the
+  // tag response — indistinguishable from the outside from the model declining to answer.
   const pieceForm = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceForm.jsx'), 'utf8')
   const batchAdd = fs.readFileSync(path.join(process.cwd(), 'src/components/BatchAdd.jsx'), 'utf8')
 
-  assert.match(pieceForm, /applyTagValue\(next, 'fiber_content_completeness', tags\.fiber_content_completeness\)/)
-  assert.match(batchAdd, /fiber_content_completeness: tags\.fiber_content_completeness \|\| 'unknown'/)
+  assert.match(pieceForm, /applyTagValue\(next, 'interior_construction', tags\.interior_construction\)/)
+  assert.match(batchAdd, /interior_construction: tags\.interior_construction \|\| 'unknown'/)
   // Both submit by iterating the form object, so presence in the blank form is what makes it send.
-  assert.match(batchAdd, /fiber_content_completeness: 'unknown'/)
-  assert.match(pieceForm, /fiber_content_completeness: piece\?\.fiber_content_completeness \|\| 'unknown'/)
+  assert.match(batchAdd, /interior_construction: 'unknown'/)
+  assert.match(pieceForm, /interior_construction: piece\?\.interior_construction \|\| 'unknown'/)
 
-  // Every field the tagger is asked for should reach the form. fiber_content already did; this is
-  // the one that did not.
-  for (const field of ['fiber_content', 'fiber_content_completeness']) {
+  for (const field of ['fiber_content', 'interior_construction']) {
     assert.match(pieceForm, new RegExp(`applyTagValue\\(next, '${field}'`))
+  }
+
+  // The owner-facing control never exposes the stored vocabulary or manufacturing terminology.
+  const control = pieceForm.slice(pieceForm.indexOf('data-piece-field="interior_construction"')).slice(0, 900)
+  assert.match(control, /What is the inside construction\?/)
+  // The editor PROJECTS the canonical options — it does not keep its own labelled list. See
+  // test/interiorConstruction.test.js for the single-ownership ratchet this pairs with.
+  assert.match(control, /options=\{INTERIOR_CONSTRUCTION_OPTIONS\}/)
+  const labels = INTERIOR_CONSTRUCTION_OPTIONS.map(o => o.label)
+  assert.deepEqual(labels, ['Unlined', 'Regular lining — part of the garment',
+    'Regular lining — most/all of the garment', 'Reversible / two full fabric layers', 'Not sure'])
+  // No manufacturing terminology reaches the owner, in either the control or its labels.
+  for (const jargon of ['interlining', 'material assembly', 'facing', 'batting']) {
+    assert.ok(!new RegExp(jargon, 'i').test(control + labels.join(' ')),
+      `the editor must not say "${jargon}"`)
   }
 })
 
@@ -392,8 +415,8 @@ test('an insulating LAYER settles the verdict whatever its fibres are', () => {
   // insulating-layer role. See material-role-representation-spec.md.
   const coat = { fiber_content: ['polyester', 'nylon', 'leather'], fabric_category: 'leather' }
   assert.equal(thermalMaterialVerdict(coat), 'unknown', 'layer unrecorded')
-  assert.equal(thermalMaterialVerdict({ ...coat, fiber_content_completeness: 'complete' }), 'unknown',
-    'complete composition alone must NOT produce a negative — this was the false negative')
+  assert.equal(thermalMaterialVerdict({ ...coat, insulating_layer_materials: [] }), 'non_insulating',
+    'the owner ruling the fill out IS the negative answer — nothing else is required')
   assert.equal(thermalMaterialVerdict({ ...coat, insulating_layer_materials: ['polyester'] }), 'insulating')
 
   // ['unknown'] is a POSITIVE claim: a layer is there, its material unidentified. A quilted coat is
@@ -402,11 +425,11 @@ test('an insulating LAYER settles the verdict whatever its fibres are', () => {
 })
 
 test('the negative branch needs the layer explicitly ruled out, not merely absent', () => {
-  const tee = { fiber_content: ['cotton'], fiber_content_completeness: 'complete' }
+  const tee = { fiber_content: ['cotton'] }
   assert.equal(thermalMaterialVerdict(tee), 'unknown', 'absent is not empty')
   assert.equal(thermalMaterialVerdict({ ...tee, insulating_layer_materials: [] }), 'non_insulating')
-  // Incomplete face composition still blocks a negative even with the layer ruled out.
-  assert.equal(thermalMaterialVerdict({ fiber_content: ['cotton'], insulating_layer_materials: [] }), 'unknown')
+  // A tagger cannot reach the negative by any route: its [] is downgraded to null upstream.
+  assert.equal(normalizeInsulatingLayerMaterials([], { source: 'tagger' }), null)
 })
 
 test('a photograph may assert an insulating layer exists, never that one is absent', () => {
@@ -415,7 +438,10 @@ test('a photograph may assert an insulating layer exists, never that one is abse
   assert.deepEqual(n([], { source: 'tagger' }), null, 'a tagger asserting [] is downgraded to unrecorded')
   assert.deepEqual(n([], { source: 'manual' }), [], 'only a person can rule the layer out')
   assert.deepEqual(n(['unknown'], { source: 'tagger' }), ['unknown'])
-  assert.deepEqual(n(['Wool', ' shearling'], { source: 'tagger' }), ['wool'], 'unknown vocab dropped, wool kept')
+  assert.deepEqual(n(['Wool', ' shearling'], { source: 'tagger' }), ['wool', 'shearling'],
+    'shearling is a canonical insulating material in its own right, not a synonym for fleece')
+  assert.deepEqual(n(['shearling'], { source: 'manual' }), ['shearling'],
+    '996868 round-trips as shearling — a verdict-only assertion would pass even if it collapsed to [unknown]')
   assert.deepEqual(n(['bogus'], { source: 'tagger' }), ['unknown'],
     'a positive observation must not collapse to nothing because its material was misspelled')
 })

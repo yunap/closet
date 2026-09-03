@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
-import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS, FIBER_FAMILIES } from '../../styling-engine/fiberTaxonomy.js'
+import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS, FIBER_FAMILIES, INTERIOR_CONSTRUCTION_OPTIONS } from '../../styling-engine/fiberTaxonomy.js'
 import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
@@ -368,6 +368,12 @@ const CHIP_UNSET_VALUES = new Set(['none', 'unknown', 'n/a'])
 // those exist. A t-shirt has no interior layer to ask about.
 const INSULATING_LAYER_CATEGORIES = ['outerwear', 'shoes']
 
+// Interior construction is asked wherever an ordinary lining is a real possibility. Shoes are
+// excluded deliberately: a boot's lining is thermal or nothing, and it is already recorded as an
+// insulating layer — asking "is there a regular lining?" about a shoe invites the wrong answer.
+const INTERIOR_CONSTRUCTION_CATEGORIES = ['outerwear', 'top', 'bottom', 'dress']
+
+
 // Offered materials: the warm family plus the synthetics real fill is actually made of. Projected
 // from the canonical taxonomy rather than re-listed — polyester wadding is why this field exists.
 const INSULATING_LAYER_MATERIAL_OPTIONS = [...FIBER_FAMILIES.insulating, ...FIBER_FAMILIES.synthetic]
@@ -469,7 +475,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     opacity:            piece?.opacity            || null,
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
-    fiber_content_completeness: piece?.fiber_content_completeness || 'unknown',
+    interior_construction: piece?.interior_construction || 'unknown',
     insulating_layer_materials: piece?.insulating_layer_materials ?? null,
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
@@ -709,7 +715,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       // exact propagated-but-unread failure this spec exists to close, reproduced while building
       // the fix for it. A live tag of piece 996866 (a visibly quilted puffer) stored 'unknown'
       // and looked like the model declining, when the form had simply never carried the field.
-      applyTagValue(next, 'fiber_content_completeness', tags.fiber_content_completeness)
+      applyTagValue(next, 'interior_construction', tags.interior_construction)
       applyTagValue(next, 'insulating_layer_materials', tags.insulating_layer_materials)
       applyTagValue(next, 'formality', tags.formality)
       applyTagValue(next, 'heel_height', tags.heel_height)
@@ -1514,13 +1520,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 />
               </div>
             ))}
-            {/* Completeness is a separate stored fact, not something read off the list above: a
-                shell-only reading and a care-label transcription look identical once stored, and
-                only a person can tell them apart. Asked in the user's terms rather than the
-                internal unknown/partial/complete vocabulary. "Not sure" preserves an existing
-                'partial' — that is a stronger statement than "not established" and answering this
-                control should never quietly discard it. See
-                docs/fiber-evidence-completeness-spec.md §11. */}
             {warmthCalibrationEvidenceState(form) === 'thermally_ambiguous' && (
               /* Deliberately NOT "this garment is non-insulating" — the app has established no
                  such thing, and saying so would contradict everything the verdict layer proves.
@@ -1530,6 +1529,28 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               <div className="form-warning" data-piece-field="fiber_content_ambiguous">
                 The recorded materials don’t say how warm this is. Padded or quilted pieces may
                 contain insulation that isn’t visible; the care label can identify it.
+              </div>
+            )}
+            {INTERIOR_CONSTRUCTION_CATEGORIES.includes(cat) && (
+              /* Ordinary interior construction — deliberately NOT a warmth question. The owner is
+                 asked what is physically inside the garment, which they can answer by opening it;
+                 the engine turns that into graded warmth in thermal.js and never into an
+                 "insulated" verdict. Replaces "is this the complete material composition?", which
+                 needed a care label and was answered on zero pieces in the app's lifetime.
+
+                 Reversible construction is one option in THIS control rather than a separate
+                 toggle, which makes it mutually exclusive with an ordinary lining. That is an
+                 accepted limitation: no real garment in the wardrobe needs both. Do not generalize
+                 to independent controls unless one does — docs/interior-construction-spec.md §8. */
+              <div className="form-subgroup" data-piece-field="interior_construction">
+                <span className="form-hint">What is the inside construction?</span>
+                <FieldConsequence field="interior_construction" />
+                <ChipRow
+                  options={INTERIOR_CONSTRUCTION_OPTIONS}
+                  value={form.interior_construction || 'unknown'}
+                  onChange={v => set('interior_construction', v)}
+                  clearable={false}
+                />
               </div>
             )}
             {INSULATING_LAYER_CATEGORIES.includes(cat) && (
@@ -1565,19 +1586,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 )}
               </div>
             )}
-            <div className="form-subgroup" data-piece-field="fiber_content_completeness">
-              <span className="form-hint">Is this the complete material composition?</span>
-              <FieldConsequence field="fiber_content_completeness" />
-              <ChipRow
-                options={[
-                  { value: 'complete', label: 'Yes' },
-                  { value: form.fiber_content_completeness === 'partial' ? 'partial' : 'unknown', label: 'Not sure' },
-                ]}
-                value={form.fiber_content_completeness || 'unknown'}
-                onChange={v => set('fiber_content_completeness', v)}
-                clearable={false}
-              />
-            </div>
           </div>
 
           {fabricConfig.showStretch && (

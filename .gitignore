@@ -98,3 +98,6 @@ scratch/*
 # directly, gated behind CONFIRM_SPEND=yes. Its output directory stays ignored -- raw run
 # results are local/ephemeral, not meant to be committed.
 !scratch/openai_persistence_benchmark.mjs
+!scratch/repair_interior_construction_calibration.mjs
+!scratch/verify_interior_construction_calibration.mjs
+!scratch/verify_interior_construction_50f.mjs

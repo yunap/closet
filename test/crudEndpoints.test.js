@@ -821,40 +821,62 @@ test('fiber gaps the tagger dropped before the client saw them still reach the r
   assert.equal(JSON.parse(queued[0].payload).fiber, 'lycra')
 })
 
-test('fiber_content_completeness is persisted, and only a human may assert complete', async () => {
-  // docs/fiber-evidence-completeness-spec.md §11. The fact exists because a care-label
-  // transcription and an unverified photo guess are byte-identical in fiber_content, and neither
-  // manual_overrides nor tagger confidence can tell them apart.
+test('interior_construction round-trips, and only a human may assert unlined', async () => {
+  // docs/interior-construction-spec.md §9. A photograph can show a lining EXISTS; it can never
+  // show one is absent, so `unlined` is owner-only and a tagger proposing it is downgraded.
   const create = new FormData()
-  create.append('name', 'completeness coat')
+  create.append('name', 'reversible plaid jacket')
   create.append('category', 'outerwear')
-  create.append('colors', JSON.stringify(['black']))
-  create.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
-  create.append('fiber_content_completeness', 'complete')
+  create.append('colors', JSON.stringify(['navy']))
+  create.append('fiber_content', JSON.stringify(['cotton']))
+  create.append('interior_construction', 'full_second_face')
+  create.append('insulating_layer_materials', JSON.stringify([]))
   const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
-  assert.equal(created.fiber_content_completeness, 'complete',
-    'a person confirming the composition is the canonical path that can assert complete')
+  assert.equal(created.interior_construction, 'full_second_face')
+  assert.deepEqual(created.insulating_layer_materials, [],
+    'the two facts are stored independently — a second fabric face is not a fill')
 
-  // The same fibre list with completeness unstated stays unknown — never promoted by the absence
-  // of an uncertainty marker.
+  // The owner IS permitted to assert unlined through this path.
+  const unlined = new FormData()
+  unlined.append('name', 'olive lightweight jacket')
+  unlined.append('category', 'outerwear')
+  unlined.append('colors', JSON.stringify(['olive']))
+  unlined.append('interior_construction', 'unlined')
+  const plain = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: unlined })).json()
+  assert.equal(plain.interior_construction, 'unlined')
+
+  // Unstated stays null — never promoted to unlined by the absence of an answer.
   const unstated = new FormData()
-  unstated.append('name', 'guessed coat')
+  unstated.append('name', 'unanswered coat')
   unstated.append('category', 'outerwear')
   unstated.append('colors', JSON.stringify(['black']))
-  unstated.append('fiber_content', JSON.stringify(['polyester', 'nylon', 'down']))
-  const guessed = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: unstated })).json()
-  assert.equal(guessed.fiber_content_completeness, null)
-  assert.deepEqual(guessed.fiber_content, created.fiber_content,
-    'identical fibre lists — completeness is the only thing separating them, which is the point')
+  const quiet = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: unstated })).json()
+  assert.equal(quiet.interior_construction, null)
 
   // Nonsense is rejected rather than stored.
   const bogus = new FormData()
-  bogus.append('name', 'completeness coat')
+  bogus.append('name', 'reversible plaid jacket')
   bogus.append('category', 'outerwear')
-  bogus.append('colors', JSON.stringify(['black']))
-  bogus.append('fiber_content_completeness', 'mostly')
+  bogus.append('colors', JSON.stringify(['navy']))
+  bogus.append('interior_construction', 'batting')
   const rejected = await (await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: bogus })).json()
-  assert.equal(rejected.fiber_content_completeness, null)
+  assert.equal(rejected.interior_construction, null)
+})
+
+test('shearling round-trips as itself, never collapsed into fleece', async () => {
+  // The silent-failure trap from spec §4: before `shearling` was a canonical value,
+  // normalizeInsulatingLayerMaterials dropped it as out-of-vocabulary and returned ['unknown'].
+  // A layer still existed, so the verdict was still `insulating` and a verdict-only assertion
+  // would have passed for entirely the wrong reason. This asserts the STORED value.
+  const create = new FormData()
+  create.append('name', 'tan suede shearling-lined jacket')
+  create.append('category', 'outerwear')
+  create.append('colors', JSON.stringify(['tan']))
+  create.append('fiber_content', JSON.stringify(['suede']))
+  create.append('insulating_layer_materials', JSON.stringify(['shearling']))
+  const created = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: create })).json()
+  assert.deepEqual(created.insulating_layer_materials, ['shearling'],
+    'shearling must survive storage as shearling, not as fleece and not as unknown')
 })
 
 test('editing a legacy piece preserves its retired outerwear_role rather than wiping it', async () => {
