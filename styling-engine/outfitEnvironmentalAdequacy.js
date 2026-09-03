@@ -22,12 +22,20 @@
 import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup, thermalMaterialVerdict, pieceWeatherProtection, garmentKind } from './attributes.js'
 import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
+// §8 step 3: completed outfits compare against the band. Semantic signals only — the ranking slice
+// found a filter keyed on a reason STRING that silently stopped matching when the band renamed it,
+// so prose is never an API here.
+import { resolveExposureContext } from './exposure.js'
+import { requiredThermalBand, compareThermalFit } from './thermalDemand.js'
+import { outfitThermalContribution } from './outfitThermalContribution.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
   COOL_LAYER_IS_SEE_THROUGH: 'outfit_cool_layer_is_see_through',
   NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
+  THERMAL_UNDERSHOOT: 'outfit_thermal_capacity_below_conditions',
+  THERMAL_OVERSHOOT: 'outfit_thermal_capacity_above_conditions',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
   NO_OUTDOOR_LAYER_FOR_SEVERE_COLD: 'outfit_no_outdoor_capable_layer_for_severe_cold',
   INDOOR_LAYER_ONLY_FOR_SEVERE_COLD: 'outfit_indoor_layer_only_for_severe_cold',
@@ -267,6 +275,74 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
       'no warm layer for cold weather', { evidence }))
+  }
+
+  // --- thermal amount, from the band (§8 step 3) -------------------------------------------------
+  //
+  // The floor above answers "is there a warm layer at all", a PRESENCE question keyed on `isCold`.
+  // This answers the AMOUNT question the flags could never express: between the two temperature
+  // extremes `isCold` is false and nothing was said, which is how a down puffer and a light jacket
+  // were equally acceptable on a 65/47 museum day.
+  //
+  // Deliberately NOT migrating the neighbouring contracts. Removability ("something to put on"),
+  // transit coverage ("sleeve-bearing") and outdoor capability are different questions from
+  // "how much insulation", and §2.1 keeps them separate. This slice adds the amount and leaves
+  // those triggers alone.
+  if (!indoorDestination) {
+    const exposure = resolveExposureContext(
+      { environment: resolvedContext.environment || 'outdoor' }, weather)
+    const demand = requiredThermalBand(exposure)
+    const contribution = outfitThermalContribution(list)
+    if (demand.level && contribution.withLayer) {
+      const fit = compareThermalFit(contribution.withLayer, demand)
+      evidence.thermalDemand = demand.level
+      evidence.thermalContribution = contribution.withLayer
+      evidence.thermalFit = fit.fit
+      evidence.thermalCertain = demand.certain
+
+      // UNKNOWN IS NEVER INADEQUACY (§5.6) — but the asymmetry that runs through this whole arc
+      // applies here too, and collapsing it would silence the finding that matters most.
+      //
+      // UNDERSHOOT is blocked by unknown evidence: an unplaceable base could be secretly warm, so
+      // "this is too light" is exactly the claim the missing data could falsify. Silence is right.
+      //
+      // OVERSHOOT is not: an unknown base cannot make a `very warm` coat LESS excessive for a mild
+      // day. Positive evidence of too much insulation stands on its own, the same way positive
+      // insulating evidence settles thermalMaterialVerdict from an incomplete record.
+      const unknownPresent = contribution.unknown.base || contribution.unknown.removable
+      if (unknownPresent) evidence.thermalContributionUnknown = true
+      const overshooting = String(fit.fit).includes('overshoot')
+      // The overshoot signal is carried by the garment that was actually PLACED — here the removable
+      // layer. An unknown base is irrelevant to it, so requiring complete evidence would silence the
+      // finding on almost every real outfit: a plain medium cotton top is itself unplaceable (§13.3's
+      // at-risk band), and most outfits contain one.
+      if (unknownPresent && !overshooting) {
+        // undershoot with unknown evidence: record it, claim nothing
+      } else if (fit.fit === 'undershoot') {
+        // ADVISORY, not an error — and this was a hard finding for exactly one test run before the
+        // fixtures showed why it must not be. A synthetic "sleeved wool coat" tagged
+        // `fabric_weight: light` with no fibre content placed as `light`, undershot a 65/45 day, and
+        // hard-blocked submission. That is acceptance criterion 8 violated: missing metadata may
+        // never become hard invalidity, and a barely-tagged wardrobe is exactly the shape that
+        // produces it.
+        //
+        // The PRESENCE gate keeps its authority — NO_WARM_LAYER_FOR_COLD above is still an error.
+        // What the band adds here is the AMOUNT, graded, which informs rather than blocks. That also
+        // keeps §19.1's composition invariant intact at the adequacy layer.
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT,
+          corroborate('this outfit carries less warmth than the conditions call for'),
+          { evidence, severity: 'advisory' }))
+      } else if (overshooting) {
+        // ADVISORY, never hard. §5.5: overshoot ranks, it never excludes — a wardrobe whose only
+        // layer is a heavy coat still gets dressed. This is the puffer-on-a-65F-museum-day finding
+        // that layer-weight-ceiling.md recorded and nothing has ever been able to state.
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT,
+          fit.fit === 'substantial_overshoot'
+            ? 'this outfit carries considerably more warmth than the conditions call for'
+            : 'this outfit carries more warmth than the conditions call for',
+          { evidence, severity: 'advisory' }))
+      }
+    }
   }
 
   // [R2]: the transit floor, likewise migrated verbatim. Sleeve-bearing removable coverage is

@@ -1221,3 +1221,66 @@ Eight thermal readers remain in `rules.js`, and none is ranking:
   classifies it as *"unclear, needs its own analysis"*; it is not folded in here.
 
 The remaining 7 are `outfitEnvironmentalAdequacy.js`, which is §8 step 3 and deliberately untouched.
+
+
+---
+
+## 20. §8 step 3 — outfit adequacy reads the band for thermal AMOUNT
+
+`outfitEnvironmentalAdequacy.js`, `test/thermalAdequacyMigration.test.js`. Scoped to the amount
+question only; removability, transit coverage and outdoor capability keep their own triggers (§2.1).
+
+### 20.1 What it adds
+
+Two findings the engine could never state before, both from `compareThermalFit`:
+
+```text
+THERMAL_OVERSHOOT    advisory   "more warmth than the conditions call for"
+THERMAL_UNDERSHOOT   advisory   "less warmth than the conditions call for"
+```
+
+The existing `NO_WARM_LAYER_FOR_COLD` is a **presence** question keyed on `isCold` — "is there a warm
+layer at all". It keeps its authority and stays an error. What the band adds is the **amount**, which
+between the two temperature extremes nothing could express: that is how a puffer and a light jacket
+were equally acceptable on a mild museum day, the failure
+[layer-weight-ceiling.md](layer-weight-ceiling.md) recorded across five runs and two providers.
+
+### 20.2 Both findings are ADVISORY, and undershoot learned that the hard way
+
+Undershoot shipped as an error for exactly one test run. A synthetic *"sleeved wool coat"* tagged
+`fabric_weight: light` with no fibre content placed as `light`, undershot a 65/45 day, and
+**hard-blocked plan submission** — acceptance criterion 8 violated, and a barely-tagged wardrobe is
+precisely the shape that produces it. Both are advisory now. The presence gate keeps the hard
+authority; the band informs.
+
+That also keeps §19.1's composition invariant intact one layer down: adequacy reports, it does not
+compose.
+
+### 20.3 The unknown asymmetry
+
+```text
+UNDERSHOOT  blocked by unknown evidence   an unplaceable base could be secretly warm, so
+                                          "too light" is what the missing data could falsify
+OVERSHOOT   not blocked                   an unknown base cannot make a `very warm` coat LESS
+                                          excessive; the signal is carried by the PLACED layer
+```
+
+Requiring complete evidence for overshoot would have silenced it on nearly every real outfit — a
+plain medium cotton top is itself unplaceable under §13.3's at-risk band, and most outfits contain
+one. This is the same asymmetry `thermalMaterialVerdict` uses: positive evidence is decisive from an
+incomplete record; negative evidence is not.
+
+### 20.4 Honest limits
+
+**The Vienna case does not fire here.** Adequacy builds its exposure from `environment` alone — it
+has no activity, so exertion is `unknown`, the demand widens to `warm` and a puffer sits inside the
+band. The ranking layer *does* receive slot exposure and does out-rank it (§19.3). Threading slot
+exposure into adequacy is a separate question, not smuggled into this slice.
+
+**The census did not move.** `thermal_demand` stays 15: this slice ADDS band-driven findings without
+removing the four neighbouring contracts' flag triggers. Reaching 0 requires those triggers to come
+from the band even though the contracts stay separate — steps 4-6, not this one.
+
+```text
+census  thermal_demand 15 (unchanged)   non_thermal 4    suite 1839 tests, 1837 pass, 2 pre-existing
+```
