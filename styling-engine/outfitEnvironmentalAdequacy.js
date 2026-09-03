@@ -164,16 +164,23 @@ function outerLayerSevereColdAdequacy(piece = {}) {
 // be proportionate. Live QA (thread_1788421510368): stated only as "something removable is needed",
 // it was satisfied by a down puffer on a 65/48 day, seven times over.
 //
-// It deliberately does NOT restate a demand level. The plan roster already gives each layer a
-// thermal_fit advisory computed from the slot's own exposure — including its ACTIVITY, which this
-// function does not receive — so naming a level here would risk contradicting it: adequacy would say
-// `warm` for a slot the roster had already scored as `moderate`. Two numbers that can disagree are
-// worse than one, so this points at the number rather than inventing a second one.
+// It deliberately does NOT restate a demand level. The plan roster resolves its own exposure —
+// including ACTIVITY, which this function does not receive — so naming a level here would risk
+// contradicting it: adequacy would say `warm` for a slot the roster had already resolved as
+// `moderate`. Two numbers that can disagree are worse than one, so this checks whether a level is
+// even computable rather than inventing a second one.
+//
+// docs/search-propose-signal-inventory.md: no longer prescribes HOW to pick a layer ("match to
+// conditions rather than reaching for the warmest") — that told the model to obey a verdict, the
+// exact pattern this session's cleanup removed everywhere else. It also referenced `thermal_fit`,
+// a field removed from the payload in an earlier commit (02ffa84) — a stale pointer nobody had
+// caught. Points at the facts that still exist (each candidate's own warmth/insulation) and leaves
+// the choice to the model.
 function demandHint(weather, resolvedContext = {}) {
   const demand = requiredThermalBand(resolveExposureContext(
     { environment: resolvedContext.environment || 'outdoor' }, weather))
   if (!demand?.level) return ''
-  return ' — match the layer to the conditions rather than reaching for the warmest one available; each layer carries a thermal-fit assessment'
+  return ' — each candidate piece states its own warmth and insulation; choose accordingly'
 }
 
 function finding(code, message, { severity = 'error', evidence = {}, remedy = false } = {}) {

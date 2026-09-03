@@ -68,7 +68,13 @@ test('evidence, never a gate — shoes and accessories stay out of it', () => {
 
 test('the layer requirement no longer says only that a layer is needed', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitEnvironmentalAdequacy.js'), 'utf8')
-  assert.match(src, /match the layer to the conditions rather than reaching for the warmest one available/)
+  // docs/search-propose-signal-inventory.md: this used to prescribe HOW to pick a layer ("match to
+  // conditions rather than reaching for the warmest") and pointed at a `thermal_fit` field removed
+  // from the payload in 02ffa84 — a stale, prescriptive hint. It still adds proportionality beyond
+  // bare presence, now by pointing at facts the model can weigh itself, not a directive to obey.
+  assert.match(src, /each candidate piece states its own warmth and insulation/)
+  assert.ok(!/match the layer to the conditions/.test(src), 'must not prescribe how to choose')
+  assert.ok(!/thermal-fit assessment/.test(src), 'must not reference the removed thermal_fit field')
   // And it must NOT restate a demand level: the roster owns that number, computed with the slot's
   // activity, which adequacy does not receive. Two numbers that can disagree are worse than one.
   assert.ok(!/roughly \$\{demand\.level\}/.test(src))
