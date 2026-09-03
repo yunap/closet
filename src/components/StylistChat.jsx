@@ -4855,6 +4855,9 @@ export default function StylistChat({
       role: 'user', text: q, imagePrev: displayPrev, contextName: userContextName,
       contextMode: compareOutfit && outfitToSend ? getCompareConfidenceText(outfitToSend, compareOutfit) : (outfitToSend ? `${getOutfitConfidenceMode(outfitToSend)?.label} · ${getOutfitConfidenceMode(outfitToSend)?.detail}` : ''),
       contextType: outfitToSend ? 'outfit' : (pieceToSend || shouldGenerateActiveEditorialVisuals ? 'piece' : null),
+      // See the matching note on assistantMsg below: without this, a resent "Retry with Sonnet"
+      // turn is text-identical to a genuine repeated question in persisted storage.
+      ...(overrides.forceNewRequest ? { manualRetryResend: true } : {}),
     }
 
     let targetThreadId = currentThreadId
@@ -5640,6 +5643,16 @@ export default function StylistChat({
         text: replyText,
         provider: replyProvider,
         model: replyModel,
+        // Persisted so a later read of chat_threads.payload can tell a manual "Retry with Sonnet"
+        // click (owner's own words: not automatic failover, just a click when a non-Sonnet reply is
+        // slow, fails, or reads poorly — see the two buttons at ~6295/6469) apart from an
+        // independent routing decision or a genuine repeated question with identical text. Before
+        // this, neither carried any trace once persisted: the resent user turn is indistinguishable
+        // from a real duplicate complaint, and the isError bubble it may have followed is dropped
+        // from `nextMessages` by forceNewRequest's own history-slicing, not saved at all. Found live
+        // analyzing thread_1788430055577, where a mid-thread anthropic call was mis-read as a server
+        // restart because nothing recorded the click that caused it.
+        ...(overrides.providerOverride ? { manualProviderOverride: overrides.providerOverride, manualRetry: Boolean(overrides.forceNewRequest) } : {}),
         renderedBoards: replyRenderedBoards,
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: replyWholeWardrobe,

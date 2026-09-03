@@ -32,6 +32,20 @@ p(`\n**Title:** ${row.title || '(untitled)'}  `)
 p(`**Created:** ${row.created_at} · **Updated:** ${row.updated_at}  `)
 p(`**Provider/model:** ${final.provider || '?'} / ${final.model || '?'}`)
 
+// A provider that changes mid-thread is ambiguous without this: it can be independent per-turn
+// routing, or a manual "Retry with Sonnet" click (owner's own words: not automatic failover, just
+// a click when a non-Sonnet reply is slow, fails, or reads poorly). Found live analyzing
+// thread_1788430055577, where a manual click was mis-read as a server restart because nothing
+// distinguished it. Both message-object fields are set client-side (StylistChat.jsx) only when
+// present, so their absence on older threads means the marker didn't exist yet, not that no retry
+// happened.
+const manualRetries = messages
+  .map((m, i) => ({ m, i }))
+  .filter(({ m }) => m.manualRetry || m.manualRetryResend)
+for (const { m, i } of manualRetries) {
+  p(`> ⚠ message [${i}] (${m.role}) is a manual "Retry with Sonnet" ${m.role === 'user' ? 'resend' : `result (forced provider: ${m.manualProviderOverride})`} — not independent routing.`)
+}
+
 p(`\n---\n\n## 1. What the user asked\n`)
 for (const m of messages.filter(m => m.role === 'user')) p(`> ${String(m.text || '').trim().replace(/\n/g, '\n> ')}`)
 

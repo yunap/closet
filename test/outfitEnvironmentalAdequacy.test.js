@@ -512,3 +512,73 @@ test('season does not leak into the cold or severe tiers', () => {
   assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
   assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
 })
+
+// --- base without its removable layer, for an indoor destination -------------------------------
+//
+// "A sleeveless dress is fine at 75°F, needs a cardigan at 59°F — not just the coat, since the coat
+// gets checked at the door." live-QA'd on thread_1788427903679's Cozy Museum Stroll and Floral
+// Evening Dinner cards, both a sleeveless base plus a trench that satisfied the pre-existing
+// "has a removable layer" transit check while leaving nothing adequate once that same layer is off.
+
+const SLEEVELESS_DRESS = { id: 30, category: 'dress', name: 'sleeveless dress', sleeve_length: 'sleeveless', fabric_weight: 'light', fiber_content: ['polyester'] }
+const TRENCH = { id: 31, category: 'outerwear', name: 'trench coat', fabric_weight: 'medium', fiber_content: ['cotton'], interior_construction: 'full_lining', insulating_layer_materials: [], sleeve_length: 'long', weather_protection: [] }
+const KNIT_CARDIGAN = { id: 32, category: 'outerwear', name: 'wool cardigan', fabric_weight: 'medium', fiber_content: ['wool'], insulating_layer_materials: [], sleeve_length: 'long', weather_protection: [] }
+
+test('BASE WITHOUT LAYER: a trench is not enough once it comes off indoors', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([SLEEVELESS_DRESS, shoes(), TRENCH], {
+    weatherProfile: { isIndoor: true, transitHighF: 65, transitLowF: 48 }, environment: 'indoor', activity: 'walking',
+  })
+  assert.deepEqual(codes(result), [C.BASE_INADEQUATE_WITHOUT_LAYER])
+  assert.equal(result.findings[0].severity, 'advisory', 'this ranks, it never blocks — the base+layer combination is still a valid outfit')
+})
+
+test('BASE WITHOUT LAYER: warming the base itself clears it', () => {
+  // The honest remedy path THIS mechanism supports: outfitThermalContribution splits an outfit into
+  // base (non-outerwear) vs ONE combined removable layer (the warmest outerwear piece) — it cannot
+  // tell a cardigan meant to stay on apart from a coat meant to be checked; both are 'outerwear' and
+  // only the warmer contributes. Adding KNIT_CARDIGAN alongside TRENCH therefore does NOT clear the
+  // finding — the mechanism has no way to know the cardigan is the one that stays on. A long-sleeve
+  // knit BASE layer under the dress does, because it is category 'top', which is what the primitive
+  // actually reads as base warmth.
+  const KNIT_TOP = { id: 34, category: 'top', name: 'long sleeve knit', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([SLEEVELESS_DRESS, KNIT_TOP, shoes(), TRENCH], {
+    weatherProfile: { isIndoor: true, transitHighF: 65, transitLowF: 48 }, environment: 'indoor', activity: 'walking',
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('BASE WITHOUT LAYER: a known real limitation — a second outerwear piece meant to stay on is not distinguished from the one that gets checked', () => {
+  // Documents the gap above as a test, not just a comment, so it cannot silently start passing (or
+  // failing differently) without someone noticing. This is not a bug in the check just added; it is
+  // the boundary of outfitThermalContribution's existing two-bucket model, which this check reuses
+  // rather than extending. Fixing it would mean re-deriving "which outerwear piece stays on indoors"
+  // — exactly the question outerwear_role tried to answer and was retired for (docs/README.md:
+  // "replace the enum, do not rescue it"). Left open rather than reintroduced on the side.
+  const result = evaluateOutfitEnvironmentalAdequacy([SLEEVELESS_DRESS, shoes(), KNIT_CARDIGAN, TRENCH], {
+    weatherProfile: { isIndoor: true, transitHighF: 65, transitLowF: 48 }, environment: 'indoor', activity: 'walking',
+  })
+  assert.deepEqual(codes(result), [C.BASE_INADEQUATE_WITHOUT_LAYER], 'known gap: the cardigan is invisible to this check today')
+})
+
+test('BASE WITHOUT LAYER: silent on a warm day — this is not a coat-check rule, it is a demand comparison', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([SLEEVELESS_DRESS, shoes(), TRENCH], {
+    weatherProfile: { isIndoor: true, transitHighF: 82, transitLowF: 70 }, environment: 'indoor', activity: 'walking',
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('BASE WITHOUT LAYER: an unplaceable base stays silent (criterion 8 — absence of evidence is not evidence of inadequacy)', () => {
+  const UNPLACEABLE_DRESS = { id: 33, category: 'dress', name: 'mystery dress', sleeve_length: 'sleeveless' }
+  const result = evaluateOutfitEnvironmentalAdequacy([UNPLACEABLE_DRESS, shoes(), TRENCH], {
+    weatherProfile: { isIndoor: true, transitHighF: 65, transitLowF: 48 }, environment: 'indoor', activity: 'walking',
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('BASE WITHOUT LAYER: silent when there is no removable layer at all — a different finding owns that gap', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([SLEEVELESS_DRESS, shoes()], {
+    weatherProfile: { isIndoor: true, transitHighF: 65, transitLowF: 48, transitNeedsRemovableCoolLayer: true }, environment: 'indoor', activity: 'walking',
+  })
+  assert.ok(!codes(result).includes(C.BASE_INADEQUATE_WITHOUT_LAYER))
+  assert.ok(codes(result).includes(C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT))
+})

@@ -44,6 +44,7 @@ export const ENVIRONMENTAL_ADEQUACY_CODES = {
   THERMAL_CAPACITY_INSUFFICIENT: 'outfit_thermal_capacity_insufficient_for_severe_cold',
   RAIN_PROTECTION_MISSING: 'outfit_rain_protection_missing_for_wet_exposure',
   CAPABILITY_UNKNOWN: 'outfit_outerwear_capability_unknown',
+  BASE_INADEQUATE_WITHOUT_LAYER: 'outfit_base_inadequate_without_removable_layer',
 }
 
 // [R3]: a hard environmental finding can be unsatisfiable from the wardrobe the user actually
@@ -294,6 +295,45 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
       'no warm layer for cold weather', { evidence }))
+  }
+
+  // --- base without its removable layer, for an indoor destination -------------------------------
+  //
+  // "A sleeveless dress is fine at 75°F, and needs a cardigan (not just a coat) at 59°F" — owner's
+  // framing, live-QA'd on thread_1788427903679's Cozy Museum Stroll and Floral Evening Dinner
+  // cards. A trench worn to a museum or restaurant does not stay worn for the visit; a coat check
+  // or the wearer's own choice takes it off, and the outfit that is actually worn indoors for hours
+  // is the BASE, not base-plus-trench. The block above already answers "is the whole outfit,
+  // trench included, adequate for the day" and skips entirely on `indoorDestination` — this answers
+  // the question that block cannot: is the outfit still adequate once the layer people actually
+  // remove indoors comes off.
+  //
+  // Deliberately reuses `demand.level` from `environment: 'outdoor'` rather than the fixed
+  // `INDOOR_BASE_DEMAND` constant: the risk here is not the heated room, it is the ambient
+  // conditions of the day itself (coat check, stepping out, a drafty gallery) — the same demand a
+  // fully outdoor slot would be held to. resolveExposureContext already falls back to transit*
+  // conditions when environment is forced 'outdoor' on an indoor-destination weatherProfile (the
+  // fix that made an indoor slot's own weather visible at all), so this is the day's real outdoor
+  // temperature, not an invented one.
+  //
+  // Same criterion-8 asymmetry as every other band check here: fires only on POSITIVE evidence
+  // (`contribution.base` a KNOWN warmth level that undershoots) — never on an unplaceable base,
+  // which is absence of evidence, not evidence of inadequacy. And only when a removable layer is
+  // actually the thing propping the outfit up (`hasRemovableLayer`): an outfit with no layer at all
+  // is already covered by NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT above.
+  if (indoorDestination) {
+    const transitDemand = requiredThermalBand(resolveExposureContext(
+      { environment: 'outdoor', activity: resolvedContext.activity }, weather))
+    const contribution = outfitThermalContribution(list)
+    if (transitDemand.level && contribution.hasRemovableLayer && contribution.base && !contribution.unknown.base) {
+      const withLayerFit = compareThermalFit(contribution.withLayer, transitDemand)
+      const baseAloneFit = compareThermalFit(contribution.base, transitDemand)
+      if (baseAloneFit.fit === 'undershoot' && withLayerFit.fit !== 'undershoot') {
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.BASE_INADEQUATE_WITHOUT_LAYER,
+          corroborate('this outfit only works with its removable layer on; once that comes off indoors — a coat check, a warm room, a choice not to keep it on — the base underneath is not enough on its own for the day\'s conditions'),
+          { evidence: { ...evidence, thermalContributionBase: contribution.base, transitDemand: transitDemand.level }, severity: 'advisory' }))
+      }
+    }
   }
 
   // --- thermal amount, from the band (§8 step 3) -------------------------------------------------
