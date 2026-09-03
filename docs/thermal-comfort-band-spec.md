@@ -807,7 +807,8 @@ caller.
    where it can move the level
 2. coverage represented         PASS   sleeveless wool shell: warm -> light
 3. pinned orderings hold        PASS   puffer > cardigan > unlined jacket, on real rows
-4a. anchors verify boundaries   PARTIAL low/mid verified; `very warm` UNANCHORED (§15.3)
+4a. anchors verify boundaries   PASS through `warm`; `very warm` accepted as an explicitly
+                                       unanchored ordinal extension (§15.5)
 4b. evidence sufficiency        PASS   coverage outweighs substance ~4x (§15.4)
 5. cold as diagnostic only      OBSERVED, not optimised: 2.7% disagreement (was 7.0%)
 ```
@@ -820,8 +821,7 @@ placed 116/213 = 54.5%    material_unestablished 97
 ```
 
 Anchor verification did not move any boundary, so this snapshot stands as Slice 2's acceptance
-result. **Slice 2 is ratified except for the `very warm` boundary**, which no available source can
-anchor (§15.3).
+result. **Slice 2 is ratified** — see §15.5 for how the top of the scale is treated.
 
 Criterion 5 is reported, never targeted. The improvement from 7.0% to 2.7% is a **side effect** of
 reading coverage, which `cold` also reads — not evidence of fitting, and not a success metric. A
@@ -927,3 +927,89 @@ insulation by construction. You cannot have a light garment with a down fill.
 **Ratified:** criterion 1's narrower wording stands, and the light-unknown exception is no longer
 provisional. The `PROVISIONAL` markers in `garmentWarmth.js` and `test/garmentWarmth.test.js` can be
 lifted for 4b — **but not for the `very warm` boundary**, which §15.3 leaves unanchored.
+
+
+### 15.5 `very warm` — an explicitly unanchored ordinal extension
+
+Owner ruling 2026-09-03, clearing Slice 2. The top bucket is accepted as unanchored rather than
+blocked on obtaining a cold-weather standard.
+
+```text
+very warm
+  = ordinal extension ABOVE the verified reference range
+  = reserved for garments with strong positive insulation evidence
+    AND sufficient substance/coverage
+  = NOT assigned a clo value
+  = boundary NOT claimed to be ASHRAE-calibrated
+```
+
+Closet never needs to claim *"this puffer corresponds to X clo."* It needs only the much weaker and
+fully supported statement: **this garment is materially warmer than the highest class our indoor
+anchors cover.** Heavy construction plus positive insulating-layer evidence is a qualitatively
+different state from the cardigans, fleeces and ordinary coats below it, and that is enough for an
+ordinal overflow bucket.
+
+Both alternatives are worse. Collapsing `very warm` into `warm` destroys exactly the puffer/cardigan
+separation pinned rows 1 and 3 depend on. Inventing a numeric anchor manufactures scientific
+precision the source does not support — §11.8's own prohibition, arriving at the top of the scale.
+
+**Corresponding constraint on the demand side.** The demand mapping must treat `very warm` as a
+**bounded ordinal ceiling**. It may say:
+
+```text
+demand = moderate · puffer = very warm   ->  substantial overshoot
+demand = very warm · puffer = candidate, cardigan = undershoot
+```
+
+It may **not** invent `very warm+`, an "extreme" tier, or numeric distances above the verified
+range. No granularity above the anchors until there is product evidence that it is needed.
+
+
+---
+
+## 16. Slice 3 — the demand mapping (2026-09-03)
+
+`styling-engine/thermalDemand.js`, `test/thermalDemand.test.js` (10 tests). **No production
+consumers** — still §8 step 1. Authorized once §15.5 cleared the `very warm` question.
+
+### 16.1 The pinned cases now hold end to end
+
+Run through `exposure.js` → `requiredThermalBand` → `compareThermalFit`:
+
+```text
+row 1  65/45 museum, walking     puffer OVERSHOOT (dist 2) · cardigan adequate (dist 1)
+row 3  30/20 outdoors, sedentary puffer adequate (dist 0)  · cardigan adequate (dist -1)
+row 4  40/28  none -> very warm · walking -> warm · hiking -> moderate
+row 5  overshoot ranks, never excludes
+row 6  unknown garment -> { fit: 'unknown' }, never neutral
+```
+
+**Rows 1 and 3 reverse on conditions alone**, which §12.1 called the decisive pair. The Vienna
+defect is resolved at the model level: on a 65/45 museum day the puffer is out-ranked, not excluded.
+
+### 16.2 Two design points worth keeping
+
+**Membership cannot express preference.** A first version returned only `fit`, and on a genuinely
+cold day the uncertainty band spans `moderate..very warm`, so a cardigan and a puffer were both
+`adequate` and row 3's ordering vanished. `compareThermalFit` now also reports `distance` from the
+band's **target**, not its edges: ranking reads `distance`, gating reads `fit`.
+
+**The indoor base is not the outdoor demand.** A first version gave a heated restaurant's base the
+outdoor demand — the Vienna error inverted, over-dressing the base instead of the outing. An indoor
+destination is an indoor-comfort problem, which is exactly the band the anchors DO cover; the
+transit window keeps its own demand and is returned separately so it cannot be blended away.
+
+### 16.3 The thresholds are a stated calibration
+
+`SEDENTARY_DEMAND_F` is not derived from a comfort equation. §11.7 refuses that apparatus, so there
+is none to derive from, and inventing one is the fake precision §11.8 prohibits. The boundaries were
+chosen so the pinned cases hold, and are written as a plain table so they can be argued with.
+Exertion shifts are ordinal steps, never a metabolic rate.
+
+### 16.4 What is still not built
+
+* **Ensemble contribution (§9.2).** This compares ONE garment against a demand. Pinned row 2 —
+  a mild base plus a removable layer beating a permanently heavy base — needs outfit-level
+  aggregation and is the one pinned case still unmet.
+* **The migration (§8 steps 2-6).** Nothing consumes any of this. `thermal_demand` is still 20.
+* **`isWeatherFiltered`** (§8.1) still holds binary authority.

@@ -94,9 +94,14 @@ function coverageAdjustment(piece) {
 // VERIFIED for the low and middle of the scale (§15.3): t-shirt 0.08 < thin trousers 0.15 <
 // long-sleeve shirt 0.25 < thin coat 0.36 < thick coat 0.48.
 //
-// THE `very warm` BOUNDARY IS STILL UNANCHORED. ASHRAE 55 is an indoor-comfort standard and its
-// heaviest entry is a 0.48 double-breasted coat — no down parka, no shearling, no filled outerwear.
-// Closet's `very warm` sits above everything that source can anchor. Do not treat it as calibrated.
+// `very warm` IS AN EXPLICITLY UNANCHORED ORDINAL EXTENSION (§15.5, owner ruling 2026-09-03).
+// ASHRAE 55 is an indoor-comfort standard; its heaviest entry is a 0.48 double-breasted coat, with
+// no down parka, shearling or filled outerwear. So this level sits above everything the anchors
+// cover, and it claims only that such a garment is materially warmer than that highest class —
+// never a clo value, never an ASHRAE-calibrated boundary.
+//
+// Consumers must treat it as a BOUNDED CEILING: no `very warm+`, no "extreme" tier, no numeric
+// distance above the verified range.
 function levelForRawScore(raw) {
   if (raw <= -1) return 'very light'
   if (raw <= 1) return 'light'
