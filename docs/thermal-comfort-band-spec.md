@@ -733,9 +733,36 @@ Per §12, **the demand mapping is not chosen yet.** Slice 2 is:
 1. Rebuild ordinal placement on `pieceWeatherEvidence`'s structured terms, so coverage is read.
 2. Return `unknown` when material evidence is unknown and substance alone cannot carry the level —
    pinned case 6 becomes a test, not an aspiration.
-3. Re-run `measure_warmth_placement.mjs`: **inversions must approach zero and the level medians must
-   be monotonic.** That is the mechanical gate on proceeding to demand mapping.
+3. Verify the §13.5 anchors against the primary ASHRAE 55 / ISO 9920 material before any boundary is
+   treated as authoritative. Ordinary calibration work, not a checkpoint.
 4. Only then choose the demand mapping.
+
+#### Slice 2's acceptance gate
+
+Corrected by owner ruling 2026-09-03, and the correction matters more than the rest of this section.
+
+An earlier draft of this gate read *"inversions must approach zero and the level medians must be
+monotonic"* — measured against `pieceWeatherScores().cold`. **That is wrong, and would have quietly
+undone §10.1.** That section concluded `cold` is good evidence and **not** a calibrated warmth unit:
+no temperature anchor, no meaningful zero, weights tuned historically for ranking. A Slice 2 that
+optimises the new representation until it agrees with `cold` promotes the old score to the oracle —
+canonizing the very scale this spec disqualified.
+
+The gate is therefore:
+
+```text
+1. Unknown material/thermal evidence stays unknown.
+2. Coverage is explicitly represented.
+3. Pinned real-garment orderings hold (§12.1).
+4. Published reference-anchor ordering holds, once the anchors are verified.
+5. pieceWeatherScores().cold is a DIAGNOSTIC disagreement signal, never the target to fit.
+```
+
+Keep measuring the disagreement — a large one is worth investigating — but zero inversions against
+`cold` is neither necessary nor desirable. If the new representation places a sleeveless wool shell
+at `light`/`moderate` while `cold` says `-2`, that may be evidence **the old score is wrong in a
+different way**, not evidence the new scale should move toward `-2`. Monotonic medians against `cold`
+remain a useful sanity check and are not a definition of success.
 
 `proposedWarmthLevel` has no production consumer, so all of this is behaviour-neutral until the
 migration in §8.
