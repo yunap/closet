@@ -1,0 +1,396 @@
+{
+  "generated": "2026-09-03T03:32:09.069Z",
+  "counts": {
+    "projection": 16,
+    "thermal_demand": 20,
+    "producer": 15,
+    "non_thermal": 4
+  },
+  "rows": [
+    {
+      "file": "styling-engine/core.js",
+      "line": 2182,
+      "owner": "savedOutfitImagePrompt",
+      "cls": "projection",
+      "text": "weatherProfile.isCold"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 197,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "projection",
+      "text": "isCold: Boolean(weather.isCold),"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 198,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "projection",
+      "text": "isColdSevere: Boolean(weather.isColdSevere),"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 199,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "transitIsColdSevere: Boolean(weather.transitIsColdSevere),"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 200,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "projection",
+      "text": "transitNeedsRemovableCoolLayer: Boolean(weather.transitNeedsRemovableCoolLayer),"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 228,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 251,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 267,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 274,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.transitIsCold) {"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 287,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.isColdSevere && !indoorDestination) {"
+    },
+    {
+      "file": "styling-engine/outfitEnvironmentalAdequacy.js",
+      "line": 337,
+      "owner": "evaluateOutfitEnvironmentalAdequacy",
+      "cls": "thermal_demand",
+      "text": "if (weather.transitIsColdSevere) {"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 871,
+      "owner": "describeWeatherProfile",
+      "cls": "projection",
+      "text": "if (profile.isHot && profile.isCold) return 'hot days, cold nights'"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 873,
+      "owner": "describeWeatherProfile",
+      "cls": "projection",
+      "text": "if (profile.isCold) return 'cold'"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1013,
+      "owner": "resolveSlotWeather",
+      "cls": "producer",
+      "text": "isHot: t.isHot, isCold: false, isExtremeHeat: t.isExtremeHeat,"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1018,
+      "owner": "resolveSlotWeather",
+      "cls": "producer",
+      "text": "transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1019,
+      "owner": "resolveSlotWeather",
+      "cls": "projection",
+      "text": "transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1030,
+      "owner": "resolveSlotWeather",
+      "cls": "projection",
+      "text": "isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1031,
+      "owner": "resolveSlotWeather",
+      "cls": "producer",
+      "text": "needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1387,
+      "owner": "slotGateEligiblePieces",
+      "cls": "thermal_demand",
+      "text": "if (indoorSlot) slotWeatherProfile.isCold = false"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 1703,
+      "owner": "elevatedCapsuleDemands",
+      "cls": "thermal_demand",
+      "text": "if (indoorSlot) slotWeatherProfile.isCold = false"
+    },
+    {
+      "file": "styling-engine/outfitSetPlanner.js",
+      "line": 3680,
+      "owner": "buildPlanSlotWorkbench",
+      "cls": "projection",
+      "text": "if (pendingSlot?.weatherProfile?.transitIsCold) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 100,
+      "owner": "weatherProfileFromContext",
+      "cls": "producer",
+      "text": "return { isHot: false, isCold: false }"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 153,
+      "owner": "weatherProfileFromContext",
+      "cls": "producer",
+      "text": "isCold: explicitCold && !explicitHot,"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 157,
+      "owner": "weatherProfileFromContext",
+      "cls": "producer",
+      "text": "...(explicitCold && !explicitHot && hasSevereColdSignal ? { isColdSevere: true } : {})"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 167,
+      "owner": "weatherProfileFromContext",
+      "cls": "producer",
+      "text": "return { isHot: currentSeasonHot, isCold: currentSeasonCold, isRainy: hasRainSignal, isWetExposure }"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 196,
+      "owner": "weatherFitForPiece",
+      "cls": "thermal_demand",
+      "text": "} else if (weatherProfile?.isCold && cold !== 0) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2218,
+      "owner": "piecePriorityForMission",
+      "cls": "thermal_demand",
+      "text": "if (weatherProfile && (weatherProfile.isHot || weatherProfile.isCold)) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2574,
+      "owner": "wholeWardrobePieceTrustDecision",
+      "cls": "thermal_demand",
+      "text": "cold: Boolean(weatherProfile.isCold),"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2618,
+      "owner": "wholeWardrobePieceTrustDecision",
+      "cls": "thermal_demand",
+      "text": "if (weatherProfile.isCold) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2645,
+      "owner": "wholeWardrobePieceTrustDecision",
+      "cls": "non_thermal",
+      "text": "if (weatherProfile.isCold || weatherProfile.transitIsCold ||"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2646,
+      "owner": "wholeWardrobePieceTrustDecision",
+      "cls": "non_thermal",
+      "text": "weatherProfile.needsRemovableCoolLayer || weatherProfile.transitNeedsRemovableCoolLayer) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2657,
+      "owner": "wholeWardrobePieceTrustDecision",
+      "cls": "non_thermal",
+      "text": "(weatherProfile.isColdSevere || weatherProfile.transitIsColdSevere) &&"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2800,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "if (!isHot && !isCold) return null"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2810,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "const needsCoverage = isCold && group === 'bottom' && bottomKind(piece) !== 'pants' && (pieceFabricWeight(piece) === 'me"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 2999,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "const isCold = weatherProfile && weatherProfile.isCold"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 3059,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "} else if (isCold) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 3214,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "} else if (weatherProfile && weatherProfile.isCold) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 3231,
+      "owner": "buildVisualComposerRoster",
+      "cls": "thermal_demand",
+      "text": "if (isHeavy && weatherProfile.isColdSevere) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 3692,
+      "owner": "scoreWholeWardrobeCandidate",
+      "cls": "thermal_demand",
+      "text": "} else if (weather.isCold) {"
+    },
+    {
+      "file": "styling-engine/rules.js",
+      "line": 3724,
+      "owner": "scoreWholeWardrobeCandidate",
+      "cls": "non_thermal",
+      "text": "if (!weather.isCold) {"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 69,
+      "owner": "weatherSummary",
+      "cls": "projection",
+      "text": "isCold: Boolean(profile.isCold ?? profile.is_cold),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 98,
+      "owner": "projectStylingApplicabilityContext",
+      "cls": "producer",
+      "text": "cold: Boolean(weatherProfile.isCold ?? weatherProfile.is_cold ?? weatherProfile.cold),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 295,
+      "owner": "profileForEnvironment",
+      "cls": "producer",
+      "text": "isCold: false,"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 296,
+      "owner": "profileForEnvironment",
+      "cls": "producer",
+      "text": "isColdSevere: false,"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 299,
+      "owner": "profileForEnvironment",
+      "cls": "producer",
+      "text": "needsRemovableCoolLayer: false,"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 300,
+      "owner": "profileForEnvironment",
+      "cls": "projection",
+      "text": "transitNeedsRemovableCoolLayer: Boolean(profile.needsRemovableCoolLayer),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 303,
+      "owner": "profileForEnvironment",
+      "cls": "producer",
+      "text": "transitIsCold: Boolean(profile.isCold),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 306,
+      "owner": "profileForEnvironment",
+      "cls": "producer",
+      "text": "transitIsColdSevere: Boolean(profile.isColdSevere),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 315,
+      "owner": "profileFromResolvedWeatherContext",
+      "cls": "producer",
+      "text": "isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 322,
+      "owner": "profileFromResolvedWeatherContext",
+      "cls": "projection",
+      "text": "isColdSevere: Boolean(t.isColdSevere),"
+    },
+    {
+      "file": "styling-engine/stylingContext.js",
+      "line": 323,
+      "owner": "profileFromResolvedWeatherContext",
+      "cls": "producer",
+      "text": "needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),"
+    },
+    {
+      "file": "styling-engine/tools.js",
+      "line": 1453,
+      "owner": "executeToolInternal",
+      "cls": "projection",
+      "text": "if (resolvedWeather.isHot || resolvedWeather.isCold) {"
+    },
+    {
+      "file": "styling-engine/tools.js",
+      "line": 3265,
+      "owner": "",
+      "cls": "projection",
+      "text": ": (resolvedWeather.isColdSevere ? 'cold weather'"
+    },
+    {
+      "file": "styling-engine/tools.js",
+      "line": 3266,
+      "owner": "",
+      "cls": "projection",
+      "text": ": (resolvedWeather.isCold ? 'cool weather' : 'mild weather')))"
+    },
+    {
+      "file": "routes/ai.js",
+      "line": 2591,
+      "owner": "generateWholeWardrobeOutfitsVisualInternal",
+      "cls": "projection",
+      "text": "const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold"
+    }
+  ]
+}

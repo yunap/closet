@@ -188,6 +188,10 @@ Choosing numbers before that split is what produced four thresholds in one day.
 
 * **No wearing-period / daypart weather.** [cool-weather-tier-spec.md](cool-weather-tier-spec.md)
   §5.2 records this; a band model wants it more, since a band is naturally per-exposure-window.
+  **Confirmed 2026-09-03** as the only genuinely missing environmental variable of the four —
+  [exposure-conditions-spec.md](exposure-conditions-spec.md) §2.2 found `activity` and wind already
+  stored and thermally unconsumed, and §4.2 treats sourcing these conditions as a degradation tier
+  rather than a `daypart` field.
 * **No garment temperature range.** Deliberately so —
   [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) §20 rules out
   per-role temperature ranges, and §5.3 above shows the role+severity pairing already approximates
@@ -249,8 +253,20 @@ signature failure: a correct primitive fed the wrong inputs. Whether the two arr
 arguments or one canonical object, **exposure must be a named, required part of the contract** and
 absent exposure must be an explicit `unknown`, not silently "outdoors, all day".
 
-What exists today: nothing. `environment` (indoor/outdoor) and the transit split are the only
-exposure signals, and there is no daypart or duration anywhere (§7).
+What exists today: **more than this section originally claimed.** Corrected 2026-09-03 by
+[exposure-conditions-spec.md](exposure-conditions-spec.md) §2.2 and its Slice 1 census (§10.2).
+
+A `plan_outfit_set` slot already carries `activity` (`none|walking|hiking` — the metabolic proxy the
+standard model treats as a core input), `environment`, `occasion`, and its own `date` and `location`.
+These are validated typed fields, not prose: `normalizeActivity` rejects off-vocabulary values, and
+**measured across 53 real plan turns, `activity` was declared on 52 of them** (prose-inferred on 1).
+
+They are thermally inert — `thermal.js` and `outfitEnvironmentalAdequacy.js` contain zero references
+to `activity`, which currently drives footwear only. So the exposure input this contract needs is
+substantially available and unconsumed, rather than absent.
+
+**Still genuinely missing:** daypart/wearing-period conditions and duration (§7). That half of the
+original claim stands.
 
 ### 9.2 Outfit thermal contribution — nothing owns it
 

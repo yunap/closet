@@ -483,6 +483,70 @@ process.
 
 Everything else is the implementer's to resolve and report.
 
+## 10.2 Slice 1 findings — measured 2026-09-03
+
+Run `node scratch/census_thermal_demand_consumers.mjs`; inventory at
+`scratch/thermal_demand_consumer_inventory.json`. Deterministic, no DB, no model calls.
+
+### The ownership assumption holds — no escalation
+
+§2.2's load-bearing claim is that `activity` and `environment` are authoritative slot state. §10.1
+makes its falsification the reason to stop. Measured against **real history**, not the schema:
+
+```text
+53 real plan turns (freeform_generation_runs, submit_plan or plan_outfit_set)
+   activity prose-inferred on     1 turn  (3 slots)
+   environment prose-inferred on  1 turn
+```
+
+**52 of 53 plan turns had `activity` declared** by the model as validated enum data —
+`normalizeActivity` rejects off-vocabulary values, and `hasDeclaredPlanSlotActivity` separates
+declared from inferred from fallback. The claim survives contact with production. Slice 1 continues.
+
+**One caveat worth recording, not escalating.** `normalizeActivity` returns `'none'` for both *"the
+wearer is stationary"* and *"nobody said"*. As a metabolic proxy `none` is a real thermal claim, so
+the exposure context must distinguish them — the plan path already can (`hasDeclaredPlanSlotActivity`),
+and §4.3's `unknown`-as-first-class requirement covers it. This is the same `null`-vs-`[]` discipline
+`insulating_layer_materials` needed, arriving on a different field.
+
+### The 83 references are 55 live sites, in four classes
+
+The 83 figure counted comment lines. Live, comment-excluded, and every one classified:
+
+| Class | Count | Migration |
+|---|---|---|
+| `thermal_demand` | **20** | Migrate to `requiredThermalBand`. The actual work. |
+| `projection` | 16 | Read a derived projection of the band, never a parallel flag |
+| `producer` | 15 | Moves with the contract — not a reclassification |
+| `non_thermal` | 4 | **Stays independent** — footwear and wet-weather contracts (§7) |
+
+The `thermal_demand` 20 concentrate in seven owners: `evaluateOutfitEnvironmentalAdequacy` (7),
+`wholeWardrobePieceTrustDecision` (3), `scoreWholeWardrobeCandidate`, `buildVisualComposerRoster`,
+`weatherFitForPiece`, `piecePriorityForMission`, `slotGateEligiblePieces`, `elevatedCapsuleDemands`.
+That is a tractable migration surface, and it confirms band spec §3's provisional split rather than
+contradicting it.
+
+**The projection class contains a defect the band spec already named.** `routes/ai.js:2591`'s
+`isWeatherFiltered` decides whether the model hears *any* weather guidance, at a threshold crossing —
+band spec §6 calls this out as having "no good reason", and this census confirms it is live. It is
+projection, so it is not this slice's fix, but it should not survive the migration as a binary.
+
+### Two corrections to the band spec
+
+1. **§9.1's "What exists today: nothing"** is wrong about exposure signals. `activity` is typed,
+   validated and declared on 52 of 53 real plan turns; `environment` likewise. Replace with §2.2.
+2. **§7's "No wearing-period / daypart weather"** stands, and is the *only* genuinely missing
+   variable of the four (§2.2). Duration and ensemble insulation remain missing as recorded.
+
+### Census-tool notes
+
+The classifier needed three corrections during this slice, each recorded in the script: a
+column-0-only owner match with a 900-line lookback (a relaxed version reported local helpers like
+`corroborate` as owners); context rules that refine only demand-ish sites (a stray "rain" nearby was
+flipping a producer to `non_thermal`); and next-line matching for the prompt-requirement switches.
+Re-run after each migration step — `thermal_demand` falling to zero is the migration's completion
+test.
+
 ## 11. Why this is worth doing as architecture
 
 The last arc made garment thermal evidence trustworthy for the first time and changed no
