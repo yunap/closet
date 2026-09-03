@@ -1319,15 +1319,16 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   const candidateBlob = pieceTextBlob(candidate)
   const occasion = String(options.occasion || '').toLowerCase().trim()
 
-  // Weather appropriateness — independent term, applies to every candidate
-  const weather = options.weatherProfile || weatherProfileFromContext(options)
-  const weatherFit = weatherFitForPiece(candidate, weather)
-  if (weatherFit.adjustments.length) {
-    score += weatherFit.score
-    for (const adjustment of weatherFit.adjustments) {
-      reasons.push(adjustment.reason)
-    }
-  }
+  // No thermal term here (docs/search-propose-signal-inventory.md). This fed
+  // generateOutfitsForPieceInternal's "style this piece" candidate ranking and reason text — found
+  // during verification, not in the original inventory scope, because the call chain
+  // (selectAutomaticUseCandidatesForOutfitGeneration -> selectCandidatesForOutfitGeneration ->
+  // here) never contains the literal string "weatherFit". A derived thermal score affected both
+  // WHICH candidates surfaced and the "WHY RETRIEVED: hot weather: lightweight fabric" reason text
+  // shown to the model — the same hidden-ordering-plus-leaked-verdict pattern already removed from
+  // search_wardrobe and suggest_slot_swaps. buildPieceText (used downstream by every consumer of
+  // this ranking) already carries fabric_weight/fabric_category for every candidate, so this is not
+  // a net loss of thermal signal — the judgment, not the fact, is what's removed.
 
   const candidateFormalityFit = formalityFitForPiece(candidate, options)
   if (candidateFormalityFit.adjustments.length) {

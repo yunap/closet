@@ -966,7 +966,9 @@ export function extractToolResultImages(result) {
     const { image, ...rest } = item
     const normalizedImage = normalizeToolImage(image)
     if (normalizedImage) {
-      const flags = [item.ruleFit, item.weatherFit].filter(f => f && f !== 'neutral').join(', ')
+      // item.weatherFit no longer exists (docs/search-propose-signal-inventory.md) — this silently
+      // dropped to undefined and got filtered out, not a crash, but a stale reference worth clearing.
+      const flags = [item.ruleFit].filter(f => f && f !== 'neutral').join(', ')
       images.push({
         ...normalizedImage,
         label: `ID ${item.id}: ${item.name || 'unnamed garment'}${flags ? ` — ${flags}` : ''}`

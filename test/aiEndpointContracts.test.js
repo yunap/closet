@@ -4058,7 +4058,6 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
   const result = [{
     id: 42,
     name: 'linen top',
-    weatherFit: 'lightweight - good for heat',
     ruleFit: 'preferred',
     image: { mime: 'image/jpeg', base64: 'abc123' },
     text: 'linen top details'
@@ -4070,7 +4069,8 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
 
   const extracted = extractToolResultImages(result)
   assert.equal(extracted.images.length, 1)
-  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred, lightweight - good for heat')
+  // item.weatherFit removed (docs/search-propose-signal-inventory.md) along with the field it read.
+  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred')
   assert.equal(extracted.images[0].mime, 'image/jpeg')
   assert.equal(extracted.images[0].base64, 'abc123')
   assert.ok(!JSON.parse(extracted.textResult)[0].image)
