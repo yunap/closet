@@ -1384,7 +1384,14 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
   const slotWeatherProfile = {
     ...(slot.stylingContext?.weatherProfile || weatherProfileFromContext({ mood: slotRequestText, season })),
   }
-  if (indoorSlot) slotWeatherProfile.isCold = false
+  // REMOVED (thermal-comfort-band-spec.md §18.6): `if (indoorSlot) slotWeatherProfile.isCold = false`.
+  // Hand-setting the flag was how an indoor slot avoided cold handling. That distinction now belongs
+  // to ExposureContext's `indoor_destination` mode, where the base is an indoor-comfort problem and
+  // the transit window keeps its own demand — and keeping a second, hand-mutated copy of it is the
+  // parallel-system failure Slice 5 forbids.
+  //
+  // Provably inert to remove: this profile flows ONLY into evaluatePlannerAutomaticUsePool, which
+  // reads `isHot` and never `isCold`. The mutation had no consumer left.
   const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
   const registerCeiling = registerRankName(ceilingRank) || null
   const { eligiblePieces } = evaluatePlannerAutomaticUsePool(pool, {
@@ -1699,8 +1706,9 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
     const season = indoorSlot
       ? (slot.transitSeason || 'indoor')
       : (slot.statedWeather || slot.season || (isSummer ? 'summer' : 'winter'))
+    // Same removal as above (§18.6): the indoor/outdoor thermal distinction is ExposureContext's,
+    // and this profile reaches only the pool's `isHot` read.
     const slotWeatherProfile = weatherProfileFromContext({ mood: slotRequestText, season })
-    if (indoorSlot) slotWeatherProfile.isCold = false
     const occasionCeilingRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
     const registerCeilingOverride = occasionCeilingRank !== null && ceilingRank > occasionCeilingRank
       ? registerRankName(ceilingRank)

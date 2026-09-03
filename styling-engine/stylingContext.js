@@ -133,7 +133,50 @@ function heuristicWeather({ mood, requestText, season, date }) {
   }
 }
 
+// Temperatures the user actually stated. Same extraction the prose heuristic uses — including its
+// "10-piece" guard, which stops a piece count being read as a temperature — but here the NUMBERS ARE
+// KEPT instead of being collapsed into booleans.
+//
+// Deliberately narrow. Two numbers are a range; ONE number is used as both ends, which is not
+// synthesis — it is the temperature the user gave, and exposure.js's waking-window offset is a
+// no-op across a zero span, so nothing is invented. No numbers at all means no structured weather
+// and the band stays unknown, which is the correct answer rather than a guessed envelope.
+function statedTemperatures(statedWeather = '') {
+  const text = String(statedWeather || '').toLowerCase()
+  const values = [...text.matchAll(/\b(\d{2,3})(?!-[a-z])\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
+    .flatMap(m => [Number(m[1]), Number(m[2])].filter(n => Number.isFinite(n)))
+    .filter(n => n >= -60 && n <= 140)
+  if (!values.length) return null
+  return { high_f: Math.max(...values), low_f: Math.min(...values) }
+}
+
 function statedWeatherProfile({ statedWeather, mood, requestText, date }) {
+  // MIGRATION (thermal-comfort-band-spec.md §18.4). This routed the user's STATED weather through
+  // the prose heuristic, which parses Fahrenheit values and then discards them — so "it will be
+  // 47°F" reached the engine as `{ isCold: true }` and the thermal band, which needs a temperature,
+  // was starved on exactly the turns where the user was most explicit.
+  //
+  // PRECEDENCE IS UNCHANGED. This branch already sits above the structured named-destination branch
+  // in resolveWeatherProfile, and it still does. Nothing here consults a forecast or "improves" a
+  // stated value with live data — that would be a different regression class.
+  const stated = statedTemperatures(statedWeather)
+  const userWeather = stated ? validateUserWeather(stated) : null
+  if (userWeather) {
+    const resolved = resolveWeatherContext({ userWeather })
+    return {
+      // The heuristic still supplies the non-thermal reads it genuinely owns — rain, wet exposure —
+      // which are parsed from the same prose and are not the band's business (§2.1).
+      ...weatherProfileFromContext({
+        mood: [mood, requestText].filter(Boolean).join(' '),
+        season: statedWeather,
+        currentDate: date || new Date(),
+      }),
+      ...resolved.temperature,
+      resolvedWeatherContext: resolved,
+      weatherSource: 'stated',
+      statedWeather,
+    }
+  }
   return {
     ...weatherProfileFromContext({
       mood: [mood, requestText].filter(Boolean).join(' '),
