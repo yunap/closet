@@ -1616,3 +1616,76 @@ would demand a removable layer at 75/60, and `producer -> 0` was never adopted o
 project and needs its own spec. It is deliberately not designed here — §21's measurement is the
 evidence for why those triggers cannot be inferred from the thermal band, and that is the starting
 point rather than a conclusion to re-derive.
+
+
+---
+
+## 25. Finish plan — locked 2026-09-03
+
+Recorded so live QA and the calibration project cannot swallow work belonging to the other.
+
+```text
+Thermal amount                        SHIPPED AND MIGRATED
+Live QA                               NEXT
+Exposure-contract calibration         planned, separate project, own spec
+Legacy cold compatibility removal     BLOCKED on that project
+Final authority ratchets              afterward
+```
+
+### 25.1 Live end-to-end QA — validation, not design
+
+Proves the shipped path. Cases:
+
+```text
+65/47 museum          lighter layer ahead of the puffer
+30/20 outdoor         puffer becomes preferred
+indoor + transit      base stays light, transit keeps its own demand
+puffer-only wardrobe  remains usable, never excluded
+unknown evidence      no false certainty, no hard block
+mild day              no gratuitous layer pressure
+search_wardrobe       thermal evidence actually reaches the model
+outfit adequacy       advisory findings that do not fight composition
+```
+
+**A failure here is a bug against the shipped owner, not an invitation to reopen the architecture** —
+unless the evidence genuinely falsifies it, which is the §10.1 bar, not a lower one.
+
+### 25.2 The known integration gap
+
+Recorded in §20.4: **ranking receives richer slot exposure than outfit adequacy.** Adequacy builds
+exposure from `environment` alone, so it has no exertion and its demand widens — which is why Vienna
+ranks correctly without necessarily producing an adequacy overshoot afterward.
+
+After live QA, inspect whether that matters in real flows. If it does, specify the missing context
+threading **narrowly**. It is a plumbing question; thermal demand is not to be redesigned for it.
+
+### 25.3 Parallel-contract calibration — the next project, its own spec
+
+Decompose the 13 by actual question: removable-layer requirement · transit sleeve-bearing coverage ·
+outdoor-capability requirement · footwear environmental adequacy · owner-rule applicability and
+metadata gates.
+
+For each, the question is:
+
+```text
+ASK      what exposure condition should trigger this question?
+NOT      which thermal-band level corresponds to the old isCold flag?
+```
+
+That distinction is §21's result, and it is the starting premise rather than something to re-derive.
+
+### 25.4 Then the compatibility retirement, then the ratchets
+
+Only after those contracts have calibrated triggers: drop their dependence on
+`weatherProfileFromContext`, retire the four genuine producer sites, simplify the 11 derivations that
+no longer have compatibility consumers, and clean the 12 display/debug projections.
+
+Final mechanical guards, so the architecture cannot regress quietly:
+
+```text
+thermal_amount === 0
+non_thermal stays independently classified
+no new thermal-amount consumer reads isCold / isColdSevere
+parallel contracts may not derive triggers from thermal-band levels
+no new consumer of the prose cold producer without explicit ownership
+```
