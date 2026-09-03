@@ -2,13 +2,13 @@ import { db, parsePiece, safeJsonParse } from '../db.js'
 import {
   pieceHasInsulatingMaterial,
   thermalMaterialVerdict,
-  compositionEvidenceState,
   pieceHasVentilatedFootwearMaterial,
   pieceHasWetSensitiveFootwearMaterial,
   pieceOuterwearRole,
   pieceWeatherProtection,
   wardrobeCategoryGroup,
 } from '../styling-engine/attributes.js'
+import { interiorConstruction, insulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
 import { pieceWeatherScores } from '../styling-engine/thermal.js'
 import { proposedWarmthLevel, warmthCalibrationEvidenceState } from '../styling-engine/warmthCalibration.js'
 import { evaluateOuterwearCapability } from '../styling-engine/outerwearCapability.js'
@@ -20,11 +20,12 @@ import { evaluateOuterwearCapability } from '../styling-engine/outerwearCapabili
 function printDerived(piece) {
   const group = wardrobeCategoryGroup(piece)
   const scores = pieceWeatherScores(piece)
-  const line = (k, v) => console.log(`${String(k).padEnd(26)}${v}`)
+  const line = (k, v) => console.log(`${String(k).padEnd(28)}${v}`)
   console.log('\n=== Derived: what the engine concludes ===')
   line('thermal evidence', scores.evidence ? 'present' : 'null  <- nothing known about warmth')
   line('cold / heat score', `${scores.cold} / ${scores.heat}`)
-  line('composition evidence', compositionEvidenceState(piece))
+  line('interior construction', interiorConstruction(piece))
+  line('insulating layer materials', JSON.stringify(insulatingLayerMaterials(piece)))
   line('thermal material verdict', thermalMaterialVerdict(piece))
   line('calibration evidence', warmthCalibrationEvidenceState(piece))
   line('warmth level (proposed)', proposedWarmthLevel(piece) ?? '— not assignable')
