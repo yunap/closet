@@ -215,18 +215,48 @@ Whether the estimate schema gains a field for this is §8's measured question, n
 is currently visible only to `weather_protection`. Whether it shifts the demand or is merely carried
 is the band's decision, not this spec's — but it must reach the band, which today it cannot.
 
-### 4.4 Why this ordering makes the hard part optional
+### 4.4 Two independent defects, staged — not one defect with an optional half
 
-Museum, hike and indoor dinner differ in **activity** (`walking` / `hiking` / `none`) and **exposure
-mode** (`outdoor` / `outdoor` / `indoor`+transit). Both are stored, populated and thermally unused
-**today**.
+The census uncovered **two** failures, and the standard model requires both inputs to be right:
 
-So acceptance case A (§9) is reachable **without solving conditions-during-exposure at all**. The
-three slots diverge on variables Closet already has, for the reason the standard model gives — a
-hiker generating metabolic heat needs less insulation than a stationary diner at the same ambient
-temperature. Daypart sourcing improves the *number*; it is not what makes the three cards differ.
+```text
+correct environmental condition  +  ignored exertion   →  wrong demand
+wrong environmental condition    +  correct exertion   →  ALSO wrong demand
+```
 
-That is the simplification the census bought, and it sets the implementation order in §10.
+**Defect 1 — existing variables are unconsumed.** Museum, hike and indoor dinner differ in
+`activity` (`walking` / `hiking` / `none`) and exposure mode (`outdoor` / `outdoor` /
+`indoor`+transit). Both are stored, populated and thermally inert today (§2.2), so the three slots
+currently resolve to one demand. Fixing this needs no new data.
+
+**Defect 2 — the environmental condition is wrong.** The demand for the museum slot is computed from
+a 47°F pre-dawn trough nobody is dressed for. That was the original owner ruling, and it is
+independent: a demand that correctly accounts for exertion is still wrong if the temperature feeding
+it is the wrong one.
+
+**Discovering that the metabolic and exposure inputs already exist does not demote environmental
+conditions to optional precision.** It only means there is less new data to invent for defect 1.
+
+The two failures have two acceptance cases and neither substitutes for the other:
+
+```text
+case A  →  the owner READS the right contextual variables      (defect 1)
+case B  →  the owner RECEIVES the right environmental conditions (defect 2)
+```
+
+This matters for how the staging in §10 is read. Step 2 can deliberately prove A against today's
+coarse high/low, which is a real and checkable milestone — but it **must not be reported as the
+Vienna defect being fixed**. Case A can pass perfectly while the museum still gets too much coat:
+
+```text
+walking museum  → demand X
+hiking          → demand X-2      activity is finally working
+indoor dinner   → demand Y
+
+...and if X is still computed from 47°F, the museum is still over-coated.
+```
+
+Step 4 is therefore **required, not optional**. Only after both does the Vienna plan satisfy case B.
 
 ## 5. `needsRemovableCoolLayer` loses authority
 
@@ -310,10 +340,12 @@ spec; naming the boundary is what keeps this one from absorbing it.
 Answer with measurement, not preference. **Reordered after the §2.2 census** — the questions that
 looked hardest are no longer on the critical path.
 
-1. **Does `activity` + `exposure mode` alone produce acceptable divergence on case A?** If
-   `none` / `walking` / `hiking` and `indoor` / `outdoor` already separate the three Vienna cards
-   defensibly, conditions-during-exposure is a **precision** improvement rather than a prerequisite,
-   and ships second. This is the first thing to measure because it decides everything below.
+1. **Does `activity` + `exposure mode` alone produce acceptable divergence on case A?** They must
+   differentiate thermal demand *before* better weather sourcing is added — that is what proves the
+   existing variables are actually being consumed, and it is checkable with today's coarse high/low.
+   **Correct conditions-during-exposure are independently required** to size that demand against the
+   weather the outfit will actually encounter; this question establishes sequencing, not sufficiency.
+   Measure it first because it decides what step 2 can claim, not whether step 4 happens.
 2. **What ordinal exertion levels does `none | walking | hiking` support?** The standard model says
    higher exertion lowers required insulation at the same ambient temperature. Three levels is what
    exists; whether the demand shift is one step or two is calibration, and belongs with the band's
@@ -349,9 +381,19 @@ problem is not solved. Divergence produced by an arbitrary per-occasion constant
 standard model's own: higher exertion lowers required insulation at the same ambient temperature.
 A design that needs daypart data to separate a hike from a dinner has not understood the inputs.
 
-**B — the puffer.** On the Vienna plan's city slots, `996775` (`cold 23`) is not preferred over
-`996767` (6) / `996764` (10). Overshoot is a ranking penalty, never an exclusion — a wardrobe whose
-only layer is a heavy coat still gets dressed (band spec §5.5).
+**A passing is not the Vienna defect fixed.** This case tests that the owner READS the right
+contextual variables (§4.4, defect 1). It says nothing about whether the conditions it read them
+against are the right ones — case B tests that, and requires step 4.
+
+**B — the puffer. This is the Vienna defect, and the case A does not cover.** On the plan's city
+slots, `996775` (`cold 23`) is not preferred over `996767` (6) / `996764` (10). Overshoot is a
+ranking penalty, never an exclusion — a wardrobe whose only layer is a heavy coat still gets dressed
+(band spec §5.5).
+
+**B requires step 4 and must not be expected to pass at step 2.** The museum slot is over-coated
+because its demand is computed from a 47°F pre-dawn trough; correcting exertion alone leaves that
+input untouched. A run where the hike and the dinner finally differ while the museum still wears a
+puffer sized for 5am has passed A and failed B, and is **not** a fixed Vienna plan.
 
 **C — the layer requirement survives.** The same city slot still requires removable outer coverage.
 The owner's ruling is that 47°F is the wrong size, not that no coat is needed. A run that answers
