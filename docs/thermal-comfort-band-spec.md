@@ -1,9 +1,20 @@
 # Spec — decomposing `isCold` into a thermal comfort band
 
-**Status:** active — audit and design. **Revised Slice 1 complete 2026-09-03 (§13): measurement
-only, still no production code.** Thresholds deliberately not chosen (§6), and the demand mapping is
-**not** chosen — §13 found the candidate ordinal scale internally inconsistent, so §12's gate has not
-been cleared. Verifier: `node scratch/measure_warmth_placement.mjs`.
+**Status:** **IMPLEMENTED AND MIGRATED 2026-09-03.** This is the shipped owner of thermal amount —
+`requiredThermalBand` (§16) compared against `garmentWarmth` / `outfitThermalContribution` (§14, §17),
+fed by `exposure.js`. Ranking, model evidence, outfit adequacy and projection surfaces all read it
+(§19, §20, §22); no consumer derives thermal amount from a legacy cold flag.
+
+**Deferred by ruling, not omission:** the parallel contracts — removable-layer need, transit sleeve
+coverage, outdoor capability, footwear triggers — keep their own legacy triggers and **must never
+take band semantics** (§21.1). Their calibration is a separate semantic project with its own spec.
+
+Superseded within this document: §12's "no production code" framing, and §13's finding that the
+candidate ordinal scale was internally inconsistent — §14 rebuilt it on coverage and §15 anchored it.
+Sections 12-13 are the record of how that was reached, not live contract.
+
+Verifiers: `node scratch/measure_warmth_placement.mjs` ·
+`node scratch/compare_warmth_placement.mjs` · `node scratch/census_thermal_demand_consumers.mjs`
 **Route:** [docs/README.md](README.md). Supersedes the *authority* of `isCold`, `transitIsCold` and
 `isColdSevere`; amends [cold-severity-spec.md](cold-severity-spec.md) and
 [cool-weather-tier-spec.md](cool-weather-tier-spec.md) §8, which required this audit.
@@ -1575,3 +1586,33 @@ non_thermal         4    held throughout
 cold flag; no independent contract derives its semantics from the band; and the single remaining
 producer has a named dependency and a stated end. What is left is not migration work — it is the
 parallel contracts' own future calibration, which is its own semantic problem (§21.1).
+
+
+---
+
+## 24. Arc closed — final state
+
+Merged to `main` 2026-09-03 across eight PRs (#305, #306, #309, #310, #311, #312, #313, #314).
+
+```text
+thermal_amount      0    no consumer derives thermal AMOUNT from a legacy cold flag
+parallel_contract  13    named, independent — must never take band semantics (§21.1)
+projection         12    display and debug payloads; model-facing evidence migrated (§22)
+derivation         11    computes the flag shape from already-resolved weather — no authority
+producer            4    one function, justified consumers, stated removal condition (§23.2)
+non_thermal         4    held throughout — the guard that nothing dissolved into the band
+```
+
+`non_thermal` holding at 4 across every step is the load-bearing half of that table: it is the
+evidence that footwear and wet-weather contracts were never quietly absorbed. A migration measured
+only by the number falling would not have shown it.
+
+**Two completion criteria were changed by evidence during the arc**, both recorded where they were
+decided: `thermal_demand -> 0` was retired when §21 measured that forcing contracts through the band
+would demand a removable layer at 75/60, and `producer -> 0` was never adopted once §23 showed 11 of
+15 sites carried no authority at all.
+
+**Handoff.** The parallel contracts' calibration against exposure conditions is the next semantic
+project and needs its own spec. It is deliberately not designed here — §21's measurement is the
+evidence for why those triggers cannot be inferred from the thermal band, and that is the starting
+point rather than a conclusion to re-derive.
