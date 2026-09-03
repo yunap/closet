@@ -106,3 +106,4 @@ scratch/*
 !scratch/measure_warmth_placement.mjs
 !scratch/probe_unknown_placements.mjs
 !scratch/compare_warmth_placement.mjs
+!scratch/qa_thermal_shipped_path.mjs

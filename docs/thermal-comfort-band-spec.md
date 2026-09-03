@@ -1650,6 +1650,33 @@ outfit adequacy       advisory findings that do not fight composition
 **A failure here is a bug against the shipped owner, not an invitation to reopen the architecture** —
 unless the evidence genuinely falsifies it, which is the §10.1 bar, not a lower one.
 
+### 25.1.1 Deterministic pass — 2026-09-03, all six cases green
+
+`node scratch/qa_thermal_shipped_path.mjs` against the real wardrobe (271 active pieces, 34
+outerwear). **Zero model calls**, so it is free to re-run on every future change.
+
+```text
+65/47 museum      puffer ranks 31 of 34 (score -4); trench / plaid jacket / olive jacket lead at +4
+30/20 outdoor     puffer ranks 2 of 34            reversal 31 -> 2 on conditions alone
+indoor + transit  base demand `light`, transit demand `warm`, split preserved
+puffer-only       still scored and usable; overshoot is ADVISORY, never a hard error
+unknown evidence  no thermal opinion, no hard error, unknown recorded structurally
+mild day 75/60    demand `light`, no findings — no invented layer pressure
+```
+
+The original defect is settled: the down puffer that once ranked equally on a 65/47 museum day now
+sits 31st of 34 layers, and second of 34 at 30/20.
+
+**One number worth carrying into live QA: 115 of 271 garments cannot be placed at all.** That is
+§14.2's tagging backlog, visible from the other end — the placement refuses to invent a level where
+material evidence is missing, which is correct, but it means a large share of the wardrobe
+contributes no thermal signal. Live QA should watch whether that shows up as thin or hedged advice
+rather than as wrong advice.
+
+Cases 7 and 8 need a real tool loop and are deliberately left to the in-app run: whether
+`search_wardrobe` actually surfaces the evidence in a live turn, and whether adequacy's advisories
+fight composition.
+
 ### 25.2 The known integration gap
 
 Recorded in §20.4: **ranking receives richer slot exposure than outfit adequacy.** Adequacy builds
