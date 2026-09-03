@@ -1677,6 +1677,52 @@ Cases 7 and 8 need a real tool loop and are deliberately left to the in-app run:
 `search_wardrobe` actually surfaces the evidence in a live turn, and whether adequacy's advisories
 fight composition.
 
+### 25.1.2 Live pass — 2026-09-03, `thread_1788421510368`: the defect is NOT fixed end to end
+
+Real dev pair, real wardrobe, verified running HEAD. Same request as the original incident.
+
+**The black puffer is on 7 of 7 cards at 65/48** — including both hikes and both indoor museum days.
+Deterministic QA had it ranked 31st of 34. Both results are true, and the gap between them is the
+finding.
+
+**Causal chain, from the model's own narration and the diagnostics:**
+
+```text
+1. needsRemovableCoolLayer fires on lowF 48 <= 55 as a HARD ERROR
+   -> "The engine requires a removable outerwear layer on every city/museum look for the 48°F low"
+   A parallel_contract, still legacy-triggered by the §21.1 ruling.
+
+2. The slot roster the model composes from carries NO THERMAL EVIDENCE.
+   outfitSetPlanner.js has zero references to weatherFit / weatherFitForPiece.
+   The model cannot see that the puffer ranks 31st of 34.
+
+3. search_wardrobe was never called (searchCalls: 0), so §22's evidence migration
+   did not apply to this turn at all — the plan path uses slot rosters, not search.
+
+4. Adequacy's overshoot advisory did not fire, exactly as §20.4 predicted: adequacy
+   builds exposure from `environment` alone, so demand widens and the puffer sits in band.
+```
+
+**Every migration in this arc is real, and none of them reaches the plan path's composition
+decision.** The model was handed a hard requirement and a roster with no thermal signal, and picked
+the warmest coat. That is a rational choice given what it was shown.
+
+**This does not falsify the architecture** (§25.1's bar). Thermal amount is computed correctly,
+consumed correctly by ranking, adequacy and search. It is not *delivered* to the one path this
+request actually takes.
+
+**§25.2's gap is larger than recorded.** It was written as "ranking receives richer slot exposure
+than adequacy". The truth is that the plan path receives **no thermal ranking at all** — a missing
+consumer, not an impoverished one.
+
+**Also still live, and not this arc's:** the deliberation prose leak from the original incident is
+unchanged — *"The engine requires…"*, *"The engine is capping me at 3 shoes total"* — with
+`closingProseWithheld: 0`. Tracked separately; it is a turn-contract defect, not a thermal one.
+
+**Improvements visible against the original thread:** 7 outfits delivered rather than 6 with one
+offloaded to the user, 16 pieces rather than a 19-item roster containing a phantom, and the
+warm-season linen pants are now disclosed to the owner rather than silently packed.
+
 ### 25.2 The known integration gap
 
 Recorded in §20.4: **ranking receives richer slot exposure than outfit adequacy.** Adequacy builds
