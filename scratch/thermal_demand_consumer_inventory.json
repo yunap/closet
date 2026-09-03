@@ -1,11 +1,10 @@
 {
-  "generated": "2026-09-03T07:04:10.885Z",
+  "generated": "2026-09-03T07:10:20.321Z",
   "counts": {
     "projection": 16,
     "parallel_contract": 13,
     "producer": 15,
-    "non_thermal": 4,
-    "thermal_amount": 2
+    "non_thermal": 4
   },
   "rows": [
     {
@@ -234,21 +233,7 @@
     },
     {
       "file": "styling-engine/rules.js",
-      "line": 3251,
-      "owner": "buildVisualComposerRoster",
-      "cls": "thermal_amount",
-      "text": "} else if (weatherProfile && weatherProfile.isCold) {"
-    },
-    {
-      "file": "styling-engine/rules.js",
-      "line": 3268,
-      "owner": "buildVisualComposerRoster",
-      "cls": "thermal_amount",
-      "text": "if (isHeavy && weatherProfile.isColdSevere) {"
-    },
-    {
-      "file": "styling-engine/rules.js",
-      "line": 3777,
+      "line": 3793,
       "owner": "scoreWholeWardrobeCandidate",
       "cls": "non_thermal",
       "text": "if (!weather.isCold) {"

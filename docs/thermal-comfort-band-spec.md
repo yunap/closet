@@ -1388,12 +1388,64 @@ guarded on the retired `thermal_demand` class, so every footwear site stayed `pa
 than the code. And the thermal-amount rule matched the flag line, where the bonus sits two lines
 below the guard, so it had to become windowed.
 
-### 21.3 What is actually left
+### 21.3 The last two thermal_amount readers — migrated
 
-* **`thermal_amount` (2)** — `rules.js:3251`, `3268`. A genuine PR B remainder; migrate next.
+`buildVisualComposerRoster`'s per-piece `weatherBonus` was `else if (weatherProfile.isCold)` with
+`fabric_weight` bonuses beneath it: between the two temperature extremes the roster carried no
+thermal signal, and inside the cold tier it ranked by **mass** rather than by fit.
+
+**Both original carve-outs survive, and one became unnecessary rather than re-tuned.**
+
+The undershoot penalty still applies only to bottoms and dresses — a light TOP is not a problem in
+the cold because it gets layered over, and that asymmetry has no band equivalent, so it stays an
+explicit rule.
+
+The heavy-fabric bonus used to require `isColdSevere` rather than `isCold`, because a merely-chilly
+dinner had surfaced a long leather coat as the top-ranked outerwear pick
+([cold-severity-spec.md](cold-severity-spec.md), `thread_1788050815289`). **The band removes the need
+for that guard**, and more strongly than the guard did:
+
+```text
+chilly 55/45   leather coat -10 (warmer than conditions)   wool jacket +10 (well matched)
+severe 30/20   leather coat +10 (well matched)             wool jacket  --
+```
+
+The old fix merely *withheld* a bonus. Ranking by fit actively penalises the coat and prefers the
+piece that suits the evening. The incident's regression test was rewritten to assert that intent
+under structured weather, rather than the absence of one particular bonus string.
+
+### 21.4 Acceptance — the thermal-amount migration is complete
+
+```text
+thermal_amount      2 -> 0     the migration's real completion test, now met
+parallel_contract  13 -> 13    untouched, as ruled
+non_thermal         4 ->  4    held; the guard that contracts did not dissolve into the band
+projection         16          unchanged — steps 5-6
+producer           15          unchanged — steps 5-6
+suite  1839 tests, 1837 pass, same 2 pre-existing failures
+```
+
+**No consumer derives thermal amount from a legacy cold flag any more.** What remains is projection
+and producer cleanup, plus separate future work on the independent contracts' own trigger
+calibration — which must not come from the band (§21.1).
+
+### 21.5 What is actually left
 * **`parallel_contract` (13)** — each needs *named independent ownership* recorded, not a band
-  trigger. That naming is the step-4 work, and it is documentation plus boundaries rather than a
-  behaviour migration.
+  trigger. Documentation and boundaries rather than a behaviour migration:
+
+```text
+outfitEnvironmentalAdequacy  removable-layer presence      "is there something to put on"
+outfitEnvironmentalAdequacy  transit removable presence    same question, transit window
+outfitEnvironmentalAdequacy  minimum-warmth presence       "is there a warm layer at all"
+outfitEnvironmentalAdequacy  transit sleeve coverage       "does it cover your arms"
+outfitEnvironmentalAdequacy  outdoor capability            "is this garment for outdoors"
+outfitEnvironmentalAdequacy  transit outdoor capability    same, transit window
+wholeWardrobePieceTrustDecision  cold-appropriateness      "shorts / linen / bare in the cold"
+buildVisualComposerRoster        eligibility gate          which pieces enter the roster
+```
+
+None of these asks how much insulation. Each may eventually earn its own trigger calibration from
+exposure conditions; none may take it from the band.
 * **`projection` (16)** and **`producer` (15)** — steps 5-6, unchanged.
 
 No code was written for step 4's original premise.

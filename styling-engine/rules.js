@@ -3248,26 +3248,42 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         weatherBonus -= 10
         pushAdjustmentReason(p.id, 'hot weather: heavy fabric (-10)')
       }
-    } else if (weatherProfile && weatherProfile.isCold) {
-      const isLight = fabricWeight(p) === 'light'
-      const isHeavy = fabricWeight(p) === 'heavy'
-
-      if (isLight) {
-        const catGroup = wardrobeCategoryGroup(p)
-        if (catGroup === 'bottom' || catGroup === 'dress') {
-          weatherBonus -= 10
-          pushAdjustmentReason(p.id, 'cold weather: lightweight fabric (-10)')
+    } else if (weatherProfile) {
+      // MIGRATED to the thermal band (§21.3 — the last two thermal_amount readers). This was
+      // `else if (weatherProfile.isCold)` with fabric_weight bonuses beneath it, so between the two
+      // temperature extremes the roster carried no thermal signal, and inside the cold tier it
+      // ranked by fabric mass rather than by fit.
+      //
+      // BOTH ORIGINAL CARVE-OUTS SURVIVE, and one is now structural rather than special-cased:
+      //
+      //   * The undershoot penalty still applies only to bottoms and dresses. A light TOP is not a
+      //     problem in the cold — it gets layered over — and that asymmetry has no band equivalent,
+      //     so it stays an explicit rule.
+      //
+      //   * The heavy-fabric bonus used to require isColdSevere rather than isCold, because a
+      //     merely-chilly dinner had surfaced a long leather coat as the top-ranked outerwear pick
+      //     (cold-severity-spec.md, thread_1788050815289). The band removes the need for that guard
+      //     entirely: on a mild-cold day the demand is `warm`, so a `very warm` coat OVERSHOOTS and
+      //     is penalised. Ranking by fit rather than by mass is what makes the special case
+      //     unnecessary, instead of merely re-tuned.
+      const rosterDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
+      const rosterFit = compareThermalFit(garmentWarmthLevel(p), rosterDemand)
+      if (rosterDemand.level && rosterFit.fit !== 'unknown') {
+        const off = rosterFit.distance ?? 0
+        if (off < 0) {
+          const catGroup = wardrobeCategoryGroup(p)
+          if (catGroup === 'bottom' || catGroup === 'dress') {
+            weatherBonus -= 10
+            pushAdjustmentReason(p.id, 'thermal band: lighter than the conditions call for (-10)')
+          }
+        } else if (off > 0) {
+          const penalty = 10 * Math.min(2, off)
+          weatherBonus -= penalty
+          pushAdjustmentReason(p.id, `thermal band: warmer than the conditions call for (-${penalty})`)
+        } else {
+          weatherBonus += 10
+          pushAdjustmentReason(p.id, 'thermal band: well matched to the conditions (+10)')
         }
-      }
-      // The heavy-fabric bonus (unlike the lightweight penalty above) requires
-      // isColdSevere, not just isCold: mild cold ("chilly") is a minimum-warmth
-      // signal, not a mandate to rank the heaviest owned piece top — see
-      // docs/cold-severity-spec.md (thread_1788050815289: a merely-chilly
-      // dinner surfaced a long leather coat as the top-ranked outerwear pick
-      // via this exact bonus).
-      if (isHeavy && weatherProfile.isColdSevere) {
-        weatherBonus += 10
-        pushAdjustmentReason(p.id, 'cold weather: heavy fabric (+10)')
       }
     }
 
