@@ -32,17 +32,64 @@ test('A — same date, location and forecast, three slots, not identical', () =>
   assert.equal(hike.exertion, 'hiking')
   assert.equal(dinner.exposureMode, 'indoor_destination')
   assert.deepEqual(
-    [museum.conditions.highF, hike.conditions.highF, dinner.conditions.highF], [65, 65, 65],
+    [museum.conditions.dailyHighF, hike.conditions.dailyHighF, dinner.conditions.dailyHighF], [65, 65, 65],
     'the forecast is genuinely shared — the divergence is not smuggled in through the weather')
 })
 
-test('A is not case B — the conditions are still the coarse daily envelope', () => {
-  // The guard against declaring victory early. Step 2 proves the variables are consumed; the
-  // museum is STILL sized against a 47°F pre-dawn trough until step 4 replaces this.
+test('the exposure temperature is no longer the pre-dawn trough', () => {
+  // The Vienna ruling, enforced: the coat is genuinely needed, but 47°F is not the temperature to
+  // size it for. The daily envelope is kept as real data; nothing thermal should read it.
   const museum = resolveExposureContext(MUSEUM, VIENNA)
-  assert.equal(museum.conditions.coarse, true,
-    'while coarse is true, case B is unfixed and no run may be reported as a fixed Vienna plan')
-  assert.equal(museum.conditions.lowF, 47)
+  assert.equal(museum.conditions.dailyLowF, 47, 'the envelope is preserved, not discarded')
+  assert.ok(museum.conditions.wakingLowF > museum.conditions.dailyLowF,
+    'the waking window must sit above the 5am trough')
+  assert.ok(museum.conditions.wakingLowF < museum.conditions.dailyHighF,
+    'and below the daily high — a layer is still genuinely needed (case C)')
+  assert.equal(museum.conditions.wakingHighF, 65)
+})
+
+test('the waking window is a WEATHER-SOURCING policy, not a semantic one', () => {
+  // Owner ruling 2026-09-03. It answers "what part of the envelope is plausibly met while a person
+  // is out", never "when does a museum happen". Identical for every slot on the same day — a
+  // per-occasion or per-activity window would reintroduce exactly what §4.1 rejected.
+  const a = resolveExposureContext(MUSEUM, VIENNA).conditions
+  const b = resolveExposureContext(HIKE, VIENNA).conditions
+  const c = resolveExposureContext(DINNER, VIENNA).conditions
+  assert.deepEqual(a, b)
+  assert.deepEqual(a, c)
+
+  const src = fsRead('styling-engine/exposure.js')
+  // Live code only. The prose around this function legitimately says "environmental condition" and
+  // names the slot fields it must NOT read, so matching comments fails on its own documentation.
+  const fn = src.slice(src.indexOf('function estimateWakingWindow'), src.indexOf('function resolveConditions'))
+    .split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  for (const banned of ['occasion', 'activity', 'environment', 'exposureMode', 'slot']) {
+    assert.ok(!fn.includes(banned), `the window estimator must not read ${banned}`)
+  }
+  // And its whole signature is the two numbers — nothing slot-shaped can reach it.
+  assert.match(src, /function estimateWakingWindow\(highF, lowF\)/)
+})
+
+test('conditionsSource records the sourcing tier, and coarse survives it', () => {
+  // Provenance, not a point estimate: a consumer can see how much to trust the number.
+  const seasonal = resolveExposureContext(MUSEUM, VIENNA).conditions
+  assert.equal(seasonal.conditionsSource, 'seasonal_waking_window_estimate')
+  assert.equal(seasonal.coarse, true, 'an inferred window is coarse whatever fed it')
+
+  const live = resolveExposureContext(MUSEUM,
+    { temperature: { highF: 65, lowF: 47, source: 'live_forecast' } }).conditions
+  assert.equal(live.conditionsSource, 'waking_window_estimate')
+  assert.equal(live.coarse, true)
+
+  const none = resolveExposureContext(MUSEUM, null).conditions
+  assert.equal(none.conditionsSource, 'unknown')
+  assert.equal(none.known, false)
+
+  // explicit_hourly is defined in the tier list but deliberately unreachable: the forecast requests
+  // `daily=` only, and no clock fact exists to key a window. Spec §10.3. Asserted so the day it
+  // becomes reachable, this test is what says so.
+  assert.ok(!/'explicit_hourly'/.test(fsRead('styling-engine/exposure.js').split('function resolveConditions')[1] || ''),
+    'no code path may claim explicit_hourly until hourly data is actually sampled')
 })
 
 test('occasion never reaches the exposure context', () => {
@@ -73,6 +120,7 @@ test('F — absent context is explicitly unknown, never "outdoors, all day"', ()
   assert.equal(bare.exertion, 'unknown')
   assert.equal(bare.exposureMode, 'unknown')
   assert.equal(bare.conditions.known, false)
+  assert.equal(bare.conditions.conditionsSource, 'unknown')
   assert.deepEqual(bare.unknownFields.sort(), ['conditions', 'duration', 'exertion', 'exposureMode'])
 })
 
@@ -80,7 +128,7 @@ test('E — an indoor destination excuses the base, never the trip', () => {
   const dinner = resolveExposureContext(DINNER, VIENNA)
   assert.equal(dinner.exposureMode, 'indoor_destination')
   assert.equal(dinner.transit.applies, true)
-  assert.equal(dinner.transit.conditions.lowF, 47, 'the transit window still carries real conditions')
+  assert.equal(dinner.transit.conditions.dailyLowF, 47, 'the transit window still carries real conditions')
 
   const outdoors = resolveExposureContext(MUSEUM, VIENNA)
   assert.equal(outdoors.transit.applies, false, 'an outdoor slot has no separate transit window')

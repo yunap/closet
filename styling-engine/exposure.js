@@ -54,14 +54,50 @@ function normalizeExposureMode(slot = {}) {
   return ENVIRONMENT_TO_MODE[env] || 'unknown'
 }
 
-// The conditions the outfit is expected to MEET.
+// ── Conditions during exposure ───────────────────────────────────────────────────────────────
 //
-// Today this is the daily envelope, unchanged and openly labelled `coarse: true`. That is defect 2
-// still live, on purpose: spec §10 fixes it at step 4, after the band exists, via §4.2's sourcing
-// tier (hourly / window / stated estimate / explicit range). The flag is the seam — a consumer can
-// see it is reading a 24-hour envelope rather than exposure conditions, and this module can start
-// returning better numbers without any consumer changing.
+// The variable the Vienna failure got wrong. `needsRemovableCoolLayer` consumed the 24-hour MINIMUM
+// as though it were the temperature a museum visitor experiences; 47°F is a pre-dawn trough, and a
+// layer mandated by it with no ceiling makes the warmest coat owned the safest answer.
 //
+// PROVENANCE, not a point estimate. Sourcing degrades explicitly (spec §4.2), and the tier is
+// recorded so a consumer can see how much to trust the number:
+//
+//   explicit_hourly                 an exposure window is known and sampled from real hourly data
+//   waking_window_estimate          live daily high/low, waking window estimated
+//   seasonal_waking_window_estimate model-estimated high/low, waking window estimated
+//   unknown                         nothing usable
+//
+// THIS IS A WEATHER-SOURCING POLICY AND NOTHING ELSE. Owner ruling 2026-09-03: it answers "what
+// part of the 24-hour envelope is plausibly encountered while a person is out?" — never "when does a
+// museum happen?". It does not read the slot. It does not know about occasion, activity or exposure
+// mode, and it must give the identical answer for a hike, a dinner and a gallery on the same day.
+// A semantic assumption dressed as observed context is the thing this whole arc rejected; a stated,
+// disclosed, slot-independent one is not.
+//
+// Why an assumption is unavoidable here: the Slice 1 census found NO clock information in any typed
+// field anywhere (spec §10.3). A slot carries a date, never a time. So there is nothing to derive a
+// window from, and the honest move is to state the assumption and label it, not to keep using a
+// number everybody agrees is wrong.
+const WAKING_WINDOW = {
+  // The share of the day's range the pre-dawn trough sits below by the time people are ordinarily
+  // out. STATED ASSUMPTION, not a calibrated constant — it exists to stop the daily minimum being
+  // used as exposure temperature, and it is deliberately conservative (it still keeps the low end
+  // well under the daily high). Replace it with sampled hourly data rather than tuning it; if it
+  // proves materially wrong, that is the evidence that would justify a typed exposure-window field,
+  // which the owner ruled must NOT be added before such evidence exists.
+  troughOffsetFraction: 0.35,
+}
+
+// Returns the range plausibly met during ordinary waking exposure, given only the day's envelope.
+// A RANGE, never a point: uncertainty is preserved rather than collapsed into a fake precision.
+function estimateWakingWindow(highF, lowF) {
+  if (!Number.isFinite(highF) || !Number.isFinite(lowF)) return null
+  const span = Math.max(0, highF - lowF)
+  const wakingLowF = Math.round((lowF + span * WAKING_WINDOW.troughOffsetFraction) * 10) / 10
+  return { wakingLowF, wakingHighF: highF }
+}
+
 // Wind is carried because it is an environmental condition that is already resolved per turn and
 // today reaches only `weather_protection`, never the thermal model (spec §2.2). Whether it shifts
 // the demand is the band's decision; establishing the pipe is this module's.
@@ -69,17 +105,37 @@ function resolveConditions(resolvedWeather = null) {
   const t = resolvedWeather?.temperature || resolvedWeather || null
   const highF = Number.isFinite(t?.highF) ? t.highF : null
   const lowF = Number.isFinite(t?.lowF) ? t.lowF : null
-  const wind = resolvedWeather?.wind?.value ?? resolvedWeather?.wind ?? 'unknown'
+  const rawWind = resolvedWeather?.wind?.value ?? resolvedWeather?.wind ?? 'unknown'
+  const wind = typeof rawWind === 'string' ? rawWind : 'unknown'
+  const source = t?.source || resolvedWeather?.overallSource || 'unknown'
+
   if (highF === null && lowF === null) {
-    return { highF: null, lowF: null, wind, source: 'unavailable', coarse: true, known: false }
+    return {
+      dailyHighF: null, dailyLowF: null, wakingLowF: null, wakingHighF: null,
+      wind, source, conditionsSource: 'unknown', coarse: true, known: false,
+    }
   }
+
+  const window = estimateWakingWindow(highF, lowF)
+  // A model estimate five weeks out and a live forecast for tomorrow are both estimates of the
+  // waking window here, but they are not equally trustworthy, so the tier records which.
+  const conditionsSource = /estimate/i.test(String(source))
+    ? 'seasonal_waking_window_estimate'
+    : 'waking_window_estimate'
+
   return {
-    highF,
-    lowF,
-    wind: typeof wind === 'string' ? wind : 'unknown',
-    source: t?.source || resolvedWeather?.overallSource || 'unknown',
-    // TRUE while conditions come from the daily envelope rather than the exposure window.
-    // Spec §4.2 / §10 step 4 is what makes this false.
+    // The envelope is kept: it is real data, and the daily low still matters to anything genuinely
+    // asking about overnight. Nothing thermal should read it — that is what wakingLowF is for.
+    dailyHighF: highF,
+    dailyLowF: lowF,
+    wakingLowF: window ? window.wakingLowF : highF,
+    wakingHighF: window ? window.wakingHighF : highF,
+    wind,
+    source,
+    conditionsSource,
+    // TRUE for both estimate tiers: the window is inferred, not observed. Only `explicit_hourly`
+    // clears it, and that tier needs the forecast query to request `hourly=temperature_2m` (it asks
+    // for `daily=` only today) AND a clock fact to key it — neither exists yet. See spec §10.3.
     coarse: true,
     known: true,
   }

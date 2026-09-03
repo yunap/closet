@@ -1,8 +1,9 @@
 # Spec — relevant exposure conditions
 
-**Status:** **Ratified 2026-09-03.** **Slices 1-2 implemented** — `styling-engine/exposure.js` and
-`test/exposureContext.test.js`; **case A passes**. **Steps 3-5 blocked on two owner rulings** (§10.3):
-`requiredThermalBand` does not exist, and no clock information exists in any typed field. **No human stop/go checkpoint is required** — see §10.1. **Route:**
+**Status:** **Ratified 2026-09-03.** **All owned work implemented** — `styling-engine/exposure.js`,
+`test/exposureContext.test.js` (12 tests). **Case A passes**; the waking-exposure fallback replaces
+the pre-dawn trough (§10.4). **Steps 4-6 are EXTERNAL**, gated on the thermal-band implementation
+under its own spec (§10, §10.3). Case B is gated by design, not by omission. **No human stop/go checkpoint is required** — see §10.1. **Route:**
 [docs/README.md](README.md).
 
 **Supplies the input [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md) §9.1 declares
@@ -425,6 +426,28 @@ context calls for.
 Reordered after §2.2. **The variables that already exist come first**, so the first slice can be
 proved against case A without touching weather sourcing.
 
+**Scope, after the Slice 1-2 census (owner ruling 2026-09-03).** This document's implementation
+covers the exposure side only. Step 3 is an **external dependency**, not work this spec performs:
+
+```text
+THIS SPEC (#305)                       THERMAL-BAND SPEC (separate work)
+  canonical ExposureContext              calibrated ordered thermal representation
+  exertion / exposure-mode plumbing      requiredThermalBand
+  explicit coarse/unknown provenance     outfit thermal contribution
+  weather-sourcing fallback policy       overshoot/undershoot comparison
+                                         migration of the old cold-tier authorities
+        └────────────── seam: requiredThermalBand(weather, exposureContext) ─────┘
+```
+
+`requiredThermalBand` **must not be implemented here.** The band spec states its own `cold` score
+cannot serve as the demand scale without calibration against published insulation references, and
+that demand mapping comes only after those orderings are validated. Inventing a scale and
+coefficients inside `exposure.js` would smuggle another spec's open questions into this one.
+
+This spec can therefore complete its owned work — through exposure sourcing — without the downstream
+band existing, and **cannot deliver the Vienna behaviour change end to end on its own.** Case B is
+gated on the band, by design, not by an oversight here.
+
 ```text
 1. VERIFICATION CENSUS — confirm the ownership model, then continue (§10.1).
    Every site that answers "how much warmth does this context need", including the 83 flag
@@ -436,15 +459,19 @@ proved against case A without touching weather sourcing.
    → Acceptance case A must already pass here (§4.4). If it does not, the model is wrong and no
      amount of daypart precision will rescue it.
 
-3. Seam into requiredThermalBand as its named exposure input (the band itself is band spec §9.1).
-   Wind reaches the band for the first time.
+3. Conditions during exposure — the §4.2 sourcing tier. Where the 47°F stops being the number.
+   DONE (§10.4). Reordered ahead of the seam once the census showed the band does not exist; it
+   depends on nothing downstream.
 
-4. Conditions during exposure — the §4.2 sourcing tier, once §8.1 and §8.4 are answered. This is
-   where the 47°F stops being the number, and it is deliberately LAST.
+--- everything below is EXTERNAL: gated on the thermal-band implementation ---
+
+4. Seam into requiredThermalBand as its named exposure input. Wind reaches the band for the
+   first time. Cannot start until the band exists under its own spec.
 
 5. Migrate consumers off the flags; needsRemovableCoolLayer becomes derived (§5).
+   The census-tool completion test is `thermal_demand` reaching zero.
 
-6. Acceptance cases A-H, then the Vienna plan re-run offline as the regression fixture.
+6. Acceptance cases B-E and H, then the Vienna plan re-run offline as the regression fixture.
 ```
 
 ### 10.1 The implementation contract
@@ -615,6 +642,50 @@ Not decided here.
 Nothing further. Step 4 needs finding 2 ruled; steps 3, 5 and case B need finding 1. Slices 1 and 2
 are complete, green, and independently useful: the exposure owner exists, is consumed by nothing yet,
 and changes no behaviour — an additive, provable no-op in the sense AGENTS.md principle 6 requires.
+
+## 10.4 Step 3 done — the waking-exposure fallback
+
+Owner ruling 2026-09-03, on blocking finding 2: use a **disclosed waking-exposure fallback** before
+adding any typed daypart field, and make it a **weather-sourcing policy**, not a semantic one.
+
+`resolveConditions` now returns provenance rather than a bare number:
+
+```text
+explicit_hourly                  an exposure window is known and sampled from real hourly data
+waking_window_estimate           live daily high/low, waking window estimated
+seasonal_waking_window_estimate  model-estimated high/low, waking window estimated
+unknown                          nothing usable
+```
+
+`coarse: true` for both estimate tiers — the window is inferred, not observed. On the Vienna
+forecast:
+
+```text
+daily 47-65°F   →   waking 53.3-65°F   ·   seasonal_waking_window_estimate   ·   coarse true
+```
+
+The daily envelope is **kept** as real data; nothing thermal should read it. `wakingLowF` is what a
+demand model consumes.
+
+**The policy is slot-independent, and tested to be.** It answers *"what part of the 24-hour envelope
+is plausibly met while a person is out?"* — never *"when does a museum happen?"*. Museum, hike and
+dinner on the same day get byte-identical conditions, `estimateWakingWindow(highF, lowF)` takes only
+two numbers, and a test asserts its body references no slot field. A per-occasion window would
+reintroduce exactly what §4.1 rejects.
+
+**The offset is a stated assumption, not a calibrated constant.** It exists to stop the daily minimum
+being used as exposure temperature, and the comment says so at the definition. The upgrade path is
+sampling real hourly data, **not tuning the fraction**. If it proves materially wrong, that is the
+evidence that would justify a typed exposure-window field — and per the ruling, only then.
+
+`explicit_hourly` is named in the tier list and is **deliberately unreachable**: the forecast query
+asks Open-Meteo for `daily=temperature_2m_max,temperature_2m_min` and never for
+`hourly=temperature_2m`, and no clock fact exists to key a window. A test asserts no code path claims
+that tier, so the day it becomes reachable, that test is what says so.
+
+**What this does and does not fix.** Defect 2's *input* is corrected: the exposure temperature is no
+longer the pre-dawn trough. Whether the museum stops getting a puffer depends on a demand model that
+does not exist yet — case B stays gated on the band (§10.3). The spec claims no more than that.
 
 ## 11. Why this is worth doing as architecture
 
