@@ -211,7 +211,14 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure =
   // happens in a slot-less retrieval context, resolveExposureContext degrades honestly to `unknown`
   // exertion and mode rather than asserting stillness, and the demand is still graded.
   const exposureContext = exposure || resolveExposureContext({}, weatherProfile)
-  const demand = requiredThermalBand(exposureContext)
+  const slotDemand = requiredThermalBand(exposureContext)
+  // Outerwear answers to the LAYER demand, not the base's. The base demand carries the exertion
+  // discount, and an outer layer sized for the middle of a hike is a layer sized for the one moment
+  // it is not being worn. On an indoor slot the trip, not the destination, governs the coat — which
+  // is what `transit` has always meant. See requiredThermalBand for the live failure this fixes.
+  const demand = wardrobeCategoryGroup(piece) === 'outerwear'
+    ? (slotDemand.layer || slotDemand)
+    : slotDemand
   const fit = compareThermalFit(garmentWarmthLevel(piece), demand)
   if (demand.level && fit.fit !== 'unknown') {
     // RANKING READS `distance`, NOT `fit`. Using fit alone made every garment inside the

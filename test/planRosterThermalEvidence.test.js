@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 const { thermalFitPieceAdvisory, slotThermalDemandLabel } = await import('../styling-engine/outfitSetPlanner.js')
 const { resolveExposureContext } = await import('../styling-engine/exposure.js')
+const { requiredThermalBand } = await import('../styling-engine/thermalDemand.js')
 const { validateUserWeather, resolveWeatherContext } = await import('../styling-engine/weather.js')
 
 const W = (h, l) => ({ ...resolveWeatherContext({ userWeather: validateUserWeather({ high_f: h, low_f: l }) }).temperature })
@@ -160,4 +161,47 @@ test('thermal tiers grade by distance in both directions', () => {
   assert.ok(puffer.score < denim.score, 'further out must score worse')
   // Well matched stays preferred.
   assert.equal(thermalFitPieceAdvisory(TEE, hike, hikeExp).tier, 'preferred')
+})
+
+// The exertion discount belongs to the BASE. Applying it to the outer layer sizes the jacket for
+// the middle of the climb — the one moment the jacket is off. thread_1788425468666: 65/48°F October,
+// hiking shifted a `warm` demand down two steps to `light`, and the only `light` outerwear in the
+// wardrobe is a sheer shrug, two knit cardigans and a technical hoodie. The engine recommended the
+// hoodie for an October nature walk and ranked every real jacket below it.
+const HOODIE = { id: 5, category: 'outerwear', fabric_weight: 'light', fiber_content: ['polyester'], interior_construction: 'unlined', sleeve_length: 'long' }
+const FLEECE = { id: 6, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['polyester'], fabric_category: 'fleece', interior_construction: 'unlined', sleeve_length: 'long' }
+
+test('a hike does not get a lighter layer than a walk in the same weather', () => {
+  const w = W(65, 48)
+  const hike = requiredThermalBand(EXP(w, 'hiking'))
+  const walk = requiredThermalBand(EXP(w, 'walking'))
+  // The base legitimately differs — a hiker generates more heat.
+  assert.notEqual(hike.level, walk.level)
+  // The layer must not: both take it off at the same trailhead.
+  assert.equal(hike.layer.level, walk.layer.level, 'the removable layer answers to the stops, not the pace')
+})
+
+test('an October nature walk prefers a real jacket over a technical hoodie', () => {
+  const w = W(65, 48)
+  const hikeExp = EXP(w, 'hiking')
+  assert.equal(thermalFitPieceAdvisory(TRENCH, w, hikeExp).tier, 'preferred')
+  assert.equal(thermalFitPieceAdvisory(HOODIE, w, hikeExp).tier, 'workable',
+    'the lightest layer in the wardrobe must not lead an October hike')
+  assert.ok(thermalFitPieceAdvisory(TRENCH, w, hikeExp).score > thermalFitPieceAdvisory(HOODIE, w, hikeExp).score)
+  // And the fix must not walk the puffer back in.
+  assert.equal(thermalFitPieceAdvisory(PUFFER, w, hikeExp).tier, 'discouraged')
+})
+
+test('an indoor destination sizes the coat for the trip, not the gallery', () => {
+  const w = W(65, 48)
+  const museum = EXP(w, 'walking', 'indoor')
+  const demand = requiredThermalBand(museum)
+  // The base is excused by the heated room; the layer is not.
+  assert.equal(demand.level, 'light')
+  assert.equal(demand.layer.level, 'moderate')
+  // Level and range must come from the same band — returning transit's level beside the slot's
+  // range measured distance from one band's centre against another band's edges.
+  assert.ok(demand.layer.range.includes(demand.layer.level))
+  assert.equal(thermalFitPieceAdvisory(TRENCH, w, museum).tier, 'preferred')
+  assert.equal(thermalFitPieceAdvisory(FLEECE, w, museum).tier, 'workable')
 })

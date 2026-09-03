@@ -85,6 +85,46 @@ export function requiredThermalBand(exposure = null) {
     ? { level: shift(levelAt(exposure.transit.conditions?.wakingLowF ?? c.wakingLowF), 0) }
     : null
 
+  // THE REMOVABLE LAYER IS NOT EXERTING WHEN IT MATTERS. The exertion shift above is correct for
+  // the BASE — a hiker generates heat and needs less insulation at the same ambient — but applying
+  // it to the outer layer sizes the jacket for the middle of the climb, which is the one moment the
+  // jacket is off. The layer is for the trailhead, the stops, the shade, the walk back.
+  //
+  // This is §5.5's error on the exertion axis: the demand absorbing removability instead of leaving
+  // it to the removability axis. `transit` above already had the right shape for the same reason on
+  // the time axis — an indoor destination excuses the base, never the trip — so this returns the
+  // layer separately rather than blending it back in.
+  //
+  // Live cost of the blend (thread_1788425468666): 65/48°F October, waking low 54°F. Sedentary
+  // demand at 54°F is `warm`; hiking shifts it to `light`; the only `light` outerwear in the
+  // wardrobe is a sheer shrug, two knit cardigans and a technical hoodie. The engine recommended
+  // the hoodie for an October nature walk and ranked every real jacket below it.
+  //
+  // The layer's band is the WAKING WINDOW ITSELF, not a ±1 uncertainty cuff: the layer is carried
+  // across the whole day, so the warm end caps it as surely as the cold end sets it. That is what
+  // keeps a `very warm` puffer overshooting a 54–65°F day while a `warm` cardigan sits inside it.
+  //
+  // The discount is CAPPED, not dropped. Dropping it entirely over-corrects: a city sightseeing day
+  // is mostly spent moving, and sizing its coat for a standstill puts a fleece on a 65°F afternoon —
+  // the same error inverted, which is this arc's signature way of failing. Exertion is INTERMITTENT,
+  // and one step is what that intermittency is worth: a hiker's base gets the full -2 because they
+  // are climbing, while the jacket they take off at the top gets -1 because they are not climbing
+  // the whole time. Walking's -1 is already within the cap and so is unchanged.
+  //
+  // Built from the TRIP's conditions when the destination is indoors — an outer layer on a museum
+  // day answers to the walk there, never to the heated gallery. That is the same thing `transit`
+  // says; the layer is where it becomes usable, as one demand-shaped object with a level and a
+  // range that agree. Returning transit's level beside the slot's range was measuring distance from
+  // one band's centre against another band's edges.
+  const layerExertion = Math.max(-1, exertion)
+  const lc = (exposure.transit?.applies && exposure.transit.conditions) || c
+  const layerLevel = shift(levelAt(lc.wakingLowF ?? c.wakingLowF), layerExertion)
+  const layer = {
+    level: layerLevel,
+    range: [shift(levelAt(lc.wakingHighF ?? lc.dailyHighF ?? lc.wakingLowF ?? c.wakingLowF), layerExertion), layerLevel],
+    certain: !c.coarse,
+  }
+
   // Uncertainty. A coarse window is an estimate of which hours are met, so the true demand could sit
   // a level either side. An anchored (`explicit_hourly`) reading would collapse this to a point.
   const spread = c.coarse ? 1 : 0
@@ -97,6 +137,7 @@ export function requiredThermalBand(exposure = null) {
     basis: c.conditionsSource,
     exertionApplied: exposure.exertion,
     transit,
+    layer,
   }
 }
 
