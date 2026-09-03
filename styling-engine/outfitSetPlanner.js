@@ -3699,6 +3699,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
     // fabricating past the catalog truth it already had in piece_catalog.
+    // The payload has carried piece_assessments since the plan path first shipped, and the tier
+    // vocabulary was only ever DEFINED inside the extreme-heat branch below — so on every ordinary
+    // day the model received `thermal_fit: {tier: 'discouraged'}` having never been told the field
+    // exists or what the word means. Live thread_1788424519744: the engine marked the down puffer
+    // `discouraged` on a 65/48 October day and ranked five better layers above it; the model put
+    // the puffer on four of six looks. Correct evidence, undelivered vocabulary.
+    'Each slot carries piece_assessments, aligned index-for-index with its allowed_piece_ids, which are ordered best-fitting first. Each assessment rates that piece on thermal_fit (against the slot\'s stated thermal_demand), season_fit (against calendar_season), extreme_heat, movement, and operational_ease. The tiers mean: `preferred` — well suited, lead with these; `workable` — usable when it better serves another stated need; `neutral` — the dimension does not apply; `discouraged` — a worse choice than available alternatives; `prohibited` — do not use. Reach past a `discouraged` piece only when no preferred or workable piece in that slot can do the job, and say in the card reason why you did.',
+    'thermal_demand states HOW MUCH warmth a slot\'s conditions call for — not merely that a layer is wanted. A garment rated `discouraged` on thermal_fit is wrong by AMOUNT: too warm for these conditions is as wrong as too thin, and satisfying a removable-layer requirement does not license overshooting it.',
     'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.',
     'The catalog\'s silhouette, length, hem, sleeve, fit, tuck, waistband, opacity, and base-layer fields are authoritative garment construction. Never write a card reason or styling instruction that contradicts them. Card prose expresses styling intent only; it cannot redefine how a garment is constructed or worn.',
     // Part 3 (spec 19): live miss — a submitted card's reason said "Actually
@@ -3788,6 +3796,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     }
     if (pendingSlot?.weatherProfile?.transitIsCold) {
       requirements.push('This is a climate-controlled destination reached through cold weather: include adequate removable, sleeve-bearing outerwear for arrival and departure. The indoor base may stay light, but the first submitted outfit must already include the transit layer.')
+    }
+    if (workbenchSlot.thermal_demand) {
+      requirements.push(`This slot's conditions call for ${workbenchSlot.thermal_demand} warmth${workbenchSlot.calendar_season ? `, in ${workbenchSlot.calendar_season}` : ''}. Lead with pieces this slot's piece_assessments rate preferred on thermal_fit and season_fit.`)
     }
     if (pendingSlot?.weatherProfile?.isExtremeHeat) {
       requirements.push('Extreme-heat fit is advisory unless marked prohibited: lead with pieces rated preferred, use workable pieces only when they better serve another stated need, and avoid discouraged pieces when a preferred or workable option can do the same job. For full-length light pants, “light” describes fabric mass, not guaranteed comfort in triple-digit heat.')

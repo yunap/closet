@@ -122,3 +122,21 @@ test('the two advisories stay separate in the payload', () => {
     assert.ok(!fn.includes(banned), `season must not read ${banned}`)
   }
 })
+
+// The payload carried piece_assessments long before anything told the model the field existed.
+// Delivering correct evidence in an undocumented field is the same as not delivering it —
+// thread_1788424519744 put an engine-`discouraged` puffer on four of six 65/48°F looks.
+test('the workbench documents the assessment payload and its tier vocabulary', async () => {
+  const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
+  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
+  const instructions = src.slice(src.indexOf('const workbenchInstructions'), src.indexOf('].filter(Boolean).join', src.indexOf('const workbenchInstructions')))
+  for (const term of ['piece_assessments', 'thermal_fit', 'season_fit', 'thermal_demand', 'calendar_season']) {
+    assert.ok(instructions.includes(term), `workbench instructions must name ${term}`)
+  }
+  // Each tier the advisories can emit must be defined where every slot sees it, not only in the
+  // extreme-heat branch that used to be the sole definition site.
+  for (const tier of ['preferred', 'workable', 'neutral', 'discouraged', 'prohibited']) {
+    assert.ok(instructions.includes(`\`${tier}\``), `tier ${tier} must be defined in the shared instructions`)
+  }
+  assert.ok(typeof buildPlanSlotWorkbench === 'function')
+})
