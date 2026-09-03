@@ -1,6 +1,8 @@
 # Spec — relevant exposure conditions
 
-**Status:** Proposed 2026-09-03, no implementation. **Route:** [docs/README.md](README.md).
+**Status:** **Ratified 2026-09-03** (owner, on the ownership/consolidation review). No
+implementation yet. **No human stop/go checkpoint is required** — see §10.1. **Route:**
+[docs/README.md](README.md).
 
 **Supplies the input [thermal-comfort-band-spec.md](thermal-comfort-band-spec.md) §9.1 declares
 missing.** That spec defines `requiredThermalBand(weather, exposureContext)` and states that
@@ -423,7 +425,7 @@ Reordered after §2.2. **The variables that already exist come first**, so the f
 proved against case A without touching weather sourcing.
 
 ```text
-1. CENSUS ONLY — stop for review.
+1. VERIFICATION CENSUS — confirm the ownership model, then continue (§10.1).
    Every site that answers "how much warmth does this context need", including the 83 flag
    references in §5 and band spec §6's prompt-projection switches.
    Correct band spec §9.1/§7's "what exists today: nothing" with §2's measurement.
@@ -444,9 +446,42 @@ proved against case A without touching weather sourcing.
 6. Acceptance cases A-H, then the Vienna plan re-run offline as the regression fixture.
 ```
 
-Slice 1 stops for owner review before any code, matching
-[architecture-ownership-consolidation-spec.md](architecture-ownership-consolidation-spec.md)'s
-census-first protocol.
+### 10.1 The implementation contract
+
+**No human stop/go checkpoint is required. Slice 1 is a verification census, not a decision gate.**
+Continue through all slices when the census confirms the ownership model. Resolve ordinary
+measurement, sourcing, calibration, consumer-classification and stale-code findings during
+implementation. Return for an owner ruling only if measured code contradicts a ratified requirement
+or exposes a genuinely new product-semantic decision.
+
+The earlier draft required a stop here. That made sense while the architecture was unsettled; it no
+longer does. This document already determines what to do with every likely census outcome, and once
+an architectural owner is ratified, a human should not have to re-adjudicate implementation details
+the owner contract already answers — which is the consolidation principle applied to this spec's own
+process.
+
+**Findings that are implementation work, not checkpoints:**
+
+| Census finding | Determined by | Do this |
+|---|---|---|
+| No hourly provider data exists | §4.2 | Fall down the sourcing tiers; preserve uncertainty as a range |
+| `none\|walking\|hiking` needs coefficient calibration | §8.2, band spec §11.8 | Calibrate against the band's ordinal scale |
+| That vocabulary cannot separate the cases at all | §8.2 | Report it as evidence the vocabulary is insufficient — **do not fake precision with coefficients**; widening `ACTIVITY_VALUES` is a tagging change, specified separately |
+| N of the 83 references are mere projections | §5, band spec §6 | Classify and migrate; graded consumers read the band, discrete ones read a derived projection |
+| A legacy flag consumer turns out to be non-thermal | §7 | Keep that contract independent — removability, footwear and rain do **not** fold into the band |
+| Stale or dead thermal code | — | Remove it with the migration, as PR #304 did with completeness |
+
+**Findings that DO warrant returning:**
+
+* `activity` (or `environment`) turns out not to be authoritative slot state — e.g. it is
+  model-supplied prose rather than validated typed data, or it is routinely absent on real plans.
+  §2.2's census is the load-bearing claim of this spec and its falsification changes the design.
+* `requiredThermalBand` cannot represent the exposure distinctions §4 requires without changing its
+  fundamental semantics. That is a band-contract change, and the band is not this spec's to redefine.
+* A genuinely new product-semantic decision surfaces — of the kind the owner has ruled on throughout
+  this arc, such as whether calendar season may ever override a thermal verdict (§6).
+
+Everything else is the implementer's to resolve and report.
 
 ## 11. Why this is worth doing as architecture
 
