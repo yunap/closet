@@ -149,6 +149,8 @@ import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
 import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction } from '../styling-engine/fiberTaxonomy.js'
+import { resolveExposureContext } from '../styling-engine/exposure.js'
+import { requiredThermalBand } from '../styling-engine/thermalDemand.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -2588,7 +2590,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // (~$0.12-0.18 of each ~$0.15-0.21 call) was never once recovered.
 
     // VOLATILE TAIL SECOND: occasion, season, mood, saved outfit photo, feedback memory
-    const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold
+    // MIGRATED (§8 step 5). This gated a DISCLOSURE — "everything shown is weather-optimized" —
+    // on the same two flags, so on a 65/47 day the roster was weather-scored and the model was told
+    // it was not. The claim now tracks whether weather actually shaped the roster.
+    //
+    // Narrower than §8.1's pin suggested: this line was named there as the last hidden binary, but
+    // the real one was tools.js's search-evidence gate (§22.1). This is a disclosure, not the
+    // evidence itself.
+    const weatherDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
+    const isWeatherFiltered = Boolean(weatherProfile.isHot || weatherDemand.level)
     content.push({ type: 'text', text: [
       `Occasion: ${occasion}`,
       `Season: ${season}`,

@@ -6,6 +6,8 @@ import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { resolveExposureContext } from './exposure.js'
+import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
@@ -1450,12 +1452,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
         let results = filtered
         // One shared resolver owns stated/live/saved/heuristic weather precedence and records
         // provenance. Search remains retrieval policy; it does not gain a complete-outfit gate.
-        if (resolvedWeather.isHot || resolvedWeather.isCold) {
+        // MIGRATED (§8 step 5). This was gated on `isHot || isCold`, which made it THE decision about
+        // whether the model hears any thermal evidence for the garments it is choosing between. At
+        // 65/47 neither flag fires, so search results carried no weatherFit at all and the model
+        // composed with nothing to go on — §6's defect on the EVIDENCE side rather than ranking.
+        //
+        // weatherFitForPiece now reads the band and returns 0 with no adjustments when there is
+        // nothing to say, so the gate is unnecessary: labels appear whenever a temperature exists,
+        // and a garment whose placement is unknown contributes no adjustment and so gets no label.
+        const weatherFits = results.map(p => weatherFitForPiece(p, resolvedWeather))
+        if (weatherFits.some(fit => fit.adjustments.length)) {
           results = results
-            .map(p => {
-              const fit = weatherFitForPiece(p, resolvedWeather)
-              return { ...p, weatherFit: fit.label, weatherFitScore: fit.score }
-            })
+            .map((p, i) => ({ ...p, weatherFit: weatherFits[i].label, weatherFitScore: weatherFits[i].score }))
             .sort((a, b) => (b.weatherFitScore || 0) - (a.weatherFitScore || 0))
         }
 
@@ -3259,11 +3267,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // collapsing "chilly" and "freezing" into one "cold weather" label that
           // primes the model toward the heaviest owned piece — see
           // docs/cold-severity-spec.md.
+          // The coarse label the model actually reads. The COLD half is now derived from the band:
+          // isCold/isColdSevere classify the 24-hour trough, so a 65/47 day read 'mild weather'
+          // while its exposure window genuinely called for a layer. §3.8 asked for exactly this — a
+          // coarse word computed FROM the band rather than from a parallel flag. Heat is untouched;
+          // this arc migrated the cold side only.
+          const physicalDemand = requiredThermalBand(resolveExposureContext({}, resolvedWeather))
+          const coldLabel = physicalDemand.level === 'very warm' ? 'cold weather'
+            : physicalDemand.level === 'warm' ? 'cool weather'
+              : null
           const physicalWeather = resolvedWeather.isExtremeHeat
             ? 'extreme hot weather'
-            : (resolvedWeather.isHot ? 'hot weather'
-              : (resolvedWeather.isColdSevere ? 'cold weather'
-                : (resolvedWeather.isCold ? 'cool weather' : 'mild weather')))
+            : (resolvedWeather.isHot ? 'hot weather' : (coldLabel || 'mild weather'))
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
             : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
