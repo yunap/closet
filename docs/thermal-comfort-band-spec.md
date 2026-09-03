@@ -1514,3 +1514,64 @@ suite  1844 tests, 1842 pass, same 2 pre-existing failures
 
 The remaining 12 projections are display/debug evidence payloads and slot descriptions, not
 model-facing composition evidence.
+
+
+---
+
+## 23. §8 step 6 — producer inventory
+
+Inventoried before touching anything, per the ruling: **not a blanket deletion pass, and not
+`producer 15 -> 0` chased mechanically.** The end condition is that no legacy producer holds semantic
+authority independent of ExposureContext, thermal demand, or the named parallel contracts.
+
+### 23.1 Eleven of the fifteen were never producers
+
+Splitting the class by **where the cold truth comes from** collapses most of it:
+
+| Function | Sites | Source of its flags | Class |
+|---|---|---|---|
+| `profileFromResolvedWeatherContext` | 2 | `resolved.temperature` — real numbers | derivation |
+| `profileForEnvironment` | 5 | transforms a profile it was handed (indoor/transit split) | derivation |
+| `resolveSlotWeather` | 3 | `context.temperature` — real numbers | derivation |
+| `projectStylingApplicabilityContext` | 1 | reshapes an existing profile for owner-rule matching | derivation |
+| **`weatherProfileFromContext`** | **4** | **prose, with no structured temperature at all** | **producer** |
+
+```text
+derivation  11    carries no independent authority
+producer     4    the only class step 6 has to justify
+```
+
+None of the eleven invents a temperature. They compute the flag shape the parallel contracts still
+consume, from weather that was already resolved — which is exactly what a compatibility layer should
+do, and is not authority.
+
+### 23.2 The one real producer, and why it stays for now
+
+`weatherProfileFromContext` parses text like *"chilly work dinner"* and emits `isCold` with nothing
+structured behind it. It genuinely creates cold truth, and it is the last-resort heuristic tier PR A
+deliberately kept (§18).
+
+**It cannot be removed yet, and the reason is a dependency rather than a preference.** Its consumers
+are the 13 named parallel contracts, which by ruling (§21.1) still take legacy triggers. A producer
+serving contracts that legitimately consume flags is a compatibility source, not stray authority.
+
+**The condition for removing it is therefore already written down:** when the parallel contracts earn
+their own trigger calibration from exposure conditions, this producer loses its last consumer and
+goes with them. It should not be removed before that, and it must not acquire new consumers in the
+meantime.
+
+### 23.3 End state
+
+```text
+thermal_amount      0    no consumer derives thermal AMOUNT from legacy flags
+parallel_contract  13    named, independent, must never take band semantics
+projection         12    display and debug payloads; model-facing evidence migrated (§22)
+derivation         11    computes the flag shape from resolved weather — no authority
+producer            4    one function, one justified consumer set, one stated removal condition
+non_thermal         4    held throughout
+```
+
+**The migration is complete on its stated terms.** No consumer derives thermal amount from a legacy
+cold flag; no independent contract derives its semantics from the band; and the single remaining
+producer has a named dependency and a stated end. What is left is not migration work — it is the
+parallel contracts' own future calibration, which is its own semantic problem (§21.1).

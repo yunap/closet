@@ -1,9 +1,10 @@
 {
-  "generated": "2026-09-03T07:16:49.620Z",
+  "generated": "2026-09-03T07:22:14.038Z",
   "counts": {
     "projection": 12,
     "parallel_contract": 13,
-    "producer": 15,
+    "derivation": 11,
+    "producer": 4,
     "non_thermal": 4
   },
   "rows": [
@@ -102,14 +103,14 @@
       "file": "styling-engine/outfitSetPlanner.js",
       "line": 1013,
       "owner": "resolveSlotWeather",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "isHot: t.isHot, isCold: false, isExtremeHeat: t.isExtremeHeat,"
     },
     {
       "file": "styling-engine/outfitSetPlanner.js",
       "line": 1018,
       "owner": "resolveSlotWeather",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),"
     },
     {
@@ -130,7 +131,7 @@
       "file": "styling-engine/outfitSetPlanner.js",
       "line": 1031,
       "owner": "resolveSlotWeather",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,"
     },
     {
@@ -249,28 +250,28 @@
       "file": "styling-engine/stylingContext.js",
       "line": 98,
       "owner": "projectStylingApplicabilityContext",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "cold: Boolean(weatherProfile.isCold ?? weatherProfile.is_cold ?? weatherProfile.cold),"
     },
     {
       "file": "styling-engine/stylingContext.js",
       "line": 338,
       "owner": "profileForEnvironment",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "isCold: false,"
     },
     {
       "file": "styling-engine/stylingContext.js",
       "line": 339,
       "owner": "profileForEnvironment",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "isColdSevere: false,"
     },
     {
       "file": "styling-engine/stylingContext.js",
       "line": 342,
       "owner": "profileForEnvironment",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "needsRemovableCoolLayer: false,"
     },
     {
@@ -284,21 +285,21 @@
       "file": "styling-engine/stylingContext.js",
       "line": 346,
       "owner": "profileForEnvironment",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "transitIsCold: Boolean(profile.isCold),"
     },
     {
       "file": "styling-engine/stylingContext.js",
       "line": 349,
       "owner": "profileForEnvironment",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "transitIsColdSevere: Boolean(profile.isColdSevere),"
     },
     {
       "file": "styling-engine/stylingContext.js",
       "line": 358,
       "owner": "profileFromResolvedWeatherContext",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "isHot: t.isHot, isCold: t.isCold, isExtremeHeat: t.isExtremeHeat,"
     },
     {
@@ -312,7 +313,7 @@
       "file": "styling-engine/stylingContext.js",
       "line": 366,
       "owner": "profileFromResolvedWeatherContext",
-      "cls": "producer",
+      "cls": "derivation",
       "text": "needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),"
     }
   ]
