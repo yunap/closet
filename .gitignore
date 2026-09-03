@@ -101,3 +101,5 @@ scratch/*
 !scratch/repair_interior_construction_calibration.mjs
 !scratch/verify_interior_construction_calibration.mjs
 !scratch/verify_interior_construction_50f.mjs
+!scratch/census_thermal_demand_consumers.mjs
+!scratch/thermal_demand_consumer_inventory.json

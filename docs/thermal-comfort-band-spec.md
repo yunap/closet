@@ -161,6 +161,17 @@ A replacement is not acceptable unless all of these hold:
    a wardrobe whose only layer is a heavy coat still uses it.
 6. **Unknown is never inadequacy** — acceptance criterion 8, violated twice in this arc already.
 7. **Transit keeps its own answer** — an indoor destination excuses the base, never the trip.
+8. **Coarse exposure conditions are consumed as uncertainty, never as measurement.** Added
+   2026-09-03 with [exposure-conditions-spec.md](exposure-conditions-spec.md)'s implementation. That
+   module now supplies `wakingLowF` — for the Vienna forecast, `53.3°F` where the old path used the
+   `47°F` pre-dawn trough. **`53.3` is a stated assumption, not a measurement**, and it arrives
+   flagged: `coarse: true` and `conditionsSource: seasonal_waking_window_estimate`.
+
+   A band that reads `53.3` as a precise figure replaces *"47°F is falsely precise"* with
+   *"53.3°F is falsely precise"* — the same defect, one step to the right. The band must read the
+   provenance and widen its demand accordingly: a coarse window is a range, and
+   `conditionsSource: unknown` is §5.6's "unknown is never inadequacy" arriving through the
+   environmental input rather than the garment one.
 
 ## 6. What is deliberately NOT decided
 
@@ -188,6 +199,10 @@ Choosing numbers before that split is what produced four thresholds in one day.
 
 * **No wearing-period / daypart weather.** [cool-weather-tier-spec.md](cool-weather-tier-spec.md)
   §5.2 records this; a band model wants it more, since a band is naturally per-exposure-window.
+  **Confirmed 2026-09-03** as the only genuinely missing environmental variable of the four —
+  [exposure-conditions-spec.md](exposure-conditions-spec.md) §2.2 found `activity` and wind already
+  stored and thermally unconsumed, and §4.2 treats sourcing these conditions as a degradation tier
+  rather than a `daypart` field.
 * **No garment temperature range.** Deliberately so —
   [outerwear-weather-consolidation-spec.md](outerwear-weather-consolidation-spec.md) §20 rules out
   per-role temperature ranges, and §5.3 above shows the role+severity pairing already approximates
@@ -219,6 +234,37 @@ Choosing numbers before that split is what produced four thresholds in one day.
 Each slice ships independently and is reversible. No slice may add a new threshold without recording
 it here first.
 
+### 8.1 Two pins for this arc, from the exposure work
+
+Added 2026-09-03 on closing [exposure-conditions-spec.md](exposure-conditions-spec.md)'s PR, so this
+arc starts with them rather than rediscovering them.
+
+**`thermal_demand == 0` is the mechanical definition of done for step 6.** The exposure work's Slice
+1 census classified every live reference to the cold/cool flag family into four classes and committed
+the tool:
+
+```bash
+node scratch/census_thermal_demand_consumers.mjs     # → scratch/thermal_demand_consumer_inventory.json
+```
+
+Baseline 2026-09-03: **55 live sites — 20 `thermal_demand`, 16 `projection`, 15 `producer`, 4
+`non_thermal`.** Re-run after each slice. The migration is complete when `thermal_demand` reaches
+zero, and *only* then: a non-zero count with the band shipped means two overlapping cold models are
+live, which is the exact condition §8.6 exists to prevent. The `non_thermal` 4 must NOT fall to zero
+— footwear and wet-weather contracts stay independent, and their disappearance would mean the band
+swallowed them.
+
+**`isWeatherFiltered` must lose its threshold authority in step 5, not survive it.**
+`routes/ai.js:2591` decides whether the model hears **any** weather guidance, at a threshold
+crossing. §6 above already names this as a defect rather than a discrete consumer — *"there is no
+good reason for the model to go from hearing nothing about thermal conditions to hearing full weather
+guidance at a threshold crossing"* — and the census confirms it is live.
+
+It is classified `projection`, which makes it easy to migrate mechanically and leave binary. Do not.
+It is the last place an old-model switch could survive after every other cold flag is gone, and it
+would be invisible: the flags would all read the band while this one quietly kept deciding whether
+the band's output was mentioned at all.
+
 
 ---
 
@@ -244,13 +290,31 @@ exposure in ways weather alone cannot express:
 50F · museum, outdoor transit only     two bands, one outfit
 ```
 
+**The exposure half now exists.** `resolveExposureContext` (`styling-engine/exposure.js`, shipped
+2026-09-03) supplies `exertion`, `exposureMode`, the transit split, wind, and conditions with
+provenance. It computes no warmth and no threshold — a test enforces that it contains no Fahrenheit
+constant — so this contract's demand side is still entirely unwritten and entirely this spec's.
+Consume its `coarse` / `conditionsSource` fields as uncertainty (§5.8).
+
 Passing a single blob and letting the function reach into it for exposure would repeat this arc's
 signature failure: a correct primitive fed the wrong inputs. Whether the two arrive as separate
 arguments or one canonical object, **exposure must be a named, required part of the contract** and
 absent exposure must be an explicit `unknown`, not silently "outdoors, all day".
 
-What exists today: nothing. `environment` (indoor/outdoor) and the transit split are the only
-exposure signals, and there is no daypart or duration anywhere (§7).
+What exists today: **more than this section originally claimed.** Corrected 2026-09-03 by
+[exposure-conditions-spec.md](exposure-conditions-spec.md) §2.2 and its Slice 1 census (§10.2).
+
+A `plan_outfit_set` slot already carries `activity` (`none|walking|hiking` — the metabolic proxy the
+standard model treats as a core input), `environment`, `occasion`, and its own `date` and `location`.
+These are validated typed fields, not prose: `normalizeActivity` rejects off-vocabulary values, and
+**measured across 53 real plan turns, `activity` was declared on 52 of them** (prose-inferred on 1).
+
+They are thermally inert — `thermal.js` and `outfitEnvironmentalAdequacy.js` contain zero references
+to `activity`, which currently drives footwear only. So the exposure input this contract needs is
+substantially available and unconsumed, rather than absent.
+
+**Still genuinely missing:** daypart/wearing-period conditions and duration (§7). That half of the
+original claim stands.
 
 ### 9.2 Outfit thermal contribution — nothing owns it
 
