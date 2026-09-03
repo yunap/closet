@@ -1,5 +1,5 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
-import { normalizeFiberContent, normalizeFiberCompleteness, normalizeInsulatingLayerMaterials } from './fiberTaxonomy.js'
+import { normalizeFiberContent, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
@@ -337,18 +337,17 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const patch = { ...tags }
   delete patch.color_taxonomy_gaps
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
-  // The tagger does not emit completeness today. This guard is here so that if it ever does, the
-  // writer rule applies at the boundary rather than being remembered later: photo-only inference
-  // cannot see a lining or a fill, so it may never assert 'complete'. See fiberTaxonomy.js.
   // A photograph can show that an insulating layer exists; it can never show that one is absent.
   // normalizeInsulatingLayerMaterials downgrades a tagger-asserted [] to null for that reason.
   if ('insulating_layer_materials' in patch) {
     patch.insulating_layer_materials =
       normalizeInsulatingLayerMaterials(patch.insulating_layer_materials, { source: 'tagger' })
   }
-  if ('fiber_content_completeness' in patch) {
-    patch.fiber_content_completeness =
-      normalizeFiberCompleteness(patch.fiber_content_completeness, { source: 'tagger' })
+  // Same asymmetry, same reason: a photo can show a lining or a second face EXISTS, never that one
+  // is absent. A tagger-asserted 'unlined' is downgraded to 'unknown'.
+  if ('interior_construction' in patch) {
+    patch.interior_construction =
+      normalizeInteriorConstruction(patch.interior_construction, { source: 'tagger' })
   }
   // Category-aware: a retag may change the category in the same patch, so validate against the
   // incoming category when there is one and fall back to the stored one.

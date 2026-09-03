@@ -30,8 +30,11 @@ export const FIBER_FAMILIES = {
   plant_cellulose: ['cotton', 'linen', 'hemp'],
   // Filament protein. Not grouped with the insulating protein fibres: silk does not trap body heat.
   filament_protein: ['silk'],
-  // The warmth-bearing family. INSULATING_FIBERS is derived from exactly this list.
-  insulating: ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'],
+  // The warmth-bearing family. `shearling` is a member in its own right, NOT a synonym for
+  // fleece: 996868's shearling lining was recorded as ['fleece'] only because this list had no
+  // token for it. It already existed as a fabric_category in INSULATING_FABRIC_CATEGORIES
+  // (attributes.js), so the vocabularies disagreed about a material the wardrobe actually owns.
+  insulating: ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'shearling', 'down'],
   // Regenerated cellulose. `lyocell` is not a member — it normalizes to `tencel` (see FIBER_SYNONYMS).
   regenerated_cellulose: ['tencel', 'modal', 'rayon', 'viscose'],
   synthetic: ['polyester', 'nylon', 'acrylic', 'spandex'],
@@ -127,70 +130,23 @@ export function normalizeFiberContent(value = []) {
   return fiberContentNormalization(value).values
 }
 
-// ── Completeness: is the recorded composition the WHOLE composition? ─────────────────────────
+// ── Composition completeness: REMOVED 2026-09-02 ─────────────────────────────────────────────
 //
-// A separate, irreducible fact from the fibre list and from provenance. Three states, and the
-// distinction that keeps them durable:
+// Removed from this file: `FIBER_COMPLETENESS_VALUES`, `FIBER_COMPLETENESS_WRITERS`,
+// `FIBER_COMPLETENESS_SCHEMA_DESCRIPTION`, `normalizeFiberCompleteness()` and
+// `compositionEvidenceState()`. Named here so the docs that cite them still resolve to an
+// explanation rather than to nothing. Retired on measurement,
+// not opinion: `complete` was set on ZERO of 268 active pieces, so the `non_insulating` branch it
+// gated had never executed on a real garment, and `partial` had no semantic readers at all — every
+// one of its 10 rows already carried "unknown" inside fiber_content.
 //
-//   unknown   completeness was never established
-//   partial   KNOWN to be incomplete — someone said "plus something I could not identify"
-//   complete  explicitly VERIFIED complete
+// The question it asked was unanswerable without a care label, which is why nobody ever answered
+// it. It is replaced by two questions the owner can answer by opening the coat: interiorConstruction
+// (below) and insulatingLayerMaterials. See docs/interior-construction-spec.md §5.
 //
-// 'partial' does not mean "contains some values". A list with fibres in it says nothing about
-// whether more exist; if the writer does not know, the honest state is 'unknown'. And 'complete'
-// is never inferred from the absence of an uncertainty marker — absence means the writer did not
-// emit one. See docs/fiber-evidence-completeness-spec.md §6 and §11.
-export const FIBER_COMPLETENESS_VALUES = ['unknown', 'partial', 'complete']
-
-// Writer rules. Photo-only inference cannot see a lining or a fill, so it is not permitted to
-// assert 'complete' no matter how confident it sounds — that is precisely the claim the black
-// puffer's ["polyester","nylon"] made implicitly and got wrong. A tagger proposing 'complete' is
-// downgraded to 'unknown' ("not established"), not to 'partial': proposing completeness is not
-// evidence of incompleteness either.
-//
-// Only a human confirming the composition — reading a care label, or answering the editor's
-// "is this the complete material composition?" — can write 'complete'. A manual assertion is
-// protected from later retagging by the existing manual_overrides machinery, the same way every
-// other manually-owned field is; this function deliberately does not reimplement that.
-export const FIBER_COMPLETENESS_WRITERS = {
-  tagger: ['unknown', 'partial'],
-  manual: ['unknown', 'partial', 'complete'],
-}
-
-export function normalizeFiberCompleteness(value, { source = 'manual' } = {}) {
-  const token = String(value ?? '').toLowerCase().trim()
-  if (!FIBER_COMPLETENESS_VALUES.includes(token)) return null
-  const permitted = FIBER_COMPLETENESS_WRITERS[source] || FIBER_COMPLETENESS_WRITERS.manual
-  if (!permitted.includes(token)) return 'unknown'
-  return token
-}
-
-// The completeness contract as the model is told it — ONE source for every photo-derived producer.
-// Both photo schemas (the tagger in prompts.js and /extract-pieces in routes/ai.js) project this
-// rather than restating it; §7.1 is the cautionary tale for what two hand-kept copies become.
-//
-// The last two sentences are load-bearing, not padding. "Use partial when unsure" or "assume
-// partial for coats" would collapse 'partial' back into 'unknown' and undo the whole distinction.
-export const FIBER_COMPLETENESS_SCHEMA_DESCRIPTION =
-  "partial|unknown — whether the fiber_content list above describes the WHOLE garment. " +
-  "Use 'partial' ONLY when the image gives positive evidence that additional material components " +
-  "exist whose composition cannot be identified: visible lining, padding, quilting or baffles, " +
-  "fill, or clearly distinct unidentified material panels. Otherwise use 'unknown'. Never emit " +
-  "'complete' — a photograph cannot verify that nothing is hidden, and only a person reading a " +
-  "care label can assert that. 'unknown' means completeness was not established; 'partial' means " +
-  "the list is positively known not to describe the whole garment. Do not use 'partial' merely " +
-  "because you are unsure, and do not assume it by category."
-
-// Verdict 1 of 2. Answers ONLY: how complete is the recorded fibre composition?
-// It says nothing about warmth — see thermalMaterialVerdict() in attributes.js for that.
-//
-// Reads the stored fact rather than inferring one. The absence of an "unknown" marker is not
-// evidence of completeness, which is the whole reason fiber_content_completeness exists; a row
-// that predates the column, or one nobody has answered for, is 'unknown'.
-export function compositionEvidenceState(piece = {}) {
-  const stored = String(piece?.fiber_content_completeness ?? '').toLowerCase().trim()
-  return FIBER_COMPLETENESS_VALUES.includes(stored) ? stored : 'unknown'
-}
+// Do NOT reintroduce a derived `partialComposition()` from "fiber_content contains unknown OR a
+// layer exists OR construction exists". Those are three facts with three consequences, and
+// recombining them rebuilds exactly the abstraction that was removed. Read the specific evidence.
 
 // Values inside jewelry_material that are genuinely jewellery-specific. The tagger prompt already
 // draws this line in its own wording — pearl/crystal/enamel are described as jewellery beads,
@@ -292,8 +248,103 @@ export const INSULATING_LAYER_SCHEMA_DESCRIPTION =
   "when construction positively shows an insulating layer — quilting, baffles, visible loft, a " +
   "fuzzy or pile interior — but you cannot identify what it is made of; that is a POSITIVE " +
   "answer and the common one. Name the material only when it is visually supportable (a visible " +
-  "shearling or fleece lining is 'wool' or 'fleece'). NEVER return an empty array: 'this garment " +
+  "shearling lining is 'shearling', a fleece one is 'fleece'). NEVER return an empty array: 'this garment " +
   "has no insulating layer' cannot be established from a photograph, so omit the field instead. " +
   "ORDINARY LINING DOES NOT COUNT — a plain lightweight polyester or acetate lining in a blazer, " +
   "dress or unlined-feeling jacket is not an insulating layer and must not be recorded here. " +
   "This is separate from fiber_content, which describes the FACE fabric."
+
+
+// ── Interior construction: ordinary, non-insulating material assembly ────────────────────────
+//
+// The fact Closet had no field for. `996764 navy plaid jacket` is reversible — two full fabric
+// faces, no fill — and the tagger, having seen substantial material inside, put ['unknown'] in
+// insulating_layer_materials because that was the only field that accepts "there is material in
+// here". Any non-empty value there means insulating BY DESIGN, so an ordinary construction
+// observation was promoted to a thermal claim. See docs/interior-construction-spec.md.
+//
+// States:
+//   unknown           construction not established. NOT equivalent to unlined.
+//   unlined           confirmed: no separate ordinary lining and no second fabric face
+//   partial_lining    an ordinary non-insulating lining covers part of the garment
+//   full_lining       an ordinary lightweight non-insulating lining covers most of it
+//   full_second_face  two substantial faces cover the same body area, neither being an
+//                     insulating lining or fill — includes reversible construction
+//
+// ONE canonical state model: missing, null and invalid all collapse to `unknown`. Deliberately no
+// null-vs-[] distinction like the insulating layer has — there, [] is a strong human assertion of
+// absence; here "no lining" and "nobody has said" differ only in provenance, which the writer
+// rules below already carry.
+//
+// full_second_face is separate from full_lining because the second face is part of the garment's
+// PRIMARY fabric construction rather than a thin conventional lining, and carries more thermal
+// capacity. The two lining depths are stored separately but scored identically for now (thermal.js)
+// — representation may be finer than scoring; do not invent a magnitude for partial_lining until a
+// real garment demands one.
+//
+// The fibre identity of an ordinary lining is NOT recorded and must not be asked. Polyester,
+// acetate, silk or viscose are thermally irrelevant here — that is the whole reason this is a
+// construction fact and not a second fibre list.
+export const INTERIOR_CONSTRUCTION_VALUES = [
+  'unknown', 'unlined', 'partial_lining', 'full_lining', 'full_second_face',
+]
+
+// Writer rules, mirroring the insulating layer's asymmetry for the same physical reason.
+// A photograph can show that a lining or a second face EXISTS. It can never show that one is
+// ABSENT: absence of a visible lining is not evidence of no lining, it is evidence of an exterior
+// photograph. So `unlined` is owner-only.
+// DERIVED, not hand-kept: the tagger may write everything except the one claim a photograph cannot
+// support. Re-listing the permitted values would let this drift from INTERIOR_CONSTRUCTION_VALUES
+// the moment a sixth value is added — the fibre taxonomy's §7.1 failure, in miniature.
+export const INTERIOR_CONSTRUCTION_WRITERS = {
+  tagger: INTERIOR_CONSTRUCTION_VALUES.filter(v => v !== 'unlined'),
+  manual: INTERIOR_CONSTRUCTION_VALUES,
+}
+
+// Downgrade, not reject — the convention normalizeInsulatingLayerMaterials already follows when it
+// turns a tagger's [] into null. A tagger asserting `unlined` becomes `unknown` ("not
+// established"), never a different positive claim.
+export function normalizeInteriorConstruction(value, { source = 'manual' } = {}) {
+  const token = String(value ?? '').toLowerCase().trim()
+  if (!INTERIOR_CONSTRUCTION_VALUES.includes(token)) return null
+  const permitted = INTERIOR_CONSTRUCTION_WRITERS[source] || INTERIOR_CONSTRUCTION_WRITERS.manual
+  return permitted.includes(token) ? token : 'unknown'
+}
+
+// THE canonical reader. Every consumer goes through this rather than touching the raw column, so
+// the missing/null/invalid → 'unknown' collapse lives in exactly one place.
+export function interiorConstruction(piece = {}) {
+  const stored = String(piece?.interior_construction ?? '').toLowerCase().trim()
+  return INTERIOR_CONSTRUCTION_VALUES.includes(stored) ? stored : 'unknown'
+}
+
+// Owner-facing wording, owned HERE rather than in the editor — the same reason FIBER_FAMILY_LABELS
+// lives in this file. A second intake surface (BatchAdd, a future bulk editor) must show the same
+// words, and a locally-maintained option list in a component is how the fibre vocabulary ended up
+// with four disagreeing copies. The stored vocabulary never reaches the screen: no "interlining",
+// "material assembly", "facing" or "batting". See docs/interior-construction-spec.md §8.
+export const INTERIOR_CONSTRUCTION_LABELS = {
+  unlined: 'Unlined',
+  partial_lining: 'Regular lining — part of the garment',
+  full_lining: 'Regular lining — most/all of the garment',
+  full_second_face: 'Reversible / two full fabric layers',
+  unknown: 'Not sure',
+}
+
+// The order the owner sees: the positive answers first, "Not sure" last. Derived from the canonical
+// list so a new value appears in the editor automatically instead of being silently unofferable.
+export const INTERIOR_CONSTRUCTION_OPTIONS = [
+  ...INTERIOR_CONSTRUCTION_VALUES.filter(v => v !== 'unknown'),
+  'unknown',
+].map(value => ({ value, label: INTERIOR_CONSTRUCTION_LABELS[value] }))
+
+export const INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION =
+  "unknown|partial_lining|full_lining|full_second_face — ordinary, NON-INSULATING interior " +
+  "construction, which is a different question from insulating_layer_materials. Use 'full_lining' " +
+  "when a separate ordinary lightweight lining covers most of the garment, 'partial_lining' when " +
+  "it covers only part, and 'full_second_face' when the garment is reversible or built from two " +
+  "substantial fabric faces covering the same area. Emit these ONLY with positive visual evidence " +
+  "of the construction; otherwise 'unknown'. NEVER emit 'unlined' — the absence of a visible " +
+  "lining in a photograph is not evidence that there is no lining, and only a person handling the " +
+  "garment can establish that. Do not record a warm/fuzzy/pile lining or a quilted fill here; " +
+  "that is insulating_layer_materials. Do not report the lining's fibre — it is not asked for."

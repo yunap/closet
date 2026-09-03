@@ -1,6 +1,6 @@
 # Spec — fiber evidence completeness and its canonical owner
 
-**Status:** Implemented and verified 2026-09-02. Every section is shipped; the tagger contract is
+**Status:** Implemented and verified 2026-09-02. **SUPERSEDED 2026-09-02 by [interior-construction-spec.md](interior-construction-spec.md) §5, which retires `fiber_content_completeness` from active semantics.** The retirement is on measurement, not opinion: `complete` was set on **zero** of 268 active pieces, so this spec's `non_insulating` branch never executed on a real garment, and `partial` — present on 10 rows, all of which already carry `"unknown"` inside `fiber_content` — has no semantic readers. §8's conclusion that a persisted completeness fact "does earn its keep" was sound in principle and unrealized in practice. Read the sections below as the record of why the field was built and what it measured, not as live contract. Every section is shipped; the tagger contract is
 confirmed against live model output (§16). Proposed 2026-09-01, **amended the same day** after review. §6's derivation was
 too strong and is corrected below; §8's condition is now answered by measurement rather than
 left as a suspicion; two new required corrections (§9, §10) came out of that audit. Written in response to a review of the garment-editor

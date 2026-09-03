@@ -148,7 +148,7 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES, FIBER_COMPLETENESS_SCHEMA_DESCRIPTION, INSULATING_LAYER_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeFiberCompleteness, normalizeInsulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction } from '../styling-engine/fiberTaxonomy.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -576,11 +576,12 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     const fiberNormalization = fiberContentNormalization(tags.fiber_content)
     tags.fiber_content = fiberNormalization.values
     tags.fiber_taxonomy_gaps = fiberNormalization.invalid
-    // Writer rule at the boundary: photo tagging may state known-incomplete, never verified-complete.
-    tags.fiber_content_completeness =
-      normalizeFiberCompleteness(tags.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
     tags.insulating_layer_materials =
       normalizeInsulatingLayerMaterials(tags.insulating_layer_materials, { source: 'tagger' })
+    // Writer rule at the boundary: a photo may establish that a lining or second face EXISTS,
+    // never that one is absent, so a tagger-asserted 'unlined' becomes 'unknown'.
+    tags.interior_construction =
+      normalizeInteriorConstruction(tags.interior_construction, { source: 'tagger' }) || 'unknown'
     tags.formality = normalizeFormality(tags.formality)
     tags.heel_height = normalizeHeelHeight(tags.heel_height)
     tags.walk_support = normalizeWalkSupport(tags.walk_support)
@@ -1543,8 +1544,8 @@ function applyFiberWriterContract(result) {
     const { values, invalid } = fiberContentNormalization(piece.fiber_content)
     piece.fiber_content = values
     piece.fiber_taxonomy_gaps = invalid
-    piece.fiber_content_completeness =
-      normalizeFiberCompleteness(piece.fiber_content_completeness, { source: 'tagger' }) || 'unknown'
+    piece.interior_construction =
+      normalizeInteriorConstruction(piece.interior_construction, { source: 'tagger' }) || 'unknown'
   }
   return result
 }
@@ -1609,8 +1610,8 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "stretch": "none|minimal|moderate|stretchy|null (clothing only; null/omit for shoes/accessory. Tag conservatively; omit if the photo does not show enough to judge)",
       "needs_base": "yes|no|null (omit unless clearly a construction that cannot be worn alone against skin — conservative default is null, not 'no')",
       "weather_protection": "array, 0-2 values from: rain, wind (outerwear only; empty array for non-outerwear or when evidence is insufficient — an empty array is common and normal, not a gap). SEPARATE from outerwear_role — a protective_shell is not automatically both, a transition/cold-weather piece is not automatically empty. Include 'rain' only with genuine construction evidence (coated/sealed face fabric, built as a rain shell) — nylon/polyester fiber alone is not evidence. Include 'wind' only with genuine construction evidence (tight wind-blocking weave, built as a windbreaker) — heavy fabric weight or wool alone is not evidence. A windbreaker is typically ['wind'] only; a raincoat is typically ['rain'] only.",
-      "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: ${FIBER_VALUES.join(', ')}. ${FIBER_FAMILIES.jewelry_material.join('/')} are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible (a shearling or fleece collar, a visibly fuzzy or quilted interior) — record it as 'wool', 'fleece', or 'down'. It is the only place a boot's warmth is recorded, since fabric_weight is null for shoes and fabric_category describes the upper. Only when you can see it; never inferred from the word 'boot' or 'winter'. Use 'unknown' if not determinable."],
-      "fiber_content_completeness": "${FIBER_COMPLETENESS_SCHEMA_DESCRIPTION}",
+      "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: ${FIBER_VALUES.join(', ')}. ${FIBER_FAMILIES.jewelry_material.join('/')} are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. For FOOTWEAR, include the LINING/interior material alongside the upper when it is visible (a shearling or fleece collar, a visibly fuzzy or quilted interior) — record it as 'shearling', 'fleece', 'wool', or 'down'. It is the only place a boot's warmth is recorded, since fabric_weight is null for shoes and fabric_category describes the upper. Only when you can see it; never inferred from the word 'boot' or 'winter'. Use 'unknown' if not determinable."],
+      "interior_construction": "${INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION}",
       "insulating_layer_materials": "${INSULATING_LAYER_SCHEMA_DESCRIPTION}",
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",

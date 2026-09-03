@@ -15,6 +15,7 @@ import {
   pieceFiberBreathability,
   pieceHasInsulatingMaterial,
   pieceHemCoverage,
+  interiorConstruction,
   pieceOcclusiveFitDegree,
   sleeveCoverage,
   wardrobeCategoryGroup,
@@ -41,10 +42,48 @@ function heatCoverageScale(massIndex) {
   return massIndex <= -1 ? 0 : massIndex >= 1 ? 2 : 1
 }
 
+// Graded, ordinary NON-INSULATING interior construction. A lining or a second fabric face is real
+// thermal mass and belongs in the score; it is not insulation and must never reach
+// thermalMaterialVerdict. See docs/interior-construction-spec.md §7.
+//
+//   unknown           0     no claim either way
+//   unlined           0     confirmed absent — nothing to add, and deliberately not negative:
+//                           "no lining" is not evidence of being COOLER than an untagged garment
+//   partial_lining    0.5   \ stored separately because the physical distinction is real, scored
+//   full_lining       0.5   / identically until a real garment demonstrates a difference (§7.1)
+//   full_second_face  1     part of the garment's primary fabric construction, not a thin lining
+//
+// The degree is multiplied by a weight strictly below the insulating-material weight, which is what
+// keeps the required ordering true by construction:
+//   unlined < ordinary lined < full second face < true insulation
+const INTERIOR_CONSTRUCTION_DEGREE = {
+  unknown: 0,
+  unlined: 0,
+  partial_lining: 0.5,
+  full_lining: 0.5,
+  full_second_face: 1,
+}
+
+// Parity guard. This map is a SCORING POLICY keyed by the canonical vocabulary, not a second copy
+// of it: if a sixth construction value is ever added, an unlisted key would silently score 0 and the
+// new value would be stored, shown, and thermally inert — the quietest possible regression. Asserted
+// in test/interiorConstruction.test.js rather than thrown at import, so a vocabulary change fails
+// the suite instead of the app.
+export const INTERIOR_CONSTRUCTION_DEGREE_KEYS = Object.keys(INTERIOR_CONSTRUCTION_DEGREE)
+
+function interiorConstructionDegree(piece) {
+  return INTERIOR_CONSTRUCTION_DEGREE[interiorConstruction(piece)] ?? 0
+}
+
 const WEATHER_EVIDENCE_WEIGHTS = {
   mass: 8,
   insulatingMaterialHeat: 6,
   insulatingMaterialCold: 6,
+  // Strictly below insulatingMaterial*: a full second face (degree 1) contributes 4, an ordinary
+  // lining 2, against insulation's 6. Construction can make a jacket warmer than an unlined one
+  // without ever reaching what a filled or fleece-lined garment scores.
+  constructionHeat: 4,
+  constructionCold: 4,
   breathability: 5,
   hemCoverageHeat: 5,
   hemCoverageCold: 6,
@@ -124,11 +163,12 @@ export function pieceWeatherEvidence(piece = {}) {
   const warmNeckline = necklineWarmth(piece) === 'warm'
   const longSleeves = sleeveCoverage(piece) === 'long'
   const occlusion = pieceOcclusiveFitDegree(piece)
+  const construction = interiorConstructionDegree(piece)
 
-  if (massIndex === null && !insulatingMaterial && breathability === 0 && !hemCoverage && !exposure && !warmNeckline && !longSleeves && !occlusion) {
+  if (massIndex === null && !insulatingMaterial && !construction && breathability === 0 && !hemCoverage && !exposure && !warmNeckline && !longSleeves && !occlusion) {
     return null
   }
-  return { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion }
+  return { group, massIndex, insulatingMaterial, construction, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion }
 }
 
 // Graded hot/cold numeric scores built from pieceWeatherEvidence — see that function's comment for
@@ -139,7 +179,7 @@ export function pieceWeatherEvidence(piece = {}) {
 export function pieceWeatherScores(piece = {}) {
   const evidence = pieceWeatherEvidence(piece)
   if (!evidence) return { heat: 0, cold: 0, evidence: null }
-  const { group, massIndex, insulatingMaterial, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion } = evidence
+  const { group, massIndex, insulatingMaterial, construction, breathability, hemCoverage, exposure, warmNeckline, longSleeves, occlusion } = evidence
   const W = WEATHER_EVIDENCE_WEIGHTS
   const heatScale = heatCoverageScale(massIndex)
 
@@ -153,6 +193,13 @@ export function pieceWeatherScores(piece = {}) {
   if (insulatingMaterial) {
     heat -= W.insulatingMaterialHeat
     cold += W.insulatingMaterialCold
+  }
+  // Independent of insulatingMaterial, never folded into it — a garment can be both lined and
+  // filled (996765), and collapsing the two would make a reversible jacket "insulating" again by
+  // a different route.
+  if (construction) {
+    heat -= W.constructionHeat * construction
+    cold += W.constructionCold * construction
   }
   heat += breathability * W.breathability
   if (hemCoverage === 'full') {

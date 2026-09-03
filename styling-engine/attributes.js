@@ -2,12 +2,15 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
-import { INSULATING_FIBERS, compositionEvidenceState, insulatingLayerMaterials } from './fiberTaxonomy.js'
+import { INSULATING_FIBERS, insulatingLayerMaterials } from './fiberTaxonomy.js'
 
 export {
   ALL_PIECE_CATEGORIES,
-  compositionEvidenceState,
   insulatingLayerMaterials,
+  interiorConstruction,
+  normalizeInteriorConstruction,
+  INTERIOR_CONSTRUCTION_VALUES,
+  INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION,
   normalizeInsulatingLayerMaterials,
   INSULATING_LAYER_SCHEMA_DESCRIPTION,
   FIBER_FAMILIES,
@@ -33,8 +36,8 @@ export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
 // paper over with generic copy. A field with no entry renders no consequence line.
 export const FIELD_CONSEQUENCE = {
   fiber_content: 'Affects warmth and weather suitability',
-  fiber_content_completeness: 'Lets the app tell "no warm fibres recorded" apart from "not checked"',
   insulating_layer_materials: 'A padded or lined piece is warm because of what is inside it, which a photo cannot see',
+  interior_construction: 'A lining or a second fabric layer adds warmth without making a piece insulated',
 }
 
 // Canonical fit_on_body vocabulary and the description the model is given for it — ONE source,
@@ -550,41 +553,45 @@ function hasPositiveInsulatingEvidence(p) {
   return INSULATING_FABRIC_CATEGORIES.has(String(p?.fabric_category || '').toLowerCase().trim())
 }
 
-// Verdict 2 of 2, and the canonical owner of "what does the recorded material evidence establish
-// thermally?" — see compositionEvidenceState() in fiberTaxonomy.js for the other half.
+// THE canonical owner of "what does the recorded material evidence establish thermally?"
 //
-//   any completeness  + insulating evidence  → insulating
-//   complete          + no insulating fibre  → non_insulating
-//   partial/unknown   + no insulating fibre  → unknown
+//   positive insulating-layer evidence                → insulating
+//   positive insulating face/fabric evidence          → insulating
+//   layer explicitly []  AND no positive face evidence → non_insulating
+//   otherwise                                          → unknown
 //
-// The asymmetry is the point. POSITIVE evidence is decisive even from a partial record — a list
-// containing 'down' establishes insulation whether or not anything else is missing. NEGATIVE
-// evidence is decisive only when the composition is complete: the black puffer's
-// ["polyester","nylon"] was a true statement about its shell and lining, and reading "therefore
-// not insulated" off it was the error this whole chain exists to prevent.
+// The asymmetry is the point. POSITIVE evidence is decisive from any record — a list containing
+// 'down' establishes insulation whether or not anything else is missing. NEGATIVE evidence needs
+// an explicit [], which is a human-only write: normalizeInsulatingLayerMaterials downgrades a
+// tagger's [] to null, because "there is no fill in here" is not observable from outside.
 //
-// Deliberately NOT a strength scale. It is a narrow factual verdict; the ordinal warmth
-// calibration consumes it alongside fabric_weight/fabric_category rather than living here.
+// CONSTRUCTION IS ABSENT FROM THIS VERDICT, IN BOTH DIRECTIONS. An ordinary lining or a reversible
+// second face does not make a garment insulated, and equally does not gate the negative branch.
+// An earlier draft required "enough construction evidence to know there is no hidden thermal
+// layer" before concluding non_insulating; that both re-coupled the two axes this separation
+// exists to keep apart, and was redundant — insulating_layer_materials: [] IS the hidden-thermal-
+// layer answer. Construction moves warmth in thermal.js and nothing else.
+// See docs/interior-construction-spec.md §6.
 //
-// Note that positive evidence includes fabric_category (fleece, shearling, wool...), not just
-// fiber_content — a cardigan tagged fiber_content ["unknown"] with fabric_category 'fleece' is
-// insulating, and always was. Completeness describes the FIBRE record only, so it gates the
-// negative branch and never overrides a positive fabric_category.
+// Deliberately NOT a strength scale. It is a narrow factual verdict; graded warmth belongs to
+// pieceWeatherEvidence, which consumes this alongside mass and construction.
+//
+// Positive evidence includes fabric_category (fleece, shearling, wool, tweed...), not just
+// fiber_content — a cardigan tagged fiber_content ['unknown'] with fabric_category 'fleece' is
+// insulating, and always was.
+//
+// History: this branch used to require fiber_content_completeness === 'complete'. That field was
+// retired 2026-09-02 after measurement showed 'complete' had never been set on a single piece, so
+// non_insulating had never once been reached. This version makes it reachable for the first time.
 export function thermalMaterialVerdict(p = {}) {
   // An insulating LAYER settles it outright, whatever its fibres are. Nobody fills a garment with
   // a material chosen not to insulate — loft is the mechanism, and polyester wadding works for the
   // same structural reason down does. The engine is not claiming polyester is intrinsically warm;
-  // it is reading that polyester occupies the insulating-layer role. This is what made a
-  // 100%-polyester-filled leather coat unrepresentable before.
+  // it is reading that polyester occupies the insulating-layer role.
   const layer = insulatingLayerMaterials(p)
   if (layer && layer.length) return 'insulating'
   if (hasPositiveInsulatingEvidence(p)) return 'insulating'
-  // The negative branch now needs BOTH: a complete face composition and an explicit "no insulating
-  // layer". Absent is not empty — a piece nobody has answered the layer question for stays
-  // unknown, because that is the case that produced a confident false negative on 996765.
-  const compositionComplete = compositionEvidenceState(p) === 'complete'
-  const layerRuledOut = Array.isArray(layer) && layer.length === 0
-  return compositionComplete && layerRuledOut ? 'non_insulating' : 'unknown'
+  return Array.isArray(layer) && layer.length === 0 ? 'non_insulating' : 'unknown'
 }
 
 // Compatibility wrapper, deliberately kept while its six consumers are migrated one at a time.

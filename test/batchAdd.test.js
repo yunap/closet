@@ -63,14 +63,18 @@ test('the fibre vocabulary has exactly one owner', () => {
 
 test('both fibre orderings reproduce the vocabulary each consumer shipped', () => {
   // The two orderings are permutations of the same family blocks. These literals are the exact
-  // lists in use before consolidation; a change to either is a real behaviour change (the tagger
-  // prompt's enum text, or the chip order the owner sees) and should have to be made deliberately.
-  assert.deepEqual(FIBER_VALUES, ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
-    'cotton', 'linen', 'hemp', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
+  // lists in use; a change to either is a real behaviour change (the tagger prompt's enum text, or
+  // the chip order the owner sees) and should have to be made deliberately.
+  // 2026-09-02: `shearling` added to the insulating family — it already existed as a
+  // fabric_category, so the two vocabularies disagreed and 996868's shearling lining had to be
+  // stored as 'fleece'. See docs/interior-construction-spec.md §4.
+  assert.deepEqual(FIBER_VALUES, ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'shearling',
+    'down', 'cotton', 'linen', 'hemp', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
     'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'metal', 'stone', 'wood', 'ceramic',
     'glass', 'horn', 'shell', 'resin', 'pearl', 'crystal', 'enamel', 'unknown'])
   assert.deepEqual(FIBER_OPTIONS_ORDER, ['cotton', 'linen', 'hemp', 'silk', 'wool', 'merino',
-    'cashmere', 'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 'rayon', 'viscose',
+    'cashmere', 'alpaca', 'mohair', 'fleece', 'shearling', 'down', 'tencel', 'modal', 'rayon',
+    'viscose',
     'polyester', 'nylon', 'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'metal',
     'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'pearl', 'crystal', 'enamel',
     'unknown'])
