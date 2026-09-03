@@ -68,7 +68,16 @@ export function outfitThermalContribution(pieces = []) {
   // light top under a knit cardigan to `very warm` — puffer territory, from a cardigan.
   const weaker = base == null || removable == null ? null
     : (IDX.get(base) <= IDX.get(removable) ? base : removable)
-  const bothReal = weaker != null && IDX.get(weaker) >= IDX.get('moderate')
+  // Threshold raised from `moderate` to `warm` on 2026-09-03. It was calibrated when most bases were
+  // UNPLACEABLE and so never reached the step at all; once garmentWarmth stopped treating known
+  // non-insulating fabrics as unknown, ordinary bases began placing at `moderate` and nearly every
+  // layered outfit took the +1 — a cotton top, jeans and a knit cardigan came out `very warm` and
+  // was reported as overshooting a 72/62 day.
+  //
+  // The clo evidence still supports a step only when BOTH halves are substantial
+  // (trousers+long-sleeve 0.61 + jacket 0.36 -> 0.96). A `moderate` base is the thin-trousers end of
+  // that range, not the substantial end.
+  const bothReal = weaker != null && IDX.get(weaker) >= IDX.get('warm')
   const withLayer = removable == null ? base
     : base == null ? removable
     : bothReal ? stepUp(warmer(base, removable)) : warmer(base, removable)

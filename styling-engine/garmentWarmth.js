@@ -28,6 +28,21 @@ export const WARMTH_LEVELS = ['very light', 'light', 'moderate', 'warm', 'very w
 // material — no boundary here may be treated as authoritative until that lands (§12 Slice 2 step 3).
 const SUBSTANCE = { ultralight: -1, light: 0, medium: 1, heavy: 2 }
 
+// Is the FACE fabric recorded? Deliberately not "is it warm" — that is thermalMaterialVerdict's
+// question. A list containing only `unknown`, or no list at all, is absent evidence; a list naming
+// real fibres is present evidence even when none of them is insulating.
+//
+// fabric_category counts too: a piece tagged `denim` or `leather` has its face material established
+// whatever fiber_content says, which is the same reasoning hasPositiveInsulatingEvidence already
+// uses in the other direction.
+function hasFaceMaterialEvidence(piece = {}) {
+  const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
+  const named = fibers.map(f => String(f).toLowerCase().trim()).filter(f => f && f !== 'unknown')
+  if (named.length) return true
+  const category = String(piece?.fabric_category || '').toLowerCase().trim()
+  return Boolean(category) && category !== 'other' && category !== 'unknown'
+}
+
 /**
  * Can this garment be placed at all, and if not, why?
  *
@@ -58,7 +73,22 @@ export function warmthPlacementState(piece = {}) {
   //
   // This replaces the old THERMALLY_UNCHARACTERIZED_FABRIC_CATEGORIES allowlist, which reached for
   // the same predicate through fabric_category and caught 9 pieces instead of 88.
-  if (substance >= 1 && thermalMaterialVerdict(piece) === 'unknown') return 'material_unestablished'
+  // CORRECTED 2026-09-03, live QA. The predicate above tested `thermalMaterialVerdict === 'unknown'`,
+  // which asks whether INSULATING evidence exists — not whether MATERIAL evidence exists. Those are
+  // different questions, and conflating them silenced 80 of 97 "unplaceable" garments that have
+  // perfectly good recorded fibres: every pair of jeans, medium cotton trousers, linen blouses.
+  //
+  // A medium cotton trouser with fiber_content ["cotton"] is not unknown. It is KNOWN
+  // NON-INSULATING: the face fabric is recorded, cotton is not a warm fibre, and nothing suggests a
+  // hidden layer. Refusing to place it left the roster with no basis to rank bottoms at all, which
+  // is how a plan came back with a warm-season pant in five outfits out of five.
+  //
+  // What genuinely blocks placement is a substantial garment whose FACE FABRIC is unrecorded, where
+  // the unstated material could be anything — the black puffer's original ["polyester","nylon"]
+  // shape, or a bare ["unknown"].
+  if (substance >= 1 && !hasFaceMaterialEvidence(piece) && thermalMaterialVerdict(piece) === 'unknown') {
+    return 'material_unestablished'
+  }
   return 'placeable'
 }
 
@@ -103,8 +133,19 @@ function coverageAdjustment(piece) {
 // Consumers must treat it as a BOUNDED CEILING: no `very warm+`, no "extreme" tier, no numeric
 // distance above the verified range.
 function levelForRawScore(raw) {
-  if (raw <= -1) return 'very light'
-  if (raw <= 1) return 'light'
+  // The light/moderate boundary moved from 1 to 0.5 on 2026-09-03. `light` had spanned TWO full
+  // substance steps, so a light cotton pant (raw 0) and medium denim (raw 1) came out identical and
+  // the roster had no way to prefer either — a warm-season pant then appeared in five outfits of
+  // five on an October trip.
+  //
+  // The anchors say they are different: thin trousers 0.15, thick trousers 0.24 (§15.2). That gap is
+  // the same clo distance as t-shirt 0.08 -> thin trousers 0.15, which the scale already treats as a
+  // level boundary. Treating one as a boundary and not the other was inconsistent.
+  //
+  // Only this boundary moved. The bands are deliberately NARROWER AT THE LOW END and wider at the
+  // top, matching the anchors: 0.08/0.15/0.24 are tightly spaced while 0.36/0.48 are not.
+  if (raw <= -0.5) return 'very light'
+  if (raw <= 0.5) return 'light'
   if (raw <= 2.5) return 'moderate'
   if (raw <= 4) return 'warm'
   return 'very warm'

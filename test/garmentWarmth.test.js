@@ -39,7 +39,11 @@ test('gate 2 — coverage is represented, and a bare cut is decisive', () => {
   // read coverage, while the evidence layer scored it -2.
   assert.ok(at(garmentWarmthLevel(G.woolShellBare)) < at(garmentWarmthLevel(G.woolSweater)),
     'the same wool, bare, must sit below the long-sleeved version')
-  assert.equal(garmentWarmthLevel(G.woolShellBare), 'light')
+  // `moderate` since the light/moderate boundary moved (garmentWarmth.js): the anchors put a thin
+  // sleeveless scoop-neck at 0.23 and thick trousers at 0.24, so a bare wool shell sitting alongside
+  // substantial bottoms is anchor-consistent. What matters is the ORDERING against its long-sleeved
+  // twin, which is asserted above and still holds.
+  assert.equal(garmentWarmthLevel(G.woolShellBare), 'moderate')
   assert.equal(garmentWarmthLevel(G.linenDress), 'very light')
 })
 
