@@ -8,6 +8,13 @@ exposure must be a named, required part of the contract — then records *"What 
 nothing."* This spec defines where `exposureContext` comes from. **It does not define the band, the
 scale, or any threshold**; §9.1–§9.3 and §12 of the band spec own those and are not restated here.
 
+**Adapts an established model rather than inventing one.** The band spec's §11 already established
+that `weather + activity → required insulation`, compared against a clothing ensemble, is ISO 11079's
+IREQ shape and ASHRAE 55's input model. §11 settled that the *architecture* is legitimate. What has
+never been done — and what §2.2 below does — is map Closet's **actual fields** onto that model's
+input variables to find which are genuinely missing. The answer turns out to be much smaller than
+this spec's first draft assumed.
+
 Deliberately NOT a weather spec. No new forecast source, no new heuristic, no Fahrenheit constant.
 The object being added is an ownership seam.
 
@@ -85,6 +92,37 @@ encounter?"*
 
 Correct the band spec's §9.1 and §7 accordingly when this lands; do not leave "nothing" standing.
 
+### 2.2 Closet's fields against the standard input model
+
+The variables every established model takes — environmental conditions, metabolic rate, clothing
+insulation, exposure — mapped onto what this codebase actually stores. Measured 2026-09-03.
+
+| Standard input | Closet's field | Exists | Thermally consumed |
+|---|---|---|---|
+| Air temperature | `highF` / `lowF` | yes | **yes — but sampled from the wrong window (§1)** |
+| Air movement | `WIND_VALUES` = `calm\|breezy\|windy\|unknown`, resolved per turn | yes | **no** — reaches `weather_protection` only, never the thermal model |
+| Precipitation | `PRECIPITATION_VALUES`, resolved per turn | yes | no — **correctly**, see §7 |
+| Metabolic rate | `ACTIVITY_VALUES` = `none\|walking\|hiking` | yes, populated per slot | **no** — drives footwear walkability and discouraged materials; `thermal.js` and `outfitEnvironmentalAdequacy.js` contain zero references to it |
+| Exposure mode | `environment` = `indoor\|outdoor\|beach_coastal` + the transit split | yes, populated | label only — produced `"indoor; transit: …"` and changed no selection |
+| Exposure duration | — | **no** | — (only trip-length prose in `outfitSetPlanner.js`) |
+| Garment insulation | `pieceWeatherScores().cold`, `thermalMaterialVerdict` | yes, PR #304 | yes |
+| Ensemble insulation | — | **no** | — (band spec §9.2 owns this; not this spec) |
+
+**Two findings, and they reshape the work.**
+
+**A three-level metabolic proxy already exists and is thermally inert.** `none | walking | hiking` is
+the variable ASHRAE 55 and IREQ treat as a core input alongside environment — the reason a hiker
+needs *less* insulation than a stationary person at the same ambient temperature. Closet has it,
+typed and populated on every slot, and spends it entirely on shoes.
+
+**Wind is resolved and thermally unused.** The second environmental variable in every model is
+stored per turn and only ever asks "is this garment a windbreaker", never "is this day colder than
+its number".
+
+**What is genuinely missing is smaller than it looked:** exposure duration, ensemble insulation
+(owned elsewhere), and *conditions during the exposure* as a sourced value rather than a daily
+envelope. Everything else is present and unconsumed.
+
 ## 3. The ownership chain
 
 ```text
@@ -114,46 +152,81 @@ selection.** This spec adds the consumer, which is what makes the ordering load-
 ## 4. The canonical object
 
 ```text
-relevantExposureConditions(slot, resolvedWeather) → ExposureConditions
+resolveExposureContext(slot, resolvedWeather) → ExposureContext
 ```
 
-`ExposureConditions` answers, for one outfit: **which part of the day's weather this outfit is
-actually worn through, and how hard.** Its fields are named in §4.2 as a contract, with values left
-to Slice 2 measurement — this spec does not choose numbers.
+Not *"derive the hours this outfit is worn"*. **"Resolve the environmental exposure this outfit is
+expected to experience."** The first framing makes clock time the domain concept and leads to
+designing a `daypart` field; the second matches how established models are structured, where the
+thermal calculation consumes environmental conditions and *sourcing* those conditions is a separate
+concern.
 
-### 4.1 Derivation, in priority order
+That distinction is what keeps this spec small.
 
-1. **Explicit slot facts first.** `environment`, `activity`, `occasion` and any per-slot `date` /
-   `location` are read as given. They are typed, model-supplied and already validated.
-2. **Derived, never invented.** An `evening` occasion is an evening window; `walking` with
-   `environment: outdoor` is sustained daytime exposure; `environment: indoor` splits into a light
-   base window and a transit window — the split the label already describes.
-3. **Fallback only when the slot supplies nothing.** A bare at-home question with no plan has no
-   slot; that case gets a stated default and **must mark itself `unknown`**, per the band spec's
-   requirement that absent exposure be explicit rather than silently "outdoors, all day".
+### 4.1 The three inputs, lined up with the standard model
 
-**No global daypart constant.** An earlier draft of this work proposed asking the owner to rule on
-fixed active hours (8am–9pm) versus activity-shifted hours. That was rejected: it converts a
-product-modelling problem into a preference, and creates a constant that later has to be unwound.
-The window is derived from what the slot knows; the fixed assumption is the fallback, not the
-design centre.
+```text
+resolved environmental conditions      what the air is actually doing during exposure
++ activity / exertion                   metabolic proxy — ALREADY EXISTS (§2.2)
++ exposure mode / duration              sustained outdoor · brief transit · indoor destination
+→ ExposureContext
 
-### 4.2 Contract shape
+ExposureContext + requiredThermalBand  ⟷  outfit thermal contribution
+```
 
-The object must carry at least:
+**No semantic rules.** An earlier draft of this section derived exposure from meanings — *"an
+`evening` occasion is an evening window"*, *"museum means daytime"*. That is inventing a conceptual
+model Closet has no business owning, and it was removed. The inputs are the standard model's
+variables; Closet supplies what it has and marks the rest `unknown`.
 
-* **the conditions actually encountered** — not the 24h envelope. For a daytime outdoor slot this is
-  warmer than `lowF`; for an evening slot it is cooler than `highF`. Sourcing is Slice 2's question
-  (§8): hourly data where a live forecast exists, and a stated figure from the model estimate where
-  it does not — the Vienna trip resolved `weatherSource: model_estimate` five weeks out, so an
-  estimate must be able to express this the same way it already expresses high and low.
-* **duration / sustained-ness** — three hours of walking is not a five-minute transit.
-* **exertion** — `activity: hiking` generates output heat; `activity: none` does not.
-* **the transit split** — an indoor destination excuses the base, never the trip. Band spec §5.7.
-* **`unknown` as a first-class value**, never silently defaulted.
+### 4.2 Conditions during exposure — a sourcing tier, not a field
 
-Whether these arrive as one object or several named arguments is an implementation choice. What is
-not optional: **exposure is a named, required input to the band, and absent exposure is explicit.**
+The daily high/low is a **coarse source** for the environmental-conditions variable. It is not the
+variable. Sourcing degrades explicitly:
+
+```text
+live forecast + explicit event time      → sample the hour
+live forecast + approximate exposure mode → sample the window
+seasonal estimate + evening slot          → the estimate states evening conditions
+seasonal estimate + timing unknown        → represent a RANGE, or unknown
+                                            never the daily low as though it were the answer
+```
+
+The Vienna trip is the last row: `weatherSource: model_estimate`, five weeks out. The failure was
+not that the estimate was bad — it was that its 24-hour minimum was consumed as the temperature a
+museum visitor experiences. An estimate that cannot express exposure conditions should say so and
+carry uncertainty, which the band can then treat as a range rather than a point.
+
+Whether the estimate schema gains a field for this is §8's measured question, not a decision here.
+
+### 4.3 What the contract must carry
+
+* **environmental conditions during exposure** — sourced per §4.2, with provenance, as the existing
+  resolved-weather contract already does for high/low.
+* **exertion** — from `activity`. Available today.
+* **exposure mode** — sustained outdoor / brief transit / indoor destination, with the transit split
+  preserved: an indoor destination excuses the base, never the trip (band spec §5.7). Available today.
+* **duration when known** — genuinely absent; must be optional and explicitly `unknown`, never
+  defaulted to all-day.
+* **`unknown` as a first-class value** on every field, per the band spec's requirement that absent
+  exposure be explicit rather than silently "outdoors, all day".
+
+**Wind belongs here too** (§2.2): it is an environmental condition, it is already resolved, and it
+is currently visible only to `weather_protection`. Whether it shifts the demand or is merely carried
+is the band's decision, not this spec's — but it must reach the band, which today it cannot.
+
+### 4.4 Why this ordering makes the hard part optional
+
+Museum, hike and indoor dinner differ in **activity** (`walking` / `hiking` / `none`) and **exposure
+mode** (`outdoor` / `outdoor` / `indoor`+transit). Both are stored, populated and thermally unused
+**today**.
+
+So acceptance case A (§9) is reachable **without solving conditions-during-exposure at all**. The
+three slots diverge on variables Closet already has, for the reason the standard model gives — a
+hiker generating metabolic heat needs less insulation than a stationary diner at the same ambient
+temperature. Daypart sourcing improves the *number*; it is not what makes the three cards differ.
+
+That is the simplification the census bought, and it sets the implementation order in §10.
 
 ## 5. `needsRemovableCoolLayer` loses authority
 
@@ -215,24 +288,46 @@ spec; naming the boundary is what keeps this one from absorbing it.
   leaves sourcing to Slice 2.
 * Does not touch `outerwear_role`, still the sole gate consumer in `outfitEnvironmentalAdequacy.js`.
 * Does not design the calendar-season axis (§6).
+* **Does not let the thermal band swallow adjacent axes.** ISO 9920's ensemble-insulation model
+  explicitly does not cover rain and snow effects; ASHRAE and ISO keep insulation, air movement and
+  evaporative effects as distinct variables. That is the standards world agreeing with the split this
+  codebase already has, and it must survive:
+
+  ```text
+  thermal fit  ≠  rain protection  ≠  removability  ≠  outdoor capability
+  ```
+
+  Precipitation is resolved (§2.2) and deliberately stays with `weather_protection`. Removability
+  stays its own axis (band spec §2.1, §11.5). The apparatus refused in band spec §11.7 — radiant
+  temperature, evaporative resistance, metabolic watts, wind-penetration coefficients — is refused
+  here too. `activity` is an **ordinal exertion proxy**, not a metabolic rate.
 * Does not implement overshoot. Overshoot falls out of the band comparison once the band has the
   right input; building it separately is what
   [layer-weight-ceiling.md](layer-weight-ceiling.md) was absorbed to prevent.
 
-## 8. Open questions for Slice 2 measurement
+## 8. Open questions
 
-Answer with data, not preference:
+Answer with measurement, not preference. **Reordered after the §2.2 census** — the questions that
+looked hardest are no longer on the critical path.
 
-1. **Where does the encountered condition come from when the forecast is hourly?** Does any live
-   provider path already return hourly data the resolver discards?
-2. **And when it is a model estimate?** The estimate schema commits to a numeric high/low today.
-   Adding an encountered-conditions figure is a schema change with a prompt-cost implication; measure
-   it against `docs/tagger-cost-spec.md`-style budgeting before assuming it is free.
-3. **How much of the Vienna plan's divergence comes from `activity` alone** versus needing a real
-   daypart figure? If `hiking` vs `none` vs `walking` already separates the three cards acceptably,
-   the daypart sourcing question is less urgent than it looks.
-4. **Which of the 83 flag references** (§5) genuinely need a discrete boundary rather than graded
-   fit? Band spec §6 has the provisional split; confirm it against the cool-tier flags.
+1. **Does `activity` + `exposure mode` alone produce acceptable divergence on case A?** If
+   `none` / `walking` / `hiking` and `indoor` / `outdoor` already separate the three Vienna cards
+   defensibly, conditions-during-exposure is a **precision** improvement rather than a prerequisite,
+   and ships second. This is the first thing to measure because it decides everything below.
+2. **What ordinal exertion levels does `none | walking | hiking` support?** The standard model says
+   higher exertion lowers required insulation at the same ambient temperature. Three levels is what
+   exists; whether the demand shift is one step or two is calibration, and belongs with the band's
+   scale (band spec §11.8), not here.
+3. **Should wind shift the demand, or only be carried?** It is resolved today and reaches nothing
+   thermal (§2.2). Establishing the pipe is this spec; whether the band reads it is the band's call.
+4. **Where do exposure conditions come from when the forecast is live?** Does any provider path
+   already return hourly data the resolver discards? Cheap to check, and it decides whether §4.2's
+   top tier is reachable at all.
+5. **And when it is a model estimate?** Adding an exposure-conditions figure to the estimate schema
+   is a prompt-cost change; measure it the way `docs/tagger-cost-spec.md` measures schema growth
+   before assuming it is free.
+6. **Which of the 83 flag references** (§5) need a discrete boundary rather than graded fit? Band
+   spec §6 has the provisional split; confirm it covers the cool-tier flags.
 
 ## 9. Acceptance cases
 
@@ -248,6 +343,11 @@ indoor dinner     occasion smart casual· activity none    · environment indoor
 
 If the model cannot make these diverge **for principled reasons stated in the derivation**, the
 problem is not solved. Divergence produced by an arbitrary per-occasion constant does not count.
+
+**This case must pass at step 2 of §10, before any weather-sourcing work.** The three slots differ on
+`activity` and `environment` — both stored and populated today — and the principled reason is the
+standard model's own: higher exertion lowers required insulation at the same ambient temperature.
+A design that needs daypart data to separate a hike from a dinner has not understood the inputs.
 
 **B — the puffer.** On the Vienna plan's city slots, `996775` (`cold 23`) is not preferred over
 `996767` (6) / `996764` (10). Overshoot is a ranking penalty, never an exclusion — a wardrobe whose
@@ -277,19 +377,29 @@ context calls for.
 
 ## 10. Implementation order
 
+Reordered after §2.2. **The variables that already exist come first**, so the first slice can be
+proved against case A without touching weather sourcing.
+
 ```text
 1. CENSUS ONLY — stop for review.
-   Every site that currently answers "how much warmth does this context need", including the
-   83 flag references in §5 and the prompt-projection switches in band spec §6.
+   Every site that answers "how much warmth does this context need", including the 83 flag
+   references in §5 and band spec §6's prompt-projection switches.
    Correct band spec §9.1/§7's "what exists today: nothing" with §2's measurement.
 
-2. relevantExposureConditions: contract, derivation, `unknown`, fallback. No consumers yet.
+2. ExposureContext from what EXISTS: activity, exposure mode, transit split, `unknown` everywhere
+   else. Conditions still sourced from today's high/low, unchanged and openly coarse.
+   → Acceptance case A must already pass here (§4.4). If it does not, the model is wrong and no
+     amount of daypart precision will rescue it.
 
-3. Seam into requiredThermalBand as its named exposure input (band spec §9.1 owns the band itself).
+3. Seam into requiredThermalBand as its named exposure input (the band itself is band spec §9.1).
+   Wind reaches the band for the first time.
 
-4. Migrate consumers off the flags; needsRemovableCoolLayer becomes derived (§5).
+4. Conditions during exposure — the §4.2 sourcing tier, once §8.1 and §8.4 are answered. This is
+   where the 47°F stops being the number, and it is deliberately LAST.
 
-5. Acceptance cases A-H, then the Vienna plan re-run offline as the regression fixture.
+5. Migrate consumers off the flags; needsRemovableCoolLayer becomes derived (§5).
+
+6. Acceptance cases A-H, then the Vienna plan re-run offline as the regression fixture.
 ```
 
 Slice 1 stops for owner review before any code, matching
