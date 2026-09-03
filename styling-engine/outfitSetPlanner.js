@@ -40,6 +40,7 @@ import {
   weatherFitForPiece,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
+import { garmentWarmthLevel } from './garmentWarmth.js'
 import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
@@ -68,8 +69,10 @@ import {
   pieceCoverage,
   shoeCoverage,
   sleeveCoverage,
-  pieceRequiresBaseLayer
+  pieceRequiresBaseLayer,
+  thermalMaterialVerdict,
 } from './attributes.js'
+import { interiorConstruction } from './fiberTaxonomy.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
@@ -2516,6 +2519,29 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
 // Exported under a test-only alias: the line itself is internal, but Slice E's cross-projection
 // parity fixture has to prove capability reaches THIS surface too, not just the shared truth text.
 export { planWorkbenchPieceLine as _planWorkbenchPieceLineForTests }
+// The engine's thermal reading of a garment, stated as the facts it is made of rather than as a
+// verdict about a slot. `insulation` distinguishes THREE states on purpose: an explicitly empty
+// insulating-layer list means verified-none, a null one means nobody ever asked, and they must not
+// collapse — 23 of this wardrobe's outerwear pieces are unasked and 7 are verified. The navy sun
+// hoodie is the case that made this matter: unrecorded insulation read as a little insulation,
+// placing it `light` and therefore level with a transitional jacket.
+function thermalFactsForPieceLine(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return ''
+  const bits = []
+  const warmth = garmentWarmthLevel(piece)
+  bits.push(`warmth:${warmth || 'not established'}`)
+  const verdict = thermalMaterialVerdict(piece)
+  bits.push(`insulation:${verdict === 'insulating' ? 'insulated' : verdict === 'non_insulating' ? 'none' : 'not recorded'}`)
+  // Through the canonical reader, never the raw column: a flow reading the stored field directly
+  // is a second thermal authority forming (interiorConstruction.test.js ratchet H).
+  const interior = interiorConstruction(piece)
+  if (interior && interior !== 'unknown') bits.push(`interior:${interior}`)
+  if (piece.season) bits.push(`season:${piece.season}`)
+  if (group === 'outerwear') bits.push('removable:yes')
+  return bits.join(' | ')
+}
+
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
   const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
@@ -2547,6 +2573,12 @@ function planWorkbenchPieceLine(piece = {}) {
     pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
+    // THERMAL FACTS, not a thermal verdict (docs/model-facing-signal-inventory.md, finding 1).
+    // The catalog line was the only per-piece fact channel and it carried none of these, so the
+    // model was told a trench was `discouraged` while never being told it is moderate, uninsulated,
+    // removable and year-round — a verdict it had no means to check. These are the inputs the
+    // engine's own thermal reasoning runs on; handing them over is what lets the model disagree.
+    thermalFactsForPieceLine(piece),
     piece.visual_weight ? `weight:${piece.visual_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
@@ -2626,6 +2658,23 @@ export function slotThermalDemandLabel(exposure = null) {
   const demand = requiredThermalBand(exposure)
   if (!demand?.level) return ''
   return demand.certain ? demand.level : `${demand.level} (estimated exposure window)`
+}
+
+// The slot's conditions as FACTS the model can size a layer from itself, replacing the
+// `thermal_demand` target the engine used to compute for it. The waking window is the honest
+// exposure range (band spec's ~35%-above-trough estimate), not the 5am trough nobody dresses for,
+// and its certainty is stated rather than implied. Returns '' when conditions are genuinely
+// unknown — an empty field is the truthful answer there, and inventing a range would be exactly
+// the fake precision this arc keeps paying for.
+export function slotExposureConditions(exposure = null) {
+  const c = exposure?.conditions
+  if (!c?.known || !Number.isFinite(c.wakingLowF)) return ''
+  const bits = [`${c.wakingLowF}-${c.wakingHighF}°F likely exposure`]
+  if (exposure.exertion && exposure.exertion !== 'unknown') bits.push(exposure.exertion)
+  if (exposure.exposureMode === 'indoor_destination') bits.push('indoor destination, outdoor transit')
+  else if (exposure.exposureMode === 'sustained_outdoor') bits.push('sustained outdoor')
+  bits.push(c.coarse ? 'estimated window' : 'hourly')
+  return bits.join(' · ')
 }
 
 // Evidence, never a gate: every allowed piece stays, only the order changes.
@@ -2749,8 +2798,6 @@ function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement 
   return {
     id: Number(piece?.id),
     extreme_heat: extremeHeatPieceAdvisory(piece, weatherProfile),
-    thermal_fit: thermalFitPieceAdvisory(piece, weatherProfile, exposure),
-    season_fit: seasonFitPieceAdvisory(piece, calendarSeason),
     movement: activeMovementPieceAdvisory(piece, activeMovement),
     operational_ease: operationalEasePieceAdvisory(piece, operationalEase)
   }
@@ -3114,26 +3161,41 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(),
   if (slotFloor !== null && pieceRank !== null) {
     score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
   }
-  // SELECTION IS WHERE THE ROSTER IS DECIDED, so thermal and season fit have to be read HERE.
-  // Ordering the roster afterwards (orderByThermalFit) sorts a bag whose contents are already
-  // fixed — thread_1788427130315 offered four outer layers per slot and not one of them was the
-  // trench, the plaid jacket, the olive jacket or either wool vest. The model picked the best of a
-  // bad bag and got blamed for it.
-  //
   // The blanket `+5 for light fabric` that used to sit here is gone: it was a season-blind thumb on
   // the scale that, against a 4-piece outerwear quota, floated a sheer shrug and two knit cardigans
-  // over every real coat on a 48°F October morning. Fabric weight only means "cooler" relative to
-  // conditions, which is precisely what these advisories say and a bare tag cannot.
+  // over every real coat on a 48°F October morning. Fabric weight only means "cooler" RELATIVE TO
+  // conditions, which a bare tag cannot say.
   //
-  // Weighted ×4 to sit alongside the occasion (+35) and register (+20) terms rather than under
-  // them. Advisory, still: this changes what is OFFERED, never what is allowed — every gate-eligible
-  // piece remains eligible, and the model can still reach past the ordering.
-  score += thermalFitPieceAdvisory(piece, weatherProfile, exposure).score * 4
-  score += seasonFitPieceAdvisory(piece, calendarSeason).score * 4
+  // Its replacement is NOT a thermal verdict in the score. Ranking candidates by
+  // preferred/discouraged makes selection a second stylist operating one layer below the one we
+  // just removed from the model contract — the same abstraction error, harder to see. Thermal range
+  // is preserved structurally instead, by spreadThermalRange below.
   score += extremeHeatPieceAdvisory(piece, weatherProfile).score
   score += activeMovementPieceAdvisory(piece, activeMovement).score
   score += operationalEasePieceAdvisory(piece, operationalEase).score
   return score
+}
+
+// Preserve thermal RANGE in what the model is offered, rather than ranking candidates by a derived
+// stylistic verdict. Both Vienna failures were the same roster defect: the slot contained only one
+// kind of layer. Offering a puffer and nothing lighter forces the puffer; offering a sun hoodie and
+// nothing warmer forces the hoodie. Neither is a calibration problem.
+//
+// Deliberately NOT a quota. It takes the strongest candidate at each warmth level the group can
+// actually supply, then falls back to plain score order — so a wardrobe or slot with one warmth
+// level degrades to exactly the previous behaviour instead of manufacturing variety it does not
+// have. Pieces with no established warmth share the `unknown` bucket and are neither privileged nor
+// suppressed: not knowing is not a thermal property.
+function spreadThermalRange(items = []) {
+  const firstAtLevel = []
+  const rest = []
+  const seenLevels = new Set()
+  for (const item of items) {
+    const level = garmentWarmthLevel(item.piece) || 'unknown'
+    if (seenLevels.has(level)) rest.push(item)
+    else { seenLevels.add(level); firstAtLevel.push(item) }
+  }
+  return [...firstAtLevel, ...rest]
 }
 
 export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '', limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
@@ -3158,9 +3220,8 @@ export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { ancho
   for (const group of coverageGroups) {
     const quota = group === 'accessory' || group === 'outerwear' ? 4 : 8
     let taken = selected.filter(piece => wardrobeCategoryGroup(piece) === group).length
-    for (const item of scored) {
+    for (const item of spreadThermalRange(scored.filter(entry => wardrobeCategoryGroup(entry.piece) === group))) {
       if (taken >= quota || selected.length >= limit) break
-      if (wardrobeCategoryGroup(item.piece) !== group) continue
       const before = selected.length
       add(item)
       if (selected.length > before) taken += 1
@@ -3628,10 +3689,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
     }
     const floorRank = slotRegisterRank(slot)
-    // ONE order for both lists. A first version ordered the ids and left the assessments in the
-    // original order, so assessment[i] no longer described allowed_piece_ids[i] — a silent
-    // mismatch in the very payload this fix exists to make trustworthy.
-    const thermallyOrdered = orderByThermalFit(shownPieces, weatherProfile, slotExposure, slot.stylingContext.calendarSeason)
+    // ONE order for both lists — assessment[i] must describe allowed_piece_ids[i].
+    //
+    // The order no longer encodes a thermal verdict. Sorting the roster best-thermal-fit-first was
+    // a derived styling judgment delivered by position instead of by field, which is harder to
+    // argue with than a stated one, not easier. Selection preserves thermal RANGE (see
+    // selectPlanWorkbenchPieces); what the model does with that range is its own call.
+    const rosterOrder = shownPieces
     workbenchSlots.push({
       id: slot.id,
       label: slot.label,
@@ -3645,13 +3709,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       styling_context: slot.stylingContext,
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
-      // Ordered best-fitting first, and the slot states HOW MUCH warmth its conditions call for.
-      // The removable-layer requirement only ever said a layer was needed, never how much — which is
-      // how a down puffer satisfied it on a 65/48 day, seven times.
-      thermal_demand: slotThermalDemandLabel(slotExposure),
-      allowed_piece_ids: thermallyOrdered.map(piece => Number(piece.id)).filter(Boolean),
+      // CONDITIONS, not a target. `thermal_demand` used to state how much warmth the engine had
+      // decided this slot calls for — a derived styling judgment the model was then instructed to
+      // obey. The exposure window is the fact underneath it, and the model can size a layer from a
+      // temperature range on its own (docs/model-facing-signal-inventory.md).
+      exposure_conditions: slotExposureConditions(slotExposure),
+      allowed_piece_ids: rosterOrder.map(piece => Number(piece.id)).filter(Boolean),
       calendar_season: slot.stylingContext.calendarSeason || '',
-      piece_assessments: thermallyOrdered.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
+      piece_assessments: rosterOrder.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
       coverage_report: workbenchCoverage,
     })
@@ -3726,14 +3791,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
     // fabricating past the catalog truth it already had in piece_catalog.
-    // The payload has carried piece_assessments since the plan path first shipped, and the tier
-    // vocabulary was only ever DEFINED inside the extreme-heat branch below — so on every ordinary
-    // day the model received `thermal_fit: {tier: 'discouraged'}` having never been told the field
-    // exists or what the word means. Live thread_1788424519744: the engine marked the down puffer
-    // `discouraged` on a 65/48 October day and ranked five better layers above it; the model put
-    // the puffer on four of six looks. Correct evidence, undelivered vocabulary.
-    'Each slot carries piece_assessments, aligned index-for-index with its allowed_piece_ids, which are ordered best-fitting first. Each assessment rates that piece on thermal_fit (against the slot\'s stated thermal_demand), season_fit (against calendar_season), extreme_heat, movement, and operational_ease. The tiers mean: `preferred` — well suited, lead with these; `workable` — usable when it better serves another stated need; `neutral` — the dimension does not apply; `discouraged` — a worse choice than available alternatives; `prohibited` — do not use. Reach past a `discouraged` piece only when no preferred or workable piece in that slot can do the job, and say in the card reason why you did.',
-    'thermal_demand states HOW MUCH warmth a slot\'s conditions call for — not merely that a layer is wanted. A garment rated `discouraged` on thermal_fit is wrong by AMOUNT: too warm for these conditions is as wrong as too thin, and satisfying a removable-layer requirement does not license overshooting it.',
     'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.',
     'The catalog\'s silhouette, length, hem, sleeve, fit, tuck, waistband, opacity, and base-layer fields are authoritative garment construction. Never write a card reason or styling instruction that contradicts them. Card prose expresses styling intent only; it cannot redefine how a garment is constructed or worn.',
     // Part 3 (spec 19): live miss — a submitted card's reason said "Actually
@@ -3823,9 +3880,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     }
     if (pendingSlot?.weatherProfile?.transitIsCold) {
       requirements.push('This is a climate-controlled destination reached through cold weather: include adequate removable, sleeve-bearing outerwear for arrival and departure. The indoor base may stay light, but the first submitted outfit must already include the transit layer.')
-    }
-    if (workbenchSlot.thermal_demand) {
-      requirements.push(`This slot's conditions call for ${workbenchSlot.thermal_demand} warmth${workbenchSlot.calendar_season ? `, in ${workbenchSlot.calendar_season}` : ''}. Lead with pieces this slot's piece_assessments rate preferred on thermal_fit and season_fit.`)
     }
     if (pendingSlot?.weatherProfile?.isExtremeHeat) {
       requirements.push('Extreme-heat fit is advisory unless marked prohibited: lead with pieces rated preferred, use workable pieces only when they better serve another stated need, and avoid discouraged pieces when a preferred or workable option can do the same job. For full-length light pants, “light” describes fabric mass, not guaranteed comfort in triple-digit heat.')

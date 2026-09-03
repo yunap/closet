@@ -66,14 +66,6 @@ test('evidence, never a gate — shoes and accessories stay out of it', () => {
   assert.equal(thermalFitPieceAdvisory(unplaceable, w, EXP(w)).tier, 'neutral', 'unknown stays neutral, not discouraged')
 })
 
-test('ids and assessments share one order', () => {
-  // A first version ordered the ids and left the assessments alone, so assessment[i] no longer
-  // described allowed_piece_ids[i] — a silent mismatch in the payload this fix exists to trust.
-  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
-  assert.match(src, /allowed_piece_ids: thermallyOrdered\.map/)
-  assert.match(src, /piece_assessments: thermallyOrdered\.map/)
-})
-
 test('the layer requirement no longer says only that a layer is needed', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitEnvironmentalAdequacy.js'), 'utf8')
   assert.match(src, /match the layer to the conditions rather than reaching for the warmest one available/)
@@ -110,36 +102,6 @@ test('season is NOT derived from the thermal band', () => {
     seasonFitPieceAdvisory({ season: 'warm' }, 'winter').tier,
     'the verdict does not change with how cold it is')
   assert.equal(seasonFitPieceAdvisory({ season: 'warm' }, '').tier, 'neutral', 'no calendar, no claim')
-})
-
-test('the two advisories stay separate in the payload', () => {
-  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
-  assert.match(src, /thermal_fit: thermalFitPieceAdvisory/)
-  assert.match(src, /season_fit: seasonFitPieceAdvisory/)
-  // seasonFitPieceAdvisory must not consult any thermal value.
-  const fn = src.slice(src.indexOf('export function seasonFitPieceAdvisory'))
-    .slice(0, src.slice(src.indexOf('export function seasonFitPieceAdvisory')).indexOf('\n}\n'))
-  for (const banned of ['requiredThermalBand', 'weatherFitForPiece', 'garmentWarmthLevel', 'weatherProfile']) {
-    assert.ok(!fn.includes(banned), `season must not read ${banned}`)
-  }
-})
-
-// The payload carried piece_assessments long before anything told the model the field existed.
-// Delivering correct evidence in an undocumented field is the same as not delivering it —
-// thread_1788424519744 put an engine-`discouraged` puffer on four of six 65/48°F looks.
-test('the workbench documents the assessment payload and its tier vocabulary', async () => {
-  const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
-  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
-  const instructions = src.slice(src.indexOf('const workbenchInstructions'), src.indexOf('].filter(Boolean).join', src.indexOf('const workbenchInstructions')))
-  for (const term of ['piece_assessments', 'thermal_fit', 'season_fit', 'thermal_demand', 'calendar_season']) {
-    assert.ok(instructions.includes(term), `workbench instructions must name ${term}`)
-  }
-  // Each tier the advisories can emit must be defined where every slot sees it, not only in the
-  // extreme-heat branch that used to be the sole definition site.
-  for (const tier of ['preferred', 'workable', 'neutral', 'discouraged', 'prohibited']) {
-    assert.ok(instructions.includes(`\`${tier}\``), `tier ${tier} must be defined in the shared instructions`)
-  }
-  assert.ok(typeof buildPlanSlotWorkbench === 'function')
 })
 
 // Distance, not direction. A distance-blind tier put straight-leg denim (one step over a `light`
@@ -248,4 +210,95 @@ test('an indoor slot still knows the weather it travels through', () => {
   assert.equal(demand.layer.level, 'moderate', 'the coat answers to the walk there')
   assert.equal(thermalFitPieceAdvisory(PUFFER, indoorProfile, exposure).tier, 'discouraged',
     'a museum day must have something to say about a down puffer')
+})
+
+// ─── THE MODEL CONTRACT (docs/model-facing-signal-inventory.md) ────────────────────────────────
+//
+// The inventory's finding 1: 19 of 25 model-facing signals were derived judgments, and the garment
+// thermal facts behind them were in no payload at all. A verdict the model cannot check is the
+// wrong interface even when the verdict is right. These tests pin the boundary in both directions.
+
+const SUN_HOODIE = {
+  id: 990358, name: 'navy technical hoodie', category: 'outerwear',
+  fabric_weight: 'light', fabric_category: 'technical/performance',
+  fiber_content: ['polyester', 'spandex', 'unknown'], sleeve_length: 'long',
+  season: 'year-round', reads_as: 'simple technical hoodie',
+  // Both absent in the real record — nobody ever asked.
+  insulating_layer_materials: null, interior_construction: null,
+}
+
+test('the catalog line carries the facts needed to judge the sun hoodie', async () => {
+  const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
+  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
+  const line = src.slice(src.indexOf('function thermalFactsForPieceLine'), src.indexOf('function planWorkbenchPieceLine'))
+  // The four facts that separate a UPF shell from a transitional jacket. Without them the model is
+  // told a warmth level and cannot tell which garment produced it.
+  for (const fact of ['warmth:', 'insulation:', 'interior:', 'season:', 'removable:']) {
+    assert.ok(line.includes(fact), `the fact channel must state ${fact}`)
+  }
+  assert.ok(typeof buildPlanSlotWorkbench === 'function')
+})
+
+test('unrecorded insulation is not reported as verified-none', async () => {
+  const { thermalMaterialVerdict } = await import('../styling-engine/attributes.js')
+  // 23 of this wardrobe's outerwear pieces have never been asked; 7 are verified empty. Collapsing
+  // the two would turn an honest gap into a confident wrong fact — the whole point of §5 of
+  // material-role-representation-spec.md.
+  assert.equal(thermalMaterialVerdict(SUN_HOODIE), 'unknown')
+  assert.equal(thermalMaterialVerdict({ ...SUN_HOODIE, insulating_layer_materials: [] }), 'non_insulating')
+  assert.equal(thermalMaterialVerdict({ ...SUN_HOODIE, insulating_layer_materials: ['down'] }), 'insulating')
+})
+
+test('no thermal or season verdict crosses into the model contract', () => {
+  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
+  const payload = src.slice(src.indexOf('function planPieceAssessments'), src.indexOf('function idSetForPieces'))
+  assert.ok(!payload.includes('thermal_fit'), 'thermal_fit is a derived styling judgment')
+  assert.ok(!payload.includes('season_fit'), 'season_fit is a derived styling judgment')
+  const workbench = src.slice(src.indexOf('workbenchSlots.push({'), src.indexOf('slot._modelWorkbench = {'))
+  // The field, not the word — the comment explaining its removal legitimately names it.
+  assert.ok(!workbench.includes('thermal_demand:'), 'the slot states conditions, not a warmth target')
+  assert.ok(workbench.includes('exposure_conditions'), 'the slot must still state its conditions')
+  // The instructions must not carry text whose purpose is obedience to a removed verdict.
+  const instructions = src.slice(src.indexOf('const workbenchInstructions'), src.indexOf('].filter(Boolean).join', src.indexOf('const workbenchInstructions')))
+  for (const gone of ['piece_assessments', 'thermal_fit', 'wrong by AMOUNT', 'aligned index-for-index']) {
+    assert.ok(!instructions.includes(gone), `instruction text "${gone}" belongs to the removed contract`)
+  }
+})
+
+test('conditions are stated as a range, and absent when unknown', async () => {
+  const { slotExposureConditions } = await import('../styling-engine/outfitSetPlanner.js')
+  const text = slotExposureConditions(EXP(W(65, 48), 'hiking'))
+  assert.match(text, /54-65°F likely exposure/)
+  assert.match(text, /hiking/)
+  assert.match(text, /estimated window/)
+  // No conditions is an empty field, never an invented range.
+  assert.equal(slotExposureConditions(EXP({}, 'hiking')), '')
+})
+
+test('selection preserves thermal range, and degrades when the wardrobe cannot', async () => {
+  const { selectPlanWorkbenchPieces } = await import('../styling-engine/outfitSetPlanner.js')
+  const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
+  const { garmentWarmthLevel } = await import('../styling-engine/garmentWarmth.js')
+  const w = W(65, 48)
+  const slot = { label: 'Nature Walks', activity: 'hiking', environment: 'outdoor', occasion: 'casual', stylingContext: { occasion: 'casual', calendarSeason: 'fall' } }
+  const pick = pool => selectPlanWorkbenchPieces(pool, slot, { weatherProfile: w, exposure: EXP(w, 'hiking'), calendarSeason: 'fall' })
+    .pieces.filter(p => wardrobeCategoryGroup(p) === 'outerwear')
+
+  // A wardrobe that HAS a range must offer one: both Vienna failures were a slot holding only one
+  // kind of layer, which forces the model's hand whichever kind it is.
+  const varied = [
+    PUFFER, TRENCH, SUN_HOODIE,
+    { id: 20, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['wool'], interior_construction: 'full_lining' },
+    { id: 21, category: 'outerwear', fabric_weight: 'light', fiber_content: ['acrylic'], interior_construction: 'unlined' },
+    { id: 22, category: 'outerwear', fabric_weight: 'light', fiber_content: ['nylon'], interior_construction: 'unlined' },
+  ]
+  const levels = new Set(pick(varied).map(p => garmentWarmthLevel(p) || 'unknown'))
+  assert.ok(levels.size >= 3, `expected a spread of warmth levels, got ${[...levels].join()}`)
+
+  // A wardrobe that does NOT must not have variety manufactured for it — this is a diversity
+  // mechanism, not a quota.
+  const flat = [1, 2, 3, 4, 5].map(id => ({ id: id + 30, category: 'outerwear', fabric_weight: 'light', fiber_content: ['acrylic'], interior_construction: 'unlined' }))
+  const flatLevels = new Set(pick(flat).map(p => garmentWarmthLevel(p) || 'unknown'))
+  assert.equal(flatLevels.size, 1)
+  assert.ok(pick(flat).length > 0, 'a single-level wardrobe still fills the quota')
 })
