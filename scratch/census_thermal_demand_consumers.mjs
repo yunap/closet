@@ -17,7 +17,11 @@
 //                      derive its semantics from the thermal band
 //   projection         display, prompt text, owner-rule and metadata surfaces — migrated separately
 //   non_thermal        footwear / rain — independent, and must NOT fall to zero
-//   producer           builds or propagates the profile — legacy authority eventually derived
+//   derivation         computes the flag shape FROM structured weather or from an existing profile
+//                      — carries no independent authority; legitimate for as long as the parallel
+//                      contracts consume flags
+//   producer           creates cold truth from something that is NOT structured weather. This is the
+//                      class with independent authority, and the only one step 6 has to justify.
 //
 // DONE means: no consumer derives thermal AMOUNT from legacy cold flags, and no independent
 // contract accidentally derives its semantics from the band. Not "every count is zero".
@@ -35,11 +39,15 @@ const EXCLUDE = new Set(['styling-engine/weather.js'])   // the producer of reco
 // Classification by enclosing owner. Where one owner mixes concerns, the line-level rules below
 // refine it — evaluateOutfitEnvironmentalAdequacy is the case that matters.
 const OWNER_CLASS = {
-  profileForEnvironment: 'producer',
+  // Derivations: each computes the flag shape from structured weather (resolved.temperature) or by
+  // transforming a profile it was handed. None invents a temperature.
+  profileForEnvironment: 'derivation',
+  resolveSlotWeather: 'derivation',
+  profileFromResolvedWeatherContext: 'derivation',
+  projectStylingApplicabilityContext: 'derivation',
+  // The one genuine producer: it parses prose and emits isCold with NO structured temperature
+  // behind it. See §23.
   weatherProfileFromContext: 'producer',
-  resolveSlotWeather: 'producer',
-  profileFromResolvedWeatherContext: 'producer',
-  projectStylingApplicabilityContext: 'producer',
   describeWeatherProfile: 'projection',
   weatherSummary: 'projection',
   savedOutfitImagePrompt: 'projection',
