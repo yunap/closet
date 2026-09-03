@@ -784,3 +784,62 @@ remain a useful sanity check and are not a definition of success.
 
 `proposedWarmthLevel` has no production consumer, so all of this is behaviour-neutral until the
 migration in §8.
+
+
+---
+
+## 14. Slice 2 — ordinal placement rebuilt (2026-09-03)
+
+`styling-engine/garmentWarmth.js`, `test/garmentWarmth.test.js` (8 tests), verifier
+`node scratch/compare_warmth_placement.mjs`. **No production consumers** — §8 step 1: pure functions
+first, behaviour unchanged. `proposedWarmthLevel` is superseded but untouched, and neither has a
+caller.
+
+### 14.1 The gate, against §13.6's five criteria
+
+```text
+1. unknown stays unknown        PASS   at-risk garments still placed: 0  (old formula: 88)
+2. coverage represented         PASS   sleeveless wool shell: warm -> light
+3. pinned orderings hold        PASS   puffer > cardigan > unlined jacket, on real rows
+4. reference-anchor ordering    PROVISIONAL — anchors not yet verified against primary sources
+5. cold as diagnostic only      OBSERVED, not optimised: 2.7% disagreement (was 7.0%)
+```
+
+Criterion 5 is reported, never targeted. The improvement from 7.0% to 2.7% is a **side effect** of
+reading coverage, which `cold` also reads — not evidence of fitting, and not a success metric. A
+future change that raises disagreement while satisfying 1-4 is acceptable.
+
+### 14.2 Placement coverage falls, on purpose
+
+```text
+placed 116/213 = 54.5%      (old: 204/213 = 95.8%)
+material_unestablished 97
+```
+
+**That drop is criterion 1 being enforced, not a regression.** The 97 are medium or heavy garments
+with no material evidence — the band where "there might be something warm in here" can move a
+garment several levels. The old formula gave them a level anyway. Honest coverage of 54.5% is worth
+more to a demand comparison than confident coverage of 95.8%, and §5.6 requires it.
+
+It also names the real remedy: **97 garments are missing fibre data**, and no formula recovers that.
+This is a tagging backlog the placement now makes visible instead of papering over.
+
+### 14.3 Two calibration corrections made during the slice
+
+**Clamped index → boundaries.** The first version used the raw sum as an array index and saturated:
+a wool sweater, a knit cardigan and a down puffer all came out `very warm`, destroying the very
+separation rows 1 and 3 depend on. Inputs span roughly −3..5.5, so five levels need real boundaries.
+
+**Secondary coverage is half-steps.** Sleeves, hem and neckline first got a full step each, and a
+medium fleece with a warm collar then tied a heavy down puffer. Three secondary terms outweighing a
+fabric-weight class contradicts the §13.5 spread. A collar is not worth the difference between
+medium and heavy cloth.
+
+### 14.4 Still open
+
+* **Anchor verification** against primary ASHRAE 55 / ISO 9920 material. The §13.5 table is
+  reproduced from standard tables, not consulted at source; **the boundaries in `levelForRawScore`
+  are provisional until it lands** and must not be treated as authoritative.
+* **Demand mapping is still not chosen.** §12's gate now has 4 of 5 criteria met, with criterion 4
+  outstanding. That is the remaining precondition.
+* **Ensemble contribution** (§9.2) is untouched — this places one garment, not an outfit.

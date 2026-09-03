@@ -105,3 +105,4 @@ scratch/*
 !scratch/thermal_demand_consumer_inventory.json
 !scratch/measure_warmth_placement.mjs
 !scratch/probe_unknown_placements.mjs
+!scratch/compare_warmth_placement.mjs
