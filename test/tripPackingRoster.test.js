@@ -383,6 +383,22 @@ test('the trip roster system prompt asks for cross-use-case reuse, not capsule p
   assert.equal(tripRosterSelectionSystemPrompt(), tripRosterSelectionSystemPrompt())
 })
 
+// thread_1788504927533, Part 2: the outerwear/layering judgment belongs to the model ("cardigan vs
+// jacket for this particular 65/48°F week" is exactly the contextual judgment deterministic code
+// cannot honestly make) -- the prompt's job is only to make sure the model actually weighs it, the
+// same way it is already asked to weigh footwear jobs, using the supplied garment facts. This must
+// never harden into a category preference; that would just sneak the rejected deterministic rule
+// back in through prompt text instead of code.
+test('the trip roster system prompt asks the model to judge layering/outerwear strategy from garment facts, without preferring any category', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /LAYERING \/ OUTERWEAR THAT SUITS THE TRIP/)
+  assert.match(brief, /repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay/)
+  assert.match(brief, /construction, warmth, insulation, weather-protection, and removability facts/)
+  assert.doesNotMatch(brief, /prefer (a |)(jacket|coat)/i, 'must not harden into a category preference — that is the deterministic rule this session explicitly rejected, now smuggled into prose instead of code')
+  assert.doesNotMatch(brief, /must (pack|include|choose) a (jacket|coat)/i)
+  assert.doesNotMatch(brief, /cardigans? (is|are) not (enough|sufficient|adequate)/i, 'must not single out cardigans as inherently inadequate — the judgment is contextual, not garment-kind-based')
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],

@@ -4418,6 +4418,8 @@ REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a
 
 FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers.
 
+LAYERING / OUTERWEAR THAT SUITS THE TRIP. Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions; do not choose a layer merely because one is required structurally.
+
 A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
 
 For every selected ID, give exactly one piece_jobs entry naming the job it does on this trip — which use case(s) it serves and why it earned a place. Include no unselected IDs and do not repeat an ID.
