@@ -4102,6 +4102,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
+      // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
+      // kind register_ceiling/register_floor already are. `hasMinimumWarmLayer` (the actual
+      // NO_WARM_LAYER_FOR_COLD criterion in outfitEnvironmentalAdequacy.js) fires exactly on
+      // `isCold && !indoorDestination`; this mirrors that condition so the model is told which
+      // slots the gate applies to instead of re-deriving a threshold from exposure_conditions on
+      // its own — that re-derivation, not the gate itself, was the actual evidence gap.
+      cold_layer_required: Boolean(weatherProfile?.isCold) && slot.environment !== 'indoor' && weatherProfile?.isIndoor !== true,
       allowed_piece_ids: rosterOrder.map(piece => Number(piece.id)).filter(Boolean),
       calendar_season: slot.stylingContext.calendarSeason || '',
       piece_assessments: rosterOrder.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
@@ -4193,6 +4200,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
     'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // thread_1788508369689 arc: exposure_conditions deliberately gives only a temperature range
+    // (§2684's thermal_demand removal — a styling target must not be dictated), but the cold floor
+    // this states below is a pass/fail structural gate (NO_WARM_LAYER_FOR_COLD), not a preference,
+    // and nothing told the model its actual criterion. Names the criterion, not a garment ("add a
+    // jacket") — owner ruling: card = representative core outfit, so a cold slot's fix is not
+    // forcing the layer into piece_ids, it's the new assigned_layer_piece_ids relation.
+    planKind === 'trip'
+      ? 'When a slot\'s cold_layer_required is true, its submitted outfit itself must actually be warm: either piece_ids already includes an outerwear piece, or a heavy-fabric top/dress as the main piece. If neither is true, choose a packed layer from the current packing roster that fits this specific look and its occasion/activity, and name its ID in assigned_layer_piece_ids — do not put it in piece_ids just to satisfy this, and do not add one when piece_ids is already warm enough or cold_layer_required is false.'
+      : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
     // shawls") was present in the system-prompt tail but got out-composed by
@@ -4751,12 +4767,34 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       .filter(id => gateAllowedIds.has(id))
       .map(id => planPiecesById.get(id))
       .filter(Boolean)
+    // Owner ruling (thread_1788508369689 arc, "product ruling: use B"): a trip card is a
+    // representative CORE outfit, not a literal enumeration of every shared packed layer worn with
+    // it. A cold slot's outfit is still validated as core-plus-layer (assignedLayers feeds only the
+    // environmental-adequacy check below, via evaluateWearableOutfit's environmentPieces), but the
+    // layer never joins `pieces`/`pieceIds` — it does not count toward this card's identity
+    // (duplicate/no-repeat/budget keys all stay core-only), and it is not required to be visually
+    // shown. gateAllowedIds is reused unchanged for eligibility: it is already exactly "this trip's
+    // packing roster, filtered to what is gate-eligible for this slot" (composePool for a trip plan
+    // IS tripRosterSelection.roster) — an id passing it already proves both "in the current packing
+    // roster" and "valid for that slot under existing hard gates" from the owner's requirements.
+    const assignedLayerIds = (Array.isArray(raw?.assigned_layer_piece_ids) ? raw.assigned_layer_piece_ids : [])
+      .map(id => Number(id)).filter(Boolean)
+    const assignedLayers = []
+    for (const id of assignedLayerIds) {
+      if (!gateAllowedIds.has(id)) {
+        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
+        continue
+      }
+      const layerPiece = planPiecesById.get(id)
+      if (layerPiece) assignedLayers.push(layerPiece)
+    }
     const outfit = {
       title: String(raw?.title || slot.label || '').trim(),
       reason: String(raw?.reason || '').trim(),
       stylingInstructions: String(raw?.styling_instructions || raw?.stylingInstructions || '').trim(),
       pieces,
       pieceIds: dedupedIds,
+      ...(assignedLayers.length ? { assignedLayerIds: assignedLayers.map(piece => Number(piece.id)) } : {}),
       source: 'plan_outfit_set',
       composedBy: 'model',
       // Spec §7: persist the truthful weather disclosure and its serialized
@@ -4781,6 +4819,11 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
         // validateSlotOutfitConstraints below.
         weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment, packingRosterHasLayer },
+        // Only the environmental-adequacy stage sees assignedLayers — structure, required-base,
+        // layer-direction and layer-construction all stay core-only. A shared packed layer is not
+        // claimed to be visually shown with this look (that is exactly what "core outfit, not a
+        // literal enumeration" means), so it must not be fed into checks that assume it is.
+        ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
       })
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {

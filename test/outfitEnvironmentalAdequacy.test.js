@@ -243,6 +243,37 @@ test('evaluateWearableOutfit stays silent without weatherContext and composes wi
   assert.equal(withContext.hardValid, false)
 })
 
+// thread_1788508369689 arc, product ruling "use B": a trip card's shared packed layer is not part
+// of its visual identity, so structure/dependency/layer-direction checks must stay core-only while
+// only the environmental-adequacy stage sees core-plus-layer as the effective worn outfit.
+test('environmentPieces feeds only the environment stage; every other stage still evaluates the bare pieces', () => {
+  const coreOnly = [top(), bottom(), shoes()]
+  const withLayer = [...coreOnly, WOOL_COAT]
+
+  const bareCore = evaluateWearableOutfit(coreOnly, {
+    requireShoes: true,
+    weatherContext: { weatherProfile: { isCold: true } },
+  })
+  assert.ok(bareCore.hardFindings.some(f => f.message === 'no warm layer for cold weather'),
+    'sanity: the bare core alone must fail the cold floor')
+
+  const withEnvironmentPieces = evaluateWearableOutfit(coreOnly, {
+    requireShoes: true,
+    weatherContext: { weatherProfile: { isCold: true } },
+    environmentPieces: withLayer,
+  })
+  assert.ok(!withEnvironmentPieces.hardFindings.some(f => f.message === 'no warm layer for cold weather'),
+    'the assigned layer, passed only via environmentPieces, must satisfy the cold floor')
+
+  // Structure isn't affected by environmentPieces: a 4-piece outfit (WOOL_COAT included) would still
+  // pass structure regardless, so prove non-effect a different way -- outfitStructure findings are
+  // identical whether or not environmentPieces is supplied, since that stage always reads `pieces`.
+  const withoutOverride = evaluateWearableOutfit(coreOnly, { requireShoes: true })
+  assert.deepEqual(withEnvironmentPieces.stages.find(s => s.stage === 'structure').result,
+    withoutOverride.stages.find(s => s.stage === 'structure').result,
+    'structure must be computed from the bare pieces, never from environmentPieces')
+})
+
 // --- [R1] severity actually survives the real plumbing -------------------------------------------
 
 test('isColdSevere survives resolveWeatherContext and its serialize/restore round trip', () => {
