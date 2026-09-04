@@ -810,6 +810,15 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     // single shared weather_profile below (which cannot distinguish slots).
     ...(outfit?.weatherUsed ? { weather_used: outfit.weatherUsed } : {}),
     ...(outfit?.resolvedWeatherContext ? { resolved_weather_context: outfit.resolvedWeatherContext } : {}),
+    // thread_1788508369689 arc, product ruling "use B": the assigned packed-layer relation was
+    // being silently dropped at exactly this whitelist boundary — present on the accepted outfit,
+    // absent from persisted current_outfit_set, so a follow-up edit had no way to know a cold
+    // card's worn outfit depended on a specific packed layer. See the matching addition in
+    // core.js's outfitSetFromBody, which projects the same field for the other current_outfit_set
+    // path (kept in sync by the same convention as weather_used/resolved_weather_context above).
+    ...(Array.isArray(outfit?.assignedLayerIds) && outfit.assignedLayerIds.length
+      ? { assigned_layer_piece_ids: outfit.assignedLayerIds.map(Number).filter(Boolean) }
+      : {}),
     piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])

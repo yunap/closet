@@ -2037,6 +2037,29 @@ test('bounded router state persists per-outfit weatherUsed/resolvedWeatherContex
   assert.equal(state.current_outfit_set[1].resolved_weather_context, undefined)
 })
 
+// thread_1788508369689 arc, product ruling "use B": validateSubmittedPlanOutfits puts
+// assignedLayerIds on an accepted trip outfit (the shared packed layer used with a cold look,
+// deliberately kept off pieceIds), but this whitelist serializer was found to drop it silently on
+// the way into persisted current_outfit_set -- a follow-up edit had no way to know a cold card's
+// worn outfit depended on a specific packed layer at all.
+test('bounded router state persists assignedLayerIds onto current_outfit_set as assigned_layer_piece_ids', () => {
+  const state = boundedConversationStateFromToolContext({
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [1, 2, 3],
+      pieces: [{ id: 1, name: 'top' }, { id: 2, name: 'bottom' }, { id: 3, name: 'shoes' }],
+      assignedLayerIds: [8],
+    }, {
+      label: 'City Day',
+      pieceIds: [4, 5, 6],
+      pieces: [{ id: 4, name: 'top' }, { id: 5, name: 'bottom' }, { id: 6, name: 'shoes' }],
+    }]
+  })
+  assert.deepEqual(state.current_outfit_set[0].assigned_layer_piece_ids, [8])
+  assert.equal(state.current_outfit_set[1].assigned_layer_piece_ids, undefined,
+    'an outfit with no assigned layer must not fabricate one')
+})
+
 test('stored weather physics survive echoed display prose but yield to explicit turn weather', async () => {
   const { buildStylistConversationPayload, saveStylistConversationState } = await import('../styling-engine/core.js')
   const sessionId = `weather-physics-${Date.now()}`

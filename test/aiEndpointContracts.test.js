@@ -6487,6 +6487,27 @@ test('buildStylistConversationPayload persists per-outfit weatherUsed/resolvedWe
   assert.match(String(payload.system), /Cambria, CA/)
 })
 
+// thread_1788508369689 arc, product ruling "use B": same "kept in sync" convention as the weather
+// projection above, for the assigned packed-layer relation validateSubmittedPlanOutfits attaches to
+// an accepted cold-slot outfit. Found dropped silently at this exact whitelist boundary — present
+// on the accepted outfit, absent from persisted current_outfit_set. JSON.stringify(threadState) is
+// what actually reaches the model as THREAD STATE, so anything missing from this object is
+// invisible to a follow-up turn, not merely unlabeled.
+test('buildStylistConversationPayload persists assignedLayerIds onto current_outfit_set as assigned_layer_piece_ids', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const payload = await buildStylistConversationPayload({
+    question: 'What did you pair with the Nature Walk look?',
+    conversationMode: 'new_request',
+    sessionId: 'assigned-layer-persist-payload',
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      assignedLayerIds: [seeded.jacket],
+    }],
+  })
+  assert.deepEqual(payload.threadState.current_outfit_set[0].assigned_layer_piece_ids, [seeded.jacket])
+})
+
 // Spec §7 continuity, the gap found by external review: buildStylistConversationPayload's OWN save
 // (inside it, before the model/tool call) can only persist cards the browser already echoed back
 // from the PREVIOUS turn — it has no way to know about cards THIS turn's tool loop is about to
@@ -6543,6 +6564,46 @@ test('persistFullStylistTurnState: a fresh plan_outfit_set result survives to th
   persistFullStylistTurnState({ toolContext: proseOnlyContext, answer: 'Just a quick note.', freeformTurnToken: 'tok-2', sessionId })
   const afterProseOnlyTurn = getStylistConversationState(sessionId)
   assert.equal(afterProseOnlyTurn.current_outfit_set?.[0]?.label, 'Vienna Evening', 'a turn with no fresh cards must leave the prior set untouched, not clear it')
+})
+
+// thread_1788508369689 arc, product ruling "use B": the full four-hop trace the assigned-layer
+// relation must survive — (1) accepted outfit storage (validateSubmittedPlanOutfits ->
+// toolContext.generatedOutfits), (2) persisted current_outfit_set, (3) thread-state restoration on
+// a later turn with no browser echo, (4) availability in that later turn's payload.threadState for
+// follow-up editing context. Same shape as the weather round trip above, proving the SAME boundary
+// that dropped weather disclosure until spec §7 doesn't silently drop this relation too.
+test('persistFullStylistTurnState: assignedLayerIds survives accepted-outfit storage through persistence to a later turn\'s payload', async () => {
+  const { persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `assigned-layer-persist-${Date.now()}`
+
+  // Hop 1: standing in for validateSubmittedPlanOutfits's accepted outfit, exactly as
+  // assembleSubmittedPlanOutfits hands it to toolContext.generatedOutfits (camelCase assignedLayerIds).
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      assignedLayerIds: [seeded.jacket],
+    }],
+  }
+  persistFullStylistTurnState({ toolContext, answer: 'Here is your Nature Walk look.', freeformTurnToken: 'tok-1', sessionId })
+
+  // Hop 2: persisted current_outfit_set.
+  const afterTurnOne = getStylistConversationState(sessionId)
+  assert.deepEqual(afterTurnOne.current_outfit_set?.[0]?.assigned_layer_piece_ids, [seeded.jacket],
+    'the relation must reach persisted state, not just the in-memory accepted outfit')
+
+  // Hops 3-4: a genuine follow-up turn with no browser echo, restored from server state, and the
+  // relation must still be present in what actually reaches the model (payload.threadState).
+  const payload = await buildStylistConversationPayload({
+    question: 'what layer did you use with the nature walk look?',
+    conversationMode: 'followup',
+    sessionId,
+    // generatedOutfits intentionally omitted — the browser-echo-omitted case.
+  })
+  assert.deepEqual(payload.threadState.current_outfit_set?.[0]?.assigned_layer_piece_ids, [seeded.jacket],
+    'a follow-up turn restored from server state must still see the assigned layer, not just piece_ids')
 })
 
 // docs/README.md: trip roster architecture, item 5's static lifecycle proof -- a card edit must

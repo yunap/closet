@@ -4403,6 +4403,11 @@ export async function buildStylistConversationPayload(body) {
     // (routes/ai.js), which projects the same two fields for the other current_outfit_set path.
     ...(o?.weatherUsed ? { weather_used: o.weatherUsed } : {}),
     ...(o?.resolvedWeatherContext ? { resolved_weather_context: o.resolvedWeatherContext } : {}),
+    // See the matching addition in boundedConversationStateFromToolContext (routes/ai.js) — same
+    // "must stay in sync" convention as weather_used/resolved_weather_context above.
+    ...(Array.isArray(o?.assignedLayerIds) && o.assignedLayerIds.length
+      ? { assigned_layer_piece_ids: o.assignedLayerIds.map(Number).filter(Boolean) }
+      : {}),
     piece_ids: (Array.isArray(o?.pieceIds) && o.pieceIds.length
       ? o.pieceIds
       : (Array.isArray(o?.pieces) ? o.pieces.map(piece => piece?.id) : [])
