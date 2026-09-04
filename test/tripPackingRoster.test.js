@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { selectTripRosterViaModel } from '../styling-engine/outfitSetPlanner.js'
+import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
 
 // docs/database-safety.md: routes/ai.js reaches db.js on import, so this must isolate
 // WARDROBE_DB_PATH before that import or it runs db.js's migrations against the real wardrobe.db.
@@ -623,4 +624,43 @@ test('the trip roster repair call reuses the initial call cache prefix instead o
   assert.equal(initialBreak, repairBreak)
   assert.deepEqual(repair.slice(0, repairBreak + 1), initial.slice(0, repairBreak + 1))
   assert.match(repair[repair.length - 1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+})
+
+// ─── VISUAL-ROLE EVIDENCE SPLIT (thread_1788518048013 arc) ──────────────────────────────────────
+// hero_piece/color_accent/sharpener_piece are a capsule-era STYLING-ROLE judgment (which garment
+// should carry an outfit's visual weight for that planning objective), not a garment fact with any
+// trip-specific meaning. Both channels that could shape trip roster selection through it -- image
+// fidelity (pieceVisualDetailPolicy) and catalog text (buildPieceText/tripRosterSelectionUserText)
+// -- must stop granting it special treatment there, while a capsule caller (or any other default
+// caller) keeps the original behavior unchanged.
+const COLOR_ACCENT_PLAIN = piece(40, 'top', {
+  pattern_complexity: 'solid', fabric_category: 'cotton',
+  style_profile_json: { visual_roles: ['color_accent'] },
+})
+const LOUD_PATTERN_PIECE = piece(41, 'top', { pattern_complexity: 'loud' })
+
+test('pieceVisualDetailPolicy: color_accent alone earns 800px by default (capsule-unchanged), but not with useVisualRoles:false', () => {
+  const withRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN)
+  assert.deepEqual(withRoles, { maxPx: 800, detail: 'auto' }, 'default behavior (capsule roster selection) must be unchanged')
+
+  const withoutRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN, { useVisualRoles: false })
+  assert.deepEqual(withoutRoles, { maxPx: 448, detail: 'low' }, 'a styling-role tag with no trip-specific meaning must not earn higher fidelity when disabled')
+})
+
+test('pieceVisualDetailPolicy: genuine garment-intrinsic signals (pattern, texture) still earn 800px with useVisualRoles:false', () => {
+  const result = pieceVisualDetailPolicy(LOUD_PATTERN_PIECE, { useVisualRoles: false })
+  assert.deepEqual(result, { maxPx: 800, detail: 'auto' }, 'a genuinely hard-to-read garment must still get higher fidelity regardless of the visual-roles flag')
+})
+
+test('tripRosterSelectionUserText excludes visual roles from candidate text even when the piece carries them', () => {
+  const bench = [COLOR_ACCENT_PLAIN]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.doesNotMatch(text, /visual roles/i, 'hero_piece/color_accent must not shape the trip roster model through text either')
+})
+
+test('buildPieceText keeps surfacing visual roles by default -- only the trip roster path opts out', async () => {
+  const { buildPieceText } = await import('../styling-engine/rules.js')
+  const text = buildPieceText(COLOR_ACCENT_PLAIN)
+  assert.match(text, /visual roles: color_accent/, 'every other caller (capsule roster selection included) must be unaffected')
 })

@@ -1900,8 +1900,8 @@ export function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCuto
   }
 }
 
-export function buildPieceText(p) {
-  return buildWardrobePieceTruthText(p)
+export function buildPieceText(p, options) {
+  return buildWardrobePieceTruthText(p, options)
 }
 
 export function pieceStyleProfile(piece = {}) {

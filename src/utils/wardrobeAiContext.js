@@ -238,7 +238,12 @@ export function stylingRulesForPrompt(rules) {
   return (Array.isArray(rules) ? rules : []).filter(rule => !GENERATED_OCCASION_RECEIPT.test(String(rule || '')))
 }
 
-export function buildWardrobePieceTruthText(piece = {}) {
+// includeVisualRoles (thread_1788518048013 arc, default true so every existing caller is
+// unchanged): hero_piece/color_accent/sharpener_piece/support_piece/etc. are capsule-era STYLING-
+// ROLE judgments -- which garment should carry an outfit's visual weight in that planning
+// objective. Trip roster selection has no equivalent objective for the roles to answer, so passing
+// false there stops surfacing them as if they were a garment fact the trip model should weigh.
+export function buildWardrobePieceTruthText(piece = {}, { includeVisualRoles = true } = {}) {
   const parts = []
   const colors = Array.isArray(piece.colors) ? piece.colors : []
 
@@ -332,7 +337,7 @@ export function buildWardrobePieceTruthText(piece = {}) {
       .map(([lane, score]) => `${lane}:${score}`)
     : []
   if (lanes.length) parts.push(`style lanes: ${lanes.join(', ')}`)
-  if (Array.isArray(profile?.visual_roles) && profile.visual_roles.length) parts.push(`visual roles: ${profile.visual_roles.slice(0, 4).join(', ')}`)
+  if (includeVisualRoles && Array.isArray(profile?.visual_roles) && profile.visual_roles.length) parts.push(`visual roles: ${profile.visual_roles.slice(0, 4).join(', ')}`)
   if (profile?.style_notes?.best_use) parts.push(`best use: ${profile.style_notes.best_use}`)
   if (profile?.style_notes?.risk) parts.push(`style risk: ${profile.style_notes.risk}`)
 

@@ -4455,7 +4455,10 @@ The replacements you bring in are held to the same standard as the original pick
 export function tripRosterSelectionUserText({
   bench = [], slots = [], attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
 } = {}) {
-  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  // includeVisualRoles:false (thread_1788518048013): hero_piece/color_accent/etc. are a capsule-era
+  // styling-role judgment, not an authoritative garment fact for trip packing -- surfacing them in
+  // text would shape the roster model the same way the now-disabled image-fidelity boost did.
+  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece, { includeVisualRoles: false })}`)
   const slotLines = slots.map(slot => {
     const distinctOutfits = Math.max(1, Number(slot.targetOutfits) || 1)
     return `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}) — needs ${distinctOutfits} distinct outfit${distinctOutfits === 1 ? '' : 's'}: ${slot.bestFor || slot.label}`
@@ -4517,7 +4520,11 @@ export async function chooseTripRosterWithProvider({ bench, slots, attempt, fail
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
-      const { maxPx, detail } = pieceVisualDetailPolicy(piece)
+      // useVisualRoles:false (thread_1788518048013): hero_piece/color_accent/sharpener_piece are a
+      // capsule-era styling-role judgment with no trip-specific evidentiary meaning -- image
+      // fidelity here should track only whether the garment itself is hard to read (pattern,
+      // texture), not which piece a different planning objective would cast as the "hero."
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece, { useVisualRoles: false })
       const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
       imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
       imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
