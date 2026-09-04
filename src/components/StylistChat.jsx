@@ -4272,7 +4272,11 @@ export default function StylistChat({
           pieceIds: ids,
           occasion: options.occasion || wardrobeOutfitOccasion,
           season: options.season || wardrobeOutfitSeason,
-          renderMode: options.renderMode || 'ai'
+          renderMode: options.renderMode || 'ai',
+          // server.js's generic /api telemetry middleware reads req.body.sessionId for every route
+          // -- this was the only thing missing to correlate this call back to its thread in
+          // ai_call_log, no route-handler change needed. 'new_chat' isn't a real persisted thread id.
+          sessionId: currentThreadId !== 'new_chat' ? currentThreadId : ''
         })
       })
       const contentType = res.headers.get('content-type') || ''
@@ -4321,7 +4325,8 @@ export default function StylistChat({
         body: JSON.stringify({
           outfits: visibleOutfits,
           occasion: activeContext?.type === 'piece' ? generateOccasion : wardrobeOutfitOccasion,
-          season: activeContext?.type === 'piece' ? generateSeason : wardrobeOutfitSeason
+          season: activeContext?.type === 'piece' ? generateSeason : wardrobeOutfitSeason,
+          sessionId: currentThreadId !== 'new_chat' ? currentThreadId : ''
         })
       })
       const contentType = res.headers.get('content-type') || ''
