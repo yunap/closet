@@ -827,7 +827,11 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
   // pattern current_outfit_set already uses.
   const rosterBearingOutfit = outfits.find(outfit => outfit?.tripPlanContext)
   const packingRoster = rosterBearingOutfit?.tripPlanContext
-    ? { roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [], roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [] }
+    ? {
+        roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [],
+        roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [],
+        slots: rosterBearingOutfit.tripPlanContext.slots || [],
+      }
     : (toolContext?.pendingRosterChange
       ? (() => {
           const removedIdSet = new Set(toolContext.pendingRosterChange.removedIds || [])
@@ -836,6 +840,9 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
           return {
             roster_ids: [...new Set([...survivingIds, ...toolContext.pendingRosterChange.addedIds])],
             roster_pieces: [...survivingPieces, ...toolContext.pendingRosterChange.addedPieces],
+            // The trip's requirement slots are immutable facts about the itinerary, not something a
+            // roster edit changes — carried forward unchanged from what this turn was handed.
+            slots: toolContext.packingRosterSlots || [],
           }
         })()
       : null)
@@ -5197,6 +5204,10 @@ router.post('/ask', async (req, res) => {
       (payload.threadState?.packing_roster?.roster_ids || []).map(Number).filter(Boolean)
     )
     toolContext.packingRosterPieces = payload.threadState?.packing_roster?.roster_pieces || []
+    // The trip's original normalized use-case slots (occasion/activity/weather facts), persisted
+    // alongside the roster so a later roster edit can be validated against the real trip
+    // specification instead of reconstructed from whichever cards the user happened to accept.
+    toolContext.packingRosterSlots = payload.threadState?.packing_roster?.slots || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [
         ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),

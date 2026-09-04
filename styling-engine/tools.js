@@ -2112,10 +2112,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           : null
         if (packingRosterChange) {
           toolContext.pendingRosterChange = packingRosterChange
-          // Best-effort SET-level re-check (docs/README.md: trip roster architecture, item 5).
-          // The trip's original use-case slots are not themselves persisted across turns — only
-          // currentOutfitSet's accepted cards are — so this approximates them from each accepted
-          // card's own occasion/activity rather than re-deriving the plan's real slot definitions.
+          // SET-level re-check (docs/README.md: trip roster architecture, item 5) against the trip's
+          // own persisted requirement slots (packing_roster.slots) — never reconstructed from
+          // currentOutfitSet's accepted cards, which are representative outfits, not the trip
+          // specification. Reconstructing from cards would silently narrow "does the packing set
+          // cover the whole trip" down to "does it cover the outfits the user happened to accept,"
+          // which is exactly the roster/cards separation this architecture exists to prevent.
           // Advisory only: it discloses a potential gap in the response, it does not block the edit
           // or resurrect the removed piece, since the model (not this check) owns whether a gap is
           // acceptable for this trip.
@@ -2126,12 +2128,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
               ...priorRosterPieces.filter(piece => !removedIdSet.has(Number(piece.id))),
               ...packingRosterChange.addedPieces,
             ]
-            const proxySlots = (toolContext.currentOutfitSet || [])
-              .filter(entry => entry?.occasion)
-              .map((entry, index) => ({ id: `edit_proxy_${index}`, label: entry.label || `slot_${index}`, occasion: entry.occasion, activity: entry.activity || 'none' }))
-            if (proxySlots.length) {
-              const { validateTripRoster } = await import('./outfitSetPlanner.js')
-              const check = validateTripRoster(newRosterPieces, { slots: proxySlots })
+            const persistedSlots = toolContext.packingRosterSlots || []
+            if (persistedSlots.length) {
+              const { validateTripRoster, restoreTripRequirementSlot } = await import('./outfitSetPlanner.js')
+              const tripSlots = persistedSlots.map(restoreTripRequirementSlot)
+              const check = validateTripRoster(newRosterPieces, { slots: tripSlots })
               if (!check.ok) packingRosterChange.coverageGaps = check.failures.map(f => f.message)
             }
           } catch (err) {

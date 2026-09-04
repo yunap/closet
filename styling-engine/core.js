@@ -4388,7 +4388,13 @@ export async function buildStylistConversationPayload(body) {
   // erase the roster memory established by the plan turn before it.
   const rosterBearingOutfit = (Array.isArray(generatedOutfits) ? generatedOutfits : []).find(o => o?.tripPlanContext)
   const packingRoster = rosterBearingOutfit?.tripPlanContext
-    ? { roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [], roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [] }
+    ? {
+        roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [],
+        roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [],
+        // The plan's own normalized trip requirements (docs/README.md: trip roster architecture) —
+        // carried the same way roster_ids/roster_pieces already are, never reconstructed later.
+        slots: rosterBearingOutfit.tripPlanContext.slots || [],
+      }
     : (requestedConversationMode !== 'new_request' && restoredState.packing_roster
       ? restoredState.packing_roster
       : null)

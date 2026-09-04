@@ -737,7 +737,7 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
@@ -760,7 +760,11 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', comp
       photo: piece?.photo || null,
       worn_photo: piece?.worn_photo || null,
       colors: Array.isArray(piece?.colors) ? piece.colors : []
-    })).filter(piece => piece.id)
+    })).filter(piece => piece.id),
+    // The plan's own normalized trip requirements (docs/README.md: trip roster architecture),
+    // carried alongside the roster through the SAME client-echo/server-restore round trip —
+    // never reconstructed later from accepted cards. See serializeTripRequirementSlot.
+    slots: tripRequirementSlots
   } : null
   const capsulePlanContext = capsuleRoster.length ? {
     version: 1,
@@ -3700,6 +3704,67 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   return failures
 }
 
+// The exact fields slotGateEligiblePieces (and therefore tripRosterFailures) reads from a slot,
+// projected out for persistence — no more, no less. Follow-up validation must reuse the plan's own
+// normalized trip requirements, not a second interpretation reconstructed from accepted cards
+// (docs/README.md: trip roster architecture — the owner's own correction after the card-derived
+// proxy this file used before was flagged as partially undoing the roster/cards separation). This
+// is the one place that mapping is written down, so a future slotGateEligiblePieces field it starts
+// reading and this projection stops carrying is a one-file fix, not a silent gap.
+const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
+
+export function serializeTripRequirementSlot(slot = {}) {
+  const weatherSource = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+  const weatherProfile = {}
+  for (const key of TRIP_SLOT_WEATHER_FIELDS) if (weatherSource[key] !== undefined) weatherProfile[key] = weatherSource[key]
+  return {
+    id: slot.id,
+    label: slot.label || '',
+    bestFor: slot.bestFor || '',
+    coverage: slot.coverage || '',
+    planNote: slot.planNote || '',
+    statedWeather: slot.statedWeather || '',
+    environment: slot.environment || '',
+    register: slot.register || '',
+    occasion: slot.stylingContext?.occasion || slot.occasion || '',
+    activity: slot.stylingContext?.activity || slot.activity || '',
+    season: slot.stylingContext?.season || slot.season || '',
+    transitSeason: slot.transitSeason || '',
+    calendarSeason: slot.stylingContext?.calendarSeason || '',
+    date: slot.stylingContext?.date || slot.date || null,
+    weatherProfile,
+  }
+}
+
+// The inverse: a persisted requirement slot reconstructed into the shape slotGateEligiblePieces
+// expects (stylingContext holding the resolved facts, top-level fields as the fallback the `||`
+// chains in that function already read either from). Round-trips serializeTripRequirementSlot's
+// output back into something tripRosterFailures can validate against directly.
+export function restoreTripRequirementSlot(persisted = {}) {
+  return {
+    id: persisted.id,
+    label: persisted.label,
+    bestFor: persisted.bestFor,
+    coverage: persisted.coverage,
+    planNote: persisted.planNote,
+    statedWeather: persisted.statedWeather,
+    environment: persisted.environment,
+    register: persisted.register,
+    occasion: persisted.occasion,
+    activity: persisted.activity,
+    season: persisted.season,
+    transitSeason: persisted.transitSeason,
+    stylingContext: {
+      occasion: persisted.occasion,
+      activity: persisted.activity,
+      season: persisted.season,
+      calendarSeason: persisted.calendarSeason,
+      date: persisted.date,
+      weatherProfile: persisted.weatherProfile || {},
+    },
+  }
+}
+
 export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) {
   const failures = tripRosterFailures(roster, { slots, pool })
   return { ok: !failures.length, failures }
@@ -4096,6 +4161,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // Empty when no roster was selected this turn (chooseTripRoster absent, or planKind !== 'trip'),
   // which keeps every non-trip caller byte-identical.
   const tripRoster = planKind === 'trip' && tripRosterSelection ? composePool : []
+  // The plan's own normalized slot representation, snapshotted for persistence alongside the
+  // roster — never reconstructed later from accepted cards (see serializeTripRequirementSlot).
+  const tripRequirementSlots = tripRoster.length ? pendingSlots.map(serializeTripRequirementSlot) : []
   if (capsuleRoster.length) {
     pendingSlots = allocateCapsuleRepresentativeRotation(pendingSlots, capsuleRoster, {
       cap: capsuleTotalOutfitCap(pieceBudget)
@@ -4206,6 +4274,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       tripRosterSource: tripRosterSelection?.source || '',
       tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
       packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
+      tripRequirementSlots,
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -4909,6 +4978,7 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     pieceBudget,
     capsuleRoster: pendingPlan?.capsuleRoster || [],
     tripRoster: pendingPlan?.tripRoster || [],
+    tripRequirementSlots: pendingPlan?.tripRequirementSlots || [],
     capsuleCapacity: Number(pendingPlan?.capsuleCapacity) || 0,
     capsuleSlots: pendingPlan?.slots || [],
     isWinterCapsule: Boolean(pendingPlan?.isWinterCapsule),
