@@ -20,6 +20,7 @@
 // Severity follows evaluateWearableOutfit's existing convention: `severity: 'error'` is a hard
 // finding, anything else is advisory.
 import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup, thermalMaterialVerdict, pieceWeatherProtection, garmentKind } from './attributes.js'
+import { interiorConstruction } from './fiberTaxonomy.js'
 import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 // §8 step 3: completed outfits compare against the band. Semantic signals only — the ranking slice
@@ -193,12 +194,49 @@ function finding(code, message, { severity = 'error', evidence = {}, remedy = fa
   }
 }
 
+// thread_1788513419132: hasMinimumWarmLayer's outerwear branch used to trust CATEGORY alone — any
+// outerwear piece satisfied a gate literally named "minimum warm layer," even one whose own tagged
+// facts say the opposite. A "thin UPF technical hoodie" (fabric_weight ultralight,
+// insulating_layer_materials manually asserted [], interior_construction manually asserted
+// unlined) passed cleanly on category membership while every one of its own facts said otherwise.
+// The top/dress branches below never had this defect — they already require proven heavy weight,
+// never trusting category alone — so only the outerwear branch needed this.
+//
+// Deliberately NOT outerwear_role. docs/outerwear-role-ontology-spec.md (owner ruling 2026-09-02):
+// the field is deprecated with no replacement tag, its two questions (outdoor job vs. thermal
+// substance) were shown incoherent on this exact wardrobe, and its VALUE must not be read as
+// garment evidence again — only its bare presence survives, elsewhere, as a legacy "was this piece
+// ever tagged" proxy.
+//
+// Convergence, not a single fact and not a category rule (no cardigan/vest/jacket/coat check,
+// unlike the severe-cold sibling `outerLayerSevereColdAdequacy`, which answers a different question
+// and is deliberately not reused here). Outerwear stays presumed adequate — the unchanged default —
+// unless MULTIPLE independent negative facts agree. A single ultralight rain shell is not penalized
+// for being light; weather_protection alone proves it does a job regardless of insulation. Missing
+// or unknown evidence never counts toward the negative side (criterion 8) — only a fact with a
+// genuine value, several of them human-asserted here, contributes.
+function outerwearLayerPositivelyInadequate(piece) {
+  if (pieceWeatherProtection(piece).length) return false // a genuine rain/wind shell is doing a job
+  if (thermalMaterialVerdict(piece) === 'insulating') return false
+  if (fabricWeight(piece) === 'heavy') return false
+  const construction = interiorConstruction(piece)
+  if (construction === 'full_lining' || construction === 'full_second_face') return false
+
+  const negativeSignals = [
+    fabricWeight(piece) === 'ultralight',
+    thermalMaterialVerdict(piece) === 'non_insulating',
+    construction === 'unlined',
+  ].filter(Boolean).length
+  return negativeSignals >= 2
+}
+
 // Migrated verbatim from validateSlotOutfitConstraints ([R2]). This is the MINIMUM-WARMTH FLOOR and
 // it fires on any isCold, mild included: cold-severity-spec.md is explicit that isCold stays a
 // floor. Note it accepts a heavy main INSTEAD of a layer — that is deliberate and unchanged. The
 // severe-cold branch adds the outdoor-capability requirement on top rather than replacing this.
 function hasMinimumWarmLayer(pieces) {
-  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  const layer = pieces.find(piece =>
+    wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
   return Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')

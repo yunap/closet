@@ -60,6 +60,62 @@ test('MILD cold: a heavy main still satisfies the floor without any layer — un
   assert.deepEqual(hardCodes(result), [])
 })
 
+// thread_1788513419132: a live trip card passed this exact floor on a "thin UPF technical hoodie"
+// purely because its category was 'outerwear' -- its own tagged facts (ultralight, explicitly
+// uninsulated, explicitly unlined) said the opposite of "minimum warm layer." Deliberately does NOT
+// use outerwear_role (docs/outerwear-role-ontology-spec.md: deprecated, no replacement tag, value
+// must not be read as garment evidence) even though the real piece happened to carry
+// outerwear_role: 'indoor_layer' -- the fix must stand on the other four facts alone.
+const UPF_SUN_HOODIE = {
+  id: 30, category: 'outerwear', name: 'thin UPF technical hoodie',
+  fabric_weight: 'ultralight',
+  insulating_layer_materials: [], // manually asserted empty -> thermalMaterialVerdict: non_insulating
+  interior_construction: 'unlined', // manually asserted -> only a human can write this value
+  weather_protection: [],
+  fiber_content: ['polyester', 'spandex'],
+  fabric_category: 'technical/performance',
+  outerwear_role: 'indoor_layer', // present on the real piece; must NOT be why this test passes
+}
+
+test('MILD cold: an ultralight, uninsulated, unlined outerwear piece does NOT satisfy the minimum-warmth floor', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), UPF_SUN_HOODIE], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'category alone must no longer override three converging negative facts')
+})
+
+test('MILD cold: any ONE negative fact alone is not enough -- convergence, not a single-field rule', () => {
+  // Ultralight alone (construction and material both genuinely unknown, not asserted negative) must
+  // not be penalized -- an ultralight rain shell or an ultralight piece nobody has fully tagged yet
+  // is not automatically inadequate.
+  const onlyUltralight = { id: 31, category: 'outerwear', name: 'untagged ultralight layer', fabric_weight: 'ultralight' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), onlyUltralight], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [], 'a single negative fact, with the rest unknown, must not hard-fail')
+})
+
+test('MILD cold: weather_protection alone rescues an otherwise-ultralight-and-unlined shell', () => {
+  // Same as UPF_SUN_HOODIE except it is a genuine wind/rain shell -- a real job, regardless of
+  // insulation, per the same reasoning the severe-cold sibling function already uses.
+  const windShell = { ...UPF_SUN_HOODIE, id: 32, weather_protection: ['wind'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), windShell], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('MILD cold: outerwear_role value alone (indoor_layer, no other negative facts) must not fail the floor', () => {
+  // Proves the fix does not secretly key on outerwear_role -- an indoor_layer-tagged piece with no
+  // OTHER negative evidence stays adequate, exactly like it did before this fix (category presence).
+  const indoorLayerOnly = { id: 33, category: 'outerwear', name: 'legacy-tagged layer', outerwear_role: 'indoor_layer' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), indoorLayerOnly], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
 test('SEVERE cold: an indoor layer alone IS a hard failure', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), CARDIGAN], {
     weatherProfile: { isCold: true, isColdSevere: true },
