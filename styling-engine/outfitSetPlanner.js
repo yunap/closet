@@ -3520,6 +3520,221 @@ export async function selectCapsuleRosterViaModel({
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// TRIP PACKING ROSTER (docs/README.md: trip roster architecture). A trip gets its own first-class
+// packing set, chosen by the model from a bench, structurally validated, with cards composed FROM
+// it — the same selected-set/representative-rotation abstraction the capsule already proved, with
+// the objective and validation deliberately NOT shared:
+//
+//   CAPSULE optimizes breadth/recombination/variety — piece_budget, palette, register-reserve.
+//   TRIP optimizes itinerary coverage/reuse/compactness — no budget, no palette, no reserve pass.
+//
+// Before this, "packed" had no representation at all for a trip: modelPlanPool fell straight
+// through to the whole wardrobe, and the union of whatever pieces ended up on accepted cards WAS
+// the only place "the suitcase" existed (visible only in describeTripPieceReuse's after-the-fact
+// summary). That forced every card to re-litigate "does this outfit have a warm layer" independently
+// — the exact defect behind thread_1788427903679/thread_1788430055577: a jacket packed once had no
+// way to count as packed unless it appeared on every single card.
+//
+// Validation here is STRUCTURAL ONLY, on purpose — ownership, per-use-case feasibility, footwear
+// capability, dependent-base availability. Never "is this jacket warm enough for 48°F": that is
+// exactly the deterministic-styling-judgment pattern this session spent its facts-vs-judgments pass
+// removing everywhere else, and re-adding it at the roster level would be the same mistake one layer
+// up (docs/search-propose-signal-inventory.md).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+const TRIP_BENCH_SIZE = 60
+
+// Ranks by how many of the trip's own requested use cases a piece could serve — "prefer pieces that
+// serve multiple jobs" as a real ranking term, not prose alone. A piece gate-eligible for 3 of 4
+// slots outranks one eligible for 1, before any per-piece taste judgment. Ties break by id for a
+// stable, arguable order (never a hidden verdict — see docs/search-propose-signal-inventory.md).
+function tripReuseScore(piece, slots, gateSlots) {
+  let count = 0
+  for (const { gateAllowedIds } of gateSlots) {
+    if (gateAllowedIds.has(Number(piece.id))) count += 1
+  }
+  return count
+}
+
+// The bench: every piece gate-eligible for at least one requested use case, capped for token
+// budget. No deterministic-roster seed (there is no deterministic trip selector to seed from, by
+// design — the model owns this set-level choice) and no capsule quotas/proportional-category
+// targets (those encode "recombination breadth," a capsule objective). The one guarantee carried
+// over is coverage: buildCoveredCandidateSet ensures every requested use case keeps at least one
+// complete gate-valid core (top+bottom-or-dress, plus a shoe) within the bench, the same mechanism
+// selectCapsuleRoster's own bench uses, because "can this use case be covered at all" is structural,
+// not a taste question either abstraction should re-derive separately.
+function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE } = {}) {
+  const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
+  const eligible = capsulePiecesEligibleForAnySlot(pool, normalizedSlots, {})
+    .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
+  const gateSlots = normalizedSlots.map((slot, index) => {
+    const slotEligible = slotGateEligiblePieces(eligible, slot, {})
+    const slotLabel = slot.slot || slot.label || `slot_${index}`
+    return {
+      slotLabel,
+      slotEligible,
+      gateAllowedIds: idSetForPieces(slotEligible),
+      requirement: restrictSupplyRequirement(
+        completeOutfitSupplyRequirement({ id: `trip_slot:${slotLabel}` }),
+        idSetForPieces(slotEligible),
+      ),
+    }
+  })
+  const ranked = [...eligible].sort((a, b) =>
+    (tripReuseScore(b, normalizedSlots, gateSlots) - tripReuseScore(a, normalizedSlots, gateSlots)) ||
+    (Number(a.id) - Number(b.id)))
+  return buildCoveredCandidateSet({
+    rankedPieces: ranked,
+    initialSelection: [],
+    capacity: benchSize,
+    requirements: gateSlots.map(g => g.requirement),
+  }).pieces
+}
+
+// Structural failures only — see the header comment above for why. Every check here answers a
+// yes/no ownership/feasibility question the engine already has ratified authority over elsewhere;
+// none of them grade HOW WELL a piece serves, only WHETHER the roster can serve at all.
+function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
+  const normalizedRoster = Array.isArray(roster) ? roster : []
+  const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
+  const failures = []
+
+  const inactivePieces = normalizedRoster.filter(piece => piece?.status && piece.status !== 'active')
+  if (inactivePieces.length) {
+    failures.push({ code: 'roster_ownership', message: `roster includes ${inactivePieces.length} non-active piece(s): ${inactivePieces.map(piece => `ID ${piece.id}`).join(', ')}` })
+  }
+  if (Array.isArray(pool) && pool.length) {
+    const poolIds = idSetForPieces(pool)
+    const outsidePool = normalizedRoster.filter(piece => !poolIds.has(Number(piece?.id)))
+    if (outsidePool.length) {
+      failures.push({ code: 'roster_ownership', message: `roster includes ${outsidePool.length} piece(s) not in the supplied candidate list: ${outsidePool.map(piece => `ID ${piece.id}`).join(', ')}` })
+    }
+  }
+
+  const gateSlots = normalizedSlots.map((slot, index) => {
+    const slotEligible = slotGateEligiblePieces(normalizedRoster, slot, {})
+    return { slot, index, slotEligible, label: slot.slot || slot.label || `slot_${index}` }
+  })
+
+  // Every requested use case needs >=1 complete, gate-valid core inside the roster ITSELF — the
+  // same "slot_uncoverable" question validateCapsuleRoster already asks, reusing its own machinery
+  // rather than re-deriving it.
+  for (const { slot, index, slotEligible, label } of gateSlots) {
+    const cores = capsuleOutfitCoreCapacity(normalizedRoster, [{ ...slot, gateAllowedIds: idSetForPieces(slotEligible) }])
+    if (cores > 0) continue
+    const tops = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'top').length
+    const bottoms = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'bottom').length
+    const dresses = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'dress').length
+    const shoes = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').length
+    failures.push({ code: 'use_case_uncoverable', message: `${label} has ${shoes} eligible shoe(s), ${tops} eligible top(s), ${bottoms} eligible bottom(s), and ${dresses} eligible dress(es) in the roster, so it supports 0 complete outfits` })
+  }
+
+  // A dependent top (needs_base) needs a standalone base somewhere in the roster that also passes
+  // that use case's own gates — otherwise the roster spent a slot on a piece it cannot actually
+  // build an outfit around. Reuses the identical capsule check (pieceRequiresBaseLayer,
+  // isCapsuleBaseCandidate) — this question is not capsule-specific, only its supply-gap exemption
+  // (a wardrobe with no standalone base at all is a wardrobe gap, not a roster defect) is worth
+  // keeping, so it is kept here too.
+  for (const { slot, slotEligible, label } of gateSlots) {
+    const dependents = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
+    if (!dependents.length) continue
+    if (slotEligible.some(isCapsuleBaseCandidate)) continue
+    if (pool.length) {
+      const rosterIds = idSetForPieces(normalizedRoster)
+      const availableBases = slotGateEligiblePieces(pool.filter(piece => !rosterIds.has(Number(piece?.id))), slot, {})
+        .filter(isCapsuleBaseCandidate)
+      if (!availableBases.length) continue
+    }
+    failures.push({ code: 'dependent_base_unavailable', message: `${label} offers ${dependents.length} top(s) that cannot be worn alone (${dependents.map(p => p.name || `ID ${p.id}`).join(', ')}) but no standalone top in the roster passes that use case's gates` })
+  }
+
+  // "hiking-capable footwear exists for a hiking use case" needs no separate check: the shared
+  // hard gate (evaluatePlannerAutomaticUsePool, reached through slotGateEligiblePieces above) already
+  // excludes heel/support-incompatible shoes from a slot's eligible set — confirmed live, a shoe
+  // tagged excluded_heel_heights:'high' comes back `underlyingAllowed:false`,
+  // `code:'activity_profile_high_heel_unsuitable'`, `source:'hard_gate'`. A hiking use case with no
+  // wearable shoe therefore already surfaces as use_case_uncoverable (0 cores) above, not as a
+  // second, redundant condition re-deriving the same gate.
+
+  return failures
+}
+
+function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) {
+  const failures = tripRosterFailures(roster, { slots, pool })
+  return { ok: !failures.length, failures }
+}
+
+// Same bench -> model -> contract-validate -> repair shape as selectCapsuleRosterViaModel, with two
+// deliberate differences: no fixed size (the model decides how many pieces earn suitcase space —
+// "packing efficiency" is a real per-turn judgment, not a budget), and no deterministic fallback
+// on repeated failure, because no deterministic trip selector exists (by design — inventing one
+// would be exactly the roster-level styling judgment this architecture exists to avoid). The
+// fallback instead degrades honestly to the full coverage-guaranteed bench, disclosed as a
+// coverage gap rather than presented as a chosen roster.
+export async function selectTripRosterViaModel({
+  pool = [],
+  slots = [],
+  benchSize = TRIP_BENCH_SIZE,
+  chooseRoster = null,
+  onDiagnostic = null,
+} = {}) {
+  const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
+  const bench = buildTripBench(pool, { slots, benchSize })
+  const benchById = pieceMapForPieces(bench)
+
+  if (typeof chooseRoster !== 'function') {
+    return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
+  }
+
+  const resolve = answer => {
+    const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+    const unique = [...new Set(ids)]
+    const outsideBench = unique.filter(id => !benchById.has(id))
+    const roster = unique.map(id => benchById.get(id)).filter(Boolean)
+    const contractFailures = outsideBench.length
+      ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
+      : []
+    return { roster, contractFailures }
+  }
+
+  const attemptChoose = async attemptArgs => {
+    try {
+      return resolve(await chooseRoster(attemptArgs))
+    } catch (err) {
+      const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
+      return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
+    }
+  }
+
+  bump('tripRosterModelCalls')
+  const first = await attemptChoose({ bench, slots, attempt: 1, failures: [] })
+  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
+  if (!failures.length) {
+    return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
+  }
+
+  bump('tripRosterModelRepairs')
+  const second = await attemptChoose({
+    bench, slots, attempt: 2, failures,
+    previousRosterIds: first.roster.map(piece => Number(piece.id)),
+  })
+  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
+  if (!secondFailures.length) {
+    return { roster: second.roster, source: 'model_repaired', failures: [], bench, coverageGaps: [] }
+  }
+
+  bump('tripRosterModelFallbacks')
+  return {
+    roster: bench,
+    source: 'bench_fallback',
+    failures: secondFailures,
+    bench,
+    coverageGaps: ['[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]'],
+  }
+}
+
 export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
