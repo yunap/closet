@@ -431,6 +431,31 @@ test('COOL: a see-through layer does not satisfy the tier', () => {
   assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
 })
 
+// docs/README.md: trip roster architecture, item 3 — adjudicated rather than left behind. This
+// finding answers a physical-construction question (does the tagged opacity mean the garment
+// provides meaningful coverage at all), not a thermal styling judgment, so it survives the
+// facts-not-judgments pass and stays a hard finding — but it inherits the SET-level demotion too.
+test('COOL: a card pairing a sheer layer with real protection packed elsewhere in the roster is not rejected', () => {
+  // The owner's own example: a sheer layer may be perfectly legitimate aesthetically when the trip
+  // roster separately contains real weather protection — the engine must not reject it merely
+  // because it is not itself insulating.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true }, packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL: outside an active trip (no roster at all), a see-through layer is still rejected exactly as before', () => {
+  // No regression to the ordinary, non-trip case: packingRosterHasLayer is simply absent/false, and
+  // this finding behaves identically to the unmodified original.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})
+
 test('COOL: a cardigan satisfies it, and so does a light opaque jacket', () => {
   // The bar is see-through-ness, not a thermal cutoff. A light unlined jacket scores BELOW a sheer
   // shrug is not true — it scores -2 against the shrug's -8 — and any threshold excluding the shrug

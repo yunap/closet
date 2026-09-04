@@ -274,6 +274,18 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
+      // ADJUDICATED (docs/README.md: trip roster architecture, item 3) rather than left unexamined
+      // once thermal coverage moved to the SET level: does this finding own a factual/physical
+      // question, or a thermal styling judgment now duplicated by the roster? someLayerContributesWarmth
+      // (above) keys purely on the tagged `opacity` field — sheer/semi_sheer — never on warmth level;
+      // an earlier version tried a warmth-level cutoff and was reverted (see that function's own
+      // comment) because no threshold could separate a sheer shrug from a legitimately light jacket
+      // without being arbitrary. So this answers "does the garment provide meaningful coverage at
+      // all," a construction fact closer to "no sole on this shoe" than to "not warm enough" — it
+      // survives facts-not-judgments on its own terms and stays a hard finding. It already inherits
+      // the roster demotion above (nested inside the same !layerCoveredByRoster gate): a card
+      // pairing a sheer layer with real protection packed elsewhere in the roster is exactly the
+      // owner's own example — legitimate aesthetic layering, not rejected for being non-insulating.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
         { evidence, remedy: true }))
