@@ -133,7 +133,13 @@ function baseLayersAreFullyMeasured(pieces) {
 // `non_insulating` is now reachable precisely because it demands an explicit human assertion (a
 // complete composition AND "no insulating layer"), which is exactly the positive-evidence standard
 // this branch needs. Under the old tag the equivalent signal was a model's guess.
-function outerLayerSevereColdAdequacy(piece = {}) {
+// Exported (thread_1788504927533) for reuse one level upstream of this card-level check: the trip
+// roster's own feasibility contract (styling-engine/outfitSetPlanner.js, tripRosterFailures) asks
+// whether the SELECTED SET contains any piece capable of the "outdoor exposure" environmental job,
+// not just severe cold specifically — but the construction judgment itself ("cardigan/vest is not
+// outdoor construction, regardless of warmth") is severity-agnostic on its own terms, so it is reused
+// verbatim rather than re-derived. Nothing about its own reasoning changes; only who else can call it.
+export function outerLayerSevereColdAdequacy(piece = {}) {
   // Same bar the cool tier uses, and for the same reason: a sheer shrug is not a coat, and opacity
   // is a defined tagged field rather than a number someone picked.
   if (SEE_THROUGH_OPACITY.has(String(piece?.opacity || '').toLowerCase().trim())) return 'insufficient'

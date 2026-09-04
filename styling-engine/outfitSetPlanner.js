@@ -29,6 +29,7 @@
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
+import { outerLayerSevereColdAdequacy } from './outfitEnvironmentalAdequacy.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -3723,6 +3724,35 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
     if (layerRequiredSlots.length) {
       const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
       failures.push({ code: 'missing_removable_cool_layer', message: `missing required removable coverage for slots ${labels}` })
+    }
+  }
+
+  // Roster-level outdoor-EXPOSURE-capable layer feasibility (thread_1788504927533) — a distinct
+  // environmental job from removable-cool-layer coverage immediately above. A roster containing only
+  // a knit cardigan satisfies "some removable layer exists" without containing anything actually
+  // constructed to be worn as the layer someone goes outside in for sustained exposure (hiking, a
+  // city-walking day). Reuses outfitEnvironmentalAdequacy.js's outerLayerSevereColdAdequacy verbatim
+  // rather than inventing a parallel outdoor-capability taxonomy — that function already draws and
+  // enforces this exact construction distinction at the card level for severe cold ("a wool cardigan
+  // is warm and is still not a coat": cardigans/vests are deterministically 'insufficient' regardless
+  // of tagged warmth). Its own reasoning is severity-agnostic construction, not a cold-severity
+  // judgment, so reusing it for ordinary (non-severe) sustained outdoor exposure is not a stretch of
+  // what it already decides. Same acceptance-criterion-8 discipline as the check above: 'unknown'
+  // (untagged construction — a blazer, a poncho, anything not obviously cardigan/vest/coat/jacket)
+  // counts as satisfying, same as 'adequate' — only a piece the construction facts positively rule
+  // out fails to count. Not a quota: fires only for slots the trip itself tagged environment:'outdoor'
+  // and that need a layer at all; an indoor-only or already-warm trip is never required to carry one.
+  const outdoorExposureSlots = gateSlots.filter(({ slot }) => {
+    const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+    return slot.environment === 'outdoor' && (weatherProfile.needsRemovableCoolLayer || weatherProfile.isCold)
+  })
+  if (outdoorExposureSlots.length) {
+    const hasOutdoorCapableLayer = normalizedRoster
+      .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+      .some(piece => outerLayerSevereColdAdequacy(piece) !== 'insufficient')
+    if (!hasOutdoorCapableLayer) {
+      const labels = outdoorExposureSlots.map(({ label }) => label).join(', ')
+      failures.push({ code: 'missing_outdoor_capable_layer', message: `missing an outdoor-capable outer layer for slots ${labels}` })
     }
   }
 

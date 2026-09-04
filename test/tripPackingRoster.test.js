@@ -199,6 +199,69 @@ test('a roster chooser that never adds a qualifying layer degrades honestly to t
   assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'))
 })
 
+// ─── OUTDOOR-EXPOSURE-CAPABLE LAYER (thread_1788504927533) ──────────────────────────────────────
+// The repaired roster from the previous incident's live rerun added a knit cardigan and the
+// missing_removable_cool_layer check above correctly stopped complaining — but "some removable layer
+// exists" and "an outdoor-capable layer exists" are two different environmental jobs, and a cardigan
+// only ever answers the first. Reuses outerLayerSevereColdAdequacy's own construction verdict
+// (cardigan/vest is deterministically 'insufficient' as outdoor construction, regardless of tagged
+// warmth) rather than inventing a parallel taxonomy or a category quota.
+const CARDIGAN = piece(20, 'outerwear', { name: 'knit cardigan', occasions: ['city', 'casual'] })
+const FIELD_JACKET = piece(21, 'outerwear', { name: 'field jacket', occasions: ['city', 'casual', 'outdoor'] })
+const CITY_WALKING_OUTDOOR = layerRequiredSlot({ id: 's_city', label: 'City Walking', environment: 'outdoor' })
+const NATURE_WALKS_OUTDOOR = layerRequiredSlot({
+  id: 's_nature', label: 'Nature Walks', occasion: 'casual', activity: 'hiking', environment: 'outdoor',
+})
+const INDOOR_DINNER = layerRequiredSlot({
+  id: 's_dinner', label: 'Dinner Out', occasion: 'smart casual', activity: 'none', environment: 'indoor',
+  stylingContext: { weatherProfile: { needsRemovableCoolLayer: true, isCold: false } },
+})
+
+// The exact reported case: 65/48°F, outdoor city walking + nature walks + indoor dinner, a roster
+// containing a cardigan and no coat/jacket.
+test('a roster whose only layer is a cardigan fails outdoor-capable-layer feasibility for outdoor slots, even though it satisfies removable-cool-layer coverage', () => {
+  const result = validateTripRoster(
+    [CITY_TOP, CITY_BOTTOM, CITY_SHOES, HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CARDIGAN],
+    { slots: [CITY_WALKING_OUTDOOR, NATURE_WALKS_OUTDOOR, INDOOR_DINNER] }
+  )
+  assert.equal(result.ok, false)
+  assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'the cardigan genuinely satisfies "some removable layer exists" — this must stay a distinct, separate finding')
+  const gap = result.failures.find(f => f.code === 'missing_outdoor_capable_layer')
+  assert.ok(gap, 'a cardigan-only roster must fail the distinct outdoor-exposure-capability question')
+  assert.match(gap.message, /missing an outdoor-capable outer layer for slots City Walking, Nature Walks/)
+  assert.doesNotMatch(gap.message, /Dinner Out/, 'the indoor-only slot never required outdoor capability and must not be named')
+})
+
+test('adding a real jacket alongside the cardigan clears the outdoor-capable-layer gap', () => {
+  const result = validateTripRoster(
+    [CITY_TOP, CITY_BOTTOM, CITY_SHOES, HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CARDIGAN, FIELD_JACKET],
+    { slots: [CITY_WALKING_OUTDOOR, NATURE_WALKS_OUTDOOR, INDOOR_DINNER] }
+  )
+  assert.ok(!result.failures.some(f => f.code === 'missing_outdoor_capable_layer'))
+})
+
+test('an all-indoor trip is never required to carry an outdoor-capable layer just because it is a trip', () => {
+  const result = validateTripRoster(
+    [CITY_TOP, CITY_BOTTOM, CITY_SHOES, CARDIGAN],
+    { slots: [INDOOR_DINNER] }
+  )
+  assert.ok(!result.failures.some(f => f.code === 'missing_outdoor_capable_layer'))
+})
+
+test('an outerwear piece with no further construction evidence is not treated as a failure, per acceptance criterion 8', () => {
+  // Named with no cardigan/vest/coat keyword -- garmentKind's own outerwear fallback reads it as
+  // 'jacket' construction, but with none of thermalMaterialVerdict/weatherProtection/fabricWeight
+  // tagged, outerLayerSevereColdAdequacy has no positive evidence either way and lands on 'unknown'.
+  // That must count as satisfying, not as proof of inadequacy -- only a piece construction facts
+  // positively rule out (a determined cardigan/vest) may fail this check.
+  const AMBIGUOUS_LAYER = piece(22, 'outerwear', { name: 'wrap layer', occasions: ['city', 'casual'] })
+  const result = validateTripRoster(
+    [CITY_TOP, CITY_BOTTOM, CITY_SHOES, AMBIGUOUS_LAYER],
+    { slots: [CITY_WALKING_OUTDOOR] }
+  )
+  assert.ok(!result.failures.some(f => f.code === 'missing_outdoor_capable_layer'), 'absent/ambiguous construction metadata must not become a hard failure')
+})
+
 // ─── WIRED INTO buildPlanSlotWorkbench ──────────────────────────────────────────────────────────
 import { buildPlanSlotWorkbench } from '../styling-engine/outfitSetPlanner.js'
 
