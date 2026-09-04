@@ -23,7 +23,8 @@ import {
   normalizeMission,
   normalizeOccasion,
   normalizeStylingIntent,
-  travelRequestCanResolveWeatherLive
+  travelRequestCanResolveWeatherLive,
+  extractStatedTripDateRange
 } from '../styling-engine/stylingIntent.js'
 
 function extractOptionValues(content, constName) {
@@ -399,4 +400,42 @@ test('travelRequestCanResolveWeatherLive allows named-place single-occasion trip
     travelRequestCanResolveWeatherLive('suggest packing outfits for Portland'),
     false
   )
+})
+
+// thread_1788499704803: the actual defect, traced back from the delivered failure to its owner.
+// plan_outfit_set's own date_range drifted to the current week despite the user stating "October
+// 12th... for a week" in the same turn -- the deterministic weather fallback itself is correct (an
+// out-of-range date genuinely returns 'unavailable', proven directly against the live forecast API,
+// not just here), so the defect was upstream: nothing deterministically extracted and enforced the
+// user's own stated date, so a wrong model tool-call argument went uncorrected. This is the new
+// owner: extracted once from the user's own words, the same way extractWeatherContext already
+// extracts weather instead of trusting the model to restate it correctly every call.
+test('extractStatedTripDateRange normalizes "October 12th ... for a week" to Oct 12-18, from a September currentDate', () => {
+  const result = extractStatedTripDateRange(
+    'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?',
+    { currentDate: new Date('2026-09-04T12:00:00Z') }
+  )
+  assert.deepEqual(result, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, source: 'user_stated' })
+})
+
+test('extractStatedTripDateRange rolls a bare month/day already past this year to next year', () => {
+  const result = extractStatedTripDateRange(
+    'planning a trip on January 3rd for 5 days',
+    { currentDate: new Date('2026-09-04T12:00:00Z') }
+  )
+  assert.deepEqual(result, { start: '2027-01-03', end: '2027-01-07', durationDays: 5, source: 'user_stated' })
+})
+
+test('extractStatedTripDateRange returns null rather than guessing when no clear date is stated', () => {
+  assert.equal(extractStatedTripDateRange('outfits for the weekend'), null)
+  assert.equal(extractStatedTripDateRange(''), null)
+  assert.equal(extractStatedTripDateRange('a hiking day trip to Fairfax tomorrow'), null)
+})
+
+test('extractStatedTripDateRange defaults an unstated duration to a single day', () => {
+  const result = extractStatedTripDateRange(
+    'dinner reservations on November 3rd',
+    { currentDate: new Date('2026-09-04T12:00:00Z') }
+  )
+  assert.deepEqual(result, { start: '2026-11-03', end: '2026-11-03', durationDays: 1, source: 'user_stated' })
 })

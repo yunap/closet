@@ -72,6 +72,13 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     tripRosterModelCalls: 0,
     tripRosterModelRepairs: 0,
     tripRosterModelFallbacks: 0,
+    // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually used
+    // (never the raw model argument — the resolved value can silently diverge from it), and
+    // whether the date came from the deterministic user-stated extraction or the model's own
+    // argument.
+    resolvedDateRange: '',
+    resolvedLocation: '',
+    dateRangeSource: '',
     // Which tools ran in which iteration — the shape of a turn, not just its size.
     toolSequence: '',
     providerIterations: 0,

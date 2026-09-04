@@ -25,6 +25,7 @@ const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+const { extractStatedTripDateRange } = await import('../styling-engine/stylingIntent.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
@@ -110,6 +111,11 @@ beforeEach(() => {
   db.prepare('DELETE FROM feedback_synthesis_batches').run()
   db.prepare('DELETE FROM pieces').run()
   seedWardrobe()
+  // weather.js's geocode/forecast caches are module-level and keyed by location+date-range, not
+  // per-test -- two tests using the same location/dates (several plan_outfit_set tests share
+  // "Vienna, Virginia" + Oct 12-18) would otherwise silently reuse an earlier test's mocked
+  // response instead of calling this test's own weatherFetchImpl.
+  _clearWeatherCachesForTests()
 })
 
 test('plan_outfit_set slot schema declares environment and requires activity', () => {
@@ -1308,6 +1314,109 @@ test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed p
   }, mixedToolContext)
   assert.equal(mixedResult.status, 'weather_context_required', 'one resolved slot must not let an unresolved sibling slot through')
   assert.match(mixedResult.message, /Coast Detour/)
+})
+
+// thread_1788499704803: plan_outfit_set's own date_range silently drifted to the current week
+// (Sep 4-11) despite the user stating "October 12th... for a week" in the SAME turn, and the
+// deterministic weather fallback then resolved LIVE hot September weather for the wrong dates
+// rather than correctly reporting the requested October trip as unforecastable. Traced the whole
+// date path: the weather fallback itself was already correct (an out-of-range date genuinely
+// returns 'unavailable' -- verified directly against the real API), so the actual defect was that
+// nothing deterministically extracted/enforced the user's own stated date, leaving the model's
+// tool-call argument unverified. This reproduces the exact failure shape and proves the fix: a
+// model date_range that disagrees with the deterministically-extracted one is corrected BEFORE it
+// ever reaches weather resolution, so the request lands on weather_context_required (asking for a
+// seasonal estimate) instead of silently substituting the wrong week's live weather.
+test('plan_outfit_set: a wrong model date_range is corrected to the user-stated date before weather resolves, never substituting the current week', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'city bottom', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'city shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const question = 'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.deepEqual(statedTripDateRange, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, source: 'user_stated' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async (url) => {
+      if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+      // The real Open-Meteo rejection shape for a date outside its forecast window (verified
+      // directly against the live API while diagnosing this incident) -- only for the CORRECTED
+      // October dates. If the override failed to fire, the model's wrong Sep 4-11 argument would
+      // hit the branch below instead and get real-looking hot-week data, the same live weather
+      // the actual incident silently used.
+      if (url.includes('start_date=2026-10-12')) return { ok: false, json: async () => ({ error: true }) }
+      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [93.5], temperature_2m_min: [61.7] } }) }
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    // The model's own (wrong) argument -- the current week, not the stated October trip.
+    date_range: { start: '2026-09-04', end: '2026-09-11' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'weather_context_required', 'the corrected October date must be genuinely unforecastable, not silently resolved as hot September weather')
+  assert.deepEqual(result.date_range, { start: '2026-10-12', end: '2026-10-18' }, 'the model\'s wrong date_range must be corrected to the user-stated one, not passed through')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
+  assert.equal(toolContext.freeformDiagnostics.resolvedDateRange, '2026-10-12..2026-10-18')
+  assert.equal(toolContext.freeformDiagnostics.resolvedLocation, 'Vienna, Virginia')
+})
+
+test('plan_outfit_set: a model date_range that agrees with the user-stated date is left as the model gave it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia on October 12th for a week'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    // A shorter stay than the extracted default (the model's own more specific end date) must
+    // survive unchanged -- the override only fires on a genuine mismatch, not merely "any date
+    // context exists."
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-15' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.end, '2026-10-15', 'an agreeing model date_range keeps its own end date rather than being overwritten by the extracted default')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'model')
+})
+
+test('plan_outfit_set: with no user-stated date anywhere, the model\'s own date_range is used as before (no regression)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'weekend top', occasions: ['casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'outfits for the weekend',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'coordinated_plan',
+    date_range: { start: '2026-09-05', end: '2026-09-06' },
+    slots: [{ label: 'Weekend', occasion: 'casual', activity: 'none', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.freeformDiagnostics.resolvedDateRange, '2026-09-05..2026-09-06', 'the model\'s own date_range is used as-is when nothing in the text states a trip date')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'model')
 })
 
 test('plan_outfit_set: user_weather (stated_user) outranks an unresolved live forecast, and binds to location like weather_estimate', async () => {

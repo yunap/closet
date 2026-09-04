@@ -120,7 +120,12 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
     // not activated (plan_kind never resolved to 'trip') or had no production chooser to call at
     // all — neither was visible without reconstructing it after the fact. These make "did the
     // production trip-roster path actually run this turn" a direct read instead of a reconstruction.
-    'planKindResolved', 'tripRosterModelCalls', 'tripRosterModelRepairs', 'tripRosterModelFallbacks']
+    'planKindResolved', 'tripRosterModelCalls', 'tripRosterModelRepairs', 'tripRosterModelFallbacks',
+    // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually used
+    // (never the raw model tool-call argument — that looked fine while the resolved value silently
+    // diverged to the current week instead of the stated October trip), and whether the date came
+    // from the deterministic user-stated extraction or the model's own argument.
+    'resolvedDateRange', 'resolvedLocation', 'dateRangeSource']
   let any = false
   for (const k of keys) {
     if (dbg[k] !== undefined) { p(`${k.padEnd(32)} ${JSON.stringify(dbg[k])}`); any = true }

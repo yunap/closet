@@ -297,6 +297,14 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       tripRosterModelCalls: 0,
       tripRosterModelRepairs: 0,
       tripRosterModelFallbacks: 0,
+      // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually
+      // used, and whether the date came from the deterministic user-stated extraction or the
+      // model's own argument — not the raw model argument itself, which is exactly what left this
+      // incident unobservable (a report of "date_range: {Oct 12}" would have looked fine; what
+      // actually mattered was that the resolved value silently differed).
+      resolvedDateRange: '',
+      resolvedLocation: '',
+      dateRangeSource: '',
       toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
@@ -2758,10 +2766,32 @@ async function executeToolInternal(name, args, toolContext = {}) {
               dayBreakdown: String(args?.day_breakdown || '').trim()
             }
           : null
-        const planDateRange = {
+        const modelDateRange = {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()
         }
+        // thread_1788499704803: the model's own date_range drifted to the current week despite the
+        // user stating "October 12th... for a week" in the same turn, and nothing caught the
+        // mismatch before it silently resolved LIVE weather for the wrong dates (hot early-September
+        // conditions, not the requested October trip) — the deterministic weather fallback itself is
+        // correct (an out-of-range date genuinely returns 'unavailable', proven directly against the
+        // real forecast API), so the defect was upstream: a stated trip date is factual request
+        // state, not something the model should have to re-derive correctly on every tool call. Same
+        // tool-boundary-correction shape resolvePlanKind's destination override already uses above:
+        // when this turn's own extracted date exists and the model's argument is missing or
+        // disagrees on the start day, the extracted date wins. A model date_range that agrees is left
+        // exactly as the model gave it (including its own end date, e.g. a stated shorter/longer stay).
+        const statedTripDateRange = toolContext.statedTripDateRange || null
+        const dateRangeSource = statedTripDateRange && (!modelDateRange.start || modelDateRange.start !== statedTripDateRange.start)
+          ? 'user_stated'
+          : (modelDateRange.start ? 'model' : 'none')
+        const planDateRange = dateRangeSource === 'user_stated'
+          ? { start: statedTripDateRange.start, end: statedTripDateRange.end }
+          : modelDateRange
+        toolContext.freeformDiagnostics.dateRangeSource = dateRangeSource
+        toolContext.freeformDiagnostics.resolvedDateRange = planDateRange.start
+          ? `${planDateRange.start}${planDateRange.end && planDateRange.end !== planDateRange.start ? `..${planDateRange.end}` : ''}`
+          : ''
         // Reject a timezone identifier passed as a location (the model reads
         // "Time zone: America/Los_Angeles" from context and sometimes hands it in
         // as the plan/slot location — it's not a place, so geocoding fails and
@@ -2769,6 +2799,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // search_wardrobe already applies.
         const rawPlanLocation = String(args?.location || toolContext.location || '').trim()
         const fallbackLocation = looksLikeTimezoneIdentifier(rawPlanLocation) ? '' : rawPlanLocation
+        toolContext.freeformDiagnostics.resolvedLocation = fallbackLocation
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )

@@ -301,6 +301,9 @@ function initDb(dbPath) {
       trip_roster_model_calls INTEGER DEFAULT 0,
       trip_roster_model_repairs INTEGER DEFAULT 0,
       trip_roster_model_fallbacks INTEGER DEFAULT 0,
+      resolved_date_range TEXT DEFAULT '',
+      resolved_location TEXT DEFAULT '',
+      date_range_source TEXT DEFAULT '',
       turn_failed             INTEGER DEFAULT 0,
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
@@ -900,7 +903,14 @@ function initDb(dbPath) {
     'plan_kind_resolved TEXT DEFAULT \'\'',
     'trip_roster_model_calls INTEGER DEFAULT 0',
     'trip_roster_model_repairs INTEGER DEFAULT 0',
-    'trip_roster_model_fallbacks INTEGER DEFAULT 0'
+    'trip_roster_model_fallbacks INTEGER DEFAULT 0',
+    // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually used
+    // (not the raw model argument — that would have looked fine while the resolved value silently
+    // diverged), and whether the date came from the deterministic user-stated extraction or the
+    // model's own argument.
+    'resolved_date_range TEXT DEFAULT \'\'',
+    'resolved_location TEXT DEFAULT \'\'',
+    'date_range_source TEXT DEFAULT \'\''
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

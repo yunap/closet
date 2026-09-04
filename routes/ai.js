@@ -62,6 +62,7 @@ import {
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
+  extractStatedTripDateRange,
   isTravelOrPackingRequest,
   normalizeActivity,
   normalizeOccasion
@@ -685,8 +686,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, plan_kind_resolved, trip_roster_model_calls, trip_roster_model_repairs, trip_roster_model_fallbacks, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, plan_kind_resolved, trip_roster_model_calls, trip_roster_model_repairs, trip_roster_model_fallbacks, resolved_date_range, resolved_location, date_range_source, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -721,6 +722,9 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.tripRosterModelCalls) || 0,
       Number(diagnostics.tripRosterModelRepairs) || 0,
       Number(diagnostics.tripRosterModelFallbacks) || 0,
+      String(diagnostics.resolvedDateRange || ''),
+      String(diagnostics.resolvedLocation || ''),
+      String(diagnostics.dateRangeSource || ''),
       turnFailed ? 1 : 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
@@ -5039,6 +5043,17 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
+    // Same owner/scope as extractedWeather immediately above (this turn's question, plus recent
+    // thread context so a date stated an earlier turn still survives into a later plan_outfit_set
+    // call) — a stated trip date is factual request state, not something re-derived per tool call.
+    // See extractStatedTripDateRange's own header comment (thread_1788499704803) for why this
+    // exists: the deterministic override lives at the plan_outfit_set tool boundary in tools.js,
+    // this is only the one extraction this turn computes it from.
+    const statedTripDateRange = extractStatedTripDateRange([
+      req.body.question || '',
+      req.body.threadContext || '',
+      req.body.generatedContext || ''
+    ].join('\n'), { currentDate: req.body.currentDate ? new Date(req.body.currentDate) : new Date() })
     // A capsule often spans two turns: the first names the season/palette and
     // the second answers the stylist's lifestyle clarification. The plan tool
     // used to receive only turn two, silently dropping "in yellow" before
@@ -5061,6 +5076,7 @@ router.post('/ask', async (req, res) => {
       // established req.body.location both still take priority over it, per tools.js's merge order.
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
+      statedTripDateRange,
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.
