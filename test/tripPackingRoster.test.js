@@ -106,3 +106,43 @@ test('no fixed budget: the model may choose fewer or more pieces than any capsul
   assert.equal(result.roster.length, 3)
   assert.ok(!result.failures.some(f => f.code === 'roster_size'), 'trip rosters have no size contract, unlike capsules')
 })
+
+// ─── WIRED INTO buildPlanSlotWorkbench ──────────────────────────────────────────────────────────
+import { buildPlanSlotWorkbench } from '../styling-engine/outfitSetPlanner.js'
+
+const DINNER_TOP = piece(11, 'dress', { occasions: ['casual', 'outdoor', 'city'] })
+const DINNER_SHOES = piece(12, 'shoes', { occasions: ['casual', 'outdoor', 'city'], heel_height: 'flat', walk_support: 'high' })
+const WIDE_POOL = [...POOL, DINNER_TOP, DINNER_SHOES]
+
+test('planKind trip with a chooser: card composition draws only from the selected roster, not the whole wardrobe', async () => {
+  // The model deliberately leaves the dress/dinner pieces (11, 12) out of the packing roster —
+  // this is the actual behavior under test: cards must not be able to reach past the roster to the
+  // full wardrobe just because those pieces exist and are otherwise gate-eligible.
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] })
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces: WIDE_POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
+  })
+  const allAllowedIds = new Set(workbench.slots.flatMap(s => s.allowed_piece_ids))
+  assert.ok(!allAllowedIds.has(11) && !allAllowedIds.has(12), 'pieces outside the selected packing roster must not reach any card')
+  assert.ok([1, 2, 3, 4, 5, 6, 8].some(id => allAllowedIds.has(id)), 'roster pieces must still reach their slots')
+  assert.deepEqual(workbench.pendingPlan.tripRoster.map(p => Number(p.id)).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 8])
+  assert.equal(workbench.pendingPlan.tripRosterSource, 'model')
+  assert.deepEqual(workbench.pendingPlan.packingRoster.map(p => Number(p.id)).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 8])
+})
+
+test('planKind trip with NO chooser: falls through to the whole wardrobe exactly as before (no regression)', async () => {
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces: WIDE_POOL, question: 'trip', planKind: 'trip' })
+  assert.deepEqual(workbench.pendingPlan.tripRoster, [])
+  assert.deepEqual(workbench.pendingPlan.packingRoster, [])
+})
+
+test('planKind coordinated_plan is unaffected by the trip roster wiring', async () => {
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3] })
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces: WIDE_POOL, question: 'a work week', planKind: 'coordinated_plan', chooseTripRoster: chooseRoster,
+  })
+  assert.deepEqual(workbench.pendingPlan.tripRoster, [])
+})

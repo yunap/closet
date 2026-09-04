@@ -3735,7 +3735,7 @@ export async function selectTripRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
@@ -3794,8 +3794,23 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ownerRules
     })
   }
+  // Trip packing roster (docs/README.md: trip roster architecture; selectTripRosterViaModel above).
+  // Same stage-2 shape as the capsule roster immediately above — model picks, engine validates
+  // structurally — deliberately NOT the same call: no budget, no palette, no register reserve, and
+  // the bench is ranked by cross-use-case reuse rather than capsule versatility.
+  let tripRosterSelection = null
+  if (typeof chooseTripRoster === 'function' && planKind === 'trip') {
+    tripRosterSelection = await selectTripRosterViaModel({
+      pool: allPieces,
+      slots,
+      chooseRoster: chooseTripRoster,
+      onDiagnostic,
+    })
+  }
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
+    : tripRosterSelection
+    ? tripRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
   const applicableOwnerRules = [...new Set([
     ...(Array.isArray(ownerRules) ? ownerRules : []),
@@ -3834,6 +3849,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // A layer allocation the wardrobe could not supply is disclosed, never
   // silently absorbed by another category (Step 5 criterion 1's graceful half).
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
+  if (Array.isArray(tripRosterSelection?.coverageGaps)) coverageGaps.push(...tripRosterSelection.coverageGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const weatherProfile = slot.stylingContext.weatherProfile
@@ -4037,6 +4053,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   }))
   const statedPaletteResult = extractStatedPalette(question, allPieces)
   const capsuleRoster = isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET ? composePool : []
+  // The trip's own first-class packing set — see the header comment above selectTripRosterViaModel.
+  // Empty when no roster was selected this turn (chooseTripRoster absent, or planKind !== 'trip'),
+  // which keeps every non-trip caller byte-identical.
+  const tripRoster = planKind === 'trip' && tripRosterSelection ? composePool : []
   if (capsuleRoster.length) {
     pendingSlots = allocateCapsuleRepresentativeRotation(pendingSlots, capsuleRoster, {
       cap: capsuleTotalOutfitCap(pieceBudget)
@@ -4139,6 +4159,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       capsuleRosterPalette: capsuleRosterSelection?.palette || '',
       capsuleRosterJobs: capsuleRosterSelection?.jobs || [],
       capsuleRosterFailureCodes: capsuleRosterSelection?.failureCodes || [],
+      // Trip packing roster — carried the same way capsuleRoster already is, so the client's
+      // existing threadMemory/activeContext persistence (which already round-trips capsuleRoster
+      // across turns) round-trips this with no new persistence layer. `packingRoster` is the
+      // provider-agnostic name a follow-up edit checks regardless of which plan kind produced it.
+      tripRoster,
+      tripRosterSource: tripRosterSelection?.source || '',
+      tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
+      packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
       slotWeather,
       coverageGaps,
       heldOutfits: [],
