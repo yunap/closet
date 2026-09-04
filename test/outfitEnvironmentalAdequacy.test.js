@@ -299,6 +299,25 @@ test('COOL: an outfit with no layer at all is a hard finding', () => {
   assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'supply-sensitive findings name a legal move')
 })
 
+// SET LEVEL vs CARD LEVEL (docs/README.md: trip roster architecture). A card composed from an
+// already roster-validated trip packing set must not have to re-carry a layer the set already has.
+test('COOL: packingRosterHasLayer stands the per-card finding down entirely', () => {
+  // packingRosterHasLayer is a resolvedContext-level field (a sibling of weatherProfile), the exact
+  // shape outfitSetPlanner.js's weatherContext object passes — not part of the weather profile
+  // itself, which describes conditions, not what was packed.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true }, packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL TRANSIT: packingRosterHasLayer stands the transit finding down too', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor', packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
+})
+
 test('COOL: any layer satisfies it — an indoor_layer cardigan counts', () => {
   // This tier asks for removable coverage, not outdoor capability. An indoor_layer is a perfectly
   // good answer to "it gets cool at dusk"; requiring outdoor capability is the severe tier's job.

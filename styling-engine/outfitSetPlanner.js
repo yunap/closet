@@ -4477,6 +4477,14 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     pendingPlan?.isSeasonalCapsule ||
     (Array.isArray(pendingPlan?.capsuleRoster) && pendingPlan.capsuleRoster.length)
   ) && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
+  // SET LEVEL vs CARD LEVEL: computed once per plan, from the packing roster (trip) or capsule
+  // roster, and passed into every card's adequacy check below so the per-card removable-layer
+  // finding can stand down when the SET already covers it — see the matching comment in
+  // outfitEnvironmentalAdequacy.js. Presence only (does a layer exist anywhere in what was
+  // selected), the same bar the per-card check itself already used — not a new "is it warm enough"
+  // judgment at the roster level.
+  const packingRosterHasLayer = (Array.isArray(pendingPlan?.packingRoster) ? pendingPlan.packingRoster : [])
+    .some(piece => wardrobeCategoryGroup(piece) === 'outerwear')
   const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
   const usedCoreKeys = new Set(heldOutfits.map(outfit => outfitMainCoreKey(outfit)).filter(Boolean))
   const usedPieceIds = new Set()
@@ -4552,7 +4560,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // [O2]/[R2]: the plan slot owns a resolved weather profile, so it passes it and the shared
         // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
         // validateSlotOutfitConstraints below.
-        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment },
+        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment, packingRosterHasLayer },
       })
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {

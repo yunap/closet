@@ -256,7 +256,16 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     : message
   if (warmSeasonBase) evidence.baseIsWarmSeasonOnly = true
 
-  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
+  // SET LEVEL vs CARD LEVEL (docs/README.md: trip roster architecture). "This outfit has no layer"
+  // used to mean "this CARD carries no layer" unconditionally — the exact defect that made a card
+  // demonstrate a jacket just to prove it was packed. When the caller is composing from an already
+  // roster-validated set (resolvedContext.packingRosterHasLayer), the question this finding answers
+  // is already settled at the SET level: the packed roster has a layer for the cooler part of the
+  // day, whether or not THIS card happens to show it. Suppressed, not downgraded to advisory noise
+  // on every card — a museum card and a trail card should not both carry a reminder about a jacket
+  // neither is required to display.
+  const layerCoveredByRoster = Boolean(resolvedContext.packingRosterHasLayer)
+  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination && !layerCoveredByRoster) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
         // HOW MUCH, not just "a layer". Live QA (thread_1788421510368): this requirement said only
@@ -282,7 +291,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // isCold: that floor already owns transitIsCold, and it demands MORE — sleeve-bearing coverage.
   // The gradient is deliberate. Cool transit asks for something to put on; cold transit asks for
   // something that covers your arms.
-  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
+  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold && !layerCoveredByRoster) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
         corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),

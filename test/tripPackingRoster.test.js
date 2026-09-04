@@ -146,3 +146,29 @@ test('planKind coordinated_plan is unaffected by the trip roster wiring', async 
   })
   assert.deepEqual(workbench.pendingPlan.tripRoster, [])
 })
+
+// ─── SET LEVEL vs CARD LEVEL, through the real submission path ─────────────────────────────────
+import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
+
+test('a card with no layer of its own is accepted when the packing roster already has one, rejected when it does not', async () => {
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] }) // includes JACKET (id 8)
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench([slots[0]], {
+    allPieces: POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
+  })
+  // Force the exact condition under test without needing live weather resolution — this is the
+  // real, planner-computed pendingPlan.packingRoster (JACKET included), only the slot's own weather
+  // flag is set directly so the scenario is deterministic.
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, needsRemovableCoolLayer: true, isCold: false }
+
+  const cityCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer on the card itself
+  const withRoster = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
+  assert.equal(withRoster.failures.length, 0, 'the packed jacket covers it even though this card does not show it')
+  assert.equal(withRoster.accepted.length, 1)
+
+  // Same card, same weather, but the packing roster is empty (the un-wired, pre-existing behavior)
+  // — the per-card requirement must still apply exactly as before.
+  const noRosterPlan = { ...workbench.pendingPlan, packingRoster: [], heldOutfits: [] }
+  const withoutRoster = validateSubmittedPlanOutfits(noRosterPlan, [cityCard])
+  assert.ok(withoutRoster.failures.length > 0, 'without a packing roster, the card must still carry its own layer')
+})
