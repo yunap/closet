@@ -66,6 +66,12 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // One stage later than the roster pick: distinguishes a token-cap truncation on the
     // composition call from a genuine model refusal (thread_1787717774384).
     capsuleCompositionFailureCode: '',
+    // thread_1788484052964: what plan_outfit_set actually resolved plan_kind to, and whether the
+    // trip roster model call (mirroring the capsule roster's own counters just above) ever fired.
+    planKindResolved: '',
+    tripRosterModelCalls: 0,
+    tripRosterModelRepairs: 0,
+    tripRosterModelFallbacks: 0,
     // Which tools ran in which iteration — the shape of a turn, not just its size.
     toolSequence: '',
     providerIterations: 0,

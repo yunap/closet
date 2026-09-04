@@ -416,6 +416,25 @@ test('a budgeted trip remains on the trip workbench and never enters capsule com
   assert.deepEqual(toolContext.pendingPlan.capsuleRoster, [])
 })
 
+test('plan_outfit_set: a real destination forces the trip workbench even when plan_kind is omitted', async () => {
+  // Live thread_1788484052964, reproduced at the tool boundary: a real Vienna destination,
+  // plan_kind left out entirely -- must still land on 'trip', not silently become a
+  // coordinated_plan (previously it did, and the packing-roster architecture never engaged).
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'Pack for a week in Vienna, Austria covering sightseeing, museums, and nature walks',
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    location: 'Vienna, Austria',
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.pendingPlan.planKind, 'trip')
+})
+
 test('successful atomic capsule composition removes every tool from the final prose turn', () => {
   assert.ok(stylistToolsForTurn({}).length > 0)
   assert.deepEqual(stylistToolsForTurn({ capsuleAtomicCompleted: true }), [])
@@ -3841,6 +3860,33 @@ test('sanitizePlanConstraintsForQuestion strips model-invented no_repeat from re
     'Build me a 24-piece summer capsule wardrobe, but do not repeat tops.'
   )
   assert.deepEqual(explicit, { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] })
+})
+
+// Live thread_1788484052964: a real Vienna destination-packing request went through
+// plan_outfit_set with no plan_kind:'trip' at all (missing or 'coordinated_plan'), so the
+// packing-roster architecture never engaged -- the run produced ordinary coordinated-plan
+// cards (verified after the fact: near-duplicate outfits reused across occasions, no
+// packing_roster in persisted state). Prompt wording ("use 'trip' for destination packing")
+// was not enough on its own. Fix: a real away-from-home `location` on the plan call is the
+// tool's own structural travel signal (its schema says to omit location for at-home plans)
+// and now overrides a missing/wrong plan_kind at the tool boundary, not just prose guidance.
+test('a plan_outfit_set call with a real destination cannot silently resolve to coordinated_plan', () => {
+  // No plan_kind at all -- exactly the shape the live run produced.
+  assert.equal(resolvePlanKind(undefined, 'pack for my trip', { location: 'Vienna, Austria' }), 'trip')
+  // An explicitly wrong plan_kind is overridden too -- the destination is the stronger signal.
+  assert.equal(resolvePlanKind('coordinated_plan', 'pack for my trip', { location: 'Vienna, Austria' }), 'trip')
+})
+
+test('a deliberately declared seasonal_capsule survives even with a real destination attached', () => {
+  // "A capsule for my Vienna trip" is still a capsule -- an explicit capsule choice must not be
+  // silently overridden into a packing roster just because a destination was also supplied.
+  assert.equal(resolvePlanKind('seasonal_capsule', 'a capsule for my Vienna trip', { location: 'Vienna, Austria' }), 'seasonal_capsule')
+})
+
+test('an at-home plan with no location is unaffected by the destination override', () => {
+  assert.equal(resolvePlanKind(undefined, 'outfits for the weekend'), 'coordinated_plan')
+  assert.equal(resolvePlanKind(undefined, 'outfits for the weekend', { location: '' }), 'coordinated_plan')
+  assert.equal(resolvePlanKind('coordinated_plan', 'outfits for the weekend', { location: '   ' }), 'coordinated_plan')
 })
 
 // Live thread_1785902365403 sent no_repeat ['tops','dresses'] on a capsule and,

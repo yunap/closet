@@ -297,6 +297,10 @@ function initDb(dbPath) {
       capsule_roster_model_fallbacks INTEGER DEFAULT 0,
       capsule_roster_failure_codes TEXT DEFAULT '',
       capsule_composition_failure_code TEXT DEFAULT '',
+      plan_kind_resolved TEXT DEFAULT '',
+      trip_roster_model_calls INTEGER DEFAULT 0,
+      trip_roster_model_repairs INTEGER DEFAULT 0,
+      trip_roster_model_fallbacks INTEGER DEFAULT 0,
       turn_failed             INTEGER DEFAULT 0,
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
@@ -886,7 +890,17 @@ function initDb(dbPath) {
     // arguments, so a multi-category visual search's real image cost was unmeasurable from existing
     // telemetry — it took reproducing a specific ~103k-token turn locally to find it.
     'search_visual_images_attached INTEGER DEFAULT 0',
-    'search_visual_max_category_count INTEGER DEFAULT 0'
+    'search_visual_max_category_count INTEGER DEFAULT 0',
+    // thread_1788484052964: a real Vienna destination-packing request ran with no observable trace
+    // of what plan_outfit_set actually resolved plan_kind to, and no trace of whether the trip
+    // roster model call ever fired — reconstructing "did the trip architecture engage" took a full
+    // diagnostic session after the fact. selectTripRosterViaModel already bumps
+    // tripRosterModelCalls/Repairs/Fallbacks (mirroring the capsule roster's own counters); they
+    // just never had columns to land in.
+    'plan_kind_resolved TEXT DEFAULT \'\'',
+    'trip_roster_model_calls INTEGER DEFAULT 0',
+    'trip_roster_model_repairs INTEGER DEFAULT 0',
+    'trip_roster_model_fallbacks INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

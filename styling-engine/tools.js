@@ -88,8 +88,19 @@ export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question
 export const DEFAULT_SEASONAL_CAPSULE_BUDGET = 24
 export const PLAN_KINDS = new Set(['trip', 'seasonal_capsule', 'coordinated_plan'])
 
-export function resolvePlanKind(rawKind = '', question = '') {
+export function resolvePlanKind(rawKind = '', question = '', { location = '' } = {}) {
   const explicit = String(rawKind || '').trim().toLowerCase()
+  // A real away-from-home destination on the SAME plan_outfit_set call is the tool's own
+  // structural signal for travel -- its own schema says "Omit for at-home plans with no
+  // travel" -- not prose inference. thread_1788484052964 is the reason this exists: a real
+  // Vienna destination went through with no plan_kind:'trip' at all (rawKind was missing or
+  // 'coordinated_plan'), so the roster architecture never engaged and the model-facing prompt
+  // instruction ("use 'trip' for destination packing") was evidently not load-bearing enough
+  // on its own. An unambiguous destination-packing call must not be able to silently fall back
+  // to coordinated_plan just because the model's plan_kind argument was wrong or omitted --
+  // this overrides everything except an explicit, deliberate 'seasonal_capsule' choice (a
+  // capsule for an upcoming trip is still a capsule, not a packing roster).
+  if (String(location || '').trim() && explicit !== 'seasonal_capsule') return 'trip'
   if (PLAN_KINDS.has(explicit)) return explicit
   // Intent fallback only. The model-facing schema owns the normal path, but
   // this keeps older clients and malformed tool calls from turning a plainly
@@ -282,6 +293,10 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelFallbacks: 0,
       capsuleRosterFailureCodes: '',
       capsuleCompositionFailureCode: '',
+      planKindResolved: '',
+      tripRosterModelCalls: 0,
+      tripRosterModelRepairs: 0,
+      tripRosterModelFallbacks: 0,
       toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
@@ -2763,7 +2778,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // toolContext.weather (established display/season text, not physical
         // weather) still seeds the heuristic no-location fallback below.
         const planWeather = toolContext.weather || ''
-        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '')
+        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '', { location: fallbackLocation })
+        // Directly observable so "did the trip roster architecture engage this turn" is a query,
+        // not an inference from a live thread's persisted state after the fact (thread_1788484052964
+        // took reconstructing this from scratch to even notice it never fired).
+        toolContext.freeformDiagnostics.planKindResolved = planKind
         // Capsule safety net: "N-piece capsule" states an explicit budget. The
         // model routinely forgets to set piece_budget (live: a "14-piece capsule"
         // came through with none, so the roster never enforced and 5 of 14 were
