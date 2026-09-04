@@ -3600,6 +3600,55 @@ function tripReuseScore(piece, slots, gateSlots) {
   return count
 }
 
+// A bench candidate's construction bucket — the same already-tagged attribute
+// (wardrobeCategoryGroup + garmentKind) outerLayerSevereColdAdequacy, pieceFidelityChecklist and the
+// rest of this file already use to distinguish real construction differences, not an invented
+// diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different buckets; two cardigans are
+// the same bucket regardless of color/pattern.
+function tripBenchBucketKey(piece) {
+  return `${wardrobeCategoryGroup(piece)}:${garmentKind(piece) || 'other'}`
+}
+
+// thread_1788504927533: buildCoveredCandidateSet (candidateSet.js) truncates its RANKED INPUT ORDER
+// at capacity once the structural coverage requirements below are satisfied — a flat sort by
+// (tripReuseScore desc, id asc) means that whenever many pieces tie on reuse score (the common case:
+// most pieces are gate-eligible for exactly one slot), ascending id alone decides who survives
+// truncation. Measured live: a wardrobe with 16 real jackets/coats/trenches and 6 cardigans put
+// EVERY cardigan in the bench and NONE of the 16 structured pieces in it, purely because the
+// cardigans' ids happened to be lower — the roster model was never shown a real jacket to weigh
+// against a cardigan, on a category or trip-relevance basis it had no way to know was missing. This
+// is a general property of the ranking this function feeds into buildCoveredCandidateSet, not
+// something specific to outerwear: the same truncation would silently narrow tops, bottoms, shoes or
+// dresses down to whichever construction bucket happens to have the most low-id members.
+//
+// Round-robins the already-ranked list across construction buckets (one pick per bucket per round,
+// each bucket internally keeping its own tripReuseScore/id ordering) so every construction bucket
+// gate-eligible for this trip gets an early turn instead of one bucket exhausting the whole capacity
+// before any other bucket is represented. This does not favor outerwear, or any other category —
+// every bucket, including six near-identical cardigans collapsing into one bucket, gets the same one
+// turn per round. It also does not change WHICH pieces are eligible or their relative rank within
+// their own bucket, only how eligible pieces from DIFFERENT buckets interleave before truncation.
+function diversityInterleavedByBucket(rankedPieces) {
+  const buckets = new Map()
+  for (const piece of rankedPieces) {
+    const key = tripBenchBucketKey(piece)
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key).push(piece)
+  }
+  const queues = [...buckets.values()]
+  const interleaved = []
+  let remaining = true
+  while (remaining) {
+    remaining = false
+    for (const queue of queues) {
+      if (!queue.length) continue
+      interleaved.push(queue.shift())
+      remaining = true
+    }
+  }
+  return interleaved
+}
+
 // The bench: every piece gate-eligible for at least one requested use case, capped for token
 // budget. No deterministic-roster seed (there is no deterministic trip selector to seed from, by
 // design — the model owns this set-level choice) and no capsule quotas/proportional-category
@@ -3628,8 +3677,9 @@ function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE } =
   const ranked = [...eligible].sort((a, b) =>
     (tripReuseScore(b, normalizedSlots, gateSlots) - tripReuseScore(a, normalizedSlots, gateSlots)) ||
     (Number(a.id) - Number(b.id)))
+  const diversityOrdered = diversityInterleavedByBucket(ranked)
   return buildCoveredCandidateSet({
-    rankedPieces: ranked,
+    rankedPieces: diversityOrdered,
     initialSelection: [],
     capacity: benchSize,
     requirements: gateSlots.map(g => g.requirement),

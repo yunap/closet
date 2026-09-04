@@ -130,6 +130,46 @@ test('no fixed budget: the model may choose fewer or more pieces than any capsul
   assert.ok(!result.failures.some(f => f.code === 'roster_size'), 'trip rosters have no size contract, unlike capsules')
 })
 
+// ─── BENCH CONSTRUCTION DIVERSITY (thread_1788504927533) ────────────────────────────────────────
+// The cardigan-only Vienna roster traced back to the bench the roster model was shown, not to its
+// judgment: buildTripBench ranked candidates by (tripReuseScore desc, id asc), and once many pieces
+// tie on reuse score (the common case), ascending id alone decided who survived capacity truncation.
+// A wardrobe with 16 real jackets/coats and 6 cardigans put every cardigan in the bench and NONE of
+// the 16 structured pieces in it, purely because the cardigans happened to have lower ids -- the
+// model was never shown a real jacket to weigh against a cardigan. This is a property of the bench's
+// own ranking, not anything specific to outerwear: the same truncation can silently narrow any
+// category down to whichever construction bucket has the most low-id members. These reproduce that
+// exact shape and prove the fix (diversityInterleavedByBucket) without asserting "a jacket must be
+// present" anywhere -- only that every construction bucket gate-eligible for the trip gets a turn
+// before capacity truncates, the same guarantee for every category, not a special case for outerwear.
+const manyLowIdCardigans = [10, 11, 12, 13, 14, 15].map(id => piece(id, 'outerwear', { name: `cardigan ${id}` }))
+const oneLowIdVest = piece(16, 'outerwear', { name: 'vest 16' })
+const fewHighIdJackets = [900, 901, 902].map(id => piece(id, 'outerwear', { name: `jacket ${id}` }))
+const fewHighIdCoats = [903, 904].map(id => piece(id, 'outerwear', { name: `coat ${id}` }))
+const DIVERSITY_POOL = [CITY_TOP, CITY_BOTTOM, CITY_SHOES, ...manyLowIdCardigans, oneLowIdVest, ...fewHighIdJackets, ...fewHighIdCoats]
+
+test('a bench capped well below total supply still contains every gate-eligible construction bucket, not just the lowest-id one', async () => {
+  const result = await selectTripRosterViaModel({ pool: DIVERSITY_POOL, slots: [SLOTS[0]], chooseRoster: null, benchSize: 10 })
+  const benchIds = new Set(result.bench.map(p => Number(p.id)))
+  assert.ok([...benchIds].some(id => id >= 900 && id <= 902), 'a jacket-bucket piece must survive truncation even though every jacket id is higher than every cardigan id')
+  assert.ok([...benchIds].some(id => id >= 903 && id <= 904), 'a coat-bucket piece must survive truncation for the same reason')
+  assert.ok([...benchIds].some(id => id >= 10 && id <= 15), 'the cardigan bucket must still be represented -- this is diversity, not exclusion of the low-id bucket')
+  assert.ok(benchIds.has(16), 'the single-member vest bucket must also get its turn')
+  assert.equal(result.bench.length, 10, 'sanity: the cap was actually binding')
+})
+
+test('bench diversity applies to any category with many tied candidates, not only outerwear', async () => {
+  // Six low-id tops, one high-id top of a materially different construction (garmentKind 'button-
+  // shirt' vs the default 'tee'-adjacent bucket the plain fixtures fall into) -- same shape as the
+  // outerwear case, a different category, to prove the fix is not outerwear-special-cased.
+  const manyLowIdTees = [20, 21, 22, 23, 24, 25].map(id => piece(id, 'top', { name: `tee ${id}` }))
+  const oneHighIdShirt = piece(950, 'top', { name: 'button-up shirt 950' })
+  const pool = [CITY_BOTTOM, CITY_SHOES, ...manyLowIdTees, oneHighIdShirt]
+  const result = await selectTripRosterViaModel({ pool, slots: [SLOTS[0]], chooseRoster: null, benchSize: 4 })
+  const benchIds = new Set(result.bench.map(p => Number(p.id)))
+  assert.ok(benchIds.has(950), 'a materially different top construction must survive truncation even at high id, same guarantee as outerwear')
+})
+
 // ─── ROSTER-LEVEL FEASIBILITY (thread_1788501349296) ────────────────────────────────────────────
 // A roster chooser can return something schema-valid and every-use-case-coverable
 // (tripRosterModelCalls:1, 0 repairs, 0 fallbacks looked healthy) and still be structurally unable
