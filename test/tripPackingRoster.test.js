@@ -419,6 +419,39 @@ test('the trip roster user text lists use cases and candidates with no budget/pa
   assert.doesNotMatch(text, /CAPSULE SIZE/)
 })
 
+// thread_1788508369689 / thread_1788510320546: the same 3/2/2 trip request produced roster sizes of
+// 19, 12, and 7 across three live runs, with the small rosters failing downstream on "duplicate
+// outfit already accepted" -- the roster model was never told how many DISTINCT outfits each use
+// case needs, only that it must be "covered" at all, so it had no way to reason about whether its
+// piece counts (e.g. one bottom) could actually supply that many non-repeating cores. targetOutfits
+// was already tracked on every slot object reaching this function; it just never reached the text.
+test('the trip roster user text states each use case\'s required distinct-outfit count, not just that it must be covered', () => {
+  const bench = [{ id: 1, name: 'city top', category: 'top' }]
+  const slots = [
+    { label: 'Sightseeing & Museums', occasion: 'city', activity: 'walking', bestFor: 'city sightseeing', targetOutfits: 3 },
+    { label: 'Nature Walks', occasion: 'casual', activity: 'hiking', bestFor: 'trails', targetOutfits: 2 },
+    { label: 'Dinners & Evenings', occasion: 'evening', bestFor: 'dinners', targetOutfits: 2 },
+  ]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.match(text, /Sightseeing & Museums[\s\S]*?needs 3 distinct outfits/)
+  assert.match(text, /Nature Walks[\s\S]*?needs 2 distinct outfits/)
+  assert.match(text, /Dinners & Evenings[\s\S]*?needs 2 distinct outfits/)
+})
+
+test('a slot with no targetOutfits set still states a count (1), rather than omitting the requirement silently', () => {
+  const bench = [{ id: 1, name: 'city top', category: 'top' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.match(text, /needs 1 distinct outfit:/)
+})
+
+test('the trip roster system prompt distinguishes making a use case wearable once from provisioning enough distinct outfits for its stated count', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /how many genuinely different representative looks/)
+  assert.match(brief, /enough combinatorial room/)
+  assert.match(brief, /without repeating the same core piece-for-piece/)
+})
+
 // Same reasoning as plan_outfit_set.test.js's capsule equivalent: the repair call must reuse the
 // initial call's cache prefix (images included) instead of re-paying for every thumbnail, since the
 // repair is the only point in a single run where a prompt-cache read is possible.
