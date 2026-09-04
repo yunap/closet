@@ -109,6 +109,15 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
     start: isoDate(startDate),
     end: isoDate(endDate),
     durationDays: Math.max(1, durationDays),
+    // Distinguishes "the person said how long" from "nothing was said, defaulted to a single day"
+    // — thread_1788501349296's live rerun: the extractor's own end (Oct 18, from the explicitly
+    // stated "for a week") is the complete, user-owned fact when a duration was actually stated: it
+    // must not be silently swapped back out for whatever end date the model separately supplied
+    // (Oct 19), even when the model's start happened to agree. Ownership at the plan_outfit_set
+    // boundary (styling-engine/tools.js) reads this flag to decide whether the model's own end date
+    // is additional detail worth keeping (no duration stated) or a fact already settled by the user
+    // (duration stated).
+    hasExplicitDuration: Boolean(durationMatch),
     source: 'user_stated',
   }
 }

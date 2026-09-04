@@ -2777,17 +2777,34 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // correct (an out-of-range date genuinely returns 'unavailable', proven directly against the
         // real forecast API), so the defect was upstream: a stated trip date is factual request
         // state, not something the model should have to re-derive correctly on every tool call. Same
-        // tool-boundary-correction shape resolvePlanKind's destination override already uses above:
-        // when this turn's own extracted date exists and the model's argument is missing or
-        // disagrees on the start day, the extracted date wins. A model date_range that agrees is left
-        // exactly as the model gave it (including its own end date, e.g. a stated shorter/longer stay).
+        // tool-boundary-correction shape resolvePlanKind's destination override already uses above.
+        //
+        // Ownership is scoped to exactly what the user actually supplied (thread_1788501349296's
+        // rerun: start agreed at Oct 12, but the model's own end date, Oct 19, quietly rode through
+        // unchanged even though the user's stated "for a week" makes Oct 18 the complete, already-
+        // settled fact — agreement on start is not the same as the user having said nothing about
+        // the end):
+        //   - start AND duration stated -> the extracted range owns BOTH; there is nothing left for
+        //     the model to add, so its own end date is discarded even when its start agreed.
+        //   - start stated, no duration -> the extracted start wins; the model's own end date is
+        //     genuine additional detail and is kept when its start agreed (a wrong start makes its
+        //     end untrustworthy too, so the extracted single-day default is used instead).
+        //   - nothing deterministically stated -> unchanged, the model's argument is used as before.
         const statedTripDateRange = toolContext.statedTripDateRange || null
-        const dateRangeSource = statedTripDateRange && (!modelDateRange.start || modelDateRange.start !== statedTripDateRange.start)
-          ? 'user_stated'
-          : (modelDateRange.start ? 'model' : 'none')
-        const planDateRange = dateRangeSource === 'user_stated'
-          ? { start: statedTripDateRange.start, end: statedTripDateRange.end }
-          : modelDateRange
+        let dateRangeSource
+        let planDateRange
+        if (statedTripDateRange) {
+          dateRangeSource = 'user_stated'
+          const startAgrees = modelDateRange.start === statedTripDateRange.start
+          const modelEndIsAdditionalDetail = !statedTripDateRange.hasExplicitDuration && startAgrees && modelDateRange.end
+          planDateRange = {
+            start: statedTripDateRange.start,
+            end: modelEndIsAdditionalDetail ? modelDateRange.end : statedTripDateRange.end,
+          }
+        } else {
+          dateRangeSource = modelDateRange.start ? 'model' : 'none'
+          planDateRange = modelDateRange
+        }
         toolContext.freeformDiagnostics.dateRangeSource = dateRangeSource
         toolContext.freeformDiagnostics.resolvedDateRange = planDateRange.start
           ? `${planDateRange.start}${planDateRange.end && planDateRange.end !== planDateRange.start ? `..${planDateRange.end}` : ''}`

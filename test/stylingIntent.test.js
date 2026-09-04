@@ -415,7 +415,7 @@ test('extractStatedTripDateRange normalizes "October 12th ... for a week" to Oct
     'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?',
     { currentDate: new Date('2026-09-04T12:00:00Z') }
   )
-  assert.deepEqual(result, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, source: 'user_stated' })
+  assert.deepEqual(result, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, hasExplicitDuration: true, source: 'user_stated' })
 })
 
 test('extractStatedTripDateRange rolls a bare month/day already past this year to next year', () => {
@@ -423,7 +423,7 @@ test('extractStatedTripDateRange rolls a bare month/day already past this year t
     'planning a trip on January 3rd for 5 days',
     { currentDate: new Date('2026-09-04T12:00:00Z') }
   )
-  assert.deepEqual(result, { start: '2027-01-03', end: '2027-01-07', durationDays: 5, source: 'user_stated' })
+  assert.deepEqual(result, { start: '2027-01-03', end: '2027-01-07', durationDays: 5, hasExplicitDuration: true, source: 'user_stated' })
 })
 
 test('extractStatedTripDateRange returns null rather than guessing when no clear date is stated', () => {
@@ -437,5 +437,14 @@ test('extractStatedTripDateRange defaults an unstated duration to a single day',
     'dinner reservations on November 3rd',
     { currentDate: new Date('2026-09-04T12:00:00Z') }
   )
-  assert.deepEqual(result, { start: '2026-11-03', end: '2026-11-03', durationDays: 1, source: 'user_stated' })
+  assert.deepEqual(result, { start: '2026-11-03', end: '2026-11-03', durationDays: 1, hasExplicitDuration: false, source: 'user_stated' })
+})
+
+test('extractStatedTripDateRange flags hasExplicitDuration:false for a start-only statement, even a multi-day-implying one with no explicit count', () => {
+  const result = extractStatedTripDateRange(
+    'heading to Austin on December 5th',
+    { currentDate: new Date('2026-09-04T12:00:00Z') }
+  )
+  assert.equal(result.hasExplicitDuration, false)
+  assert.equal(result.start, '2026-12-05')
 })

@@ -1481,7 +1481,7 @@ test('plan_outfit_set: a wrong model date_range is corrected to the user-stated 
 
   const question = 'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?'
   const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
-  assert.deepEqual(statedTripDateRange, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, source: 'user_stated' })
+  assert.deepEqual(statedTripDateRange, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, hasExplicitDuration: true, source: 'user_stated' })
 
   const toolContext = {
     declaredIntent: { want: 'cards' },
@@ -1516,21 +1516,53 @@ test('plan_outfit_set: a wrong model date_range is corrected to the user-stated 
   assert.equal(toolContext.freeformDiagnostics.resolvedLocation, 'Vienna, Virginia')
 })
 
-test('plan_outfit_set: a model date_range that agrees with the user-stated date is left as the model gave it', async () => {
+// thread_1788501349296's rerun: start agreed at Oct 12, and the model's own end date (Oct 19) rode
+// through unchanged even though the user's own "for a week" already makes Oct 18 the complete,
+// settled fact -- agreement on start is not the same as the user having said nothing about the end.
+// Ownership must reflect exactly what the user supplied: start+duration owns both ends; start-only
+// leaves the model's end as genuine additional detail.
+test('plan_outfit_set: a stated duration owns the end date even when the model\'s start agrees but its end disagrees', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
 
   const question = 'trip to Vienna, Virginia on October 12th for a week'
   const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.equal(statedTripDateRange.hasExplicitDuration, true, 'sanity: "for a week" must be recognized as an explicit duration')
   const toolContext = {
     declaredIntent: { want: 'cards' },
     generatedOutfits: [],
     question,
     location: 'Vienna, Virginia',
     statedTripDateRange,
-    // A shorter stay than the extracted default (the model's own more specific end date) must
-    // survive unchanged -- the override only fires on a genuine mismatch, not merely "any date
-    // context exists."
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    // Start agrees with the extracted date; end does not (mirrors the live Oct 12-19 vs Oct 12-18
+    // rerun exactly).
+    date_range: { start: '2026-10-12', end: '2026-10-19' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-18', 'a stated duration owns the complete range -- the model\'s own end date must not survive just because its start agreed')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
+})
+
+test('plan_outfit_set: a start-only statement (no duration) leaves an agreeing model\'s own end date as genuine additional detail', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia starting October 12th'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.equal(statedTripDateRange.hasExplicitDuration, false, 'sanity: no duration was stated')
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
     weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
   }
   const result = await executeTool('plan_outfit_set', {
@@ -1540,8 +1572,35 @@ test('plan_outfit_set: a model date_range that agrees with the user-stated date 
     slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
   }, toolContext)
 
-  assert.equal(result.date_range.end, '2026-10-15', 'an agreeing model date_range keeps its own end date rather than being overwritten by the extracted default')
-  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'model')
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-15', 'with no stated duration, an agreeing model end date is genuine additional detail and must be kept')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated', 'the start is still user-owned even though the end came from the model')
+})
+
+test('plan_outfit_set: a start-only statement with a disagreeing model start falls back to the extracted single-day default, not the model\'s untrustworthy end', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia starting October 12th'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-09-04', end: '2026-09-11' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-12', 'a disagreeing model start makes its end untrustworthy too -- fall back to the extracted single-day default, not the model\'s Sep 4-11')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
 })
 
 test('plan_outfit_set: with no user-stated date anywhere, the model\'s own date_range is used as before (no regression)', async () => {
