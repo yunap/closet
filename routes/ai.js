@@ -829,10 +829,15 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
   const packingRoster = rosterBearingOutfit?.tripPlanContext
     ? { roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [], roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [] }
     : (toolContext?.pendingRosterChange
-      ? {
-          roster_ids: [...new Set([...(toolContext.packingRosterIds || []), ...toolContext.pendingRosterChange.addedIds])],
-          roster_pieces: [...(toolContext.packingRosterPieces || []), ...toolContext.pendingRosterChange.addedPieces],
-        }
+      ? (() => {
+          const removedIdSet = new Set(toolContext.pendingRosterChange.removedIds || [])
+          const survivingIds = [...(toolContext.packingRosterIds || [])].filter(id => !removedIdSet.has(Number(id)))
+          const survivingPieces = (toolContext.packingRosterPieces || []).filter(piece => !removedIdSet.has(Number(piece?.id)))
+          return {
+            roster_ids: [...new Set([...survivingIds, ...toolContext.pendingRosterChange.addedIds])],
+            roster_pieces: [...survivingPieces, ...toolContext.pendingRosterChange.addedPieces],
+          }
+        })()
       : null)
   return {
     established,

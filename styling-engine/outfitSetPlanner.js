@@ -3700,7 +3700,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   return failures
 }
 
-function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) {
+export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) {
   const failures = tripRosterFailures(roster, { slots, pool })
   return { ok: !failures.length, failures }
 }

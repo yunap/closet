@@ -1118,7 +1118,8 @@ export const STYLIST_TOOLS = [
         location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
         date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
         user_weather: USER_WEATHER_SCHEMA,
-        weather_estimate: WEATHER_ESTIMATE_SCHEMA
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
+        roster_piece_ids_removed: { type: "array", items: { type: "integer" }, description: "ONLY when a trip has an active packing roster and you are confident a piece is no longer needed for the trip — not merely unused in this one card. Explicit substitution ('swap the sandals for the boots because the forecast changed') belongs here; do not infer a removal just because this card happens not to use a roster piece, since one card not showing a shared item is normal and expected." }
       },
       required: ["pieces"]
     }
@@ -1754,7 +1755,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate, roster_piece_ids_removed = [] } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -2094,11 +2095,50 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const packingRosterChange = activeRosterIds.size
           ? (() => {
               const addedPieces = resolved.filter(piece => !activeRosterIds.has(Number(piece.id)))
-              if (!addedPieces.length) return null
-              return { addedIds: addedPieces.map(piece => Number(piece.id)), addedPieces: addedPieces.map(piece => ({ id: Number(piece.id), name: piece.name, category: piece.category, photo: piece.photo || null, worn_photo: piece.worn_photo || null, colors: Array.isArray(piece.colors) ? piece.colors : [] })) }
+              // Removal is explicit only (roster_piece_ids_removed) — never inferred from a piece
+              // simply being absent from this one card. One card not showing a shared item is the
+              // ordinary, expected case this whole architecture exists to make unremarkable.
+              const removedIds = (Array.isArray(roster_piece_ids_removed) ? roster_piece_ids_removed : [])
+                .map(Number).filter(id => activeRosterIds.has(id))
+              if (!addedPieces.length && !removedIds.length) return null
+              const removedPieces = (toolContext.packingRosterPieces || []).filter(piece => removedIds.includes(Number(piece.id)))
+              return {
+                addedIds: addedPieces.map(piece => Number(piece.id)),
+                addedPieces: addedPieces.map(piece => ({ id: Number(piece.id), name: piece.name, category: piece.category, photo: piece.photo || null, worn_photo: piece.worn_photo || null, colors: Array.isArray(piece.colors) ? piece.colors : [] })),
+                removedIds,
+                removedPieces,
+              }
             })()
           : null
-        if (packingRosterChange) toolContext.pendingRosterChange = packingRosterChange
+        if (packingRosterChange) {
+          toolContext.pendingRosterChange = packingRosterChange
+          // Best-effort SET-level re-check (docs/README.md: trip roster architecture, item 5).
+          // The trip's original use-case slots are not themselves persisted across turns — only
+          // currentOutfitSet's accepted cards are — so this approximates them from each accepted
+          // card's own occasion/activity rather than re-deriving the plan's real slot definitions.
+          // Advisory only: it discloses a potential gap in the response, it does not block the edit
+          // or resurrect the removed piece, since the model (not this check) owns whether a gap is
+          // acceptable for this trip.
+          try {
+            const priorRosterPieces = toolContext.packingRosterPieces || []
+            const removedIdSet = new Set(packingRosterChange.removedIds || [])
+            const newRosterPieces = [
+              ...priorRosterPieces.filter(piece => !removedIdSet.has(Number(piece.id))),
+              ...packingRosterChange.addedPieces,
+            ]
+            const proxySlots = (toolContext.currentOutfitSet || [])
+              .filter(entry => entry?.occasion)
+              .map((entry, index) => ({ id: `edit_proxy_${index}`, label: entry.label || `slot_${index}`, occasion: entry.occasion, activity: entry.activity || 'none' }))
+            if (proxySlots.length) {
+              const { validateTripRoster } = await import('./outfitSetPlanner.js')
+              const check = validateTripRoster(newRosterPieces, { slots: proxySlots })
+              if (!check.ok) packingRosterChange.coverageGaps = check.failures.map(f => f.message)
+            }
+          } catch (err) {
+            // Advisory machinery failing must never block a real edit — log and move on.
+            console.warn('packing roster coverage re-check failed:', err.message)
+          }
+        }
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),

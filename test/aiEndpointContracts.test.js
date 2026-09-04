@@ -3919,6 +3919,36 @@ test('executeTool propose_outfit: a piece outside the active roster is an explic
   assert.equal(card.packingRosterChange.addedPieces[0].id, seeded.shoe)
 })
 
+test('executeTool propose_outfit: explicit removal, never inferred from a card simply not showing a piece', async () => {
+  const toolContext = {
+    occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+    packingRosterIds: new Set([seeded.top, seeded.bottom, seeded.shoe, seeded.boot]),
+    packingRosterPieces: [{ id: seeded.boot, name: 'roster boot' }],
+  }
+  // This card omits the boot entirely, without saying anything about removal -- must NOT be read
+  // as dropping it from the suitcase, the exact "not inferred" rule the owner asked for.
+  const noOpEdit = await executeTool('propose_outfit', {
+    label: 'Restyle, boot just not in this look',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'reason',
+  }, toolContext)
+  assert.equal(noOpEdit.status, 'success')
+  assert.equal(toolContext.pendingRosterChange, undefined, 'omission is not removal')
+
+  // Explicit removal via roster_piece_ids_removed.
+  const explicitRemoval = await executeTool('propose_outfit', {
+    label: 'Swap out the boot',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'the boots did not suit the forecast after all',
+    roster_piece_ids_removed: [seeded.boot],
+  }, toolContext)
+  assert.equal(explicitRemoval.status, 'success')
+  assert.deepEqual(toolContext.pendingRosterChange.removedIds, [seeded.boot])
+  assert.equal(toolContext.pendingRosterChange.removedPieces[0].id, seeded.boot)
+})
+
 test('executeTool propose_outfit: with no active roster, packingRosterChange never fires (ordinary ad-hoc requests unaffected)', async () => {
   const toolContext = {
     occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
@@ -3933,6 +3963,31 @@ test('executeTool propose_outfit: with no active roster, packingRosterChange nev
   assert.equal(proposed.status, 'success')
   assert.equal(toolContext.pendingRosterChange, undefined)
   assert.equal(toolContext.generatedOutfits[0].packingRosterChange, undefined)
+})
+
+test('propose_outfit: an explicit removal that breaks trip coverage is disclosed, not blocked', async () => {
+  // Best-effort set-level re-check (docs/README.md: trip roster architecture, item 5) using
+  // currentOutfitSet's own accepted-card occasions as a proxy for the trip's real use-case slots.
+  const hikeShoeId = insertPiece({ category: 'shoes', name: 'the only hiking-capable shoe', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const eveningShoeId = insertPiece({ category: 'shoes', name: 'indoor evening shoe', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    occasion: 'casual', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, hikeShoeId, eveningShoeId]),
+    generatedOutfits: [],
+    packingRosterIds: new Set([seeded.top, seeded.bottom, hikeShoeId]),
+    packingRosterPieces: [{ id: hikeShoeId, name: 'the only hiking-capable shoe' }],
+    // The proxy slot standing in for the trip's real "Nature Walks" use case.
+    currentOutfitSet: [{ label: 'Nature Walks', occasion: 'casual', activity: 'hiking', piece_ids: [seeded.top, seeded.bottom, hikeShoeId] }],
+  }
+  const result = await executeTool('propose_outfit', {
+    label: 'Remove the only hiking shoe',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: eveningShoeId, role: 'shoes' }],
+    occasion: 'casual', activity: 'none', why_it_works: 'staying in for the evening',
+    roster_piece_ids_removed: [hikeShoeId],
+  }, toolContext)
+  assert.equal(result.status, 'success', 'the edit itself is never blocked by the advisory check')
+  assert.deepEqual(toolContext.pendingRosterChange.removedIds, [hikeShoeId])
+  assert.ok(Array.isArray(toolContext.pendingRosterChange.coverageGaps) && toolContext.pendingRosterChange.coverageGaps.length, 'removing the only hiking-capable shoe must surface a coverage gap')
 })
 
 test('executeTool search_wardrobe: in_packing_roster marks membership without excluding non-roster pieces', async () => {
@@ -6547,6 +6602,25 @@ test('packing roster lifecycle: selected, carried forward, roster-only edit leav
   const afterAddition = getStylistConversationState(sessionId)
   assert.deepEqual(afterAddition.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004, 8005])
   assert.ok(afterAddition.packing_roster.roster_pieces.some(p => p.id === 8005), 'the new cardigan must be a first-class roster member, not just an id')
+
+  // Turn 4: an explicit removal/substitution -- the jacket is swapped out. Completes item 5's full
+  // static lifecycle: the removed piece must no longer appear as packed anywhere in persisted state.
+  const removalTurnContext = {
+    generatedOutfits: [{ label: 'City Walking (swapped layer)', pieceIds: [8002, 8003, 8004, 8005], pieces: [CITY_TOP, CITY_BOTTOM, CITY_SHOES, NEW_CARDIGAN], packingRosterChange: { addedIds: [], addedPieces: [], removedIds: [8001], removedPieces: [JACKET] } }],
+    packingRosterIds: new Set([8001, 8002, 8003, 8004, 8005]),
+    packingRosterPieces: [JACKET, CITY_TOP, CITY_BOTTOM, CITY_SHOES, NEW_CARDIGAN],
+    pendingRosterChange: { addedIds: [], addedPieces: [], removedIds: [8001], removedPieces: [JACKET] },
+  }
+  const removalFreshState = boundedConversationStateFromToolContext(removalTurnContext)
+  assert.ok(!removalFreshState.packing_roster.roster_ids.includes(8001), 'the removed jacket must be gone from the roster immediately')
+  persistFullStylistTurnState({ toolContext: removalTurnContext, answer: 'Swapped the jacket for the cardigan in your packing list.', freeformTurnToken: 'tok-4', sessionId })
+  const afterRemoval = getStylistConversationState(sessionId)
+  assert.deepEqual(afterRemoval.packing_roster.roster_ids.sort((a, b) => a - b), [8002, 8003, 8004, 8005], 'the jacket is gone; everything else survives')
+  assert.ok(!afterRemoval.packing_roster.roster_pieces.some(p => p.id === 8001), 'the removed piece must not appear as packed in the structured roster either')
+
+  // And the next turn reads the post-removal roster back, same as every earlier turn boundary.
+  const payloadTurn5 = await buildStylistConversationPayload({ question: 'what am I packing now?', conversationMode: 'followup', sessionId })
+  assert.deepEqual(payloadTurn5.threadState.packing_roster.roster_ids.sort((a, b) => a - b), [8002, 8003, 8004, 8005])
 })
 
 test('freeform current-season prompts receive applicable calendar-season lessons', async () => {
