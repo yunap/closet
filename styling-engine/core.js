@@ -2019,6 +2019,32 @@ function pieceFidelityChecklist(pieces) {
       if (/\b(jean|trouser|pant|wide|straight|bootcut|crop)\b/.test(blob)) constraints.push('must remain the listed pant/jean silhouette')
       if (/\b(floral|botanical|paisley|abstract|stripe|striped|pattern|abstract|tapestry)\b/.test(blob)) constraints.push('preserve the bottom print/pattern scale and colors')
     }
+    // thread_1788495287089: a hooded, asymmetric-drape, double-breasted cardigan with zip pockets
+    // rendered as a plain symmetric open cardigan — outerwear had no branch here at all, only the
+    // generic fallback below, while every other category got construction-specific language. Same
+    // shape as top/bottom above: each line fires only on evidence already in the blob (name,
+    // reads_as, notes, trusted structured fields — see pieceTextBlob). Never push a claim from
+    // category alone, and never state an absence ("no hood", "no pockets") — most outerwear
+    // legitimately lacks these features, and blob has no reliable way to confirm a true negative.
+    if (group === 'outerwear') {
+      if (/\b(asymmetric|asymmetrical|asymmetry|drape|draped|draping|waterfall)\b/.test(blob)) constraints.push('preserve the asymmetric/draped silhouette, not a symmetric closure') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bhood(ed)?\b/.test(blob)) constraints.push('must remain hooded') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\b(button|buttoned|button-front|button-up|double-breasted)\b/.test(blob)) constraints.push('preserve the button closure/placket') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bzip(per)?[- ]?(front|up|closure)\b/.test(blob)) constraints.push('preserve the zip closure') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bpocket/.test(blob)) constraints.push('preserve the visible pockets, in their described style') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\b(collar|lapel)\b/.test(blob)) constraints.push('preserve the collar/lapel shape') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      // "dropped shoulder" as an adjacent phrase, or the two words apart in either order (real
+      // tagging notes are prose, not keywords — thread_1788495287089's own notes read "the
+      // shoulder seams seem dropped", not "dropped shoulder").
+      if (/\b(dropped[- ]shoulder|drop[- ]shoulder|raglan|batwing|kimono sleeve)\b/.test(blob) || // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+          (/\bshoulder/.test(blob) && /\bdropped\b/.test(blob))) { // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+        constraints.push('preserve the sleeve construction/shoulder line')
+      }
+      if (/\b(above|below|hits?)\s+the\s+(hip|hips|knee|knees|thigh|thighs|waist|calf|calves)\b/.test(blob) || // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+          /\b(mid[- ]thigh|knee[- ]length|hip[- ]length|thigh[- ]length|waist[- ]length|cropped|longline|oversized)\b/.test(blob)) { // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+        constraints.push('must remain the listed length/hem shape')
+      }
+    }
     if (group === 'dress') constraints.push('must remain one dress, not separates')
     if (group === 'shoes') constraints.push('preserve shoe type, color, heel/sole shape, and openness/coverage')
     if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
