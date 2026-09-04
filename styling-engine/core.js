@@ -2027,6 +2027,14 @@ function pieceFidelityChecklist(pieces) {
     // category alone, and never state an absence ("no hood", "no pockets") — most outerwear
     // legitimately lacks these features, and blob has no reliable way to confirm a true negative.
     if (group === 'outerwear') {
+      // Baseline, unconditional for every outerwear piece — does NOT assert which variant a piece
+      // has (that would be exactly the fabrication-from-absence this whole function refuses to do).
+      // It tells the image model which classes of visible construction to inspect IN THE REFERENCE
+      // PHOTO and not simplify away, independent of whether the tagger ever captured them in text.
+      // The evidence-gated lines below still layer specific known facts on top when the record
+      // actually says so — this baseline exists for the (common) case where it doesn't, so fidelity
+      // is not gated on the tagging-schema project (a separate, larger piece of work) ever landing.
+      constraints.push('preserve the exact visible outerwear construction from the reference: collar/hood configuration, front closure type and placement, pocket type/placement, sleeve/shoulder construction, hem/length, and front-panel shape — do not simplify, regularize, add, or remove these details')
       if (/\b(asymmetric|asymmetrical|asymmetry|drape|draped|draping|waterfall)\b/.test(blob)) constraints.push('preserve the asymmetric/draped silhouette, not a symmetric closure') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
       if (/\bhood(ed)?\b/.test(blob)) constraints.push('must remain hooded') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
       if (/\b(button|buttoned|button-front|button-up|double-breasted)\b/.test(blob)) constraints.push('preserve the button closure/placket') // ratchet-allow: outerwear construction fidelity, no structured field exists for this

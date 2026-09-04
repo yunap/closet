@@ -288,6 +288,7 @@ test('generated outfit image prompt reinforces outerwear construction cues that 
     }],
   })
 
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape/)
   assert.match(prompt, /preserve the asymmetric\/draped silhouette, not a symmetric closure/)
   assert.match(prompt, /must remain hooded/)
   assert.match(prompt, /preserve the button closure\/placket/)
@@ -314,6 +315,9 @@ test('generated outfit image prompt never fabricates outerwear construction clai
     }],
   })
 
+  // Even when nothing specific is known, the unconditional baseline still tells the model to
+  // inspect and preserve the reference photo's real construction — it just names no variant.
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape/)
   assert.match(prompt, /preserve the asymmetric\/draped silhouette, not a symmetric closure/)
   assert.match(prompt, /preserve the sleeve construction\/shoulder line/)
   assert.doesNotMatch(prompt, /must remain hooded/)
@@ -325,16 +329,26 @@ test('generated outfit image prompt never fabricates outerwear construction clai
   assert.doesNotMatch(prompt, /no pocket/i)
 })
 
-// A plain outerwear piece with no distinctive construction language anywhere in its blob must still
-// fall back to the same generic line every other under-described piece gets — the new branch adds
-// coverage, it does not remove the existing floor.
-test('generated outfit image prompt falls back to the generic line for an outerwear piece with no evidenced construction', () => {
+// The requested "middle ground" case: a minimally tagged outerwear piece with NOTHING distinctive
+// in its blob (no notes, no reads_as beyond the bare name) must still get an explicit instruction
+// to preserve its visible hood/collar, closure, pockets, and construction — the unconditional
+// baseline is not gated on the tagger ever having captured those features in text, only the
+// evidence-specific lines are. It still asserts no variant ("must remain hooded" etc. stay absent):
+// this tells the model WHAT CLASSES to inspect in the reference photo, not WHICH ONES this garment
+// has.
+test('a minimally tagged outerwear piece still gets baseline construction-preservation instructions, without asserting which variants it has', () => {
   const prompt = wholeWardrobeImagePrompt({
     outfit: { label: 'Casual', reason: 'Easy layering.' },
     pieces: [{ name: 'grey wool cardigan', category: 'outerwear' }],
   })
 
-  assert.match(prompt, /preserve category, color, shape, and visible texture/)
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape — do not simplify, regularize, add, or remove these details/)
+  assert.doesNotMatch(prompt, /must remain hooded/)
+  assert.doesNotMatch(prompt, /preserve the button closure/)
+  assert.doesNotMatch(prompt, /preserve the zip closure/)
+  assert.doesNotMatch(prompt, /preserve the visible pockets/)
+  assert.doesNotMatch(prompt, /preserve the collar\/lapel shape/)
+  assert.doesNotMatch(prompt, /preserve category, color, shape, and visible texture/)
 })
 
 test('normalizeGeneratedOutfitObject (selected-item composer/gate path) carries styling_instructions through, and defaults to empty when absent', () => {
