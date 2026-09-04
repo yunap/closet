@@ -11,6 +11,7 @@ const { thermalFitPieceAdvisory, slotThermalDemandLabel } = await import('../sty
 const { resolveExposureContext } = await import('../styling-engine/exposure.js')
 const { requiredThermalBand } = await import('../styling-engine/thermalDemand.js')
 const { validateUserWeather, resolveWeatherContext } = await import('../styling-engine/weather.js')
+const { thermalFactsForPieceLine } = await import('../styling-engine/rules.js')
 
 const W = (h, l) => ({ ...resolveWeatherContext({ userWeather: validateUserWeather({ high_f: h, low_f: l }) }).temperature })
 const EXP = (w, activity = 'walking', environment = 'outdoor') => resolveExposureContext({ activity, environment }, w)
@@ -245,6 +246,25 @@ test('the catalog line carries the facts needed to judge the sun hoodie', async 
     assert.ok(line.includes(fact), `the fact channel must state ${fact}`)
   }
   assert.ok(typeof buildPlanSlotWorkbench === 'function')
+})
+
+// thread_1788518048013: thermalFactsForPiece correctly excludes shoes/accessories from BODY-THERMAL
+// construction claims (warmth/insulation/interior/removable -- fabric_weight on a shoe describes
+// construction substance, not body warmth), but `season` answers a different, category-independent
+// question -- a style/applicability signal, not a thermal claim -- and was being dropped for shoes
+// as collateral damage of the same exclusion. A live trip run chose a season:'warm' athletic shoe
+// for a fall hiking card with the compose-time catalog line never carrying that fact at all.
+const WARM_SEASON_SHOE = {
+  id: 213, name: 'light grey knit athletic shoes', category: 'shoes',
+  fabric_weight: 'medium', fabric_category: 'mesh', season: 'warm',
+}
+
+test('a shoe\'s season reaches the compose-time catalog line even though thermal construction facts stay omitted', () => {
+  const line = thermalFactsForPieceLine(WARM_SEASON_SHOE)
+  assert.match(line, /season:warm/, 'season must not be collateral damage of the shoes/accessory thermal exclusion')
+  for (const fact of ['warmth:', 'insulation:', 'interior:', 'removable:']) {
+    assert.ok(!line.includes(fact), `body-thermal construction fact "${fact}" must stay excluded for shoes -- fabric_weight on a shoe is not a body-warmth claim`)
+  }
 })
 
 test('unrecorded insulation is not reported as verified-none', async () => {

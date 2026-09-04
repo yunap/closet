@@ -202,16 +202,28 @@ export function thermalFactsForPiece(piece = {}) {
   }
 }
 
+// thread_1788518048013: thermalFactsForPiece's shoes/accessory exclusion is correct for warmth,
+// insulation, interior and removable — those are BODY-THERMAL CONSTRUCTION claims (does this
+// garment insulate the wearer), and a shoe's fabric_weight describes construction substance, not
+// body warmth (the same reasoning weatherFitForPiece already draws this exact line on). But
+// `season` was bundled into the same exclusion and answers a different question entirely: whether
+// the piece reads as warm-season/cool-season/year-round, a style/applicability signal that is just
+// as real for a shoe as for a top. A live trip run chose a season:'warm' shoe for a fall hiking
+// card with zero chance the compose-time model could weigh it — the catalog line never carried the
+// fact at all, for any category. Season is read independently of the group gate below.
 export function thermalFactsForPieceLine(piece = {}) {
   const facts = thermalFactsForPiece(piece)
-  if (!facts) return ''
-  const bits = [
-    `warmth:${facts.warmth || 'not established'}`,
-    `insulation:${facts.insulation}`,
-  ]
-  if (facts.interior) bits.push(`interior:${facts.interior}`)
-  if (facts.season) bits.push(`season:${facts.season}`)
-  if (facts.removable) bits.push('removable:yes')
+  const bits = []
+  if (facts) {
+    bits.push(`warmth:${facts.warmth || 'not established'}`)
+    bits.push(`insulation:${facts.insulation}`)
+    if (facts.interior) bits.push(`interior:${facts.interior}`)
+    if (facts.removable) bits.push('removable:yes')
+  }
+  // Not a gate, not a thermal score — a plain factual style/applicability signal, stated the same
+  // way for every category. Deliberately checked from the piece directly rather than through
+  // `facts.season` so it survives even when `facts` itself is null (shoes/accessory).
+  if (piece.season) bits.push(`season:${piece.season}`)
   return bits.join(' | ')
 }
 
