@@ -182,6 +182,7 @@ import {
   addEvaluationImage,
   resolveStylistConversationMode,
   buildStylistConversationDirective,
+  isGenerationFactsQuestion,
   getStylistConversationState,
   saveStylistConversationState,
   buildStylistConversationPayload,
@@ -5442,6 +5443,13 @@ router.post('/ask', async (req, res) => {
       ]
         .map(Number).filter(Boolean)
     )]
+    // thread_1788556165595: a plain "what did you use" question about an existing plan reached
+    // plan_outfit_set again and produced a second, different capsule. buildStylistConversationPayload
+    // already told the model the answer sits in current_outfit_set — this removes the tool that let
+    // it ignore that and regenerate instead, mirroring the outfit-critique-followup restriction below.
+    if (payload.restrictToInformationalTools) {
+      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details']
+    }
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,
       toolContext

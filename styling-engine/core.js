@@ -4053,6 +4053,21 @@ function isGeneratedSetCoverageAudit(question = '') {
   return /\b(coverage|cover|enough|same outfit|only one|backup|laundry|repeat|re-wear|rewear|additional|another|more options?)\b/.test(q) // ratchet-allow: user intent routing for multi-outfit coverage audits
 }
 
+// A follow-up asking about the FACTS of an already-generated plan/capsule — the weather it assumed,
+// its piece budget, its date range, the location it resolved — rather than asking for a revision.
+// thread_1788556165595: "what was the temperature range you made this capsule for?" reached
+// plan_outfit_set again instead of reading the answer already sitting in current_outfit_set's own
+// weather_used/resolved_weather_context (populated by outfitSetPlanner.js), and produced a second,
+// materially different 8-look capsule for a purely informational question. The generation facts are
+// already in THREAD STATE by the time this question is asked; the model does not need a tool call —
+// let alone a new plan — to read them back. Deliberately narrow (facts about the existing plan, not
+// "make it different"): a revision request like "actually, less rust" must still reach the composing
+// tools, so this must not match on garment/style words.
+const GENERATION_FACTS_QUESTION_RE = /\b(what|which)\b[^?.!]{0,40}\b(temperature|weather|climate|forecast|budget|piece count|price range|date range|location|city|season)\b|\bhow many\s+(pieces|outfits|looks)\b/i
+export function isGenerationFactsQuestion(question = '') {
+  return GENERATION_FACTS_QUESTION_RE.test(String(question || ''))
+}
+
 // Historical outfit-set addressability (docs: current_outfit_set stays the default referent;
 // earlier sets and their critiques are historical and surface only on an explicit backward
 // reference — see the spec discussed against thread_1787435527800). Ordinal/positional ("the first
@@ -4500,6 +4515,16 @@ export async function buildStylistConversationPayload(body) {
 
   const conversationDirective = buildStylistConversationDirective(conversationMode)
   const generatedSetCoverageAudit = Boolean(generatedOutfitContextText && isGeneratedSetCoverageAudit(question))
+  // thread_1788556165595: a plain informational follow-up about an existing plan/capsule's own
+  // facts (its assumed weather, budget, date range...) reached plan_outfit_set again instead of
+  // reading current_outfit_set's own weather_used/resolved_weather_context, producing a second,
+  // materially different capsule for a question that needed no tool call at all. The generic
+  // followup directive above ("do not restart the full evaluation flow") is prose-only and was not
+  // enough on its own. Scoped to conversationMode === 'followup' specifically — not 'correction' —
+  // so an explicit revision request ("actually, less rust") still reaches the composing tools.
+  const restrictToInformationalTools = Boolean(
+    conversationMode === 'followup' && currentOutfitSet.length && isGenerationFactsQuestion(question)
+  )
 
   // The whole-closet manifest: the stylist "knows the wardrobe" by reading it.
   // Deterministic ordering (group, then id) keeps the prompt prefix stable for
@@ -4664,6 +4689,9 @@ export async function buildStylistConversationPayload(body) {
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
     `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${prompts.PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
     'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version. For trip or multi-outfit plans, if the user asks to revise, add, check variety, or show/render the outfits, update or use the Current outfit set instead of treating the latest suggestion as a standalone note.',
+    restrictToInformationalTools
+      ? 'This turn asks about a FACT of the plan already generated (its assumed weather, budget, date range, or location), not for a revision. No tool that produces new outfits is available this turn on purpose. Answer from THREAD STATE\'s current_outfit_set — each card carries its own weather_used and resolved_weather_context — and from the plan details already shown above. If a specific number was never resolved (e.g. weatherSource was a heuristic guess with no high_f/low_f), say so plainly instead of inventing one.'
+      : '',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
@@ -4767,6 +4795,7 @@ export async function buildStylistConversationPayload(body) {
     // docs/search-payload-spec.md §5. search_wardrobe trims its rows to per-request judgment only
     // when the model can actually see the full-truth manifest. The tiered discovery index does not
     // qualify: it owns identity only, so search must return the missing stable truth.
-    wardrobeManifestIncluded: Boolean(wardrobeManifestText)
+    wardrobeManifestIncluded: Boolean(wardrobeManifestText),
+    restrictToInformationalTools
   }
 }
