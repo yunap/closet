@@ -818,8 +818,25 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     ...(toolContext?.boundedWeatherSummary ? { weather: toolContext.boundedWeatherSummary } : {}),
     ...(toolContext?.boundedWeatherUnavailable ? { weather_resolution: 'forecast unavailable; do not infer temperature' } : {})
   }
+  // The active trip packing roster (docs/README.md: trip roster architecture). Two ways this turn
+  // can produce a fresh one: a plan turn attaches tripPlanContext to its cards (the roster the
+  // model just selected), or propose_outfit records pendingRosterChange when a card edit reaches
+  // for a piece outside the roster it was handed — an explicit addition, not a silent one. Neither
+  // present means this turn made no roster change; the caller (persistFullStylistTurnState) leaves
+  // the prior persisted roster untouched by simply not overwriting it, the same "layers onto"
+  // pattern current_outfit_set already uses.
+  const rosterBearingOutfit = outfits.find(outfit => outfit?.tripPlanContext)
+  const packingRoster = rosterBearingOutfit?.tripPlanContext
+    ? { roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [], roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [] }
+    : (toolContext?.pendingRosterChange
+      ? {
+          roster_ids: [...new Set([...(toolContext.packingRosterIds || []), ...toolContext.pendingRosterChange.addedIds])],
+          roster_pieces: [...(toolContext.packingRosterPieces || []), ...toolContext.pendingRosterChange.addedPieces],
+        }
+      : null)
   return {
     established,
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
     ...(serializeWeatherProfile(toolContext?.weatherProfile) ? { weather_profile: serializeWeatherProfile(toolContext.weatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {})
   }
@@ -860,6 +877,7 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   saveStylistConversationState({
     ...priorConversationState,
     ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
+    ...(freshState?.packing_roster ? { packing_roster: freshState.packing_roster } : {}),
     ...(freshState?.weather_profile ? { weather_profile: freshState.weather_profile } : {}),
     recently_discussed_piece_ids: {
       piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
@@ -5167,6 +5185,13 @@ router.post('/ask', async (req, res) => {
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
+    // The active trip packing roster (docs/README.md: trip roster architecture) — read the same
+    // way currentOutfitSet is, so search_wardrobe/propose_outfit see this turn's roster regardless
+    // of whether it came from a fresh plan or was carried forward from an earlier one.
+    toolContext.packingRosterIds = new Set(
+      (payload.threadState?.packing_roster?.roster_ids || []).map(Number).filter(Boolean)
+    )
+    toolContext.packingRosterPieces = payload.threadState?.packing_roster?.roster_pieces || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [
         ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),

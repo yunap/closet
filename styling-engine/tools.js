@@ -791,7 +791,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, insulation, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, insulation, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1562,6 +1562,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
               Math.max(toolContext.freeformDiagnostics.searchVisualMaxCategoryCount || 0, visualCategoryCount)
           }
         }
+        // Roster membership, not exclusion (docs/README.md: trip roster architecture). An active
+        // packing roster narrows what to PREFER, never what search can return — the owner's own
+        // instruction was explicit not to hard-prohibit outside-roster search, since that would
+        // make a genuinely bad packing selection unfixable. Only present at all when a roster is
+        // active, so an ordinary non-trip search carries no new field.
+        const activeSearchRosterIds = toolContext?.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
           // The cap is per CATEGORY, not per call: batching three category searches into one must
@@ -1605,6 +1611,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               ruleFit: p.ruleFit,
               ruleFitLabel: p.ruleFitLabel,
               notes: p.notes ? p.notes.slice(0, 120) : '',
+              ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
               ...(image ? { image } : {})
             }
           }
@@ -1643,6 +1650,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             hem_finish: p.hem_finish,
             tuck_behavior: p.tuck_behavior,
             thermal: p.thermalFacts || undefined,
+            ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
             ruleFit: p.ruleFit,
             ruleFitLabel: p.ruleFitLabel,
             notes: p.notes ? p.notes.slice(0, 120) : '',
@@ -2075,6 +2083,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const removedForRecovery = supersededBroken
           ? (supersededBroken.pieces || []).find(piece => !proposedPieceIdSet.has(Number(piece?.id)))
           : null
+        // A card edit must not silently mutate the suitcase (docs/README.md: trip roster
+        // architecture). When a thread has an active packing roster (toolContext.packingRosterIds,
+        // read from threadState.packing_roster), a piece this card uses that the roster does not
+        // already contain is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — disclosed on
+        // the card explicitly and handed to toolContext so the end-of-turn persist can fold it into
+        // the roster going forward. Only computed when a roster is actually active: an ordinary
+        // ad-hoc outfit request (no trip in progress) is unaffected.
+        const activeRosterIds = toolContext.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
+        const packingRosterChange = activeRosterIds.size
+          ? (() => {
+              const addedPieces = resolved.filter(piece => !activeRosterIds.has(Number(piece.id)))
+              if (!addedPieces.length) return null
+              return { addedIds: addedPieces.map(piece => Number(piece.id)), addedPieces: addedPieces.map(piece => ({ id: Number(piece.id), name: piece.name, category: piece.category, photo: piece.photo || null, worn_photo: piece.worn_photo || null, colors: Array.isArray(piece.colors) ? piece.colors : [] })) }
+            })()
+          : null
+        if (packingRosterChange) toolContext.pendingRosterChange = packingRosterChange
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -2092,6 +2116,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           debug: outfitDebug,
           previewOnly: true,
           ...weatherCardFields(stylingContext),
+          ...(packingRosterChange ? { packingRosterChange } : {}),
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: supersededEngineNote ? 'annotated' : 'accepted',

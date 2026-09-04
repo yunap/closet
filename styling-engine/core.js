@@ -4380,6 +4380,18 @@ export async function buildStylistConversationPayload(body) {
     : (requestedConversationMode !== 'new_request' && Array.isArray(restoredState.current_outfit_set)
       ? restoredState.current_outfit_set
       : [])
+  // The active trip packing roster (docs/README.md: trip roster architecture) — SET-level state, a
+  // sibling of current_outfit_set rather than folded into it, since the roster spans every card in
+  // the plan, not one. Same carry-forward shape as current_outfit_set: prefer a fresh roster this
+  // turn's echoed cards carry (a NEW or regenerated plan), else keep whatever was persisted, so
+  // editing one card via propose_outfit (which does not attach tripPlanContext) does not silently
+  // erase the roster memory established by the plan turn before it.
+  const rosterBearingOutfit = (Array.isArray(generatedOutfits) ? generatedOutfits : []).find(o => o?.tripPlanContext)
+  const packingRoster = rosterBearingOutfit?.tripPlanContext
+    ? { roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [], roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [] }
+    : (requestedConversationMode !== 'new_request' && restoredState.packing_roster
+      ? restoredState.packing_roster
+      : null)
 
   const threadState = {
     turn_mode: conversationMode,
@@ -4405,6 +4417,7 @@ export async function buildStylistConversationPayload(body) {
       }
     } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
     // docs/bounded-multi-context-continuity-spec.md §5.2. Continuation context ONLY — pieces the
     // immediately preceding accepted answer discussed, not verified this turn. Deliberately a
     // separate key from current_outfit_set (which IS this turn's verified truth for outfit cards)
@@ -4427,6 +4440,7 @@ export async function buildStylistConversationPayload(body) {
     established: establishedStylingContext,
     ...(effectiveWeatherProfile ? { weather_profile: serializeWeatherProfile(effectiveWeatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
   }, sessionId)
 
   // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
@@ -4615,6 +4629,9 @@ export async function buildStylistConversationPayload(body) {
     'CURRENT-SET AUTHORITY: current_outfit_set is the default referent for unqualified discussion ("these outfits", "the second one", "add a layer", "which works best?") — always reason from it, not from an earlier turn\'s conversational framing. Earlier outfit sets and critiques of them are historical context, discussable only when the user explicitly refers back (see HISTORICAL OUTFIT SETS below if supplied this turn). A critique or rejection recorded against an earlier set — "these don\'t work," "too elevated," any objection — must NOT be applied to current_outfit_set unless the user states or repeats that same critique about the current set now. Regenerating the set resolves the earlier objection; do not re-litigate it from memory of the prior turn.',
     threadState.recently_discussed_pieces
       ? 'RECENTLY DISCUSSED PIECES: threadState.recently_discussed_pieces lists pieces the immediately preceding answer discussed. These are CONTINUATION SUBJECTS ONLY — they have not been verified this turn. If the user is continuing that discussion (e.g. "yes, put those together", "make outfits from those"), call view_pieces on them before composing or citing them; do not cite or compose from them until they have been re-verified this turn this way. Do not assume they are still relevant if the user has moved on to something unrelated.'
+      : '',
+    threadState.packing_roster
+      ? 'ACTIVE PACKING ROSTER: threadState.packing_roster is the trip\'s explicit packing set — the suitcase, not just this turn\'s cards. A card edit ("this trail outfit is too summery", "swap the shoes") should restyle from roster_ids first; search_wardrobe marks each result in_packing_roster so you can tell which. Reaching outside the roster for a genuinely needed piece is allowed, but it is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — say plainly what is being added (or, if you know what it replaces, what leaves the suitcase) so the packing list and the card never silently disagree about what was decided.'
       : '',
     '',
     historicalOutfitContextText,
