@@ -218,6 +218,69 @@ test('tripRosterFailures does not flag a roster that already has an outerwear pi
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'))
 })
 
+// ─── COLD FLOOR: roster-level feasibility (thread_1788516198449) ────────────────────────────────
+// A roster can pass the removable-cool-layer check above (it DOES contain outerwear) and still
+// leave one specific isCold slot with none of it, because the only packed layer is gate-ineligible
+// for that slot's own occasion/activity. Live run: the bench contained real outdoor-eligible
+// jackets/coats, but the roster model selected only a city-only trench -- the hiking slot's own
+// allowed_piece_ids ended up with zero outerwear at all, so submit_plan_outfits' NO_WARM_LAYER_FOR_COLD
+// rejected every card composed for it, no matter what the model tried. This is knowable
+// deterministically the moment the roster is chosen, reusing hasMinimumWarmLayer -- the identical
+// criterion a submitted card is later held to -- rather than discovering it after several rejected
+// submissions.
+// occasions alone do not strictly gate a piece out (a live-earlier lesson) -- what excluded the real
+// trench from the real hiking slot was its formality ('elevated'), which the register-ceiling gate
+// does enforce. Matches the real piece's own tagged formality, not an invented exclusion mechanism.
+const CITY_ONLY_TRENCH = piece(11, 'outerwear', { occasions: ['city', 'smart-casual'], formality: 'elevated' })
+
+const coldHikingSlot = (overrides = {}) => ({
+  id: 's_hike', label: 'Nature Walks', occasion: 'casual', activity: 'hiking',
+  stylingContext: {
+    occasion: 'casual', activity: 'hiking',
+    weatherProfile: { isCold: true, needsRemovableCoolLayer: true, highF: 55, lowF: 40 },
+  },
+  ...overrides,
+})
+
+test('tripRosterFailures flags a roster whose only outerwear is gate-ineligible for an isCold slot -- the exact live-run shape', () => {
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH], { slots: [coldHikingSlot()] })
+  assert.equal(result.ok, false)
+  const gap = result.failures.find(f => f.code === 'cold_floor_infeasible')
+  assert.ok(gap, 'a roster whose only layer cannot legally reach this slot must fail this check, even though the roster is not empty of outerwear')
+  assert.equal(gap.message, 'Nature Walks cannot form a cold-valid outfit from this roster: no slot-eligible qualifying warm layer or heavy main is available.')
+})
+
+test('tripRosterFailures does not flag an isCold slot whose roster contains a slot-eligible qualifying layer', () => {
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, JACKET], { slots: [coldHikingSlot()] })
+  assert.ok(!result.failures.some(f => f.code === 'cold_floor_infeasible'), 'JACKET is outdoor-eligible, so the hiking slot does have a legal path')
+})
+
+test('tripRosterFailures does not flag a slot the cold floor does not apply to (not isCold, or indoor)', () => {
+  const notColdSlot = coldHikingSlot({ id: 's_mild', stylingContext: { occasion: 'casual', activity: 'hiking', weatherProfile: { isCold: false } } })
+  const indoorSlot = coldHikingSlot({ id: 's_indoor', environment: 'indoor', stylingContext: { occasion: 'casual', activity: 'hiking', weatherProfile: { isCold: true, isIndoor: true } } })
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH], { slots: [notColdSlot, indoorSlot] })
+  assert.ok(!result.failures.some(f => f.code === 'cold_floor_infeasible'))
+})
+
+test('selectTripRosterViaModel: a chooser that picks the city-only trench over the bench\'s outdoor-eligible jacket triggers exactly one repair, not a roster handed to submit_plan_outfits doomed to fail', async () => {
+  // A second, city slot -- exactly the real 4-slot trip's shape -- is required for the trench to be
+  // bench-eligible at all: buildTripBench only offers a piece that is gate-eligible for at least ONE
+  // requested slot, and the trench's elevated formality excludes it from the hiking slot alone.
+  const citySlot = { id: 's_city', label: 'City Walking', occasion: 'city', activity: 'walking' }
+  const pool = [HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH, JACKET]
+  let attempts = 0
+  const chooseRoster = async ({ attempt }) => {
+    attempts++
+    if (attempt === 1) return { roster_piece_ids: [4, 5, 6, 11] } // HIKE_TOP/BOTTOM/SHOES + the city-only trench, exactly the live-run mistake
+    return { roster_piece_ids: [4, 5, 6, 11, 8] } // the repair round adds JACKET (id 8)
+  }
+  const result = await selectTripRosterViaModel({ pool, slots: [citySlot, coldHikingSlot()], chooseRoster })
+  assert.equal(attempts, 2, 'the roster-level cold-floor check must reject the first attempt and trigger exactly one repair')
+  assert.equal(result.source, 'model_repaired')
+  assert.ok(result.roster.some(p => Number(p.id) === 8), 'the repaired roster must include the added outdoor-eligible jacket')
+  assert.equal(validateTripRoster(result.roster, { slots: [coldHikingSlot()] }).ok, true)
+})
+
 test('a roster chooser that omits a required removable layer triggers exactly one roster-level repair, not silent acceptance', async () => {
   let attempts = 0
   const chooseRoster = async ({ attempt }) => {

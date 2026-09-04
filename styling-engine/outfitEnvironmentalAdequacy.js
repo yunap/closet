@@ -253,7 +253,14 @@ function outerwearLayerPositivelyInadequate(piece) {
 // it fires on any isCold, mild included: cold-severity-spec.md is explicit that isCold stays a
 // floor. Note it accepts a heavy main INSTEAD of a layer — that is deliberate and unchanged. The
 // severe-cold branch adds the outdoor-capability requirement on top rather than replacing this.
-function hasMinimumWarmLayer(pieces) {
+//
+// Exported (thread_1788516198449) so tripRosterFailures (outfitSetPlanner.js) can ask, per slot,
+// "does at least one of this slot's gate-eligible roster pieces individually satisfy this same
+// floor" — hasMinimumWarmLayer([singlePiece]) answers exactly that, reusing the identical criterion
+// a submitted CARD is later held to rather than deriving a second one. A roster that cannot possibly
+// pass this for a cold_layer_required slot is a deterministic feasibility fact, knowable the moment
+// the roster is chosen — not a styling judgment discovered only after several rejected submissions.
+export function hasMinimumWarmLayer(pieces) {
   const layer = pieces.find(piece =>
     wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')

@@ -29,6 +29,7 @@
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
+import { hasMinimumWarmLayer } from './outfitEnvironmentalAdequacy.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -3774,6 +3775,31 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
       const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
       failures.push({ code: 'missing_removable_cool_layer', message: `missing required removable coverage for slots ${labels}` })
     }
+  }
+
+  // Roster-level cold-floor feasibility (thread_1788516198449): the SET-level check above only asks
+  // whether the roster contains a layer ANYWHERE — a genuine gap when a trip needs one but the
+  // roster is entirely lacking one. This is the narrower, per-slot question the live run exposed:
+  // the roster CAN contain a layer and still leave one specific isCold slot with none of it, because
+  // the only packed layer is gate-ineligible for that slot's own occasion/activity (a city-only
+  // trench cannot cover a hiking slot). submit_plan_outfits' own card-level check
+  // (NO_WARM_LAYER_FOR_COLD, hasMinimumWarmLayer) will reject every card composed for that slot no
+  // matter what the model tries — a deterministic impossibility, not a styling judgment, and knowable
+  // the moment the roster is chosen rather than after several rejected submissions.
+  //
+  // hasMinimumWarmLayer([piece]) reuses the identical criterion a submitted card is later held to,
+  // applied to one candidate at a time — no new warmth threshold, no outerwear-category rule. A slot
+  // passes here the moment ONE of its gate-eligible roster pieces would satisfy the real check on its
+  // own; this never asks whether a full outfit can be composed, only whether the raw material exists.
+  for (const { slot, slotEligible, label } of gateSlots) {
+    const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+    const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
+    if (!weatherProfile.isCold || isIndoor) continue
+    if (slotEligible.some(piece => hasMinimumWarmLayer([piece]))) continue
+    failures.push({
+      code: 'cold_floor_infeasible',
+      message: `${label} cannot form a cold-valid outfit from this roster: no slot-eligible qualifying warm layer or heavy main is available.`
+    })
   }
 
   return failures
