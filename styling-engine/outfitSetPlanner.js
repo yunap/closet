@@ -179,16 +179,37 @@ function collectPieceRoster(outfits = []) {
 // with a no_repeat rule leads with the repeat schedule (its success is "nothing
 // repeats"); everything else keeps the packing-reuse headline. Returns the
 // report lines to append to the shared plan lines.
+// WHAT TO PACK, as its own section — the roster is authoritative, cards are examples drawn from it
+// (docs/README.md: trip roster architecture). Deliberately NOT card annotations: a shared jacket
+// does not get a "remember to add jacket" note pasted onto every card that omits it, which is the
+// per-card noise this whole architecture exists to stop producing. Selected-but-not-demonstrated
+// pieces are named explicitly, the same disclosure discipline the capsule roster already gets.
+function buildTripPackingLines(tripRoster = [], tripOutfits = []) {
+  if (!tripRoster.length) return []
+  const shownIds = new Set(tripOutfits.flatMap(outfit => (outfit.pieces || []).map(piece => Number(piece?.id))))
+  const names = tripRoster.map(piece => piece?.name || 'Garment')
+  const undemonstrated = tripRoster.filter(piece => !shownIds.has(Number(piece?.id)))
+  const lines = [`WHAT TO PACK (${tripRoster.length}): ${names.join(', ')}`]
+  if (undemonstrated.length) {
+    lines.push(`Packed but not shown on a card: ${undemonstrated.map(p => p?.name || 'Garment').join(', ')} — still part of the travel system even when no representative look happens to display it.`)
+  }
+  return lines
+}
+
 function buildPlanReport(pieceReuse, tripOutfits = [], {
   reuseMode = '',
   noRepeatCats = new Set(),
   pieceBudget = 0,
   capsuleRoster = [],
   capsuleCapacity = 0,
-  statedPalette = []
+  statedPalette = [],
+  tripRoster = []
 } = {}) {
   const outfitCount = tripOutfits.length
   const lines = []
+  if (tripRoster.length) {
+    return [...buildTripPackingLines(tripRoster, tripOutfits), `OUTFITS: ${outfitCount} representative look${outfitCount === 1 ? '' : 's'} drawn from the roster above.`]
+  }
   if (pieceBudget > 0) {
     const roster = Array.isArray(capsuleRoster) && capsuleRoster.length
       ? capsuleRoster.map(piece => piece?.name || 'Garment')
@@ -716,14 +737,31 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
-  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette })
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster })
   const weatherLine = buildWeatherLine(slotWeather)
   const gapLines = buildCoverageGapLines(coverageGaps)
+  // WHAT TO PACK, structured for the client the same way capsulePlanContext already is — same
+  // shape, deliberately not the same object: trip has no piece_budget/capacity/palette/
+  // is_winter_capsule, and carries per-use-case coverage instead of per-slot capsule capacity.
+  const tripPlanContext = tripRoster.length ? {
+    version: 1,
+    roster_ids: tripRoster.map(piece => Number(piece?.id)).filter(Boolean),
+    // Same reasoning as capsulePlanContext.roster_pieces: the packing list is the product, cards
+    // are examples, so a piece with no example outfit still needs a visible record here.
+    roster_pieces: tripRoster.map(piece => ({
+      id: Number(piece?.id),
+      name: String(piece?.name || 'Garment'),
+      category: String(piece?.category || ''),
+      photo: piece?.photo || null,
+      worn_photo: piece?.worn_photo || null,
+      colors: Array.isArray(piece?.colors) ? piece.colors : []
+    })).filter(piece => piece.id)
+  } : null
   const capsulePlanContext = capsuleRoster.length ? {
     version: 1,
     piece_budget: pieceBudget,
@@ -777,6 +815,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', comp
       ...outfit,
       composedBy,
       ...(capsulePlanContext ? { capsulePlanContext } : {}),
+      ...(tripPlanContext ? { tripPlanContext } : {}),
       pieceReuse,
       coverageLine: coverageBySlot.get(key) || '',
       tripPlanLines: [
@@ -4869,6 +4908,7 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     noRepeatCats,
     pieceBudget,
     capsuleRoster: pendingPlan?.capsuleRoster || [],
+    tripRoster: pendingPlan?.tripRoster || [],
     capsuleCapacity: Number(pendingPlan?.capsuleCapacity) || 0,
     capsuleSlots: pendingPlan?.slots || [],
     isWinterCapsule: Boolean(pendingPlan?.isWinterCapsule),

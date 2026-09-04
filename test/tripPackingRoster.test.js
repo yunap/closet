@@ -172,3 +172,41 @@ test('a card with no layer of its own is accepted when the packing roster alread
   const withoutRoster = validateSubmittedPlanOutfits(noRosterPlan, [cityCard])
   assert.ok(withoutRoster.failures.length > 0, 'without a packing roster, the card must still carry its own layer')
 })
+
+// ─── WHAT TO PACK surface ────────────────────────────────────────────────────────────────────────
+import { assembleSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
+
+test('the packed roster is exposed as its own first-class object, distinct from the cards', () => {
+  const cardPieces = [
+    { id: 1, name: 'city top', category: 'top' },
+    { id: 2, name: 'city pants', category: 'bottom' },
+    { id: 3, name: 'city shoes', category: 'shoes' },
+  ]
+  // JACKET (id 8) is in the packing roster but NOT on this card — exactly the "engine knows the
+  // jacket is packed, the card doesn't show it" scenario this surface exists to make visible.
+  const tripRoster = [...cardPieces, { id: 8, name: 'shared jacket', category: 'outerwear' }]
+  const slot = { id: 'city_walking', label: 'City Walking', targetOutfits: 1, originalIndex: 0 }
+  const assembled = assembleSubmittedPlanOutfits({
+    slots: [slot], constraints: {}, slotWeather: [], tripRoster,
+  }, [{ _slotId: 'city_walking', title: 'City Look', pieces: cardPieces, pieceIds: [1, 2, 3], reason: 'r' }])
+
+  const outfit = assembled[0]
+  // Structured, client-facing: the roster as its own object, not folded into the card.
+  assert.ok(outfit.tripPlanContext, 'a trip roster must produce a first-class tripPlanContext')
+  assert.deepEqual(outfit.tripPlanContext.roster_ids.sort((a, b) => a - b), [1, 2, 3, 8])
+  assert.ok(outfit.tripPlanContext.roster_pieces.some(p => p.id === 8), 'the jacket must be visible in the roster even though no card shows it')
+
+  // Text surface: WHAT TO PACK is its own line, separate from the card, and names the
+  // undemonstrated piece explicitly rather than annotating the card itself.
+  const packLine = outfit.tripPlanLines.find(l => l.startsWith('WHAT TO PACK'))
+  assert.ok(packLine, 'plan_lines must carry a WHAT TO PACK section')
+  assert.match(packLine, /shared jacket/)
+  const undemonstratedLine = outfit.tripPlanLines.find(l => l.startsWith('Packed but not shown'))
+  assert.ok(undemonstratedLine)
+  assert.match(undemonstratedLine, /shared jacket/)
+  assert.ok(outfit.tripPlanLines.some(l => l.startsWith('OUTFITS:')), 'plan_lines must separate the outfit count from the packing list')
+
+  // The card itself carries no per-card annotation about the jacket — the point of the
+  // architecture is to stop making every card prove the set, not to relocate the same noise.
+  assert.ok(!outfit.reason?.includes('jacket'))
+})
