@@ -211,21 +211,40 @@ function finding(code, message, { severity = 'error', evidence = {}, remedy = fa
 // Convergence, not a single fact and not a category rule (no cardigan/vest/jacket/coat check,
 // unlike the severe-cold sibling `outerLayerSevereColdAdequacy`, which answers a different question
 // and is deliberately not reused here). Outerwear stays presumed adequate — the unchanged default —
-// unless MULTIPLE independent negative facts agree. A single ultralight rain shell is not penalized
-// for being light; weather_protection alone proves it does a job regardless of insulation. Missing
-// or unknown evidence never counts toward the negative side (criterion 8) — only a fact with a
-// genuine value, several of them human-asserted here, contributes.
+// unless MULTIPLE independent negative facts agree. Missing or unknown evidence never counts toward
+// the negative side (criterion 8) — only a fact with a genuine value, several of them human-asserted
+// here, contributes.
+//
+// weather_protection is deliberately NOT a positive override here, even though it is one for the
+// separate protection/capability contract (outerwearCapability.js). This function answers a
+// WARMTH-presence question; an ultralight, unlined, explicitly non-insulating wind/rain shell can
+// do a real protective job while providing essentially no insulation — passing it on
+// weather_protection alone would conflate two contracts this codebase keeps deliberately separate
+// (module header, points 1-3 above).
+//
+// interior_construction is deliberately NOT a positive override either, only a way to keep the
+// 'unlined' negative signal from firing. Per its own tagging contract (prompts.js): "A plain
+// polyester lining... is interior_construction: 'full_lining' and is NOT an insulating layer" — an
+// ordinary lining is explicitly documented as non-thermal construction, not warmth evidence, so
+// full_lining/full_second_face cannot promote a piece to adequate on their own; they only prevent
+// the unlined vote below from being cast.
+//
+// Reads raw fabric_weight directly rather than through fabricWeight() (attributes.js), which
+// deliberately collapses 'ultralight' into 'light' for its own callers — `fabricWeight(piece) ===
+// 'ultralight'` can never be true. softScoreFloors.js already reads the raw field the same way for
+// the same reason.
+function pieceFabricWeightIsUltralight(piece) {
+  return String(piece?.fabric_weight || '').toLowerCase().trim() === 'ultralight'
+}
+
 function outerwearLayerPositivelyInadequate(piece) {
-  if (pieceWeatherProtection(piece).length) return false // a genuine rain/wind shell is doing a job
   if (thermalMaterialVerdict(piece) === 'insulating') return false
   if (fabricWeight(piece) === 'heavy') return false
-  const construction = interiorConstruction(piece)
-  if (construction === 'full_lining' || construction === 'full_second_face') return false
 
   const negativeSignals = [
-    fabricWeight(piece) === 'ultralight',
+    pieceFabricWeightIsUltralight(piece),
     thermalMaterialVerdict(piece) === 'non_insulating',
-    construction === 'unlined',
+    interiorConstruction(piece) === 'unlined',
   ].filter(Boolean).length
   return negativeSignals >= 2
 }

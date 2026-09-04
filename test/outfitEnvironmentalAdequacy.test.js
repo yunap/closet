@@ -96,14 +96,50 @@ test('MILD cold: any ONE negative fact alone is not enough -- convergence, not a
   assert.deepEqual(hardCodes(result), [], 'a single negative fact, with the rest unknown, must not hard-fail')
 })
 
-test('MILD cold: weather_protection alone rescues an otherwise-ultralight-and-unlined shell', () => {
-  // Same as UPF_SUN_HOODIE except it is a genuine wind/rain shell -- a real job, regardless of
-  // insulation, per the same reasoning the severe-cold sibling function already uses.
+test('MILD cold: weather_protection does NOT rescue an ultralight, explicitly non-insulating, unlined shell', () => {
+  // This function answers a WARMTH-presence question, not a protection question. A wind/rain shell
+  // can be doing a real protective job while providing essentially no insulation -- passing it on
+  // weather_protection alone would conflate this contract with the separate protection/capability
+  // one (outerwearCapability.js). Its weather-protection value still matters there, just not here.
   const windShell = { ...UPF_SUN_HOODIE, id: 32, weather_protection: ['wind'] }
   const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), windShell], {
     weatherProfile: { isCold: true },
   })
-  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'weather_protection answers a different contract and must not cancel explicit thermal inadequacy')
+})
+
+test('MILD cold: full_lining cancels only the unlined vote it controls, flipping a borderline 2-signal case', () => {
+  // Two negative facts (ultralight + unlined; material genuinely unknown, not asserted negative)
+  // converge to inadequate.
+  const ultralightUnlined = { id: 35, category: 'outerwear', name: 'thin unlined layer', fabric_weight: 'ultralight', interior_construction: 'unlined' }
+  const unlinedResult = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), ultralightUnlined], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(unlinedResult), [C.NO_WARM_LAYER_FOR_COLD],
+    'sanity: two converging negative facts (ultralight + unlined) do fail the floor')
+
+  // Replacing 'unlined' with an ordinary lining removes exactly that one vote, dropping back to a
+  // single negative fact (ultralight) -- per prompts.js, an ordinary lining is explicitly NOT an
+  // insulating layer, so it is not itself positive evidence; it only stops the unlined vote.
+  const ultralightLined = { ...ultralightUnlined, id: 36, interior_construction: 'full_lining' }
+  const linedResult = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), ultralightLined], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(linedResult), [],
+    'one remaining negative fact (ultralight alone) must not fail it -- construction cancelled its own vote, nothing more')
+})
+
+test('MILD cold: full_lining does not rescue a piece whose OTHER negative facts still independently converge', () => {
+  // UPF_SUN_HOODIE with full_lining instead of unlined: the unlined vote is gone, but ultralight and
+  // explicitly non-insulating still converge at 2 on their own -- construction is not a blanket
+  // override, it only ever controls the one vote that is its own.
+  const linedButThin = { ...UPF_SUN_HOODIE, id: 37, interior_construction: 'full_lining' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), linedButThin], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'construction can only cancel the unlined vote -- it cannot rescue independently-converging negative facts')
 })
 
 test('MILD cold: outerwear_role value alone (indoor_layer, no other negative facts) must not fail the floor', () => {
