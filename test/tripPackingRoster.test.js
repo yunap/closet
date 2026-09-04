@@ -130,6 +130,75 @@ test('no fixed budget: the model may choose fewer or more pieces than any capsul
   assert.ok(!result.failures.some(f => f.code === 'roster_size'), 'trip rosters have no size contract, unlike capsules')
 })
 
+// ─── ROSTER-LEVEL FEASIBILITY (thread_1788501349296) ────────────────────────────────────────────
+// A roster chooser can return something schema-valid and every-use-case-coverable
+// (tripRosterModelCalls:1, 0 repairs, 0 fallbacks looked healthy) and still be structurally unable
+// to produce a single passing card, because card validation's own SET-level adequacy check
+// (outfitEnvironmentalAdequacy.js's NO_REMOVABLE_COOL_LAYER) requires a layer somewhere in the
+// roster whenever a slot's weather says needsRemovableCoolLayer and the slot is not already isCold
+// or indoor. These pin the fix: the exact same requirement, checked against the roster BEFORE any
+// card is composed, using the SAME bar (presence of an outerwear piece) the downstream check
+// already uses — not a new "trips need outerwear" quota.
+import { validateTripRoster } from '../styling-engine/outfitSetPlanner.js'
+
+const layerRequiredSlot = (overrides = {}) => ({
+  id: 's1', label: 'City Walking', occasion: 'city', activity: 'walking',
+  stylingContext: {
+    occasion: 'city', activity: 'walking',
+    weatherProfile: { needsRemovableCoolLayer: true, isCold: false, highF: 63, lowF: 46 },
+  },
+  ...overrides,
+})
+
+test('tripRosterFailures flags a roster with zero outerwear against a slot that needs a removable cool layer, with a neutral structural message', () => {
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [layerRequiredSlot()] })
+  assert.equal(result.ok, false)
+  const gap = result.failures.find(f => f.code === 'missing_removable_cool_layer')
+  assert.ok(gap, 'a roster with no outerwear at all must fail this check')
+  assert.match(gap.message, /missing required removable coverage for slots City Walking/)
+  // Neutral/factual, not a styling preference -- the whole point of the distinction the owner drew.
+  assert.doesNotMatch(gap.message, /stylish|cardigan|fashionable|cute/i)
+})
+
+test('tripRosterFailures does not flag missing removable coverage when no slot actually needs it (indoor, or already isCold)', () => {
+  const indoorSlot = layerRequiredSlot({
+    id: 's_indoor', label: 'Museum', environment: 'indoor',
+    stylingContext: { weatherProfile: { needsRemovableCoolLayer: true, isCold: false } },
+  })
+  const alreadyColdSlot = layerRequiredSlot({
+    id: 's_cold', label: 'Winter Walk',
+    stylingContext: { weatherProfile: { needsRemovableCoolLayer: true, isCold: true } },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [indoorSlot, alreadyColdSlot] })
+  assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'an all-indoor or already-cold trip is never required to carry outerwear just because it is a trip')
+})
+
+test('tripRosterFailures does not flag a roster that already has an outerwear piece, whatever its job', () => {
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES, JACKET], { slots: [layerRequiredSlot()] })
+  assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'))
+})
+
+test('a roster chooser that omits a required removable layer triggers exactly one roster-level repair, not silent acceptance', async () => {
+  let attempts = 0
+  const chooseRoster = async ({ attempt }) => {
+    attempts++
+    if (attempt === 1) return { roster_piece_ids: [1, 2, 3] } // tops/bottoms/shoes only, no outerwear
+    return { roster_piece_ids: [1, 2, 3, 8] } // the repair round adds JACKET (id 8)
+  }
+  const result = await selectTripRosterViaModel({ pool: POOL, slots: [layerRequiredSlot()], chooseRoster })
+  assert.equal(attempts, 2, 'the schema-valid but layer-less first roster must be rejected and trigger exactly one repair attempt')
+  assert.equal(result.source, 'model_repaired')
+  assert.ok(result.roster.some(p => Number(p.id) === 8), 'the repaired roster must include the added layer')
+  assert.equal(validateTripRoster(result.roster, { slots: [layerRequiredSlot()] }).ok, true)
+})
+
+test('a roster chooser that never adds a qualifying layer degrades honestly to the coverage-guaranteed bench, disclosing the real gap', async () => {
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3] }) // never adds a layer, even after repair
+  const result = await selectTripRosterViaModel({ pool: POOL, slots: [layerRequiredSlot()], chooseRoster })
+  assert.equal(result.source, 'bench_fallback')
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'))
+})
+
 // ─── WIRED INTO buildPlanSlotWorkbench ──────────────────────────────────────────────────────────
 import { buildPlanSlotWorkbench } from '../styling-engine/outfitSetPlanner.js'
 

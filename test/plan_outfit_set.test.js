@@ -476,6 +476,152 @@ test('plan_outfit_set: with a chooseTripRoster wired, the model-selected trip ro
   assert.deepEqual(toolContext.pendingPlan.packingRoster, toolContext.pendingPlan.tripRoster, 'packingRoster is the provider-agnostic name a follow-up edit checks')
 })
 
+// thread_1788501349296: a trip roster with zero outerwear made every submitted card fail
+// NO_REMOVABLE_COOL_LAYER; the model correctly repaired it by finding real, active outerwear via
+// search_wardrobe, but submit_plan_outfits rejected every one of those pieces as "not an active
+// wardrobe piece" -- they were active, just outside the roster plan_outfit_set originally selected.
+// These pin the fix: submit_plan_outfits must accept a genuinely gate-eligible non-roster piece as
+// a packing-roster addition (the same mutation semantics propose_outfit's follow-up editing already
+// has), not a hard rejection.
+test('submit_plan_outfits accepts a verified non-roster piece as a packing-roster addition when it passes the slot\'s own gates', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // A real, active outerwear piece the roster chooser did NOT select -- exactly the "found via
+  // search_wardrobe, outside the frozen roster" scenario from the live incident.
+  const jacketId = insertPiece({ category: 'outerwear', name: 'real active jacket', occasions: ['city', 'casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    // The roster chooser omits outerwear entirely, same shape as the live incident.
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId] }),
+  }
+  const planResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(planResult.status, 'slot_rosters')
+  assert.ok(!toolContext.pendingPlan.tripRoster.some(p => Number(p.id) === jacketId), 'sanity: the jacket must genuinely start outside the roster')
+  // Force the removable-cool-layer condition deterministically, the same way
+  // test/tripPackingRoster.test.js's own SET-level test does, without needing live weather.
+  toolContext.pendingPlan.slots[0].weatherProfile = { ...toolContext.pendingPlan.slots[0].weatherProfile, needsRemovableCoolLayer: true, isCold: false }
+
+  const slotId = toolContext.pendingPlan.slots[0].id
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{ slot_id: slotId, piece_ids: [topId, bottomId, shoeId, jacketId], title: 'City Look', reason: 'a coordinated city look with a layer' }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].pieces.some(p => Number(p.id) === jacketId), true, 'the non-roster jacket must be accepted onto the card')
+  // The pending roster addition must persist onto the plan's own tripPlanContext -- the same
+  // packing-roster -> tripPlanContext -> packing_roster persistence path an initially-selected
+  // roster already uses, no separate plumbing.
+  assert.equal(toolContext.generatedOutfits[0].tripPlanContext.roster_ids.includes(jacketId), true, 'the roster addition must be disclosed in the client-facing packing roster, not silently absorbed into just this one card')
+})
+
+test('submit_plan_outfits distinguishes a genuinely inactive piece from an active piece outside the trip roster', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['casual', 'outdoor'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['casual', 'outdoor'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // Active, but a heeled/low-support shoe genuinely fails a hiking activity's hard footwear gate
+  // (evaluatePlannerAutomaticUsePool -> activity_profile_high_heel_unsuitable) -- occasion alone is
+  // not a hard gate in this app, so this is the reliable way to fail gates on purpose.
+  const heeledShoeId = insertPiece({ category: 'shoes', name: 'heeled shoe', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'high', walk_support: 'low' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week of nature walks',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'Nature Walks', occasion: 'casual', activity: 'hiking', count: 1 }],
+  }, toolContext)
+  const slotId = toolContext.pendingPlan.slots[0].id
+
+  const nonExistentId = 999999999
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: slotId, piece_ids: [topId, bottomId, nonExistentId], title: 'A', reason: 'r' },
+      { slot_id: slotId, piece_ids: [topId, bottomId, heeledShoeId], title: 'B', reason: 'r' },
+    ]
+  }, toolContext)
+
+  const failureTextFor = id => submitted.failures.flatMap(f => f.reasons).find(r => r.includes(String(id)))
+  assert.match(failureTextFor(nonExistentId), /is not an active wardrobe piece/, 'a piece that does not exist at all must still get the true message')
+  assert.match(failureTextFor(heeledShoeId), /is outside this trip's current packing roster/, 'an active piece that fails this slot\'s own gates must get the honest roster-membership message, not a false "not active" claim')
+  assert.doesNotMatch(failureTextFor(heeledShoeId), /is not an active wardrobe piece/)
+})
+
+// thread_1788501349296, Part 4: repair belongs inside the active trip-plan contract.
+test('generate_outfits is blocked while a trip plan is in progress, and does not block once the plan is resolved', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'trip top', occasions: ['city'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(toolContext.pendingPlan?.mode, 'model', 'sanity: a trip plan must be active')
+
+  const blocked = await executeTool('generate_outfits', { occasion: 'city' }, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /trip plan is already in progress/)
+
+  // Once the plan is cleared (resolved, however that happens), generate_outfits must not stay
+  // blocked forever -- the guard is scoped to an ACTIVE trip plan, not trips as a topic.
+  toolContext.pendingPlan = null
+  toolContext.declaredIntent = { want: 'cards' }
+  const afterResolved = await executeTool('generate_outfits', { occasion: 'city' }, toolContext)
+  assert.notEqual(afterResolved.status, 'validation_error')
+})
+
+// thread_1788501349296, Part 4 continued: an exhausted repair budget with nothing ever accepted
+// must end in an honest disclosure, not an unbounded validation_error loop -- that unbounded loop
+// is what burned the live incident's remaining tool-loop steps until the model gave up on the trip
+// contract entirely and switched products.
+test('submit_plan_outfits discloses an honest terminal gap instead of looping forever when nothing is ever accepted', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  const slotId = toolContext.pendingPlan.slots[0].id
+
+  // Always submit an incomplete outfit (missing bottom/shoes) so nothing is ever accepted, across
+  // repeated attempts -- reproducing the live incident's "0 accepted, resubmits keep climbing" shape.
+  let last
+  for (let i = 0; i < 4; i++) {
+    last = await executeTool('submit_plan_outfits', {
+      outfits: [{ slot_id: slotId, piece_ids: [topId], title: `Attempt ${i}`, reason: 'incomplete on purpose' }]
+    }, toolContext)
+    if (last.status !== 'validation_error') break
+  }
+  assert.equal(last.status, 'error')
+  assert.match(last.message, /disclosed packing\/wardrobe gap/)
+  assert.match(last.message, /do not switch to generate_outfits/)
+  assert.equal(toolContext.pendingPlan, null, 'the exhausted plan must be cleared, not left open for further blind resubmits')
+})
+
 test('successful atomic capsule composition removes every tool from the final prose turn', () => {
   assert.ok(stylistToolsForTurn({}).length > 0)
   assert.deepEqual(stylistToolsForTurn({ capsuleAtomicCompleted: true }), [])

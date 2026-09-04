@@ -3223,8 +3223,31 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const pendingPlan = toolContext.pendingPlan
         const submittedOutfits = coerceSubmitPlanOutfitsArg(args?.outfits) || []
+        // thread_1788501349296: a trip roster with a genuine coverage gap (no removable cool layer)
+        // left the model no legal move — it found real, active outerwear via search_wardrobe, but
+        // submit_plan_outfits rejected every one of them as "not an active wardrobe piece" because
+        // they were outside the roster plan_outfit_set originally selected. validateSubmittedPlanOutfits
+        // (outfitSetPlanner.js, a pure module with no DB access) can now accept a genuinely gate-eligible
+        // non-roster piece as a packing-roster addition instead of a hard rejection, but it needs the
+        // piece resolved as active first — that DB lookup belongs here, the one place in this call that
+        // has it. One batched query, only for the trip-plan case, only for IDs not already known to the
+        // roster/pendingPlan.
+        let verifiedNonRosterPiecesById = new Map()
+        if (pendingPlan.planKind === 'trip') {
+          const knownIds = pendingPlan.piecesById instanceof Map ? pendingPlan.piecesById : new Map()
+          const candidateIds = [...new Set(
+            submittedOutfits.flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])
+              .map(id => Number(id))
+              .filter(id => Number.isFinite(id) && id > 0 && !knownIds.has(id))
+          )]
+          if (candidateIds.length) {
+            const rows = db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${candidateIds.map(() => '?').join(',')})`).all(...candidateIds)
+            verifiedNonRosterPiecesById = new Map(rows.map(row => [Number(row.id), parsePiece(row)]))
+          }
+        }
         const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
-          visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set(),
+          verifiedNonRosterPiecesById
         })
         const alreadyHeld = Array.isArray(pendingPlan.heldOutfits) ? pendingPlan.heldOutfits : []
         const heldPlusAccepted = [...alreadyHeld, ...accepted]
@@ -3252,12 +3275,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const failureText = failures
             .map(failure => `${failure.label}: ${failure.reasons.join('; ')}`)
             .join(' | ')
-          if (pendingPlan.resubmits <= 2 || !pendingPlan.heldOutfits.length) {
+          if (pendingPlan.resubmits <= 2) {
             return {
               status: "validation_error",
               message: `${accepted.length} outfit${accepted.length === 1 ? '' : 's'} accepted and held. Fix these plan outfit issues in ONE submit_plan_outfits call, resubmitting ONLY the failed/missing slots: ${failureText}`,
               accepted_count: accepted.length,
               held_count: pendingPlan.heldOutfits.length,
+              failures
+            }
+          }
+          if (!pendingPlan.heldOutfits.length) {
+            // thread_1788501349296: the repair budget above is exhausted and NOTHING has ever been
+            // accepted — the previous behavior kept returning validation_error with no upper bound,
+            // which is exactly what burned this turn's remaining steps until the model gave up on
+            // the trip contract entirely and switched to generate_outfits. An honest terminal
+            // disclosure keeps repair inside the trip-plan contract per the guard in generate_outfits
+            // above: state the real gap, do not keep asking for another blind resubmit.
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.pendingPlan = null
+            return {
+              status: "error",
+              message: `This trip plan could not be composed after repeated attempts and nothing was accepted. Present this honestly as a disclosed packing/wardrobe gap — do not retry submit_plan_outfits again this turn and do not switch to generate_outfits or propose_outfit to paper over it. Last failures: ${failureText}`,
+              accepted_count: 0,
               failures
             }
           }
@@ -3311,6 +3350,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
       }
       case 'generate_outfits': {
+        // thread_1788501349296: two failed submit_plan_outfits attempts against an active, already-
+        // selected trip plan escaped into generate_outfits + a nested composer — silently switching
+        // the product from "packing roster + representative looks" to five unrelated wardrobe
+        // outfits, with no packing roster and no WHAT TO PACK surface. Repair belongs inside the
+        // active trip-plan contract (plan_outfit_set/submit_plan_outfits), not a fallback to a
+        // different tool that knows nothing about the roster or its requirement slots. Scoped to
+        // 'trip' specifically — a capsule or coordinated plan's own atomic composition already has
+        // its own bounded-attempt handling and this guard is not about those.
+        if (toolContext.pendingPlan?.mode === 'model' && toolContext.pendingPlan?.planKind === 'trip') {
+          return {
+            status: "validation_error",
+            message: "A trip plan is already in progress (plan_outfit_set has a selected packing roster). Keep repairing it with submit_plan_outfits — resubmit only the failed/missing slots, or call plan_outfit_set again for just those slots if the roster itself needs to change. Do not switch to generate_outfits mid-trip-plan; that abandons the packing roster and WHAT TO PACK surface entirely. If the trip genuinely cannot be composed from the current roster after repair, submit_plan_outfits will disclose the honest gap instead — present that, do not paper over it with unrelated cards."
+          }
+        }
         const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
         const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))

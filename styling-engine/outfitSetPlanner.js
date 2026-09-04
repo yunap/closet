@@ -3701,6 +3701,31 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   // wearable shoe therefore already surfaces as use_case_uncoverable (0 cores) above, not as a
   // second, redundant condition re-deriving the same gate.
 
+  // Roster-level removable-cool-layer feasibility (thread_1788501349296): a roster can pass every
+  // check above — every slot individually gate-coverable, every dependent top based — and still be
+  // structurally unable to produce a single passing card, because submit_plan_outfits' own SET-level
+  // adequacy check (outfitEnvironmentalAdequacy.js's NO_REMOVABLE_COOL_LAYER, gated on the identical
+  // packingRosterHasLayer bar this reuses) requires a layer somewhere in the roster whenever a slot's
+  // resolved weather says needsRemovableCoolLayer and the slot is not already isCold or indoor. A
+  // roster with zero outerwear pieces makes that requirement unsatisfiable by construction — not a
+  // styling defect in any one submitted card, a supply gap in the roster itself, caught here before
+  // any card is composed rather than discovered once per rejected submission. Presence-only, the same
+  // bar the downstream check already uses — this is not a new "is it warm enough" judgment, and it is
+  // not a category quota: a roster for an all-indoor or already-cold trip is never required to carry
+  // outerwear just because it's a trip.
+  const hasRosterLayer = normalizedRoster.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  if (!hasRosterLayer) {
+    const layerRequiredSlots = gateSlots.filter(({ slot }) => {
+      const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+      const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+      return weatherProfile.needsRemovableCoolLayer && !weatherProfile.isCold && !isIndoor
+    })
+    if (layerRequiredSlots.length) {
+      const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
+      failures.push({ code: 'missing_removable_cool_layer', message: `missing required removable coverage for slots ${labels}` })
+    }
+  }
+
   return failures
 }
 
@@ -4572,7 +4597,7 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
   }
 }
 
-export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
+export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
   const planPiecesById = pendingPlan?.piecesById instanceof Map
@@ -4601,6 +4626,17 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   const accepted = []
   const failures = []
   const submitted = Array.isArray(submissions) ? submissions : []
+  // Trip-roster mutation during initial plan construction (thread_1788501349296): submit_plan_outfits
+  // used to treat the roster as immutable — a verified active piece outside it produced the false
+  // "piece X is not an active wardrobe piece" (that piece existed; it just was not selected into the
+  // roster). Same mutation semantics propose_outfit's follow-up editing already has: a genuinely
+  // gate-eligible piece the caller has verified as active (verifiedNonRosterPiecesById, resolved via
+  // DB by the tools.js caller, which has DB access this pure module does not) is accepted as a
+  // pending packing-roster ADDITION, never a removal — a card omitting an existing roster piece must
+  // never imply it was taken out of the suitcase (unchanged SET vs CARD principle). Collected across
+  // the whole submission batch so the roster and its coverage recheck grow exactly once per turn.
+  const isTripPlan = pendingPlan?.planKind === 'trip'
+  const rosterAdditionsById = new Map()
   for (const [index, raw] of submitted.entries()) {
     const slot = slotById.get(String(raw?.slot_id || ''))
     const label = slot?.label || raw?.slot_id || `outfit ${index + 1}`
@@ -4624,15 +4660,41 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (gateAllowedIds.has(id)) continue
       if (suppressedReasonsById.has(id)) {
         reasons.push(`piece ${id} failed this slot's gates: ${suppressedReasonsById.get(id).join('; ')}`)
-      } else {
-        // In an enforced capsule, a piece missing from gateAllowedIds is
-        // almost always active but simply outside the curated budget roster
-        // (the model may have just verified it via search) — "not active"
-        // reads as a false contradiction there.
-        reasons.push(isEnforcedCapsule
-          ? `piece ${id} is outside this capsule's curated ${pieceBudget}-piece roster`
-          : `piece ${id} is not an active wardrobe piece for this plan`)
+        unresolvedPieceIds.push(id)
+        continue
       }
+      const verifiedCandidate = isTripPlan ? verifiedNonRosterPiecesById?.get(id) : null
+      if (verifiedCandidate) {
+        // A real, active piece the caller has already verified this turn (search_wardrobe/
+        // view_pieces), just not part of the roster plan_outfit_set originally selected. Gate it
+        // against THIS slot on its own structural merits — being verified elsewhere does not make
+        // it eligible everywhere — and accept it as a packing-roster addition, not a substitute for
+        // the roster question, only when it genuinely passes.
+        const gateEligible = slotGateEligiblePieces([verifiedCandidate], slot, {})
+        if (gateEligible.length) {
+          gateAllowedIds.add(id)
+          if (!planPiecesById.has(id)) planPiecesById.set(id, verifiedCandidate)
+          rosterAdditionsById.set(id, verifiedCandidate)
+          continue
+        }
+        reasons.push(`piece ${id} is outside this trip's current packing roster and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
+        unresolvedPieceIds.push(id)
+        continue
+      }
+      // In an enforced capsule, a piece missing from gateAllowedIds is
+      // almost always active but simply outside the curated budget roster
+      // (the model may have just verified it via search) — "not active"
+      // reads as a false contradiction there. A trip plan gets the honest
+      // "outside the roster" distinction too, but ONLY above, inside the
+      // verifiedCandidate branch — reaching THIS fallback for a trip plan
+      // means the id was never found in verifiedNonRosterPiecesById at all
+      // (the caller's own DB lookup, WHERE status='active'), so it genuinely
+      // is not an active piece; claiming "outside the roster" for a
+      // nonexistent id would be its own false contradiction in the other
+      // direction (thread_1788501349296's regression test caught this).
+      reasons.push(isEnforcedCapsule
+        ? `piece ${id} is outside this capsule's curated ${pieceBudget}-piece roster`
+        : `piece ${id} is not an active wardrobe piece for this plan`)
       unresolvedPieceIds.push(id)
     }
     const pieces = dedupedIds
@@ -4821,6 +4883,29 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       label: 'Shared anchor',
       reasons: [`include at least one shared anchor piece; it is allowed in: ${anchorAllowedSlots.join(', ')}`]
     })
+  }
+  // Persist this turn's accepted packing-roster additions (see rosterAdditionsById above) onto the
+  // pendingPlan itself, so assembleSubmittedPlanOutfits' existing tripRoster -> tripPlanContext ->
+  // packing_roster persistence path picks up the grown roster with no separate plumbing. Then an
+  // advisory-only recheck against the trip's own slots (already normalized this same turn, not
+  // reconstructed from any submitted card) — mutate roster -> validate against the real trip
+  // requirements -> surface real coverage gaps, the same contract propose_outfit's own follow-up
+  // mutation already established. Never blocks: it only adds a disclosed line to the plan's own
+  // coverageGaps, which the final plan_lines already surface honestly.
+  if (rosterAdditionsById.size) {
+    const existingRosterIds = idSetForPieces(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : [])
+    const newRosterPieces = [...rosterAdditionsById.values()].filter(piece => !existingRosterIds.has(Number(piece.id)))
+    if (newRosterPieces.length) {
+      pendingPlan.tripRoster = [...(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : []), ...newRosterPieces]
+      pendingPlan.packingRoster = pendingPlan.tripRoster
+      const rosterCheck = validateTripRoster(pendingPlan.tripRoster, { slots: pendingPlan.slots })
+      if (!rosterCheck.ok) {
+        pendingPlan.coverageGaps = [
+          ...(Array.isArray(pendingPlan.coverageGaps) ? pendingPlan.coverageGaps : []),
+          ...rosterCheck.failures.map(f => `[trip roster: ${f.message}]`)
+        ]
+      }
+    }
   }
   return { accepted, failures }
 }
