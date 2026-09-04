@@ -4043,6 +4043,10 @@ export function modelCapsuleRosterEnabled() {
   return String(process.env.WARDROBE_MODEL_CAPSULE_ROSTER || 'true').toLowerCase() !== 'false'
 }
 
+export function modelTripRosterEnabled() {
+  return String(process.env.WARDROBE_MODEL_TRIP_ROSTER || 'true').toLowerCase() !== 'false'
+}
+
 export function capsuleRosterSelectionSchema(budget = 24) {
   const exact = Math.max(1, Number(budget) || 1)
   return {
@@ -4352,6 +4356,183 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     // from the starting shape, not with budget count — hence a higher base
     // offset here than structuredResponseMaxTokens' outfit-generation default.
     maxTokens: structuredResponseMaxTokens(budget, { tokensPerItem: 100, base: 1500, floor: 1500, ceiling: 5500 })
+  })
+  if (toolContext) recordToolLoopUsage(toolContext, usage)
+  return value || {}
+}
+
+// Trip packing roster (docs/README.md: trip roster architecture). Same bench -> model -> contract-
+// validate -> repair shape as the capsule roster immediately above, deliberately NOT the same
+// prompt or schema: no fixed size (packing efficiency is the model's own per-turn judgment, not a
+// budget), no palette contract, no category starting shape. What replaces those is coverage: every
+// trip use-case slot must come out of this roster wearable, and a piece earning a suitcase place by
+// working across MULTIPLE use cases is the point, not an accident.
+export function tripRosterSelectionSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: 1, uniqueItems: true },
+      packing_reasoning: { type: 'string' },
+      piece_jobs: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { piece_id: { type: 'integer' }, job: { type: 'string' } },
+          required: ['piece_id', 'job']
+        }
+      },
+      repair_changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            removed_piece_id: { type: 'integer' },
+            added_piece_id: { type: 'integer' },
+            reason: { type: 'string' }
+          },
+          required: ['removed_piece_id', 'added_piece_id', 'reason']
+        }
+      }
+    },
+    required: ['roster_piece_ids', 'packing_reasoning', 'piece_jobs', 'repair_changes']
+  }
+}
+
+// Used verbatim for both the initial call and the bounded repair, same reasoning as
+// capsuleRosterSelectionSystemPrompt.
+export function tripRosterSelectionSystemPrompt() {
+  return `You are choosing what to pack for a trip. The conversational stylist has already interpreted the request and fixed the trip's use-case slots (Sightseeing Days, Museum Days, Nature Walks, and so on); a deterministic engine has already gated the candidates you are given to what is structurally eligible for at least one of those use cases.
+
+Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY from the supplied candidates. There is no fixed count: packing efficiency is your own judgment call for THIS trip, not a formula. A roster that is too small leaves a use case unwearable; a roster that is too large defeats the point of packing light. Both are real failures, weighed against each other, not just against a target number.
+
+Cover every stated use case. A roster that leaves one use case without a complete, gate-valid outfit is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits, with footwear that suits it.
+
+REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a capsule wardrobe: a top or a layer that works for both sightseeing and a nature walk earns its place twice over, and should be preferred over two narrower pieces that each cover only one use case, all else equal. Judge each candidate by how many of the stated use cases it can genuinely serve, not just whether it is eligible for one.
+
+FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers.
+
+A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
+
+For every selected ID, give exactly one piece_jobs entry naming the job it does on this trip — which use case(s) it serves and why it earned a place. Include no unselected IDs and do not repeat an ID.
+
+In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible.
+
+On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
+
+Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.`
+}
+
+// Mirrors capsuleRosterRepairText — same "fix exactly these problems, keep the rest" contract,
+// without the capsule-specific judgment list.
+export function tripRosterRepairText({ failures = [], previousRosterIds = [] } = {}) {
+  return `YOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]
+Fix exactly these problems, keeping the rest of your selection:
+${(failures || []).map(entry => `- ${entry.message}`).join('\n')}
+
+The replacements you bring in are held to the same standard as the original picks: cover the use case(s) that need it, prefer a piece that also works for other use cases already in the roster, and give it a distinct job. Whatever you drop to make room should be the piece doing the least work across the trip, not simply the easiest one to remove.`
+}
+
+export function tripRosterSelectionUserText({
+  bench = [], slots = [], attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
+} = {}) {
+  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
+  const repairBlock = attempt > 1
+    ? `\n\n${tripRosterRepairText({ failures, previousRosterIds })}`
+    : ''
+  const ownerRulesBlock = Array.isArray(ownerRules) && ownerRules.length
+    ? `\n\nOWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds. If a rule makes a genuinely usable roster impossible, say so in your packing_reasoning rather than bending the rule. Apply to every piece you select: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+    : ''
+  const acceptedLessonsBlock = String(acceptedLessons || '').trim()
+    ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
+    : ''
+  return `USE CASES THIS TRIP MUST COVER:
+${slotLines.join('\n')}${ownerRulesBlock}${acceptedLessonsBlock}
+
+CANDIDATES:
+${truthCatalog.join('\n')}${repairBlock}`
+}
+
+// Same cache-prefix invariant as capsuleRosterSelectionContent: everything through the last
+// cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
+// the initial call wrote instead of re-paying for every thumbnail.
+export function tripRosterSelectionContent({
+  bench = [], slots = [], ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+} = {}) {
+  const content = [{
+    type: 'text',
+    text: tripRosterSelectionUserText({
+      bench, slots, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: []
+    }),
+    cache_control: { type: 'ephemeral' }
+  }]
+  content.push(...imageParts)
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
+    }
+  }
+  if (attempt > 1) {
+    content.push({ type: 'text', text: tripRosterRepairText({ failures, previousRosterIds }) })
+  }
+  return content
+}
+
+// The production trip-roster chooser. Exists precisely because it did not: buildPlanSlotWorkbench
+// and selectTripRosterViaModel (styling-engine/outfitSetPlanner.js) already had every piece of the
+// contract this function fulfils, and test/tripPackingRoster.test.js already exercised that
+// contract against a mock chooseRoster — but nothing ever called the real model with it in
+// production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
+// plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
+// output, because this function did not exist to be wired in.
+export async function chooseTripRosterWithProvider({ bench, slots, attempt, failures, previousRosterIds }, toolContext) {
+  const imageParts = []
+  for (const piece of bench) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece)
+      const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
+      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.error(`Error loading trip roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+
+  const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: bench.map(piece => piece.id),
+    contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
+      occasion: slot?.occasion || '',
+      activity: slot?.activity || '',
+      season: slot?.requestedSeason || slot?.transitSeason || slot?.season || '',
+      currentDate: slot?.stylingContext?.date || slot?.date || null,
+      weatherText: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
+    })),
+  })
+  const content = tripRosterSelectionContent({
+    bench, slots, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
+    attempt, failures, previousRosterIds, imageParts
+  })
+
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripRosterSelectionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: tripRosterSelectionSchema(),
+    name: 'trip_roster_selection',
+    description: 'Choose what to pack for this trip from the supplied candidates.',
+    providerOverride: toolContext?.providerOverride || null,
+    // No budget to scale against (the whole point is the model decides the count), so size against
+    // the candidate bench itself — same reasoning as the capsule roster's per-item scaling, applied
+    // to the pool the model is choosing from rather than a fixed target.
+    maxTokens: structuredResponseMaxTokens(bench.length, { tokensPerItem: 90, base: 1500, floor: 1500, ceiling: 6000 })
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}
@@ -4920,6 +5101,9 @@ router.post('/ask', async (req, res) => {
     // gets a chooser and the capsule path is byte-identical to what shipped.
     if (modelCapsuleRosterEnabled()) {
       toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
+    }
+    if (modelTripRosterEnabled()) {
+      toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted

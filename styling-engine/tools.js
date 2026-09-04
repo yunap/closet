@@ -2901,6 +2901,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           chooseCapsuleRoster: typeof toolContext.chooseCapsuleRoster === 'function'
             ? toolContext.chooseCapsuleRoster
             : null,
+          // Same opt-in shape as chooseCapsuleRoster. Absent, buildPlanSlotWorkbench's own
+          // trip-roster gate never fires and the plan falls through to the ordinary pool
+          // (thread_1788484052964/thread_1788488744055: this was missing entirely, so plan_kind
+          // resolving to 'trip' was necessary but not sufficient).
+          chooseTripRoster: typeof toolContext.chooseTripRoster === 'function'
+            ? toolContext.chooseTripRoster
+            : null,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)

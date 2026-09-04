@@ -46,6 +46,22 @@ p(`# Thread capture — \`${threadId}\``)
 p(`\n**Title:** ${row.title || '(untitled)'}  `)
 p(`**Created:** ${row.created_at} · **Updated:** ${row.updated_at}`)
 
+// Persisted packing-roster state (stylist_conversation_state) — the SET-level evidence that the
+// trip roster architecture actually produced something, distinct from the per-turn diagnostic
+// counters below (which show the model call happened; this shows what it left behind). One row
+// per session, always the latest snapshot, so this is necessarily whole-thread, not per-turn — a
+// roster-only edit turn leaves it unchanged rather than clearing it (docs/README.md), so its
+// absence after a real trip request is itself the finding, not a gap in this script.
+{
+  const stateRow = db.prepare('SELECT state_json, updated_at FROM stylist_conversation_state WHERE session_id = ?').get(threadId)
+  const state = stateRow ? JSON.parse(stateRow.state_json || '{}') : null
+  const packingRoster = state?.packing_roster || null
+  p(`\n**Persisted packing roster** (as of ${stateRow?.updated_at || 'n/a'}): `
+    + (packingRoster
+      ? `packingRoster count \`${(packingRoster.roster_ids || []).length}\`, tripRequirementSlots count \`${(packingRoster.slots || []).length}\``
+      : '`(none — no trip roster in persisted state for this thread)`'))
+}
+
 // A provider that changes mid-thread is ambiguous without this: it can be independent per-turn
 // routing, or a manual "Retry with Sonnet" click (owner's own words: not automatic failover, just a
 // click when a non-Sonnet reply is slow, fails, or reads poorly). Found live on this exact thread,
@@ -98,7 +114,13 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
   const keys = ['weatherSource', 'executionProfile', 'toolSequence', 'searchCalls', 'planOutfitSetCalls',
     'submitPlanCalls', 'submitPlanValidationFails', 'submitPlanResubmits', 'submitPlanPartialAccepts',
     'providerIterations', 'gateExcludedTotal', 'closingProseWithheld', 'cardProseInconsistentBlocks',
-    'planSlotActivityInferred', 'planSlotEnvironmentInferred']
+    'planSlotActivityInferred', 'planSlotEnvironmentInferred',
+    // Trip-roster activation (docs/README.md: trip roster architecture). thread_1788484052964 and
+    // thread_1788488744055 both looked plausible in prose while the roster architecture had either
+    // not activated (plan_kind never resolved to 'trip') or had no production chooser to call at
+    // all — neither was visible without reconstructing it after the fact. These make "did the
+    // production trip-roster path actually run this turn" a direct read instead of a reconstruction.
+    'planKindResolved', 'tripRosterModelCalls', 'tripRosterModelRepairs', 'tripRosterModelFallbacks']
   let any = false
   for (const k of keys) {
     if (dbg[k] !== undefined) { p(`${k.padEnd(32)} ${JSON.stringify(dbg[k])}`); any = true }

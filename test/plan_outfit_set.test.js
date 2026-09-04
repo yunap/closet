@@ -435,6 +435,41 @@ test('plan_outfit_set: a real destination forces the trip workbench even when pl
   assert.equal(toolContext.pendingPlan.planKind, 'trip')
 })
 
+test('plan_outfit_set: with a chooseTripRoster wired, the model-selected trip roster and its requirement slots actually reach pendingPlan', async () => {
+  // Closes the loop the earlier test above cannot: plan_kind resolving to 'trip' is necessary but
+  // not sufficient (thread_1788484052964, thread_1788488744055) -- buildPlanSlotWorkbench also
+  // needs a working chooseTripRoster, which chooseTripRosterWithProvider (routes/ai.js) now is.
+  // This exercises the same toolContext.chooseTripRoster wiring path executeTool uses in
+  // production, with a mock chooser standing in for the real provider call.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip roster top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip roster bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip roster shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'Pack for a week in Vienna, Austria',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    location: 'Vienna, Austria',
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.pendingPlan.planKind, 'trip')
+  assert.equal(toolContext.pendingPlan.tripRosterSource, 'model')
+  assert.deepEqual(
+    toolContext.pendingPlan.tripRoster.map(p => Number(p.id)).sort((a, b) => a - b),
+    [topId, bottomId, shoeId].sort((a, b) => a - b)
+  )
+  assert.equal(toolContext.pendingPlan.tripRequirementSlots.length, 1, 'the trip requirement slots (docs/README.md) must be captured alongside the chosen roster')
+  assert.equal(toolContext.pendingPlan.tripRequirementSlots[0].occasion, 'city')
+  assert.deepEqual(toolContext.pendingPlan.packingRoster, toolContext.pendingPlan.tripRoster, 'packingRoster is the provider-agnostic name a follow-up edit checks')
+})
+
 test('successful atomic capsule composition removes every tool from the final prose turn', () => {
   assert.ok(stylistToolsForTurn({}).length > 0)
   assert.deepEqual(stylistToolsForTurn({ capsuleAtomicCompleted: true }), [])

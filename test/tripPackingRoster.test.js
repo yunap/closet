@@ -4,7 +4,30 @@
 // in isolation, before it is wired into buildPlanSlotWorkbench.
 import test from 'node:test'
 import assert from 'node:assert'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { selectTripRosterViaModel } from '../styling-engine/outfitSetPlanner.js'
+
+// docs/database-safety.md: routes/ai.js reaches db.js on import, so this must isolate
+// WARDROBE_DB_PATH before that import or it runs db.js's migrations against the real wardrobe.db.
+// A static `import ... from '../routes/ai.js'` would be hoisted above these env assignments (ES
+// module imports evaluate before any other top-level code), so this uses a dynamic import instead.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-trip-roster-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+process.env.OPENAI_API_KEY = ''
+process.env.ANTHROPIC_API_KEY = ''
+
+const {
+  modelTripRosterEnabled,
+  tripRosterSelectionSchema,
+  tripRosterSelectionSystemPrompt,
+  tripRosterRepairText,
+  tripRosterSelectionUserText,
+  tripRosterSelectionContent,
+} = await import('../routes/ai.js')
 
 const piece = (id, category, extra = {}) => ({ id, name: `piece ${id}`, category, status: 'active', occasions: ['city'], ...extra })
 
@@ -209,4 +232,88 @@ test('the packed roster is exposed as its own first-class object, distinct from 
   // The card itself carries no per-card annotation about the jacket — the point of the
   // architecture is to stop making every card prove the set, not to relocate the same noise.
   assert.ok(!outfit.reason?.includes('jacket'))
+})
+
+// chooseTripRosterWithProvider (routes/ai.js) — the production chooser that was missing entirely
+// (thread_1788484052964, thread_1788488744055): plan_kind resolved to 'trip' but nothing ever
+// called the real model with a trip-shaped request. These pin the offline-assertable half of that
+// contract, the same way plan_outfit_set.test.js pins capsuleRosterSelectionSchema/Content/etc
+// without invoking the provider itself.
+
+test('modelTripRosterEnabled defaults on and respects the env override', () => {
+  const original = process.env.WARDROBE_MODEL_TRIP_ROSTER
+  try {
+    delete process.env.WARDROBE_MODEL_TRIP_ROSTER
+    assert.equal(modelTripRosterEnabled(), true)
+    process.env.WARDROBE_MODEL_TRIP_ROSTER = 'false'
+    assert.equal(modelTripRosterEnabled(), false)
+  } finally {
+    if (original === undefined) delete process.env.WARDROBE_MODEL_TRIP_ROSTER
+    else process.env.WARDROBE_MODEL_TRIP_ROSTER = original
+  }
+})
+
+test('the trip roster schema has no fixed size, unlike the capsule roster', () => {
+  const schema = tripRosterSelectionSchema()
+  assert.equal(schema.properties.roster_piece_ids.minItems, 1)
+  assert.equal('maxItems' in schema.properties.roster_piece_ids, false, 'packing efficiency is a model judgment call, not a budget')
+  assert.ok(schema.required.includes('roster_piece_ids'))
+  assert.ok(schema.required.includes('repair_changes'))
+  assert.equal('palette' in schema.properties, false, 'a suitcase has no palette contract')
+  assert.equal('category_counts' in schema.properties, false, 'a suitcase has no category starting shape')
+})
+
+test('the trip roster system prompt asks for cross-use-case reuse, not capsule palette/shape judgment', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /REUSE ACROSS USE CASES IS THE POINT/)
+  assert.match(brief, /no fixed count/i)
+  assert.doesNotMatch(brief, /PALETTE CONTRACT/)
+  assert.doesNotMatch(brief, /category_shape_reason/)
+  // Same prompt for both attempts (mirrors the capsule contract): a repair is a correction, held
+  // to the same standard, not a fresh brief.
+  assert.equal(tripRosterSelectionSystemPrompt(), tripRosterSelectionSystemPrompt())
+})
+
+test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
+  const repair = tripRosterRepairText({
+    failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],
+    previousRosterIds: [1, 2, 3],
+  })
+  assert.match(repair, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.match(repair, /Previous IDs: \[1, 2, 3\]/)
+  assert.match(repair, /Nature Walks has 0 eligible shoe\(s\)/)
+})
+
+test('the trip roster user text lists use cases and candidates with no budget/palette framing', () => {
+  const bench = [{ id: 1, name: 'city top', category: 'top' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', activity: 'walking', bestFor: 'sightseeing around town' }]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.match(text, /USE CASES THIS TRIP MUST COVER/)
+  assert.match(text, /sightseeing around town/)
+  assert.match(text, /^ID 1: /m)
+  assert.doesNotMatch(text, /CAPSULE SIZE/)
+})
+
+// Same reasoning as plan_outfit_set.test.js's capsule equivalent: the repair call must reuse the
+// initial call's cache prefix (images included) instead of re-paying for every thumbnail, since the
+// repair is the only point in a single run where a prompt-cache read is possible.
+test('the trip roster repair call reuses the initial call cache prefix instead of re-paying for every thumbnail', () => {
+  const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const imageParts = bench.flatMap(piece => ([
+    { type: 'text', text: `ID ${piece.id}: ${piece.name}` },
+    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: `fake-${piece.id}` } }
+  ]))
+  const failures = [{ code: 'use_case_uncoverable', message: 'City Walking has 0 eligible top(s)' }]
+
+  const initial = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 1, failures: [], previousRosterIds: [] })
+  const repair = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 2, failures, previousRosterIds: [1] })
+
+  const lastBreakpoint = content => content.reduce((last, part, index) => (part?.cache_control ? index : last), -1)
+  const initialBreak = lastBreakpoint(initial)
+  const repairBreak = lastBreakpoint(repair)
+  assert.ok(initialBreak > 0)
+  assert.equal(initialBreak, repairBreak)
+  assert.deepEqual(repair.slice(0, repairBreak + 1), initial.slice(0, repairBreak + 1))
+  assert.match(repair[repair.length - 1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
 })
