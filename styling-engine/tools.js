@@ -2745,6 +2745,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             message: "This turn already used its one bounded capsule-composition attempt. Present the accepted cards and disclosed gaps; do not re-plan or retry the capsule in this turn."
           }
         }
+        // docs/trip-composition-parity-spec.md: mirrors the capsule guard immediately above — the
+        // atomic trip composer is a one-shot-per-turn call, same reasoning as capsule's.
+        if (toolContext.tripAtomicAttempted) {
+          return {
+            status: "validation_error",
+            message: "This turn already used its one bounded trip-composition attempt. Present the accepted cards and disclosed gaps; do not re-plan or retry the trip in this turn."
+          }
+        }
         // Spec 23 Part 1: detect a partial re-plan BEFORE anything below
         // mutates toolContext.pendingPlan — a plan already in progress this
         // turn (held outfits still pending submit, and/or cards from an
@@ -3202,6 +3210,108 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }))
           }
         }
+        // docs/trip-composition-parity-spec.md, ratified: initial trip composition becomes atomic
+        // (whole-roster images, full garment truth, a dedicated composition-only prompt); follow-up
+        // trip edits stay in this conversational tool loop unchanged (they reach propose_outfit, or
+        // a re-plan that lands in the isPartialReplan branch just below — never here). Gated the
+        // same way capsule's atomic gate is: only the initial plan_outfit_set call this session
+        // (!isPartialReplan), and only once per turn (tripAtomicAttempted).
+        const useAtomicTripComposition =
+          planKind === 'trip' &&
+          typeof toolContext.composeTripPlanOnce === 'function' &&
+          !isPartialReplan
+        if (useAtomicTripComposition) {
+          toolContext.tripAtomicAttempted = true
+          const pendingPlan = {
+            ...workbench.pendingPlan,
+            mode: 'model',
+            // Same reasoning as capsule's identical flag: one composition call, one validation
+            // pass, no repair round — a set-level soft-splice check must not drop an otherwise
+            // valid card here just because no resubmit exists to fix it.
+            boundedComposition: true
+          }
+          let submittedOutfits = []
+          let compositionError = null
+          try {
+            submittedOutfits = await toolContext.composeTripPlanOnce({
+              status: workbench.status,
+              instructions: workbench.instructions,
+              piece_catalog: workbench.piece_catalog,
+              slots: workbench.slots,
+              constraints: workbench.constraints
+            })
+          } catch (err) {
+            compositionError = err
+          }
+          bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
+          if (compositionError || !Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.generatedOutfits = []
+            toolContext.source = 'plan_outfit_set'
+            toolContext.sourceLocked = true
+            toolContext.pendingPlan = null
+            toolContext.tripAtomicCompleted = true
+            if (compositionError?.isTruncation) {
+              return {
+                status: 'error',
+                bounded_composition: true,
+                message: 'The bounded trip composer ran out of output budget composing this many looks and returned an incomplete result. Do not build the plan manually or call other styling tools in this turn; explain that this specific trip size hit a system limit during composition, and suggest asking for fewer looks or a shorter/simpler trip instead of an identical retry.'
+              }
+            }
+            return {
+              status: 'error',
+              bounded_composition: true,
+              message: 'The bounded trip composer returned no outfits even though the packing roster has valid capacity. Do not build the plan manually or call other styling tools in this turn; explain that composition failed and ask the user to retry after the engine issue is corrected.'
+            }
+          }
+          // Hard invariant (docs/trip-composition-parity-spec.md §7): the atomic call changes who
+          // composes and what evidence they see, never what counts as a valid trip outfit. These are
+          // the exact same functions the ordinary tool-loop submit_plan_outfits case below calls —
+          // same gate-eligibility/duplicate-core/assigned-layer/environmental-hard-gate checks, no
+          // parallel validation semantics.
+          const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+            visuallySeenPieceIds: seenForValidation
+          })
+          if (failures.length) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            console.log('[Atomic Trip Validation]', failures)
+          }
+          const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+          toolContext.pendingPlan = null
+          toolContext.tripAtomicCompleted = true
+          if (!planOutfits.length) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.generatedOutfits = []
+            toolContext.source = 'plan_outfit_set'
+            toolContext.sourceLocked = true
+            const failureText = failures
+              .map(failure => `${failure.label}: ${failure.reasons.join('; ')}`)
+              .join(' | ')
+            return {
+              status: 'error',
+              bounded_composition: true,
+              message: `The bounded trip composer's rotation failed validation entirely and nothing was accepted. Do not build the plan manually or call other styling tools in this turn; present this honestly as a disclosed packing/wardrobe gap. Last failures: ${failureText}`
+            }
+          }
+          if (failures.length) bumpFreeformDiagnostic(toolContext, 'submitPlanPartialAccepts')
+          toolContext.generatedOutfits = planOutfits
+          toolContext.source = 'plan_outfit_set'
+          toolContext.sourceLocked = true
+          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          return {
+            status: 'success',
+            bounded_composition: true,
+            message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            plan_lines: planLinesForResponse,
+            outfit_summaries: planOutfits.map(outfit => ({
+              slot: outfit.label,
+              coverage: outfit.coveragePosition,
+              weather: outfit.slotWeather || '',
+              pieceNames: (outfit.pieces || []).map(piece => piece.name)
+            }))
+          }
+        }
         if (isPartialReplan) {
           const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
             explicitConstraintsProvided,
@@ -3332,7 +3442,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             partial: true,
-            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.${pendingPlan.isSeasonalCapsule ? CAPSULE_PLAN_EVIDENCE_BOUNDARY : ''}`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
@@ -3357,7 +3467,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
         return {
           status: "success",
-          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
+          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${pendingPlan.isSeasonalCapsule ? CAPSULE_PLAN_EVIDENCE_BOUNDARY : ''}`,
           plan_lines: planLinesForResponse,
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,

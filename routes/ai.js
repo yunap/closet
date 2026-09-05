@@ -4050,6 +4050,39 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
   }
 }
 
+// docs/trip-composition-parity-spec.md — same shape as capsulePlanCompositionSchema, with
+// assigned_layer_piece_ids added: a trip card names a shared packed layer separately from its own
+// piece_ids (owner ruling, thread_1788508369689 arc) rather than being forced to visually enumerate
+// it. No palette/category-shape fields — a trip roster has no palette contract, unlike a capsule.
+export function tripPlanCompositionSchema(targetOutfits = 1) {
+  const exactCount = Math.max(1, Number(targetOutfits) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      outfits: {
+        type: 'array',
+        minItems: exactCount,
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            piece_ids: { type: 'array', items: { type: 'integer' } },
+            title: { type: 'string' },
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." },
+            assigned_layer_piece_ids: { type: 'array', items: { type: 'integer' }, description: "For a cold slot whose core look (piece_ids) is not warm enough on its own: the packed roster layer piece ID(s) actually worn WITH this look, chosen for fit with this specific outfit and its occasion/activity. Not part of the card's own visual identity — do not also put it in piece_ids, and omit entirely when piece_ids is already warm enough or the slot's cold_layer_required is false." }
+          },
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions']
+        }
+      }
+    },
+    required: ['outfits']
+  }
+}
+
 // Spec §3 stage 2 — the model picks the roster from a bench the engine gated.
 // Default ON: model picks the roster from the gated 70-piece bench. Can be set
 // to 'false' via environment variable if deterministic roster pick is needed.
@@ -4596,6 +4629,37 @@ WORKING STYLE:
 ${prompts.WORKING_STYLE}`
 }
 
+// docs/trip-composition-parity-spec.md — trip's dedicated composition-only sibling of
+// capsulePlanCompositionSystemPrompt. Deliberately NOT capsule's rotation objective: a trip roster
+// has no palette contract and no "every piece must prove its job" framing (a trip card is a
+// representative CORE outfit from a packed suitcase, not a demonstration that every roster piece
+// earned its place) — see the owner ruling recorded on outfitSetPlanner.js's assignedLayerIds. What
+// IS shared verbatim is the style constitution, and the mechanical contract (allowed_piece_ids
+// only, exact target_outfits count, read formality/occasions from the catalog rather than trusting
+// allowed_piece_ids alone) — those are true of any fixed-roster composition, not capsule-specific.
+export function tripPlanCompositionSystemPrompt() {
+  return `You are the composition stage of a trip-packing tool. The conversational stylist has already interpreted the request, chosen the trip's use-case slots, and the packing roster is already fixed.
+
+Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Two looks in this rotation must never share the identical set of piece_ids — reuse across DIFFERENT looks is the entire point of a packed suitcase (a top or a layer that earns its place across multiple use cases is a strength, not a compromise), so vary at least one piece between any two looks that would otherwise be identical. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+
+This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. When a slot's own instructions state a cold-weather layering requirement, follow them exactly as given — including using assigned_layer_piece_ids for a shared packed layer rather than forcing it into piece_ids.
+
+STYLE CONSTITUTION — BODY CONTRACT:
+${prompts.BODY_CONTRACT}
+
+PROVEN FORMULAS:
+${prompts.PROVEN_FORMULAS}
+
+AESTHETIC GRAVITY:
+${prompts.AESTHETIC_GRAVITY}
+
+LANE NEUTRALITY:
+${prompts.LANE_NEUTRALITY}
+
+WORKING STYLE:
+${prompts.WORKING_STYLE}`
+}
+
 async function composeCapsulePlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -4673,6 +4737,87 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
   // iterations.
   recordToolLoopUsage(toolContext, usage)
   toolContext.freeformDiagnostics.atomicCapsuleVisualPieces = visuallySeenIds.length
+  return Array.isArray(value?.outfits) ? value.outfits : []
+}
+
+// docs/trip-composition-parity-spec.md §5/§7 — trip's sibling of composeCapsulePlanOnce. Same
+// shape (full truth catalog, unconditional whole-roster images, dedicated schema-enforced call),
+// trip's own objective and prompt. Deliberately does NOT reimplement validation: the caller
+// (tools.js's plan_outfit_set atomic branch) feeds this function's returned outfits through the
+// exact same validateSubmittedPlanOutfits/assembleSubmittedPlanOutfits path a tool-loop-composed
+// trip already goes through — this function's only job is composing candidates, never judging them
+// valid.
+async function composeTripPlanOnce(workbench, toolContext) {
+  const targetOutfitCount = (workbench.slots || [])
+    .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
+  const rosterIds = [...new Set((workbench.slots || [])
+    .flatMap(slot => Array.isArray(slot?.allowed_piece_ids) ? slot.allowed_piece_ids : [])
+    .map(Number)
+    .filter(id => Number.isInteger(id) && id > 0))]
+  const rosterPieces = rosterIds.length
+    ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${rosterIds.map(() => '?').join(',')})`)
+      .all(...rosterIds)
+      .map(parsePiece)
+    : []
+  // Full garment truth (buildPieceText), not planWorkbenchPieceLine's compact line — the same
+  // pairing-requirements/do-not-pair evidence capsule composition already gets, per the ratified
+  // spec's §3.2 finding.
+  const truthCatalog = rosterPieces.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  const promptPayload = {
+    instructions: workbench.instructions,
+    constraints: workbench.constraints,
+    slots: workbench.slots,
+    piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog
+  }
+  const content = [{
+    type: 'text',
+    text: `Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    cache_control: { type: 'ephemeral' }
+  }]
+  // Unconditional, whole-roster image attachment — the same policy capsule composition uses, not
+  // pieceVisualDetailPolicy's gated selection (that policy governs roster-SELECTION candidate
+  // thumbnails, a different call with a different tradeoff; composition already has a fixed,
+  // bounded roster, so every piece gets shown).
+  const visuallySeenIds = []
+  for (const piece of rosterPieces) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const thumb = await prepareWardrobeThumb(filePath, `trip-plan:${piece.id}:${photoFile}`, { maxPx: 800 })
+      content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      content.push({
+        type: 'image',
+        detail: 'auto',
+        source: { type: 'base64', media_type: thumb.media_type, data: thumb.data }
+      })
+      visuallySeenIds.push(Number(piece.id))
+    } catch (err) {
+      console.error(`Error loading atomic trip thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
+    }
+  }
+  if (!(toolContext.retrievedPieceIds instanceof Set)) toolContext.retrievedPieceIds = new Set()
+  if (!(toolContext.visuallySeenPieceIds instanceof Set)) toolContext.visuallySeenPieceIds = new Set()
+  for (const piece of rosterPieces) toolContext.retrievedPieceIds.add(Number(piece.id))
+  for (const id of visuallySeenIds) toolContext.visuallySeenPieceIds.add(id)
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripPlanCompositionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: tripPlanCompositionSchema(targetOutfitCount),
+    name: 'trip_plan_composition',
+    description: 'Compose the complete representative trip packing rotation from the fixed roster and slots.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(targetOutfitCount, { tokensPerItem: 550, base: 900, floor: 2200, ceiling: 7500 })
+  })
+  recordToolLoopUsage(toolContext, usage)
+  toolContext.freeformDiagnostics.atomicTripVisualPieces = visuallySeenIds.length
   return Array.isArray(value?.outfits) ? value.outfits : []
 }
 
@@ -5137,6 +5282,9 @@ router.post('/ask', async (req, res) => {
     // use this one-shot structured composer instead of returning a workbench
     // that starts an open-ended submit/replan loop.
     toolContext.composeCapsulePlanOnce = workbench => composeCapsulePlanOnce(workbench, toolContext)
+    // docs/trip-composition-parity-spec.md — same one-shot structured composer shape as capsule's,
+    // for the initial trip plan only; always wired (no feature flag) since the spec is ratified.
+    toolContext.composeTripPlanOnce = workbench => composeTripPlanOnce(workbench, toolContext)
     // Stage 2 roster selection is opt-in. With the flag off, toolContext never
     // gets a chooser and the capsule path is byte-identical to what shipped.
     if (modelCapsuleRosterEnabled()) {

@@ -1178,6 +1178,22 @@ test('a completed bounded capsule does not re-enter generic card delivery retrie
   assert.equal(result.block, false)
 })
 
+// docs/trip-composition-parity-spec.md: the atomic trip composer degrades to accepted cards +
+// honest gaps after one composition call, the same as capsule's -- boundedCompositionCompleted
+// must recognize tripAtomicAttempted too, or a partial/honest trip result would incorrectly trip
+// the generic "cardsNotDelivered"/"outfitCount" retry nudges this flag exists to suppress.
+test('a completed bounded trip composition does not re-enter generic card delivery retries', () => {
+  const toolContext = {
+    question: 'Pack for a week in Vienna with 6 looks',
+    declaredIntent: { want: 'cards', outfitCount: 6 },
+    generatedOutfits: [],
+    tripAtomicAttempted: true,
+    freeformDiagnostics: {}
+  }
+  const result = applyFreeformOutputChecks('I could not validate a credible look for one use case, so I am disclosing the gap.', toolContext, new Set())
+  assert.equal(result.block, false)
+})
+
 test('bounded capsule final prose is replaced locally when it invents unvalidated outfits', () => {
   const toolContext = {
     capsuleAtomicAttempted: true,

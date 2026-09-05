@@ -28,7 +28,7 @@ const { resolveOccasionProfile } = await import('../styling-engine/occasions.js'
 const { extractStatedTripDateRange } = await import('../styling-engine/stylingIntent.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
+const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt, tripPlanCompositionSchema, tripPlanCompositionSystemPrompt } = await import("../routes/ai.js")
 const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
@@ -474,6 +474,320 @@ test('plan_outfit_set: with a chooseTripRoster wired, the model-selected trip ro
   assert.equal(toolContext.pendingPlan.tripRequirementSlots.length, 1, 'the trip requirement slots (docs/README.md) must be captured alongside the chosen roster')
   assert.equal(toolContext.pendingPlan.tripRequirementSlots[0].occasion, 'city')
   assert.deepEqual(toolContext.pendingPlan.packingRoster, toolContext.pendingPlan.tripRoster, 'packingRoster is the provider-agnostic name a follow-up edit checks')
+})
+
+// ─── ATOMIC TRIP COMPOSITION (docs/trip-composition-parity-spec.md, ratified) ────────────────────
+// Mirrors the capsule atomic tests above exactly: same call-boundary shape (one injected
+// composeTripPlanOnce attempt per turn), same hard invariant that composition changes who composes
+// and what evidence they see, never what submit_plan_outfits accepts as valid.
+
+test('an initial trip plan uses the dedicated atomic composition path, not the general stylist tool loop', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => {
+      compositionCalls += 1
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id,
+        piece_ids: [topId, bottomId, shoeId],
+        title: 'Atomic City Look',
+        reason: 'A complete conventional trip formula.'
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(result.bounded_composition, true)
+  assert.equal(compositionCalls, 1)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
+  assert.equal(toolContext.pendingPlan, null)
+  assert.equal(toolContext.freeformDiagnostics.submitPlanCalls, 1)
+  // No tool-loop submit round was ever needed -- the atomic call already produced the final cards.
+  assert.equal(toolContext.freeformDiagnostics.submitPlanResubmits || 0, 0)
+
+  const lateSubmit = await executeTool('submit_plan_outfits', { outfits: [] }, toolContext)
+  assert.equal(lateSubmit.status, 'validation_error')
+  assert.match(lateSubmit.message, /No pending plan rosters/)
+})
+
+test('a same-turn re-plan attempt after atomic trip composition already ran is refused, mirroring capsule\'s one-shot-per-turn guard', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => {
+      compositionCalls += 1
+      const slot = workbench.slots[0]
+      return [{ slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'A complete conventional trip formula.' }]
+    }
+  }
+
+  const initial = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(initial.status, 'success')
+  assert.equal(compositionCalls, 1)
+
+  const retry = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days Again', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(retry.status, 'validation_error')
+  assert.match(retry.message, /already used its one bounded trip-composition attempt/)
+  assert.equal(compositionCalls, 1, 'the atomic composer must not be invoked a second time this turn')
+})
+
+test('a genuine cross-turn follow-up (fresh toolContext, persisted cards restored) lands on the ordinary tool-loop path, not atomic composition', async () => {
+  // docs/trip-composition-parity-spec.md §6, ruled: only the INITIAL plan becomes atomic. A real
+  // follow-up turn ("redo the nature walk slot") gets a FRESH toolContext per turn -- tripAtomicAttempted
+  // and pendingPlan are turn-scoped and never carry over -- but isPartialReplan (an existing,
+  // plan-kind-agnostic mechanism) still detects it via priorAssembledOutfits: this session already has
+  // plan_outfit_set-sourced cards restored from persisted state. No new replan-detection logic needed.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const composeTripPlanOnce = async workbench => {
+    compositionCalls += 1
+    const slot = workbench.slots[0]
+    return [{ slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'A complete conventional trip formula.' }]
+  }
+  const chooseTripRoster = async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) })
+
+  const turnOne = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a week in the city', chooseTripRoster, composeTripPlanOnce }
+  const initial = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, turnOne)
+  assert.equal(initial.status, 'success')
+  assert.equal(compositionCalls, 1)
+
+  // A fresh toolContext, as a new turn actually gets -- only the restored persisted cards carry
+  // over, never the turn-scoped tripAtomicAttempted/pendingPlan flags.
+  const turnTwo = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: turnOne.generatedOutfits,
+    question: 'actually, redo the city day',
+    chooseTripRoster,
+    composeTripPlanOnce
+  }
+  const followUp = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days Again', occasion: 'city', activity: 'walking', count: 1 }],
+  }, turnTwo)
+  assert.equal(followUp.status, 'slot_rosters', 'a genuine follow-up re-plan must land on the ordinary tool-loop path')
+  assert.equal(compositionCalls, 1, 'the atomic composer must not be invoked for a follow-up')
+})
+
+test('an empty atomic trip composition result is an engine error and cannot masquerade as a successful zero-card plan', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'atomic trip top' })
+  insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async () => []
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'error')
+  assert.equal(result.bounded_composition, true)
+  assert.match(result.message, /returned no outfits/)
+  assert.equal(toolContext.tripAtomicCompleted, true)
+  assert.equal(toolContext.generatedOutfits.length, 0)
+})
+
+test('the atomic trip composer\'s outfits pass through the exact existing submit_plan_outfits validator -- a duplicate-core pair is rejected exactly as the tool loop would reject it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    // Two "different" looks that are actually the identical core -- exactly what
+    // validateSubmittedPlanOutfits's tripOutfitKey duplicate check exists to catch.
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Look One', reason: 'r1' },
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Look Two (duplicate core)', reason: 'r2' },
+      ]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  // The duplicate is dropped, not accepted twice -- the same validator the tool loop uses caught it.
+  assert.equal(toolContext.generatedOutfits.length, 1, 'only the non-duplicate look must survive validation')
+})
+
+test('the atomic trip composer\'s assigned_layer_piece_ids is validated exactly as the tool loop validates it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+  // Never selected into the roster -- exactly the "not in the current packing roster" case
+  // test/tripPackingRoster.test.js already pins for the tool-loop path.
+  const outsideRosterId = insertPiece({ category: 'outerwear', name: 'never packed jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Assigned Layer Look', reason: 'r',
+        assigned_layer_piece_ids: [outsideRosterId]
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  // A card whose ONLY content is invalid must fail entirely -- proving the assigned-layer check
+  // fires inside the atomic path exactly as it does in the tool loop, not skipped or reinterpreted.
+  assert.equal(result.status, 'error')
+  assert.match(result.message, /not eligible as a layer/)
+  assert.equal(toolContext.generatedOutfits.length, 0)
+})
+
+test('a valid assigned_layer_piece_ids from the atomic trip composer is accepted and persists on the final card', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Assigned Layer Look', reason: 'r',
+        assigned_layer_piece_ids: [jacketId]
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.deepEqual(toolContext.generatedOutfits[0].assignedLayerIds, [jacketId])
+  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b), 'the assigned layer must not join the card\'s own core piece_ids, same as the tool-loop path')
+})
+
+test('capsule-only palette/budget/rotation semantics do not leak into trip composition', async () => {
+  // Structural: the trip composition schema carries no palette/category-shape/budget fields.
+  const schema = tripPlanCompositionSchema(3)
+  const outfitProps = Object.keys(schema.properties.outfits.items.properties)
+  assert.deepEqual(outfitProps.sort(), ['assigned_layer_piece_ids', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title'])
+  assert.ok(!('palette' in schema.properties), 'trip composition has no palette contract, unlike capsule')
+
+  // Prompt: trip's composition-only prompt states its own objective, not capsule's job-demonstration
+  // or enforced-distinct-core-across-the-rotation framing.
+  const prompt = tripPlanCompositionSystemPrompt()
+  assert.doesNotMatch(prompt, /prove the capsule works/)
+  assert.doesNotMatch(prompt, /Every piece in the roster was chosen for a job/)
+  assert.doesNotMatch(prompt, /enforced across the ENTIRE rotation/)
+  assert.match(prompt, /suitcase/i)
+
+  // Functional: the actual success message the model receives for a real atomic trip run must not
+  // carry capsule's evidence-boundary text ("requested colour", "hero piece") -- confirmed by
+  // running the real path, not just reading the prompt.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => [{
+      slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'r'
+    }]
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  assert.doesNotMatch(result.message, /Capsule evidence boundary/)
+  assert.doesNotMatch(result.message, /requested colour may serve any visual role/)
+})
+
+test('atomic trip composition receives roster thumbnails and full authoritative garment truth, per its own dedicated function', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /export function tripPlanCompositionSystemPrompt\(\)/)
+  assert.match(routeSrc, /async function composeTripPlanOnce\(workbench, toolContext\)/)
+  assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `trip-plan:/)
+  assert.match(routeSrc, /atomicTripVisualPieces = visuallySeenIds\.length/)
+
+  // Read the composeTripPlanOnce function body specifically -- capsule's sibling function uses the
+  // byte-identical truthCatalog line, so a whole-file search alone cannot distinguish them.
+  const fnStart = routeSrc.indexOf('async function composeTripPlanOnce(workbench, toolContext)')
+  assert.ok(fnStart > -1)
+  const fnEndMarker = 'atomicTripVisualPieces = visuallySeenIds.length'
+  const fnEnd = routeSrc.indexOf(fnEndMarker, fnStart)
+  assert.ok(fnEnd > -1)
+  const fnBody = routeSrc.slice(fnStart, fnEnd + fnEndMarker.length)
+  assert.match(fnBody, /truthCatalog = rosterPieces\.map\(piece => `ID \$\{piece\.id\}: \$\{buildPieceText\(piece\)\}`\)/)
+  assert.doesNotMatch(fnBody, /planWorkbenchPieceLine\(/, 'must not CALL the compact line builder (the bare name appears only in an explanatory comment)')
+  assert.match(fnBody, /content\.push\(\{\s*type: 'image'/)
+  assert.match(fnBody, /maxPx: 800/)
 })
 
 // thread_1788501349296: a trip roster with zero outerwear made every submitted card fail

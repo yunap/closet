@@ -228,11 +228,11 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   const readyCards = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
     : 0
-  // An atomic capsule attempt deliberately degrades to accepted cards + honest
-  // gaps after one composition call. Re-entering the generic delivery retries
-  // here would undo that cost boundary and restart search/propose/replan.
+  // An atomic capsule (or, per docs/trip-composition-parity-spec.md, trip) attempt deliberately
+  // degrades to accepted cards + honest gaps after one composition call. Re-entering the generic
+  // delivery retries here would undo that cost boundary and restart search/propose/replan.
   const boundedCompositionCompleted = Boolean(
-    toolContext?.capsuleAtomicAttempted || toolContext?.atomicMultiLookCompleted
+    toolContext?.capsuleAtomicAttempted || toolContext?.tripAtomicAttempted || toolContext?.atomicMultiLookCompleted
   )
   // Declared cards, delivered none, and didn't ask the user anything: the
   // turn's contract is unmet. An answer containing a question is treated as the
