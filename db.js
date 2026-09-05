@@ -304,6 +304,13 @@ function initDb(dbPath) {
       resolved_date_range TEXT DEFAULT '',
       resolved_location TEXT DEFAULT '',
       date_range_source TEXT DEFAULT '',
+      -- Diagnostic-only (never sent to the model or shown in user-visible prose): the atomic trip
+      -- composer's complete pre-validation output plus, for every rejected card, the exact
+      -- validator reason -- the gap found live on thread_1788577086327/run 1336, where the console-
+      -- only failure log went to an unrecoverable stdout socket. JSON: {submitted:[{slot_id,title,
+      -- piece_ids,assigned_layer_piece_ids}], rejected:[{slot_id,label,reasons,piece_ids,
+      -- assigned_layer_piece_ids}]}.
+      trip_atomic_composition_debug TEXT DEFAULT '',
       turn_failed             INTEGER DEFAULT 0,
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
@@ -910,7 +917,12 @@ function initDb(dbPath) {
     // model's own argument.
     'resolved_date_range TEXT DEFAULT \'\'',
     'resolved_location TEXT DEFAULT \'\'',
-    'date_range_source TEXT DEFAULT \'\''
+    'date_range_source TEXT DEFAULT \'\'',
+    // Diagnostic-only (never sent to the model or shown in user-visible prose): the atomic trip
+    // composer's complete pre-validation output plus, for every rejected card, the exact validator
+    // reason -- the gap found live on thread_1788577086327/run 1336, where the console-only failure
+    // log went to an unrecoverable stdout socket.
+    'trip_atomic_composition_debug TEXT DEFAULT \'\''
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

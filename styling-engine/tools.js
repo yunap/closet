@@ -305,6 +305,11 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       resolvedDateRange: '',
       resolvedLocation: '',
       dateRangeSource: '',
+      // docs/trip-composition-parity-spec.md follow-up (thread_1788577086327/run 1336): the atomic
+      // trip composer's complete pre-validation output logged only to console, an unrecoverable
+      // dead end once the request finished. Diagnostic-only -- never read by the model or surfaced
+      // in user-visible prose.
+      tripAtomicCompositionDebug: '',
       toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
@@ -424,6 +429,36 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
   if (!toolContext || !code) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.capsuleCompositionFailureCode = code
+}
+
+// docs/trip-composition-parity-spec.md follow-up: makes the atomic trip composer's pre-validation
+// output and each rejected card's exact validator reason inspectable after the fact, without
+// reaching into console output the running process may no longer expose. Diagnostic-only by
+// construction — this never touches the tool result returned to the model, pendingPlan.coverageGaps,
+// or any other user-visible surface; it writes to freeformDiagnostics only, which
+// persistFreeformGenerationRun (routes/ai.js) already carries into its own DB row untouched by
+// anything user- or model-facing. Deliberately narrow: piece_ids/assigned_layer_piece_ids/slot/
+// reasons only, never the full resolved piece objects validateSubmittedPlanOutfits's own failures
+// carry (those repeat the entire garment record per rejected card and would bloat every row).
+export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [] } = {}) {
+  if (!toolContext) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  const debug = {
+    submitted: (Array.isArray(submitted) ? submitted : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
+      piece_ids: (Array.isArray(entry?.piece_ids) ? entry.piece_ids : []).map(Number),
+      assigned_layer_piece_ids: (Array.isArray(entry?.assigned_layer_piece_ids) ? entry.assigned_layer_piece_ids : []).map(Number),
+    })),
+    rejected: (Array.isArray(failures) ? failures : []).map(failure => ({
+      slot_id: failure?.slot_id ?? null,
+      label: failure?.label || '',
+      reasons: Array.isArray(failure?.reasons) ? failure.reasons : [],
+      piece_ids: (Array.isArray(failure?.outfit?.pieceIds) ? failure.outfit.pieceIds : []).map(Number),
+      assigned_layer_piece_ids: (Array.isArray(failure?.outfit?.assignedLayerIds) ? failure.outfit.assignedLayerIds : []).map(Number),
+    })),
+  }
+  toolContext.freeformDiagnostics.tripAtomicCompositionDebug = JSON.stringify(debug)
 }
 
 // Direct explicit weather remains authoritative, while typed user/model fields
@@ -3246,6 +3281,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
           if (compositionError || !Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            setFreeformTripAtomicCompositionDebug(toolContext, {
+              submitted: Array.isArray(submittedOutfits) ? submittedOutfits : [],
+              failures: compositionError ? [{ slot_id: null, label: 'composition call', reasons: [String(compositionError.message || compositionError)] }] : []
+            })
             toolContext.generatedOutfits = []
             toolContext.source = 'plan_outfit_set'
             toolContext.sourceLocked = true
@@ -3273,6 +3312,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
             visuallySeenPieceIds: seenForValidation
           })
+          // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the
+          // console.log below was the ONLY record of a rejected card's content/reason, and it went
+          // to a process stdout with no accessible log afterward).
+          setFreeformTripAtomicCompositionDebug(toolContext, { submitted: submittedOutfits, failures })
           if (failures.length) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
             console.log('[Atomic Trip Validation]', failures)

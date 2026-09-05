@@ -687,8 +687,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, plan_kind_resolved, trip_roster_model_calls, trip_roster_model_repairs, trip_roster_model_fallbacks, resolved_date_range, resolved_location, date_range_source, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, plan_kind_resolved, trip_roster_model_calls, trip_roster_model_repairs, trip_roster_model_fallbacks, resolved_date_range, resolved_location, date_range_source, trip_atomic_composition_debug, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -726,6 +726,14 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       String(diagnostics.resolvedDateRange || ''),
       String(diagnostics.resolvedLocation || ''),
       String(diagnostics.dateRangeSource || ''),
+      // Diagnostic-only, never read by the model or shown in user-visible prose (docs/
+      // trip-composition-parity-spec.md follow-up). Piece-ID-scoped, unlike the free-text
+      // validator reasons it also carries verbatim — a few of those reasons do name a garment
+      // (e.g. the footwear-comfort and 4th-shoe-reuse messages), narrower than what
+      // console.log('[Atomic Capsule Validation]', failures) already writes uncontrolled for
+      // capsule (full resolved piece objects), but not as strictly ID-only as the
+      // capsule_roster_failure_codes/capsule_composition_failure_code columns above.
+      String(diagnostics.tripAtomicCompositionDebug || ''),
       turnFailed ? 1 : 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,

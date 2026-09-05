@@ -79,6 +79,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     resolvedDateRange: '',
     resolvedLocation: '',
     dateRangeSource: '',
+    // docs/trip-composition-parity-spec.md follow-up (thread_1788577086327/run 1336): the atomic
+    // trip composer's complete pre-validation output, diagnostic-only.
+    tripAtomicCompositionDebug: '',
     // Which tools ran in which iteration — the shape of a turn, not just its size.
     toolSequence: '',
     providerIterations: 0,

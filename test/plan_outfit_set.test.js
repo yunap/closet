@@ -729,6 +729,73 @@ test('a valid assigned_layer_piece_ids from the atomic trip composer is accepted
   assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b), 'the assigned layer must not join the card\'s own core piece_ids, same as the tool-loop path')
 })
 
+test('the atomic trip composer\'s pre-validation output and each rejected card\'s exact reason are captured in diagnostic-only debug, never in the model-facing result', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const topId2 = insertPiece({ category: 'top', name: 'atomic trip top 2' })
+  const bottomId2 = insertPiece({ category: 'bottom', name: 'atomic trip bottom 2' })
+  const shoeId2 = insertPiece({ category: 'shoes', name: 'atomic trip shoes 2', heel_height: 'flat', walk_support: 'high' })
+  // Never selected into the roster -- guarantees the second card is rejected.
+  const outsideRosterId = insertPiece({ category: 'outerwear', name: 'never packed jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, topId2, bottomId2, shoeId2] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Accepted Look', reason: 'r1' },
+        {
+          slot_id: slot.id, piece_ids: [topId2, bottomId2, shoeId2], title: 'Rejected Look', reason: 'r2',
+          assigned_layer_piece_ids: [outsideRosterId]
+        },
+      ]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  // One card survives (partial success), the other is rejected -- exactly the mixed outcome
+  // thread_1788577086327/run 1336 had no recorded evidence for after the fact.
+  assert.equal(toolContext.generatedOutfits.length, 1)
+
+  const debugRaw = toolContext.freeformDiagnostics.tripAtomicCompositionDebug
+  assert.ok(debugRaw, 'diagnostic debug must be populated whenever the atomic trip path runs')
+  const debug = JSON.parse(debugRaw)
+
+  assert.equal(debug.submitted.length, 2, 'both cards the composer returned before validation must be recorded, accepted or not')
+  const submittedTitles = debug.submitted.map(entry => entry.title).sort()
+  assert.deepEqual(submittedTitles, ['Accepted Look', 'Rejected Look'])
+
+  assert.equal(debug.rejected.length, 1)
+  const [rejected] = debug.rejected
+  assert.equal(rejected.label, 'City Days')
+  assert.deepEqual(rejected.piece_ids.sort((a, b) => a - b), [topId2, bottomId2, shoeId2].sort((a, b) => a - b))
+  // An assigned layer that fails eligibility never resolves into the outfit's assignedLayerIds --
+  // only a successfully-resolved layer would appear here (docs/trip-composition-parity-spec.md
+  // debug field is deliberately narrow: it mirrors what the validator actually accepted, not the
+  // raw submission). The rejected id itself still names the failure in `reasons` below.
+  assert.deepEqual(rejected.assigned_layer_piece_ids, [])
+  assert.ok(
+    rejected.reasons.some(reason => reason.includes('not eligible as a layer') && reason.includes(String(outsideRosterId))),
+    'the exact validator failure reason, naming the rejected piece id, must be captured'
+  )
+
+  // Diagnostic-only: never in the model-facing tool result.
+  const serializedResult = JSON.stringify(result)
+  assert.ok(!serializedResult.includes('tripAtomicCompositionDebug'))
+  assert.ok(!serializedResult.includes('not eligible as a layer'), 'the rejected card\'s exact validator reason must not leak into the model-facing message')
+  assert.ok(!serializedResult.includes(String(outsideRosterId)), 'the rejected card\'s piece id must not leak into the model-facing message')
+  assert.equal(result.bounded_composition, true)
+})
+
 test('capsule-only palette/budget/rotation semantics do not leak into trip composition', async () => {
   // Structural: the trip composition schema carries no palette/category-shape/budget fields.
   const schema = tripPlanCompositionSchema(3)
