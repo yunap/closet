@@ -795,6 +795,155 @@ test('a qualifying cold slot continues to accept a valid assigned_layer_piece_id
   assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(jacketId)])
 })
 
+// Piece-specific half of the cold-layer invariant. Gate 2 (hasMinimumWarmLayer) judges the WHOLE
+// outfit, so a heavy core garment can make the outfit warm enough even while the specific piece
+// the model named in assigned_layer_piece_ids is thermally useless -- laundering a bad choice
+// through a floor it never actually needed to satisfy. These four pin the fix without importing
+// severe-cold's coat/jacket ontology or the separate transitIsCold sleeve-coverage contract.
+test('a positively-inadequate assigned layer is rejected even when the base outfit is already warm enough to pass the whole-outfit floor', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Heavy top alone already satisfies hasMinimumWarmLayer's whole-outfit floor -- this is exactly
+  // the "warm base launders a nonsense assigned layer" scenario the audit identified.
+  const topId = insertPiece({ category: 'top', name: 'heavy invariant top', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const badLayerId = insertPiece({ category: 'outerwear', name: 'thin unlined shell', occasions: ['city'], formality: 'everyday', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('[]', 'unlined', badLayerId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+
+  // Sanity: the base outfit alone (heavy top, no layer at all) already clears the whole-outfit
+  // floor -- proving any rejection below comes from the new piece-level check, not the old one.
+  const withoutLayer = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+  }])
+  assert.equal(withoutLayer.accepted.length, 1, 'fixture sanity: the heavy top alone must already satisfy the whole-outfit floor')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    assigned_layer_piece_ids: [Number(badLayerId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('cannot serve as a cold layer')),
+    'the piece-specific rejection must fire even though the whole outfit would otherwise pass'
+  )
+})
+
+test('a medium/insulating cardigan continues to satisfy an ordinary cold slot\'s assigned-layer check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const cardiganId = insertPiece({ category: 'outerwear', name: 'medium knit cardigan', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["unknown"]', cardiganId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    assigned_layer_piece_ids: [Number(cardiganId)],
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(cardiganId)], 'a cardigan is a legitimate cold layer -- category/garmentKind is never the question')
+})
+
+test('an insulating vest passes the warmth-only assigned-layer check -- category/garmentKind is not the question', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // "vest" only in name/garmentKind here -- sleeve_length is left unset (no positive bareness
+  // evidence), which is the fixture this check needs: a vest carrying genuine insulating evidence
+  // and nothing else, isolated from the separate sleeve-coverage question entirely.
+  const vestId = insertPiece({ category: 'outerwear', name: 'quilted vest', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["fleece"]', vestId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+  assert.equal(Boolean(slot.weatherProfile?.transitIsCold), false, 'fixture needs no cold-transit leg, isolating the warmth-only check from the separate sleeve contract')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    assigned_layer_piece_ids: [Number(vestId)],
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(vestId)])
+})
+
+// [R2]'s cold-transit sleeve-bearing floor (NO_TRANSIT_LAYER_FOR_COLD) is keyed on transitIsCold,
+// a condition disjoint from cold_layer_required (isCold): a genuinely sleeveless piece is already
+// excluded from THIS slot's gateAllowedIds whenever isCold is true (the pre-existing "cold
+// weather: bare/sleeveless" hard gate, rules.js), so a sleeveless piece can never even reach
+// assigned_layer_piece_ids resolution on a cold_layer_required slot -- there is no double-jeopardy
+// scenario to construct there. The disjoint case this floor actually exists for is an INDOOR
+// destination (isCold false, base may stay bare) reached through cold transit -- exactly what this
+// test builds, submitting the sleeveless vest as an ordinary piece_ids member (not
+// assigned_layer_piece_ids, which is illegal here since cold_layer_required is false indoors) to
+// confirm the untouched transit contract still fires end to end.
+test('cold-transit sleeve-bearing coverage remains independently enforced, unchanged by the new warmth-only assigned-layer check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // Insulating (would clear the new warmth-only check with room to spare) AND explicitly
+  // sleeveless -- proving the transit rejection below comes from the untouched sleeve contract,
+  // not from thermal-evidence reasoning.
+  const vestId = insertPiece({ category: 'outerwear', name: 'quilted vest', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium', sleeve_length: 'sleeveless' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["fleece"]', vestId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Museum Visit', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), false, 'fixture needs an indoor destination, so the base may stay bare and the sleeveless vest stays gate-eligible')
+  assert.ok(slot.gateAllowedIds.has(Number(vestId)), 'fixture sanity: the vest must actually be gate-eligible, or this test proves nothing about the transit contract')
+  // Same direct-mutation technique other tests in this file already use to force deterministic
+  // weather without live lookups -- the indoor destination's own transit leg is genuinely cold.
+  slot.weatherProfile = { ...slot.weatherProfile, transitIsCold: true }
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(vestId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('sleeve-bearing')),
+    'the independent, untouched cold-transit contract must still reject a sleeveless layer'
+  )
+})
+
 test('the atomic trip composer\'s pre-validation output and each rejected card\'s exact reason are captured in diagnostic-only debug, never in the model-facing result', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'atomic trip top' })

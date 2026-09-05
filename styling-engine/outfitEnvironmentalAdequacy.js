@@ -237,7 +237,15 @@ function pieceFabricWeightIsUltralight(piece) {
   return String(piece?.fabric_weight || '').toLowerCase().trim() === 'ultralight'
 }
 
-function outerwearLayerPositivelyInadequate(piece) {
+// Exported so validateSubmittedPlanOutfits (outfitSetPlanner.js) can hold an explicitly
+// model-assigned `assigned_layer_piece_ids` entry to the same warmth-evidence bar a layer already
+// present in the outfit gets here, piece-by-piece rather than only at whole-outfit granularity.
+// Deliberately the same function, not a re-derived copy: the two early returns below read
+// thermalMaterialVerdict/fabricWeight directly and never consult category or garmentKind, so
+// calling this on a cardigan/vest/blazer asks exactly the intended question ("does this garment's
+// own thermal evidence positively contradict a cold-layer claim") without smuggling in the
+// coat/jacket-only ontology outerLayerSevereColdAdequacy (below) deliberately keeps separate.
+export function outerwearLayerPositivelyInadequate(piece) {
   if (thermalMaterialVerdict(piece) === 'insulating') return false
   if (fabricWeight(piece) === 'heavy') return false
 

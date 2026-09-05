@@ -29,7 +29,7 @@
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
-import { hasMinimumWarmLayer } from './outfitEnvironmentalAdequacy.js'
+import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate } from './outfitEnvironmentalAdequacy.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -4822,7 +4822,22 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         continue
       }
       const layerPiece = planPiecesById.get(id)
-      if (layerPiece) assignedLayers.push(layerPiece)
+      if (!layerPiece) continue
+      // Piece-specific half of the cold-layer invariant: a warm CORE (a heavy top/dress, or a
+      // separately-adequate layer already in piece_ids) must not launder an explicitly-asserted but
+      // thermally-useless assigned_layer_piece_ids choice through the whole-outfit floor below.
+      // outerwearLayerPositivelyInadequate is Gate 2's own negative-evidence family (ultralight +
+      // non_insulating + unlined), reused verbatim rather than re-derived, and deliberately NOT
+      // gated on category/garmentKind here — the assigned relation can legitimately name a
+      // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
+      // evidence positively contradict the cold-layer claim," not "is it a coat." Only reachable
+      // when this slot actually requires a cold layer; a non-cold slot already rejects the
+      // relation outright above.
+      if (coldLayerRequired && outerwearLayerPositivelyInadequate(layerPiece)) {
+        reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer or omit assigned_layer_piece_ids.`)
+        continue
+      }
+      assignedLayers.push(layerPiece)
     }
     const outfit = {
       title: String(raw?.title || slot.label || '').trim(),
