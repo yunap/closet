@@ -237,6 +237,24 @@ export const PRECIPITATION_VALUES = ['none', 'rain', 'snow', 'mixed', 'unknown']
 export const WIND_VALUES = ['calm', 'breezy', 'windy', 'unknown']
 export const TEMPERATURE_BAND_VALUES = ['hot', 'cold', 'mild']
 
+// THE canonical structured-precipitation → wet-exposure rule. Two projections of a resolved
+// ResolvedWeatherContext need this fact — stylingContext.js's profileFromResolvedWeatherContext
+// (the general conversational-stylist path) and resolveSlotWeather (outfitSetPlanner.js, the
+// trip/plan slot path) — and until now only the first one computed it, so a real plan_outfit_set/
+// trip turn's resolved rain/mixed precipitation never became isWetExposure/isRainy on that slot's
+// weatherProfile: RAIN_PROTECTION_MISSING and the wet-sensitive-footwear gate could never fire for
+// a trip card no matter how rainy the resolved weather was. Extracted here, rather than left as two
+// copies of the same two-line expression, specifically so the next consumer reuses this instead of
+// re-deriving a third interpretation — precisely the drift this file's own header docstring exists
+// to prevent for every other structured-weather rule.
+export function wetExposureFromPrecipitation(precipitationValue) {
+  const value = String(precipitationValue || '')
+  return {
+    isRainy: value === 'rain',
+    isWetExposure: value === 'rain' || value === 'mixed',
+  }
+}
+
 // Requires an ACTUAL number, not merely a coercible value: `Number(null)`
 // is 0 and `Number("65")` is 65, so a coercing check would silently accept
 // {high_f:null, low_f:null} as 0°F/0°F, or a model-hallucinated string

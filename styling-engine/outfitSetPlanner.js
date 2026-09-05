@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate } from './outfitEnvironmentalAdequacy.js'
 import {
@@ -1067,6 +1067,13 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
         transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
         transitHighF: t.highF, transitLowF: t.lowF,
+        // Mirrors stylingContext.js's profileFromResolvedWeatherContext, the general
+        // conversational-stylist projection: wet exposure is NOT neutralized for an indoor
+        // destination the way isCold is above -- rain is a hazard for the walk there and back
+        // regardless of how climate-controlled the destination is, so that projection never zeroes
+        // it for indoor either (profileForEnvironment's indoor branch overrides isCold/severity/
+        // needsRemovableCoolLayer only; isWetExposure/isRainy pass through unchanged).
+        ...wetExposureFromPrecipitation(context.precipitation?.value),
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
@@ -1079,6 +1086,14 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),
       needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
+      // docs/README.md weather-behavior checkpoint follow-up: resolveSlotWeather never derived
+      // isWetExposure/isRainy from its own resolved precipitation at all, unlike
+      // stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
+      // path) -- so RAIN_PROTECTION_MISSING and the wet-sensitive-footwear gate could never fire
+      // for a real plan_outfit_set/trip card no matter how rainy the resolved weather was. Reuses
+      // the same canonical rule (weather.js's wetExposureFromPrecipitation) rather than a second
+      // interpretation.
+      ...wetExposureFromPrecipitation(context.precipitation?.value),
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
@@ -3812,7 +3827,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
 // proxy this file used before was flagged as partially undoing the roster/cards separation). This
 // is the one place that mapping is written down, so a future slotGateEligiblePieces field it starts
 // reading and this projection stops carrying is a one-file fix, not a silent gap.
-const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
+const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'isWetExposure', 'isRainy', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
 
 export function serializeTripRequirementSlot(slot = {}) {
   const weatherSource = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}

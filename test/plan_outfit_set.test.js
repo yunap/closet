@@ -1678,6 +1678,53 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   assert.ok(allowed.has(closedFlats), 'closed footwear remains allowed')
 })
 
+// Weather-behavior checkpoint follow-up: resolveSlotWeather (this file) never derived
+// isWetExposure/isRainy from its own resolved precipitation, unlike stylingContext.js's
+// profileFromResolvedWeatherContext (the general conversational-stylist path) -- so a real
+// plan_outfit_set/trip turn's resolved rain could never exclude wet-sensitive footwear at the
+// roster/gate level, no matter how rainy the weather. Fixed by reusing weather.js's
+// wetExposureFromPrecipitation (the same canonical rule, extracted rather than duplicated) in both
+// of resolveSlotWeather's return branches. Mirrors the existing cold-footwear pipeline test above
+// exactly, substituting resolved precipitation for resolved temperature.
+test('plan_outfit_set: resolved rainy trip weather excludes wet-sensitive footwear at the roster/gate level before composition', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const leatherShoe = insertPiece({ category: 'shoes', name: 'leather loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'leather' WHERE id = ?").run(leatherShoe)
+  const meshShoe = insertPiece({ category: 'shoes', name: 'mesh athletic sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'mesh' WHERE id = ?").run(meshShoe)
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a rainy week in the city' }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 60, low_f: 50, precipitation: 'rain' },
+    slots: [{ label: 'Rainy City Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.equal(allowed.has(meshShoe), false, 'mesh footwear must be excluded once resolved precipitation establishes wet exposure')
+  assert.ok(allowed.has(leatherShoe), 'non-wet-sensitive footwear remains allowed')
+})
+
+// The dry-weather control: the same wet-sensitive shoe stays eligible absent a rainy resolution,
+// proving the exclusion above tracks the resolved condition rather than firing unconditionally.
+test('plan_outfit_set: dry trip weather leaves wet-sensitive footwear eligible', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const meshShoe = insertPiece({ category: 'shoes', name: 'mesh athletic sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'mesh' WHERE id = ?").run(meshShoe)
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a dry week in the city' }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 60, low_f: 50, precipitation: 'none' },
+    slots: [{ label: 'Dry City Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.ok(allowed.has(meshShoe), 'wet-sensitive footwear must remain eligible when wet exposure is absent')
+})
+
 // Spec §9 item 25: "The exact Vienna request reaches plan_outfit_set once with
 // 65/45 estimate input, receives a cold-valid roster, and submits valid cards
 // without a weather retry or outfit repair." Uses replayStylistToolScript — the

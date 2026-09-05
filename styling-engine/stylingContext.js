@@ -2,7 +2,7 @@ import { resolveActivityProfile, resolveComfortFootwearConstraint } from './foot
 import { resolveOccasionProfile } from './occasions.js'
 import { weatherProfileFromContext } from './rules.js'
 import { normalizeActivity, normalizeOccasion } from './stylingIntent.js'
-import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, resolveWeatherContext, validateUserWeather, validateWeatherEstimate } from './weather.js'
+import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, resolveWeatherContext, validateUserWeather, validateWeatherEstimate, wetExposureFromPrecipitation } from './weather.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
 
 const SOURCE_ORDER = [
@@ -366,8 +366,7 @@ function profileFromResolvedWeatherContext(resolved, { indoor = false } = {}) {
     needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
     ...(Number.isFinite(t.highF) ? { highF: t.highF } : {}),
     ...(Number.isFinite(t.lowF) ? { lowF: t.lowF } : {}),
-    isRainy: resolved.precipitation?.value === 'rain',
-    isWetExposure: resolved.precipitation?.value === 'rain' || resolved.precipitation?.value === 'mixed',
+    ...wetExposureFromPrecipitation(resolved.precipitation?.value),
     weatherSource: t.source,
     resolvedWeatherContext: resolved,
   }, { indoor })
