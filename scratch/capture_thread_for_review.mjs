@@ -2,9 +2,15 @@
 // One self-contained capture of a single stylist thread, for external review.
 //
 // Emits Markdown to stdout: EVERY turn in order — what was asked, what tool path answered it, what
-// was shown, and (for turns with cards) what the engine told the model about each candidate versus
-// what the model chose. That last contrast is the reviewable unit — "the engine ranked X, the model
-// picked Y" — and nothing else in the repo produces it.
+// was shown, and (for turns with cards) this script's OWN independently recomputed thermal/season
+// verdict for each candidate versus what the model chose. That contrast is diagnostic, for a human
+// reviewer — model-facing-signal-inventory.md and search-propose-signal-inventory.md confirmed
+// these preferred/workable/discouraged verdicts and thermal-demand labels are NOT sent to the
+// composing model in either the tool-loop or atomic composition path (see
+// test/planRosterThermalEvidence.test.js's 'no thermal or season verdict crosses into the model
+// contract'). A "discouraged" placement in a delivered card is not the model overriding engine
+// guidance; the model never saw this verdict at all, only the raw garment-truth fields it is
+// computed from.
 //
 //   node scratch/capture_thread_for_review.mjs <thread_id> [> review.md]
 //
@@ -140,9 +146,16 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
 
   // ── the decisive contrast, only for turns that actually delivered cards ───────────────────────
   if (cards.length) {
-    p(`\n**Cards delivered, and what the engine said about each piece:**`)
-    p(`\`engine\` columns are what the planner computed and handed the model BEFORE it composed. A`)
-    p(`piece marked \`discouraged\` that still appears is the model overriding the engine.\n`)
+    p(`\n**Cards delivered, and this script's own recomputed verdict for each piece:**`)
+    p(`\`recomputed\` columns are NOT sent to the model — confirmed by model-facing-signal-inventory.md`)
+    p(`and search-propose-signal-inventory.md, and pinned by`)
+    p(`test/planRosterThermalEvidence.test.js's 'no thermal or season verdict crosses into the model`)
+    p(`contract'. They are independently recomputed here, after the fact, purely for this diagnostic —`)
+    p(`the model only ever received the raw garment-truth fields (season, fabric, warmth-adjacent`)
+    p(`facts) these verdicts are derived from, never the verdict itself. A piece marked \`discouraged\``)
+    p(`that appears in a delivered card is therefore NOT the model overriding engine guidance; there`)
+    p(`was no guidance to override. Read this as "would this verdict have supported the choice, had it`)
+    p(`been shown" — a retrospective quality check, not a record of what the model saw or ignored.\n`)
     const calendarSeason = dbg.calendarSeason || guessSeason(row.created_at)
     let overrides = 0
     for (const [ci, card] of cards.entries()) {
@@ -151,7 +164,7 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
       const exposure = resolveExposureContext({ activity: card.activity, environment: card.environment }, weather)
       const demand = requiredThermalBand(exposure)
       p(`Card ${ci + 1} — ${card.occasion || '?'} / ${card.activity || '?'} · weather: \`${card.weatherUsed || '?'}\` · thermal demand: \`${slotThermalDemandLabel(exposure) || 'none'}\` · calendar: \`${calendarSeason}\`\n`)
-      p('| piece | category | season tag | warmth | engine: thermal | engine: season |')
+      p('| piece | category | season tag | warmth | recomputed: thermal (not shown to model) | recomputed: season (not shown to model) |')
       p('|---|---|---|---|---|---|')
       for (const piece of card.pieces || []) {
         const full = db.prepare('SELECT * FROM pieces WHERE id = ?').get(Number(piece.id))
@@ -163,7 +176,7 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
       }
       p('')
     }
-    p(`**${overrides} piece placement(s) across ${cards.length} card(s) in this turn used a garment the engine marked \`discouraged\`.**`)
+    p(`**${overrides} piece placement(s) across ${cards.length} card(s) in this turn used a garment this script's recomputed verdict marks \`discouraged\`** (again: a retrospective diagnostic, not a signal the model saw or overrode).`)
 
     const firstCard = cards[0]
     const wx = firstCard.resolvedWeatherContext?.temperature || {}
@@ -175,7 +188,7 @@ turns.forEach(({ m: asst, i: asstIdx }, turnNumber) => {
       const s = seasonFitPieceAdvisory(piece, guessSeason(row.created_at))
       return { piece, score: t.score + s.score, t, s }
     }).sort((a, b) => b.score - a.score)
-    p(`\nWhat the engine ranked highest for this turn's conditions (\`${firstCard.weatherUsed}\`, ${firstCard.activity || 'unknown activity'}):\n`)
+    p(`\nWhat this script's recomputation ranks highest for this turn's conditions (\`${firstCard.weatherUsed}\`, ${firstCard.activity || 'unknown activity'}) — again, not a ranking the model ever saw:\n`)
     p('| rank | piece | combined | thermal | season |')
     p('|---|---|---|---|---|')
     for (const [ri, r] of ranked.slice(0, 5).entries()) p(`| ${ri + 1} | ${r.piece.name} | ${r.score} | ${r.t.tier} | ${r.s.tier} |`)
