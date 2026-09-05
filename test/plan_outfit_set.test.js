@@ -720,6 +720,11 @@ test('a valid assigned_layer_piece_ids from the atomic trip composer is accepted
 
   const result = await executeTool('plan_outfit_set', {
     plan_kind: 'trip',
+    // Cold, non-indoor -- cold_layer_required must read true so this assigned layer clears the
+    // invariant added below (a slot that doesn't require a cold layer must reject one entirely).
+    // A trip plan resolves weather through the structured contract, not a per-slot text
+    // heuristic, so a genuinely cold slot needs weather_estimate rather than slot.weather.
+    weather_estimate: { high_f: 38, low_f: 25 },
     slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
   }, toolContext)
 
@@ -727,6 +732,67 @@ test('a valid assigned_layer_piece_ids from the atomic trip composer is accepted
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.deepEqual(toolContext.generatedOutfits[0].assignedLayerIds, [jacketId])
   assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b), 'the assigned layer must not join the card\'s own core piece_ids, same as the tool-loop path')
+})
+
+// Traced live via thread_1788577086327/run 1336: gallery_lunch had cold_layer_required:false but
+// its accepted card still carried assigned_layer_piece_ids -- validateSubmittedPlanOutfits checked
+// only roster/gate eligibility, never cold_layer_required itself, even though the schema's own
+// prompt text (routes/ai.js's tripPlanCompositionSchema) already tells the model to omit the
+// relation entirely when the slot isn't cold. These pin the fix as a validator invariant, not a
+// prompt or eligibility change.
+test('a non-cold slot rejects a non-empty assigned_layer_piece_ids, even when the layer itself is gate-eligible', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'invariant jacket', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Warm City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'warm' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), false, 'fixture needs a genuinely non-cold slot')
+  assert.ok(slot.gateAllowedIds.has(Number(jacketId)), 'fixture needs the layer to otherwise be gate-eligible, isolating the cold_layer_required check')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    assigned_layer_piece_ids: [Number(jacketId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('only valid when this slot\'s cold_layer_required is true')),
+    'the invariant rejection must be the recorded reason'
+  )
+})
+
+test('a qualifying cold slot continues to accept a valid assigned_layer_piece_ids', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'invariant jacket', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+  assert.notEqual(slot.environment, 'indoor', 'fixture needs a non-indoor slot so cold_layer_required actually reads true')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    assigned_layer_piece_ids: [Number(jacketId)],
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(jacketId)])
 })
 
 test('the atomic trip composer\'s pre-validation output and each rejected card\'s exact reason are captured in diagnostic-only debug, never in the model-facing result', async () => {

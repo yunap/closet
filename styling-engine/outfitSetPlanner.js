@@ -4805,6 +4805,16 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // roster" and "valid for that slot under existing hard gates" from the owner's requirements.
     const assignedLayerIds = (Array.isArray(raw?.assigned_layer_piece_ids) ? raw.assigned_layer_piece_ids : [])
       .map(id => Number(id)).filter(Boolean)
+    // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
+    // card): the schema's own description already tells the model to "omit entirely ... when
+    // cold_layer_required is false," but nothing here checked it — a non-cold slot could carry a
+    // packed layer relation unchallenged. Mirrors the exact cold_layer_required formula the
+    // model-facing workbench slot exposes (buildPlanSlotWorkbench, same file) so this cannot
+    // silently drift from what the model was told the rule depends on.
+    const coldLayerRequired = Boolean(slot.weatherProfile?.isCold) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+    if (assignedLayerIds.length && !coldLayerRequired) {
+      reasons.push(`assigned_layer_piece_ids is only valid when this slot's cold_layer_required is true; ${label} does not require a cold layer — omit assigned_layer_piece_ids entirely for this slot.`)
+    }
     const assignedLayers = []
     for (const id of assignedLayerIds) {
       if (!gateAllowedIds.has(id)) {
