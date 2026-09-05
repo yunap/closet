@@ -29,7 +29,8 @@ const { extractStatedTripDateRange } = await import('../styling-engine/stylingIn
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt, tripPlanCompositionSchema, tripPlanCompositionSystemPrompt } = await import("../routes/ai.js")
-const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
+const { layerConstructionPromptRule, layerDirectionPromptRule, evaluateWearableOutfit } = await import('../styling-engine/outfitValidation.js')
+const { ENVIRONMENTAL_ADEQUACY_CODES } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -941,6 +942,115 @@ test('cold-transit sleeve-bearing coverage remains independently enforced, uncha
   assert.ok(
     result.failures[0].reasons.some(reason => reason.includes('sleeve-bearing')),
     'the independent, untouched cold-transit contract must still reject a sleeveless layer'
+  )
+})
+
+// Weather-behavior checkpoint (docs/README.md's cold-layer garment-role audit): severe cold and
+// rain protection are unit-proven directly against evaluateOutfitEnvironmentalAdequacy but were
+// never asserted through the real validateSubmittedPlanOutfits pipeline. These close that gap
+// with no behavior change -- the severe-cold/rain machinery is untouched by this session's work.
+test('severe cold end-to-end: an indoor-layer-only card is rejected through the real pipeline, and a qualifying coat passes', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'heavy sweater', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy', sleeve_length: 'long' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'wool trousers', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'winter boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // garmentKind 'cardigan' is hard-insufficient in outerLayerSevereColdAdequacy regardless of its
+  // own thermal evidence -- an indoor layer, however warm, is not outdoor outerwear.
+  const cardiganId = insertPiece({ category: 'outerwear', name: 'knit cardigan', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium', sleeve_length: 'long' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["unknown"]', cardiganId)
+  // A genuine coat: construction (garmentKind) passes the outdoor-capability gate, and heavy
+  // insulating fill clears the severe-cold system-warmth floor alongside the heavy base above.
+  const coatId = insertPiece({ category: 'outerwear', name: 'puffer coat', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy', sleeve_length: 'long' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["down"]', coatId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Severe Cold Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  // Same direct-mutation technique already established in this file: isColdSevere only affects
+  // validateSubmittedPlanOutfits's own weatherContext read, not roster/gate construction (already
+  // computed above from the ordinary isCold this fixture's weather text already resolved).
+  slot.weatherProfile = { ...slot.weatherProfile, isColdSevere: true }
+
+  const indoorLayerResult = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(cardiganId)],
+  }])
+  assert.equal(indoorLayerResult.accepted.length, 0)
+  assert.equal(indoorLayerResult.failures.length, 1)
+  assert.ok(
+    indoorLayerResult.failures[0].reasons.some(reason => reason.includes('not outdoor outerwear for cold exposure')),
+    'the severe-cold indoor-layer-only finding must reject through the real pipeline'
+  )
+
+  const coatResult = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(coatId)],
+  }])
+  assert.equal(coatResult.failures.length, 0)
+  assert.equal(coatResult.accepted.length, 1, 'a genuine outdoor-capable, adequately warm coat must pass the same severe-cold pipeline')
+})
+
+// Caveat, discovered while writing this test: isWetExposure is derived only inside
+// stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
+// weather projection) -- resolveSlotWeather (outfitSetPlanner.js), the function that actually
+// builds a trip/plan slot's weatherProfile, never reads or attaches isWetExposure/isRainy from its
+// own resolved precipitation data (confirmed: zero references to either name anywhere in
+// outfitSetPlanner.js). So this test forces isWetExposure by direct mutation, same as the
+// severe-cold test above, to prove the VALIDATION contract behaves correctly (advisory, never
+// blocking) once that flag is true -- it does NOT demonstrate that a real plan_outfit_set/trip
+// turn can ever reach that state today. That gap is reported separately, not fixed here.
+test('wet exposure / rain: RAIN_PROTECTION_MISSING surfaces as advisory through the real pipeline and never blocks acceptance', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const plainJacketId = insertPiece({ category: 'outerwear', name: 'plain jacket', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  const rainShellId = insertPiece({ category: 'outerwear', name: 'rain shell', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
+  // weather_protection alone is not enough: evaluateOuterwearCapability's capabilityTagged proxy
+  // (outerwearCapability.js) requires either a tagger confidence entry or a legacy outerwear_role
+  // value to trust a populated hazard array at all -- otherwise it reads as never-tagged and stays
+  // 'unknown', never 'pass'. The legacy role's VALUE is never read as evidence, only its presence.
+  db.prepare('UPDATE pieces SET weather_protection = ?, outerwear_role = ? WHERE id = ?').run('["rain"]', 'protective_shell', rainShellId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Rainy City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'warm' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  slot.weatherProfile = { ...slot.weatherProfile, isWetExposure: true }
+
+  // (a) Neither submission is blocked -- confirms the finding is advisory, not hard, through the
+  // real acceptance path exactly as docs/outerwear-weather-consolidation-spec.md §6 rules.
+  const withoutRainShell = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(plainJacketId)],
+  }])
+  assert.equal(withoutRainShell.failures.length, 0)
+  assert.equal(withoutRainShell.accepted.length, 1, 'missing rain protection must never block acceptance')
+
+  const withRainShell = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(rainShellId)],
+  }])
+  assert.equal(withRainShell.failures.length, 0)
+  assert.equal(withRainShell.accepted.length, 1)
+
+  // (b) The advisory finding actually fires (not silently absent) -- calling evaluateWearableOutfit
+  // with the identical weatherContext shape validateSubmittedPlanOutfits builds internally, since
+  // that function only ever surfaces hardFindings and discards advisories entirely.
+  const weatherContext = { weatherProfile: slot.weatherProfile, environment: slot.environment }
+  const withoutShellPieces = [topId, bottomId, shoeId, plainJacketId].map(id => allPieces.find(p => Number(p.id) === Number(id)))
+  const withoutShellEvaluation = evaluateWearableOutfit(withoutShellPieces, { requireShoes: true, weatherContext })
+  assert.ok(
+    withoutShellEvaluation.advisoryFindings.some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.RAIN_PROTECTION_MISSING),
+    'the advisory finding must actually fire when no layer has rain protection'
+  )
+
+  const withShellPieces = [topId, bottomId, shoeId, rainShellId].map(id => allPieces.find(p => Number(p.id) === Number(id)))
+  const withShellEvaluation = evaluateWearableOutfit(withShellPieces, { requireShoes: true, weatherContext })
+  assert.ok(
+    !withShellEvaluation.advisoryFindings.some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.RAIN_PROTECTION_MISSING),
+    'a rain-capable shell must satisfy the finding'
   )
 })
 
