@@ -1,6 +1,8 @@
 # Spec — trip composition is missing capsule's composition environment, not its intelligence
 
-**Status:** Proposed 2026-09-04, not implemented. One design question open (§6) before build.
+**Status:** Ratified 2026-09-04 — ready to implement. §6 (the composition/edit boundary) is ruled:
+initial trip composition becomes atomic; follow-up edits remain in the existing conversational tool
+loop.
 **Route:** [docs/README.md](README.md). Continues the facts-not-judgments doctrine established by
 [model-facing-signal-inventory.md](model-facing-signal-inventory.md) and
 [search-propose-signal-inventory.md](search-propose-signal-inventory.md); consumes the trip-roster
@@ -98,10 +100,11 @@ earlier in the arc; it is not an open question for this spec.
   and everything upstream of composition are out of scope — this spec starts from "a fixed trip
   roster already exists" and ends at "cards enter the existing `submit_plan_outfits` validator,"
   unchanged.
-- **Not a provider-capability investigation.** This finding supersedes that framing for trip
-  composition specifically: until the environment is at parity, provider comparisons on this path
-  are comparing composition quality under materially different evidence conditions, not model
-  quality.
+- **Not a provider-capability conclusion.** The capsule-vs-trip quality gap cannot be attributed to
+  provider capability while the two flows compose under materially different evidence and prompt
+  environments. Provider A/B tests *within* the trip path remain valid comparisons — both providers
+  receive the same (deficient) trip environment, so their evidence conditions are equivalent to each
+  other — but they do not explain the capsule-vs-trip gap this spec addresses.
 - **Not another round of prompt nudging.** The three deltas in §3 are structural (call boundary,
   image attachment, catalog function called), not instruction wording. A wording fix inside the
   current `stylist_tool_loop` composition would leave all three deltas in place.
@@ -136,26 +139,53 @@ declared via `assigned_layer_piece_ids` rather than forced into every card's `pi
 NOT carry capsule's palette contract, category-shape reasoning, or "every piece must prove its job"
 framing — none of which describes what a trip roster is for.
 
-## 6. The one open design question
+## 6. The composition/edit boundary — ruled
 
-**Does trip composition stay inside the conversational stylist for follow-up flexibility, or does
-only the *initial* plan become atomic, with later edits continuing through the existing tool loop?**
+**Owner ruling (2026-09-04): initial trip composition becomes atomic; follow-up edits remain in the
+conversational tool loop.** These are genuinely different tasks:
 
-Owner's stated leaning: the latter. Initial composition deserves the same focused environment
-capsule gets; a follow-up edit ("swap the hiking shoes," "I don't like the wrap dress for evening")
-is a bounded, single-card operation that doesn't need the same whole-roster visual/textual context
-an initial 6-card rotation does, and keeping edits in the tool loop preserves the conversational
-flexibility (pushback handling, anchor-piece requests, mid-conversation constraint changes) that an
-atomic call doesn't offer.
+```text
+Initial trip
+fixed roster + whole itinerary
+→ needs whole-roster images
+→ full garment truth
+→ focused composition context
+→ complete coordinated rotation
 
-This needs an explicit ruling before implementation because it determines the call boundary: an
-atomic-initial/tool-loop-edits split means the dedicated composition call only ever runs once per
-plan (matching capsule's `composeCapsulePlanOnce` shape almost exactly, parameterized by objective),
-while a fully-atomic design would need its own edit/expansion path analogous to capsule's
-`/expand-capsule` endpoint. The former is the smaller, more precedented change and is what §5 above
-assumes; recorded here as the leaning, not yet an owner ruling.
+Follow-up
+"change these shoes"
+"not that dress"
+"make hiking look warmer"
+→ localized conversational operation
+→ preserve persisted suitcase and requirements
+→ existing tool loop is appropriate
+```
 
-## 7. What already exists to build on
+Initial composition deserves the same focused environment capsule gets — whole-roster images, full
+garment truth, a prompt with nothing else competing for attention, producing a complete coordinated
+rotation in one call. A follow-up edit is a bounded, single-card operation against an already-valid,
+already-persisted plan; it doesn't need the same whole-roster context an initial rotation does, and
+the existing tool loop already gives it what it does need — pushback handling, anchor-piece
+requests, mid-conversation constraint changes.
+
+**No trip equivalent of `/expand-capsule` is being built.** There is no demonstrated need to move
+ordinary trip edits out of the existing tool loop, and doing so would expand this work well beyond
+the observed defect (§1–§3). The dedicated composition call runs once per plan — matching
+`composeCapsulePlanOnce`'s own shape, parameterized by trip's objective rather than capsule's — and
+nothing about the edit path changes.
+
+## 7. Hard invariant: the new call changes who composes and what they see, not what is valid
+
+The atomic call must not create a second validation semantics. Its output is `outfits` that enter
+the identical `submit_plan_outfits` path a tool-loop-composed trip already goes through — same
+`assigned_layer_piece_ids` resolution and gate-eligibility check, same duplicate-core key, same
+slot/register/occasion eligibility, same environmental hard gates (`NO_WARM_LAYER_FOR_COLD`,
+`cold_floor_infeasible` at the roster stage, the cool-tier layer checks). Composing atomically
+changes the evidence the model sees and who is doing the composing; it must never change what
+counts as a valid trip outfit. A dedicated call that reimplements or bypasses any part of the
+existing validator — even to "trust" its own richer evidence — is out of scope and wrong.
+
+## 8. What already exists to build on
 
 Nothing in this spec requires new lower-level primitives. Everything the dedicated call needs
 already exists and is already exercised by capsule's own atomic path:
@@ -168,9 +198,7 @@ already exists and is already exercised by capsule's own atomic path:
 - The trip workbench's own slot/constraint shape (`cold_layer_required`, `target_outfits`,
   `allowed_piece_ids`, `assigned_layer_piece_ids` eligibility) — unchanged, already flows through
   `buildPlanSlotWorkbench` regardless of which call ultimately composes from it
-- `submit_plan_outfits`'s existing validation contract — unchanged; a dedicated composition call
-  still produces `outfits` that pass through the identical structural/environmental checks a
-  tool-loop-composed trip currently does
+- `submit_plan_outfits`'s existing validation contract — unchanged (§7's hard invariant)
 
 The work is wiring a trip-specific sibling of `composeCapsulePlanOnce` — same shape, different
 objective and prompt — not inventing new machinery.
