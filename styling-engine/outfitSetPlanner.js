@@ -40,6 +40,7 @@ import {
   getOwnerRuleNotes,
   weatherFitForPiece,
   thermalFactsForPieceLine,
+  resolveRegisterCeiling,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
@@ -1399,12 +1400,28 @@ function slotRegisterRank(slot = {}) {
 // floor the ceiling forbids. Only ever LIFTS the ceiling — a declared register
 // at or below the occasion's own ceiling changes nothing, so undeclared and
 // non-escalating slots keep today's occasion ceilings exactly.
+//
+// Bug fix (live regression, thread_1788584505940): this used to combine only occasion +
+// explicit slot.register, silently discarding the activity profile's own register_ceiling
+// (hiking: "everyday") the moment either value became an explicit override passed into
+// wholeWardrobePieceTrustDecision downstream -- once options.registerCeiling is set, that
+// function skips its own occasion+activity derivation entirely (rules.js). A slot resolved as
+// outdoor_daytime_social (occasion ceiling "elevated") + hiking (activity ceiling "everyday")
+// let an elevated-formality trench coat and dress stay gate-eligible for a hike, because the
+// stricter activity ceiling never entered the computation at all. Reuses resolveRegisterCeiling's
+// own occasion+activity strictest-wins combination (rules.js) rather than a second interpretation
+// of the same question; the explicit-escalation semantics above are unchanged and still apply on
+// top of that combined structural ceiling. Activities with no register_ceiling of their own
+// (walking, or no activity) leave this byte-identical to the occasion-only ceiling it replaces.
 function effectiveSlotRegisterCeilingRank(slot = {}) {
-  const occasionRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
+  const occasionProfile = resolveOccasionProfile(slot?.occasion)
+  const activity = slot?.stylingContext?.activity || slot?.activity || ''
+  const activityProfile = resolveActivityProfile({ activity, occasion: slot?.occasion })
+  const structuralRank = formalityRank(resolveRegisterCeiling({ occasionProfile, activityProfile }))
   const slotRank = slotRegisterRank(slot)
-  if (occasionRank === null) return slotRank
-  if (slotRank === null) return occasionRank
-  return Math.max(occasionRank, slotRank)
+  if (structuralRank === null) return slotRank
+  if (slotRank === null) return structuralRank
+  return Math.max(structuralRank, slotRank)
 }
 
 function strictestRegisterCeilingRank(occasions = []) {

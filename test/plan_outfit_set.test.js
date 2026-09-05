@@ -1758,6 +1758,83 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   assert.ok(allowed.has(closedFlats), 'closed footwear remains allowed')
 })
 
+// Live regression, thread_1788584505940: effectiveSlotRegisterCeilingRank combined only occasion
+// + explicit slot.register, silently discarding the activity profile's own register_ceiling the
+// moment either became an explicit override passed into wholeWardrobePieceTrustDecision -- once
+// that override is set, the function skips its own occasion+activity derivation entirely. A slot
+// resolved as outdoor_daytime_social (occasion ceiling "elevated") + hiking (activity ceiling
+// "everyday", footwear-comfort.js) let elevated-formality pieces stay gate-eligible for a hike,
+// because the stricter activity ceiling never entered the computation. Fixed by having
+// effectiveSlotRegisterCeilingRank reuse resolveRegisterCeiling's own occasion+activity
+// strictest-wins combination (rules.js) instead of an occasion-only one.
+test('an elevated trench coat is excluded from a hiking slot even when its occasion alone permits elevated pieces', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // occasions deliberately does NOT include 'outdoor_daytime_social' -- matching the real live
+  // trench coat's own tags (["city","smart-casual"]). registerCeilingVerdict (rules.js) grants an
+  // explicit-occasion-tag exemption of up to one rank above the ceiling; including the slot's own
+  // occasion here would trigger that unrelated, pre-existing exemption (elevated is exactly one
+  // rank above hiking's everyday ceiling) and mask the fix under test.
+  const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
+  const everydayJacket = insertPiece({ category: 'outerwear', name: 'everyday zip jacket', formality: 'everyday', occasions: ['outdoor_daytime_social', 'city'] })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'hiking sneakers', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(trenchCoat)), false, 'an elevated coat must not be eligible for a hiking slot')
+  assert.ok(slot.gateAllowedIds.has(Number(everydayJacket)), 'an everyday-formality coat remains eligible')
+})
+
+// The control: the SAME elevated coat, on a slot sharing the identical occasion but an activity
+// with no register_ceiling of its own -- outdoor_daytime_social's own "elevated" ceiling must
+// still govern here, proving the fix narrows eligibility only when an activity actually demands
+// it, not universally.
+test('the same elevated trench coat remains eligible for a non-hiking outdoor-social slot where elevated is valid', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'outdoor social top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'outdoor social bottom', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'outdoor social shoes', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Outdoor Festival', occasion: 'outdoor_daytime_social', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'an outdoor festival' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.ok(slot.gateAllowedIds.has(Number(trenchCoat)), 'an elevated coat stays eligible when no stricter activity ceiling applies')
+})
+
+// Verifies the fix against the actual second bad candidate from the live run, not just the coat:
+// hiking's discouraged_pieces (dress) is a separate, deliberately-unenforced-here policy question
+// (flagged, not fixed) -- but the dress is ALSO elevated-formality, so the register ceiling alone
+// must already exclude it, independent of that open question.
+test('an elevated dress is also excluded from a hiking slot by the same register-ceiling fix', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Same tag choice as the trench coat test above, and for the same reason: excluding the slot's
+  // own occasion from the piece's tags avoids the pre-existing one-rank explicit-tag exemption.
+  const dress = insertPiece({ category: 'dress', name: 'elevated sheath dress', formality: 'elevated', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'hiking sneakers', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(dress)), false, 'an elevated dress must not be eligible for a hiking slot')
+})
+
 // Weather-behavior checkpoint follow-up: resolveSlotWeather (this file) never derived
 // isWetExposure/isRainy from its own resolved precipitation, unlike stylingContext.js's
 // profileFromResolvedWeatherContext (the general conversational-stylist path) -- so a real
