@@ -344,7 +344,7 @@ test('planKind coordinated_plan is unaffected by the trip roster wiring', async 
 })
 
 // ─── SET LEVEL vs CARD LEVEL, through the real submission path ─────────────────────────────────
-import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, computeRequiresWarmLayerForColdExposure } from '../styling-engine/outfitSetPlanner.js'
 
 test('a card with no layer of its own is accepted when the packing roster already has one, rejected when it does not', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] }) // includes JACKET (id 8)
@@ -391,7 +391,12 @@ test('a genuinely cold slot rejects a core-only card with no warm layer, exactly
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
     allPieces: POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
   })
-  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true }
+  // requiresWarmLayerForColdExposure (docs/cold-layer-exposure-trigger-spec.md) is computed once at
+  // build time, when isCold was still false here -- forcing isCold afterward without also forcing
+  // this field would leave a STALE `false` relaxation the `?? isCold` fallback can't see past (it
+  // only falls back on nullish, not on an explicit false). These tests are about the generic cold
+  // floor, not the hiking-specific relaxation, so force both fields consistently.
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
   const coreOnlyCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer, no assignment
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnlyCard])
@@ -406,7 +411,7 @@ test('assigned_layer_piece_ids lets a cold card pass using a packed layer it doe
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
     allPieces: POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
   })
-  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true }
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
   const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [8] }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
@@ -424,7 +429,7 @@ test('an assigned layer outside the packing roster or ineligible for the slot is
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
     allPieces: POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
   })
-  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true }
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
   const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [8] }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
@@ -446,7 +451,7 @@ test('an assigned layer that is packed and slot-eligible but still not warm enou
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
     allPieces: pool, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
   })
-  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true }
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
   const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [20] }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
@@ -454,6 +459,132 @@ test('an assigned layer that is packed and slot-eligible but still not warm enou
   assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))),
     'an eligible but non-warming assigned piece must not manufacture a pass — this is a real environmental check, not a rubber stamp')
 })
+
+// ─── docs/cold-layer-exposure-trigger-spec.md: the five worked cases, through the real trip/plan
+// path, plus the three preservation checks the spec requires. No outerwear anywhere in these
+// fixtures' pools -- acceptance/rejection is driven purely by whether the cold-layer trigger fires
+// at all, never confounded by register ceiling or any other gate.
+{
+  const NO_LAYER_TOP = piece(101, 'top', { occasions: ['casual', 'outdoor'] })
+  // 'evening' included so the case-3 fixture's bottom clears the unrelated
+  // "prohibited bottom for evening settings" gate -- isolating the cold-layer trigger under test.
+  const NO_LAYER_BOTTOM = piece(102, 'bottom', { occasions: ['casual', 'outdoor', 'evening'] })
+  const NO_LAYER_SHOES = piece(103, 'shoes', { occasions: ['casual', 'outdoor'], heel_height: 'flat', walk_support: 'high' })
+  const NO_LAYER_POOL = [NO_LAYER_TOP, NO_LAYER_BOTTOM, NO_LAYER_SHOES]
+  const coreOnly = slotId => ({ slot_id: slotId, piece_ids: [101, 102, 103] })
+
+  // Case 1 — the live Vienna failure: 65°F/45°F, outdoor, hiking. The resolved exposure
+  // temperature (waking-window smoothed) is above the threshold, so the trigger relaxes.
+  test('cold-layer trigger, case 1: mild active outdoor hiking relaxes the raw-low trigger', async () => {
+    const slots = [{ id: 's_hike', label: 'Nature Walks', occasion: 'casual', activity: 'hiking', weatherEstimate: { highF: 65, lowF: 45 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    assert.equal(slot.weatherProfile.isCold, true, 'fixture sanity: this is genuinely isCold by the legacy rule')
+    assert.equal(slot.weatherProfile.requiresWarmLayerForColdExposure, false)
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 1, 'a core-only outfit with no layer at all must now be accepted')
+    assert.equal(result.failures.length, 0)
+  })
+
+  // Case 2 — same weather, low exertion. Must NOT copy case 1's relaxation: without qualifying
+  // activity, the raw-low trigger stays authoritative.
+  test('cold-layer trigger, case 2: same weather at low exertion keeps the raw-low trigger', async () => {
+    const slots = [{ id: 's_walk', label: 'City Walking', occasion: 'casual', activity: 'walking', weatherEstimate: { highF: 65, lowF: 45 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    assert.equal(slot.weatherProfile.requiresWarmLayerForColdExposure, true, 'walking does not qualify for the relaxation')
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 0)
+    assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))))
+  })
+
+  // Case 3 — an explicitly evening slot, even with qualifying (hiking) activity. Evening must
+  // disable the relaxation outright, per the spec's own non-goal against smoothing away a
+  // legitimate evening cold-layer requirement.
+  test('cold-layer trigger, case 3: an explicitly evening slot disables the relaxation even with qualifying activity', async () => {
+    const slots = [{ id: 's_evening', label: 'Evening Debrief', occasion: 'evening', activity: 'hiking', weatherEstimate: { highF: 65, lowF: 45 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    assert.equal(slot.weatherProfile.requiresWarmLayerForColdExposure, true, 'an explicit evening occasion must block the relaxation')
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 0)
+    assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))))
+  })
+
+  // Case 4 — genuinely cold, non-severe: the smoothed waking-window low (43.5°F) is still at or
+  // below the threshold, so even qualifying (hiking) activity must not relax the requirement.
+  test('cold-layer trigger, case 4: a genuinely cold day keeps the requirement even for qualifying activity', async () => {
+    const slots = [{ id: 's_cold_hike', label: 'Cold Hike', occasion: 'casual', activity: 'hiking', weatherEstimate: { highF: 50, lowF: 40 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    assert.equal(slot.weatherProfile.isColdSevere, false, 'fixture sanity: this must exercise the ordinary-cold gate, not the severe-cold shortcut')
+    assert.equal(slot.weatherProfile.requiresWarmLayerForColdExposure, true)
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 0)
+    assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))))
+  })
+
+  // Case 5 — insufficient context: no usable exposure signal at all (isCold true from a purely
+  // qualitative source, no numeric temperature behind it). Direct unit test of the exported
+  // predicate: reproducing this exact shape through the full heuristic text pipeline is fragile,
+  // and the predicate's own fallback is what's under test here, not weather resolution.
+  test('cold-layer trigger, case 5: insufficient exposure context falls back to the raw-low rule', () => {
+    const slot = { activity: 'hiking', occasion: 'casual' }
+    const weatherProfile = { isCold: true, isColdSevere: false, highF: null, lowF: null }
+    assert.equal(computeRequiresWarmLayerForColdExposure(slot, weatherProfile, ''), true)
+  })
+
+  // Preservation: severe cold is untouched -- the relaxation short-circuits to true the moment
+  // isColdSevere is true, so the existing severe-cold outdoor-layer requirement still fires
+  // exactly as before, even for qualifying (hiking) activity.
+  test('cold-layer trigger preserves severe-cold validation unchanged', async () => {
+    const slots = [{ id: 's_severe_hike', label: 'Severe Cold Hike', occasion: 'casual', activity: 'hiking', weatherEstimate: { highF: 35, lowF: 20 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    assert.equal(slot.weatherProfile.isColdSevere, true, 'fixture sanity')
+    assert.equal(slot.weatherProfile.requiresWarmLayerForColdExposure, true, 'severe cold must never be relaxed by this patch')
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 0)
+    assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no outer layer at all for sustained cold outdoor exposure'))),
+      'the severe-cold outdoor-layer finding must still fire, unrelated to this patch')
+  })
+
+  // Preservation: cold transit (a disjoint condition this patch never reads or sets) still
+  // enforces sleeve-bearing coverage exactly as before, forced via the same direct-mutation
+  // technique already established elsewhere in this file for transitIsCold specifically (not
+  // isCold/requiresWarmLayerForColdExposure, so no staleness concern applies here).
+  test('cold-layer trigger preserves cold-transit sleeve-bearing coverage unchanged', async () => {
+    const slots = [{ id: 's_transit', label: 'Museum Visit', occasion: 'gallery / art event', activity: 'none', statedWeather: 'indoor', weatherEstimate: { highF: 65, lowF: 45 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    slot.weatherProfile = { ...slot.weatherProfile, transitIsCold: true }
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 0)
+    assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('sleeve-bearing'))),
+      'the independent cold-transit contract must still reject a card with no layer at all, unrelated to this patch')
+  })
+
+  // Preservation: rain/wet-exposure logic (a disjoint contract this patch never reads or sets)
+  // remains advisory-only and never blocks acceptance.
+  test('cold-layer trigger preserves rain/wet-exposure logic unchanged', async () => {
+    // Genuinely warm (not merely mild) so neither isCold nor the separate cool-tier
+    // removable-layer requirement fires -- isolating rain/wet-exposure as the only thing tested.
+    const slots = [{ id: 's_rain', label: 'Rainy City Day', occasion: 'casual', activity: 'walking', weatherEstimate: { highF: 85, lowF: 70 } }]
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces: NO_LAYER_POOL, question: 'trip', planKind: 'trip' })
+    const slot = workbench.pendingPlan.slots[0]
+    slot.weatherProfile = { ...slot.weatherProfile, isWetExposure: true }
+
+    const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnly(slot.id)])
+    assert.equal(result.accepted.length, 1, 'missing rain protection must never block acceptance, unrelated to this patch')
+    assert.equal(result.failures.length, 0)
+  })
+}
 
 // ─── WHAT TO PACK surface ────────────────────────────────────────────────────────────────────────
 import { assembleSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'

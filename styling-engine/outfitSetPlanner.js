@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate } from './outfitEnvironmentalAdequacy.js'
 import {
@@ -3972,6 +3972,34 @@ export async function selectTripRosterViaModel({
   }
 }
 
+// docs/cold-layer-exposure-trigger-spec.md: a narrow, additive relaxation of the ordinary
+// isCold-driven cold-layer trigger for trip slots only -- computed once, here, where
+// activity/occasion/environment/weather are all already resolved. Never taught to shared Contract
+// C (outfitEnvironmentalAdequacy.js), which only ever reads the resulting boolean with a legacy
+// `?? weather.isCold` fallback for every other caller. Deliberately conservative: every gate below
+// must hold, or the slot keeps exactly today's isCold-only behavior -- no exertion-degree formula,
+// no requiredThermalBand dependency, no new temperature threshold (reuses weather.js's own COLD_F).
+//
+// The one activity this spec found actually classified as elevated exertion: ACTIVITY_VALUES is
+// exactly ['none', 'walking', 'hiking'], and 'hiking' is the only one with authored exertion above
+// baseline (footwear-comfort.js's own activity profiles). Not a formula -- a narrow, named
+// allowlist matching what the taxonomy already distinguishes.
+const COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES = new Set(['hiking'])
+
+export function computeRequiresWarmLayerForColdExposure(slot, weatherProfile, environment) {
+  if (!weatherProfile?.isCold) return false
+  if (weatherProfile.isColdSevere) return true // severe cold untouched -- never relaxed here
+  const isIndoor = environment === 'indoor' || weatherProfile.isIndoor === true
+  if (isIndoor) return true // indoor already neutralizes isCold upstream; unreachable in practice
+  if (!COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES.has(slot?.activity)) return true
+  // Explicit "evening" occasion only -- never inferred from prose, per the spec's own non-goal.
+  if (resolveOccasionProfile(slot?.occasion)?.id === 'evening_social') return true
+  const exposure = resolveExposureContext({ activity: slot?.activity, environment }, weatherProfile)
+  const conditions = exposure?.conditions
+  if (!conditions?.known || !Number.isFinite(conditions.wakingLowF)) return true
+  return !(conditions.wakingLowF > COLD_F)
+}
+
 export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
@@ -3982,7 +4010,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const weatherSlot = slot.statedWeather || slot.weather !== 'indoor'
       ? slot
       : { ...slot, statedWeather: 'indoor' }
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(weatherSlot, {
+    const { profile: weatherProfileResolved, label: weatherLabel } = await resolveSlotWeather(weatherSlot, {
       mood,
       question: weatherRequestText,
       dateRange,
@@ -3990,6 +4018,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       fetchImpl,
       seasonIsCalendarOnly: isSeasonalCapsule,
     })
+    // docs/cold-layer-exposure-trigger-spec.md: trip slots only -- a narrow refinement of the
+    // trip-plan cold-layer trigger, not a general thermal-model change. Added as one more field on
+    // the same resolved profile so both downstream readers (the top-level slot.weatherProfile
+    // field, and stylingContext.weatherProfile just below, built from this exact object) see it.
+    const weatherProfile = planKind === 'trip'
+      ? { ...weatherProfileResolved, requiresWarmLayerForColdExposure: computeRequiresWarmLayerForColdExposure(slot, weatherProfileResolved, slot.environment) }
+      : weatherProfileResolved
     const stylingContext = await resolveStylingContext({
       explicitRequest: {
         occasion: slot.occasion,
@@ -4728,8 +4763,15 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
 // styling-engine/tools.js's atomic trip branch, which strips an assigned_layer_piece_ids the
 // composer attached to a non-cold slot rather than losing the whole card to a one-shot rejection.
 // One formula, not two independent copies that could drift.
+//
+// docs/cold-layer-exposure-trigger-spec.md: reads requiresWarmLayerForColdExposure (computed once
+// in buildPlanSlotWorkbench, trip slots only) with a `?? isCold` fallback, so this stays exactly
+// today's behavior for every non-trip caller and for any trip slot where the relaxation didn't
+// apply. This is the SAME fact NO_WARM_LAYER_FOR_COLD reads (outfitEnvironmentalAdequacy.js) — the
+// two must never independently recompute it.
 export function slotColdLayerRequired(slot = {}) {
-  return Boolean(slot.weatherProfile?.isCold) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+  const requiresWarmLayer = slot.weatherProfile?.requiresWarmLayerForColdExposure ?? slot.weatherProfile?.isCold
+  return Boolean(requiresWarmLayer) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
 }
 
 export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {

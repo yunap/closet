@@ -391,7 +391,14 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // [R2]/[A3]: migrated from the plan specialization so every consumer of the canonical validator
   // shares it, with its semantics and message intact. Contract C now owns both tiers — the floor
   // here, the capability requirement below — which is what makes deleting the duplicate safe.
-  if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {
+  //
+  // docs/cold-layer-exposure-trigger-spec.md: requiresWarmLayerForColdExposure is an OPTIONAL,
+  // additive field a caller may set on the resolved weatherProfile (today: only the trip-plan path,
+  // computed once in buildPlanSlotWorkbench where activity/occasion/exposure are already resolved —
+  // this module never learns to resolve them itself). `?? weather.isCold` makes every existing
+  // caller that doesn't set it — which is every caller except trip plans — byte-identical to before.
+  const requiresWarmLayer = weather.requiresWarmLayerForColdExposure ?? weather.isCold
+  if (requiresWarmLayer && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
       'no warm layer for cold weather', { evidence }))
   }

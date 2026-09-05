@@ -9,7 +9,10 @@ import { weatherProfileFromContext } from './rules.js'
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 const HOT_F = 80
-const COLD_F = 45
+// Exported (docs/cold-layer-exposure-trigger-spec.md) so the trip-slot cold-trigger relaxation can
+// compare a waking-window exposure temperature against THE SAME threshold isCold already uses,
+// rather than inventing a second number for the same question.
+export const COLD_F = 45
 // docs/cool-weather-tier-spec.md, ruled 2026-09-01. The temperature at which the cold end of a day
 // warrants something the wearer can put ON — distinct from COLD_F, which asks how warm the base
 // itself should be. Deliberately read off the LOW: the low is when a removable layer is wanted.
