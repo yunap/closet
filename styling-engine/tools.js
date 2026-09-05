@@ -45,7 +45,8 @@ import {
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET,
-  truthfulWeatherLabel
+  truthfulWeatherLabel,
+  slotColdLayerRequired
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -440,7 +441,7 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
 // anything user- or model-facing. Deliberately narrow: piece_ids/assigned_layer_piece_ids/slot/
 // reasons only, never the full resolved piece objects validateSubmittedPlanOutfits's own failures
 // carry (those repeat the entire garment record per rejected card and would bloat every row).
-export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [] } = {}) {
+export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [], corrected = [] } = {}) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   const debug = {
@@ -456,6 +457,15 @@ export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted =
       reasons: Array.isArray(failure?.reasons) ? failure.reasons : [],
       piece_ids: (Array.isArray(failure?.outfit?.pieceIds) ? failure.outfit.pieceIds : []).map(Number),
       assigned_layer_piece_ids: (Array.isArray(failure?.outfit?.assignedLayerIds) ? failure.outfit.assignedLayerIds : []).map(Number),
+    })),
+    // Mechanical pre-validation corrections (live regression, thread_1788584505940): recorded here,
+    // distinct from `rejected`, precisely so a future trace can tell "the card was lost" from "the
+    // card survived because this specific, narrow violation was silently repaired" without
+    // re-deriving it from the submitted/rejected diff by hand.
+    corrected: (Array.isArray(corrected) ? corrected : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
+      dropped_assigned_layer_piece_ids: (Array.isArray(entry?.dropped_assigned_layer_piece_ids) ? entry.dropped_assigned_layer_piece_ids : []).map(Number),
     })),
   }
   toolContext.freeformDiagnostics.tripAtomicCompositionDebug = JSON.stringify(debug)
@@ -3303,19 +3313,45 @@ async function executeToolInternal(name, args, toolContext = {}) {
               message: 'The bounded trip composer returned no outfits even though the packing roster has valid capacity. Do not build the plan manually or call other styling tools in this turn; explain that composition failed and ask the user to retry after the engine issue is corrected.'
             }
           }
+          // Mechanical pre-validation correction (live regression, thread_1788584505940): the
+          // composer violates the schema's own "omit assigned_layer_piece_ids when
+          // cold_layer_required is false" instruction often enough that the one-shot atomic path
+          // was silently losing whole cards to it — a museum slot's card was hard-rejected over an
+          // invisible layer relation that isn't even part of the card's visual identity, with no
+          // repair round to recover it. This is a narrow, deterministic violation with exactly one
+          // correct fix (drop the relation), unlike a missing structural piece
+          // (completeSubmittedPlanOutfits' job, which must choose a replacement) — so it is
+          // corrected here, before validation runs, rather than left to cost the card. The hard
+          // invariant itself (slotColdLayerRequired / validateSubmittedPlanOutfits) is unchanged
+          // and still rejects this exact violation for the ordinary tool-loop submit_plan_outfits
+          // case below, which can retry within the same turn and should keep learning from the
+          // rejection message — this correction is scoped to the one-shot path that cannot.
+          const slotById = new Map(pendingPlan.slots.map(slot => [slot.id, slot]))
+          const correctedAssignedLayers = []
+          const sanitizedOutfits = submittedOutfits.map(outfit => {
+            const assignedLayerIds = Array.isArray(outfit?.assigned_layer_piece_ids) ? outfit.assigned_layer_piece_ids : []
+            if (!assignedLayerIds.length) return outfit
+            const slot = slotById.get(String(outfit?.slot_id || ''))
+            if (!slot || slotColdLayerRequired(slot)) return outfit
+            correctedAssignedLayers.push({ slot_id: outfit.slot_id, title: outfit.title || '', dropped_assigned_layer_piece_ids: assignedLayerIds })
+            const { assigned_layer_piece_ids, ...rest } = outfit
+            return rest
+          })
           // Hard invariant (docs/trip-composition-parity-spec.md §7): the atomic call changes who
           // composes and what evidence they see, never what counts as a valid trip outfit. These are
           // the exact same functions the ordinary tool-loop submit_plan_outfits case below calls —
           // same gate-eligibility/duplicate-core/assigned-layer/environmental-hard-gate checks, no
           // parallel validation semantics.
           const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
-          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, sanitizedOutfits, {
             visuallySeenPieceIds: seenForValidation
           })
           // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the
           // console.log below was the ONLY record of a rejected card's content/reason, and it went
-          // to a process stdout with no accessible log afterward).
-          setFreeformTripAtomicCompositionDebug(toolContext, { submitted: submittedOutfits, failures })
+          // to a process stdout with no accessible log afterward). `submitted` stays the composer's
+          // ORIGINAL output (pre-correction) so a trace can still see what the model actually did;
+          // `corrected` records what this call site silently fixed before validation ran.
+          setFreeformTripAtomicCompositionDebug(toolContext, { submitted: submittedOutfits, failures, corrected: correctedAssignedLayers })
           if (failures.length) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
             console.log('[Atomic Trip Validation]', failures)

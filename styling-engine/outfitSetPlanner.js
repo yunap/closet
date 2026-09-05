@@ -4704,6 +4704,17 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
   }
 }
 
+// Mirrors the exact cold_layer_required formula the model-facing workbench slot exposes
+// (buildPlanSlotWorkbench, same file). Exported so a caller that already knows a submission will
+// fail this specific, narrow, mechanically-detectable check can act on that fact BEFORE handing
+// the submission to validateSubmittedPlanOutfits, rather than only after — see
+// styling-engine/tools.js's atomic trip branch, which strips an assigned_layer_piece_ids the
+// composer attached to a non-cold slot rather than losing the whole card to a one-shot rejection.
+// One formula, not two independent copies that could drift.
+export function slotColdLayerRequired(slot = {}) {
+  return Boolean(slot.weatherProfile?.isCold) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+}
+
 export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
@@ -4823,10 +4834,8 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
     // card): the schema's own description already tells the model to "omit entirely ... when
     // cold_layer_required is false," but nothing here checked it — a non-cold slot could carry a
-    // packed layer relation unchallenged. Mirrors the exact cold_layer_required formula the
-    // model-facing workbench slot exposes (buildPlanSlotWorkbench, same file) so this cannot
-    // silently drift from what the model was told the rule depends on.
-    const coldLayerRequired = Boolean(slot.weatherProfile?.isCold) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+    // packed layer relation unchallenged.
+    const coldLayerRequired = slotColdLayerRequired(slot)
     if (assignedLayerIds.length && !coldLayerRequired) {
       reasons.push(`assigned_layer_piece_ids is only valid when this slot's cold_layer_required is true; ${label} does not require a cold layer — omit assigned_layer_piece_ids entirely for this slot.`)
     }

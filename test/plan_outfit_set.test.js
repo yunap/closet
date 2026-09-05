@@ -688,6 +688,10 @@ test('the atomic trip composer\'s assigned_layer_piece_ids is validated exactly 
 
   const result = await executeTool('plan_outfit_set', {
     plan_kind: 'trip',
+    // Cold, so cold_layer_required is true and the correction below (which only fires when a
+    // layer is NOT required at all) never applies here -- this slot legitimately needs a layer,
+    // so the gate-ineligibility check on the one it named must still fire.
+    weather_estimate: { high_f: 38, low_f: 25 },
     slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
   }, toolContext)
 
@@ -696,6 +700,84 @@ test('the atomic trip composer\'s assigned_layer_piece_ids is validated exactly 
   assert.equal(result.status, 'error')
   assert.match(result.message, /not eligible as a layer/)
   assert.equal(toolContext.generatedOutfits.length, 0)
+})
+
+// Live regression, thread_1788584505940: the atomic composer violates the schema's own "omit
+// assigned_layer_piece_ids when cold_layer_required is false" instruction often enough that a
+// museum slot's card was hard-rejected over an invisible layer relation that isn't even part of
+// the card's visual identity, with no repair round to recover it. Since this is a narrow,
+// deterministic, mechanically-detectable violation with exactly one correct fix, it is now
+// silently corrected (the relation dropped) before validation runs, rather than costing the card.
+test('an assigned layer on a slot that does not require one is silently dropped, not rejected, in the atomic path', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Museum Look', reason: 'r',
+        assigned_layer_piece_ids: [jacketId]
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    // No weather_estimate -- mild/uncold, so cold_layer_required is false and this slot should
+    // never have carried a layer at all, exactly the museum shape.
+    slots: [{ label: 'Museum Days', occasion: 'gallery / art event', activity: 'none', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success', 'the card must survive on its otherwise-valid piece_ids')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b))
+  assert.equal(toolContext.generatedOutfits[0].assignedLayerIds, undefined, 'the dropped relation must not persist on the accepted card')
+
+  const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
+  assert.equal(debug.corrected.length, 1, 'the correction must be recorded in the diagnostic')
+  assert.equal(debug.corrected[0].title, 'Museum Look')
+  assert.deepEqual(debug.corrected[0].dropped_assigned_layer_piece_ids, [jacketId])
+  assert.equal(debug.rejected.length, 0, 'a mechanically-corrected card is not a rejection')
+})
+
+// The ordinary tool loop is NOT in scope for this correction: it can retry within the same turn
+// (unlike the atomic path's one shot), so it should keep rejecting this exact violation and let
+// the model learn from the message, rather than silently absorbing it.
+test('the ordinary tool loop still rejects an assigned layer on a slot that does not require one -- the correction is scoped to the atomic path only', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'trip jacket', occasions: ['city', 'casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+  }
+  const planResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'Museum Days', occasion: 'gallery / art event', activity: 'none', count: 1 }],
+  }, toolContext)
+  assert.equal(planResult.status, 'slot_rosters', 'no composeTripPlanOnce wired -- this exercises the ordinary tool-loop path')
+
+  const slotId = toolContext.pendingPlan.slots[0].id
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{ slot_id: slotId, piece_ids: [topId, bottomId, shoeId], title: 'Museum Look', reason: 'r', assigned_layer_piece_ids: [jacketId] }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'validation_error')
+  assert.match(submitted.message, /cold_layer_required is true/)
+  assert.equal(toolContext.generatedOutfits.length, 0, 'the tool loop must not silently correct this -- the model needs the rejection to learn from')
 })
 
 test('a valid assigned_layer_piece_ids from the atomic trip composer is accepted and persists on the final card', async () => {
@@ -1074,9 +1156,11 @@ test('the atomic trip composer\'s pre-validation output and each rejected card\'
       const slot = workbench.slots[0]
       return [
         { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Accepted Look', reason: 'r1' },
+        // A gate-ineligible piece named directly in piece_ids -- unlike assigned_layer_piece_ids,
+        // piece_ids is never touched by the mechanical cold_layer_required correction, so this
+        // stays a genuine rejection regardless of whether the slot requires a cold layer.
         {
-          slot_id: slot.id, piece_ids: [topId2, bottomId2, shoeId2], title: 'Rejected Look', reason: 'r2',
-          assigned_layer_piece_ids: [outsideRosterId]
+          slot_id: slot.id, piece_ids: [topId2, bottomId2, outsideRosterId], title: 'Rejected Look', reason: 'r2',
         },
       ]
     }
@@ -1102,21 +1186,17 @@ test('the atomic trip composer\'s pre-validation output and each rejected card\'
   assert.equal(debug.rejected.length, 1)
   const [rejected] = debug.rejected
   assert.equal(rejected.label, 'City Days')
-  assert.deepEqual(rejected.piece_ids.sort((a, b) => a - b), [topId2, bottomId2, shoeId2].sort((a, b) => a - b))
-  // An assigned layer that fails eligibility never resolves into the outfit's assignedLayerIds --
-  // only a successfully-resolved layer would appear here (docs/trip-composition-parity-spec.md
-  // debug field is deliberately narrow: it mirrors what the validator actually accepted, not the
-  // raw submission). The rejected id itself still names the failure in `reasons` below.
+  assert.deepEqual(rejected.piece_ids.sort((a, b) => a - b), [topId2, bottomId2, outsideRosterId].sort((a, b) => a - b))
   assert.deepEqual(rejected.assigned_layer_piece_ids, [])
   assert.ok(
-    rejected.reasons.some(reason => reason.includes('not eligible as a layer') && reason.includes(String(outsideRosterId))),
+    rejected.reasons.some(reason => reason.includes('not an active wardrobe piece') && reason.includes(String(outsideRosterId))),
     'the exact validator failure reason, naming the rejected piece id, must be captured'
   )
 
   // Diagnostic-only: never in the model-facing tool result.
   const serializedResult = JSON.stringify(result)
   assert.ok(!serializedResult.includes('tripAtomicCompositionDebug'))
-  assert.ok(!serializedResult.includes('not eligible as a layer'), 'the rejected card\'s exact validator reason must not leak into the model-facing message')
+  assert.ok(!serializedResult.includes('not an active wardrobe piece'), 'the rejected card\'s exact validator reason must not leak into the model-facing message')
   assert.ok(!serializedResult.includes(String(outsideRosterId)), 'the rejected card\'s piece id must not leak into the model-facing message')
   assert.equal(result.bounded_composition, true)
 })
