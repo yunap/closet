@@ -336,8 +336,11 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // day, whether or not THIS card happens to show it. Suppressed, not downgraded to advisory noise
   // on every card — a museum card and a trail card should not both carry a reminder about a jacket
   // neither is required to display.
+  // AGENTS.md's negation test: a shared SET-level suppression is one guard around both tiers below,
+  // not `&& !layerCoveredByRoster` bolted onto each tier's own condition separately.
   const layerCoveredByRoster = Boolean(resolvedContext.packingRosterHasLayer)
-  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination && !layerCoveredByRoster) {
+  if (!layerCoveredByRoster) {
+  if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
         // HOW MUCH, not just "a layer". Live QA (thread_1788421510368): this requirement said only
@@ -355,8 +358,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       // without being arbitrary. So this answers "does the garment provide meaningful coverage at
       // all," a construction fact closer to "no sole on this shoe" than to "not warm enough" — it
       // survives facts-not-judgments on its own terms and stays a hard finding. It already inherits
-      // the roster demotion above (nested inside the same !layerCoveredByRoster gate): a card
-      // pairing a sheer layer with real protection packed elsewhere in the roster is exactly the
+      // the roster demotion above (the shared `!layerCoveredByRoster` guard around both tiers): a
+      // card pairing a sheer layer with real protection packed elsewhere in the roster is exactly the
       // owner's own example — legitimate aesthetic layering, not rejected for being non-insulating.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
@@ -375,7 +378,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // isCold: that floor already owns transitIsCold, and it demands MORE — sleeve-bearing coverage.
   // The gradient is deliberate. Cool transit asks for something to put on; cold transit asks for
   // something that covers your arms.
-  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold && !layerCoveredByRoster) {
+  if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
         corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
@@ -385,6 +388,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
         { evidence, remedy: true }))
     }
+  }
   }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------

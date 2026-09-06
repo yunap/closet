@@ -2693,6 +2693,9 @@ const OUT_OF_SEASON = {
   fall: 'warm',
   winter: 'warm',
   summer: 'cool',
+  // Missing until now — spring got zero mismatch advisories regardless of piece season tag. 'cold'
+  // (deep-winter heavy pieces), the same "opposite extreme" pairing summer:'cool' already uses.
+  spring: 'cold',
 }
 
 export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
@@ -3722,6 +3725,15 @@ function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE } =
 // Structural failures only — see the header comment above for why. Every check here answers a
 // yes/no ownership/feasibility question the engine already has ratified authority over elsewhere;
 // none of them grade HOW WELL a piece serves, only WHETHER the roster can serve at all.
+// Shared by every roster/set-level "does a real layer exist" presence check, so it's answered once,
+// the same way f803d39 fixed it at card level — never by outerwear category alone. A thin, unlined
+// "technical hoodie" satisfies category but not outerwearLayerPositivelyInadequate's negative-evidence
+// read, and both this file's roster-level check and validateSubmittedPlanOutfits' set-level check
+// need to agree with the card-level check they're both standing in for.
+function rosterHasQualifyingWarmLayer(pieces = []) {
+  return pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+}
+
 function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   const normalizedRoster = Array.isArray(roster) ? roster : []
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
@@ -3790,13 +3802,15 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   // adequacy check (outfitEnvironmentalAdequacy.js's NO_REMOVABLE_COOL_LAYER, gated on the identical
   // packingRosterHasLayer bar this reuses) requires a layer somewhere in the roster whenever a slot's
   // resolved weather says needsRemovableCoolLayer and the slot is not already isCold or indoor. A
-  // roster with zero outerwear pieces makes that requirement unsatisfiable by construction — not a
-  // styling defect in any one submitted card, a supply gap in the roster itself, caught here before
-  // any card is composed rather than discovered once per rejected submission. Presence-only, the same
-  // bar the downstream check already uses — this is not a new "is it warm enough" judgment, and it is
-  // not a category quota: a roster for an all-indoor or already-cold trip is never required to carry
-  // outerwear just because it's a trip.
-  const hasRosterLayer = normalizedRoster.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  // roster with zero QUALIFYING outerwear pieces makes that requirement unsatisfiable by
+  // construction — not a styling defect in any one submitted card, a supply gap in the roster itself,
+  // caught here before any card is composed rather than discovered once per rejected submission.
+  // Presence-only, the same bar the downstream check already uses (outerwearLayerPositivelyInadequate,
+  // not category alone — a category-only bar let a thin, unlined "technical hoodie" count as a real
+  // layer, fixed at card level by f803d39 and reused here so the roster-level check doesn't reopen it)
+  // — this is not a new "is it warm enough" judgment, and it is not a category quota: a roster for an
+  // all-indoor or already-cold trip is never required to carry outerwear just because it's a trip.
+  const hasRosterLayer = rosterHasQualifyingWarmLayer(normalizedRoster)
   if (!hasRosterLayer) {
     const layerRequiredSlots = gateSlots.filter(({ slot }) => {
       const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
@@ -3826,7 +3840,10 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   for (const { slot, slotEligible, label } of gateSlots) {
     const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
     const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
-    if (!weatherProfile.isCold || isIndoor) continue
+    // Reads the same relaxed fact slotColdLayerRequired uses (cold-layer-exposure-trigger-spec.md),
+    // not raw isCold directly — this loop is a third consumer of that question and was disagreeing
+    // with the card-level check it exists to predict for a mild, activity-relaxed cold slot.
+    if (isIndoor || !slotColdLayerRequired({ weatherProfile, environment: slot.environment })) continue
     if (slotEligible.some(piece => hasMinimumWarmLayer([piece]))) continue
     failures.push({
       code: 'cold_floor_infeasible',
@@ -4196,12 +4213,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
       // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
-      // kind register_ceiling/register_floor already are. `hasMinimumWarmLayer` (the actual
-      // NO_WARM_LAYER_FOR_COLD criterion in outfitEnvironmentalAdequacy.js) fires exactly on
-      // `isCold && !indoorDestination`; this mirrors that condition so the model is told which
-      // slots the gate applies to instead of re-deriving a threshold from exposure_conditions on
-      // its own — that re-derivation, not the gate itself, was the actual evidence gap.
-      cold_layer_required: Boolean(weatherProfile?.isCold) && slot.environment !== 'indoor' && weatherProfile?.isIndoor !== true,
+      // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
+      // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
+      // inline — a hand-copied `isCold && !indoorDestination` here previously disagreed with the
+      // relaxed criterion validateSubmittedPlanOutfits actually enforces for a mild, activity-relaxed
+      // cold slot, so the model could be told a layer was required and then rejected for supplying
+      // one. One formula, read here and at validation, not two independent copies that can drift.
+      cold_layer_required: slotColdLayerRequired({ weatherProfile, environment: slot.environment }),
       allowed_piece_ids: rosterOrder.map(piece => Number(piece.id)).filter(Boolean),
       calendar_season: slot.stylingContext.calendarSeason || '',
       piece_assessments: rosterOrder.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
@@ -4790,11 +4808,11 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   // SET LEVEL vs CARD LEVEL: computed once per plan, from the packing roster (trip) or capsule
   // roster, and passed into every card's adequacy check below so the per-card removable-layer
   // finding can stand down when the SET already covers it — see the matching comment in
-  // outfitEnvironmentalAdequacy.js. Presence only (does a layer exist anywhere in what was
-  // selected), the same bar the per-card check itself already used — not a new "is it warm enough"
-  // judgment at the roster level.
-  const packingRosterHasLayer = (Array.isArray(pendingPlan?.packingRoster) ? pendingPlan.packingRoster : [])
-    .some(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  // outfitEnvironmentalAdequacy.js. Presence only (does a QUALIFYING layer exist anywhere in what
+  // was selected, via rosterHasQualifyingWarmLayer — not category alone), the same bar the per-card
+  // check itself already used — not a new "is it warm enough" judgment at the roster level.
+  const packingRosterHasLayer = rosterHasQualifyingWarmLayer(
+    Array.isArray(pendingPlan?.packingRoster) ? pendingPlan.packingRoster : [])
   const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
   const usedCoreKeys = new Set(heldOutfits.map(outfit => outfitMainCoreKey(outfit)).filter(Boolean))
   const usedPieceIds = new Set()

@@ -2880,7 +2880,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // toolContext.weather (established display/season text, not physical
         // weather) still seeds the heuristic no-location fallback below.
         const planWeather = toolContext.weather || ''
-        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '', { location: fallbackLocation })
+        // resolvePlanKind's own signal is a destination NAMED ON THIS CALL, not fallbackLocation —
+        // fallbackLocation deliberately includes toolContext.location's home-location fallback for
+        // weather resolution below, but that same fallback is always truthy, so passing it here made
+        // resolvePlanKind read every ordinary at-home plan_outfit_set call as travel.
+        const explicitPlanLocation = looksLikeTimezoneIdentifier(String(args?.location || '').trim())
+          ? ''
+          : String(args?.location || '').trim()
+        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '', { location: explicitPlanLocation })
         // Directly observable so "did the trip roster architecture engage this turn" is a query,
         // not an inference from a live thread's persisted state after the fact (thread_1788484052964
         // took reconstructing this from scratch to even notice it never fired).

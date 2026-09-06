@@ -266,7 +266,12 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure =
   // discount, and an outer layer sized for the middle of a hike is a layer sized for the one moment
   // it is not being worn. On an indoor slot the trip, not the destination, governs the coat — which
   // is what `transit` has always meant. See requiredThermalBand for the live failure this fixes.
-  const demand = wardrobeCategoryGroup(piece) === 'outerwear'
+  //
+  // Gated on a real `exposure` being SUPPLIED, not just resolvable — a slot-less caller (whole-
+  // wardrobe generation/critique, rules.js:3796/3809) never had a hiking-style exertion window to
+  // discount in the first place, and degrading through resolveExposureContext's own `unknown`
+  // fallback to reach `.layer` here silently changed outerwear ranking for those unrelated flows.
+  const demand = (exposure && wardrobeCategoryGroup(piece) === 'outerwear')
     ? (slotDemand.layer || slotDemand)
     : slotDemand
   const fit = compareThermalFit(garmentWarmthLevel(piece), demand)

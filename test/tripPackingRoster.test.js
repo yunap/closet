@@ -44,6 +44,20 @@ const HIKE_BOTTOM = piece(5, 'bottom', { occasions: ['casual', 'outdoor'] })
 const HIKE_SHOES = piece(6, 'shoes', { occasions: ['casual', 'outdoor'], heel_height: 'flat', walk_support: 'high' })
 const HEELED_SHOES = piece(7, 'shoes', { occasions: ['casual', 'outdoor'], heel_height: 'high', walk_support: 'low' })
 const JACKET = piece(8, 'outerwear', { occasions: ['city', 'casual', 'outdoor'] })
+// thread_1788513419132's exact shape (same fixture as outfitEnvironmentalAdequacy.test.js's
+// UPF_SUN_HOODIE): category 'outerwear' with its own tagged facts saying the opposite — ultralight,
+// explicitly non-insulating, explicitly unlined. Gate-eligible the same way JACKET is, so it stands
+// in for JACKET one-for-one and isolates the "is this a QUALIFYING layer" question from occasion
+// gating.
+const USELESS_HOODIE = piece(12, 'outerwear', {
+  occasions: ['city', 'casual', 'outdoor'],
+  fabric_weight: 'ultralight',
+  insulating_layer_materials: [],
+  interior_construction: 'unlined',
+  weather_protection: [],
+  fiber_content: ['polyester', 'spandex'],
+  fabric_category: 'technical/performance',
+})
 const DEPENDENT_TOP = piece(9, 'top', { occasions: ['casual', 'outdoor'], needs_base: 'yes', sleeve_length: 'sleeveless', opacity: 'sheer' })
 const STANDALONE_BASE = piece(10, 'top', { occasions: ['casual', 'outdoor'], fit_on_body: 'fitted' })
 
@@ -219,6 +233,18 @@ test('tripRosterFailures does not flag a roster that already has an outerwear pi
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'))
 })
 
+test('tripRosterFailures still flags the roster when its only "outerwear" is positively inadequate as a layer — category alone must not satisfy this bar either', () => {
+  // Same live-run fixture (thread_1788513419132) that fixed hasMinimumWarmLayer at card level:
+  // wardrobeCategoryGroup === 'outerwear' is true here, so a naive category-only presence check
+  // would wrongly clear this roster. rosterHasQualifyingWarmLayer must apply the same
+  // outerwearLayerPositivelyInadequate filter the card-level check uses, or this reopens the exact
+  // bug at roster level.
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES, USELESS_HOODIE], { slots: [layerRequiredSlot()] })
+  assert.equal(result.ok, false)
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'),
+    'a roster whose only outerwear piece is tagged ultralight/non-insulating/unlined has no real layer, whatever its category')
+})
+
 // ─── COLD FLOOR: roster-level feasibility (thread_1788516198449) ────────────────────────────────
 // A roster can pass the removable-cool-layer check above (it DOES contain outerwear) and still
 // leave one specific isCold slot with none of it, because the only packed layer is gate-ineligible
@@ -367,6 +393,25 @@ test('a card with no layer of its own is accepted when the packing roster alread
   const noRosterPlan = { ...workbench.pendingPlan, packingRoster: [], heldOutfits: [] }
   const withoutRoster = validateSubmittedPlanOutfits(noRosterPlan, [cityCard])
   assert.ok(withoutRoster.failures.length > 0, 'without a packing roster, the card must still carry its own layer')
+})
+
+test('a card with no layer of its own is still rejected when the packing roster\'s only "layer" is positively inadequate', async () => {
+  // Same shape as the test above, JACKET (id 8) swapped for USELESS_HOODIE (id 12) — an ultralight,
+  // explicitly non-insulating, explicitly unlined piece that is category 'outerwear' but not a real
+  // layer. packingRosterHasLayer must read false here, the same way hasRosterLayer must at roster
+  // level, or this card is wrongly cleared by a jacket that provides no actual warmth.
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 12] })
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench([slots[0]], {
+    allPieces: [...POOL, USELESS_HOODIE], question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster,
+  })
+  workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, needsRemovableCoolLayer: true, isCold: false }
+
+  const cityCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer on the card itself
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
+  assert.equal(result.accepted.length, 0)
+  assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no layer to put on for the cooler part of the day'))),
+    'a useless hoodie sitting in the roster must not suppress the per-card removable-layer finding')
 })
 
 // ─── COLD FLOOR: assigned_layer_piece_ids (thread_1788508369689 arc, product ruling "use B") ─────
