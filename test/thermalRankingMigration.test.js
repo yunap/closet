@@ -21,19 +21,63 @@ const score = (piece, weather, exposure) => weatherFitForPiece(piece, weather, e
 test('Vienna 65/47 — a cardigan ranks ahead of the puffer', () => {
   // The failure this whole arc came from. `isCold` is FALSE at 65/47, so before the migration the
   // ranker said nothing about warmth and the puffer ranked like anything else.
+  //
+  // Regressed by docs/source-sensitive-insulating-credit-spec.md's fiber-credit fix: the cardigan
+  // dropped from `warm` (an exact match to the `warm` demand, distance 0) to `moderate` — the SAME
+  // bucket-index distance from `warm` (1 step) that the `very warm` puffer already sat on the other
+  // side of, so both scored identically under the old symmetric distance formula. This is the equal-
+  // bucket-distance, OPPOSITE-DIRECTION case docs/thermal-ranking-source-sensitivity-and-overshoot-
+  // policy-spec.md's ranking primitive exists to break: at equal raw distance from the demand's
+  // target, undershoot (cardigan, too light) must outrank overshoot (puffer, too warm) — every live
+  // incident this arc has resolved was the reverse case wrongly winning, never the other way round.
   const w = W(65, 47)
   assert.ok(score(G.cardigan, w) > score(G.puffer, w), 'cardigan must out-rank the puffer')
 
-  // With the slot's exposure known, the separation sharpens and the light jacket leads.
+  // With the slot's exposure known, cardigan and lightJacket both land in the demand's own target
+  // bucket (both "adequate", zero bucket-index distance) -- the SAME-BUCKET case: lightJacket's raw
+  // score sits closer to the target level's own center than cardigan's, so the light jacket still
+  // leads even though compareThermalFit alone cannot tell the two apart.
   const museum = resolveExposureContext({ activity: 'walking', environment: 'outdoor' }, w)
   assert.ok(score(G.lightJacket, w, museum) > score(G.cardigan, w, museum))
   assert.ok(score(G.cardigan, w, museum) > score(G.puffer, w, museum))
 })
 
 test('genuinely cold 30/20 — the ordering reverses', () => {
+  // SAME-BUCKET refinement, undershoot direction: cardigan and lightJacket are both `moderate`
+  // (compareThermalFit alone ties them), but the cardigan's higher raw score sits closer to the
+  // `very warm` demand than the plain cotton jacket's, so it ranks above it despite the identical
+  // named bucket -- the exact invariant the source-sensitive insulating credit census established.
   const w = W(30, 20)
   assert.ok(score(G.puffer, w) > score(G.cardigan, w))
   assert.ok(score(G.cardigan, w) > score(G.lightJacket, w))
+})
+
+test('excessive undershoot floors at the same magnitude as excessive overshoot, never inverts', () => {
+  // Neither direction should escape the -8 floor, and the floor must not silently favor one
+  // direction over the other merely because it clamped first.
+  const veryLightPiece = { category: 'outerwear', fabric_weight: 'ultralight', fiber_content: ['polyester'], insulating_layer_materials: [], sleeve_length: 'sleeveless' }
+  const genuinelyCold = W(20, 5)
+  const undershootFit = weatherFitForPiece(veryLightPiece, genuinelyCold)
+  assert.equal(undershootFit.score, -8, 'a very light piece in genuinely cold conditions floors, not just scores low')
+  assert.match(undershootFit.adjustments[0].reason, /garment very light/)
+
+  const genuinelyHot = W(95, 85)
+  const overshootFit = weatherFitForPiece(G.puffer, genuinelyHot)
+  const thermalBandAdjustment = overshootFit.adjustments.find(a => a.reason.startsWith('thermal band'))
+  assert.equal(thermalBandAdjustment.score, -8, 'a down puffer in genuinely hot conditions floors the same way')
+})
+
+test('at equal raw distance from the target, overshoot scores strictly worse than undershoot — the ranking-policy asymmetry, isolated', () => {
+  // Two synthetic pieces placed to sit at an equal RAW distance either side of a `moderate` demand's
+  // own center (1.5), isolated from every other adjustment this scoring path can add (no isHot/isCold
+  // flags, no fabric-mass bonus) — this is the OVERSHOOT_RANKING_WEIGHT itself, not a side effect of
+  // some other rule.
+  const under = { category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 0.5, center 1.5 -> distance -1
+  const over = { category: 'outerwear', fabric_weight: 'heavy', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 2.5, center 1.5 -> distance +1
+  const w = W(60, 56) // resolves to a `moderate` demand at this exposure-less call
+  const underScore = score(under, w)
+  const overScore = score(over, w)
+  assert.ok(underScore > overScore, 'equal raw distance, opposite direction: undershoot must still rank above overshoot')
 })
 
 test('the puffer is never excluded for overshoot — it ranks low and stays available', () => {
@@ -63,9 +107,14 @@ test('no isCold switch decides whether graded thermal ranking runs', () => {
   assert.ok(!live.includes('isCold'), 'weatherFitForPiece must not read isCold')
   assert.ok(live.includes('requiredThermalBand'), 'it reads the band')
 
-  // Ranking reads `distance`, not merely `fit` — otherwise every garment inside the uncertainty
-  // band scores identically and the band becomes an equivalence class (§16.2).
-  assert.ok(live.includes('fit.distance'), 'ranking must read distance')
+  // Ranking reads `offset` (thermalRankingFit's continuous, overshoot-weighted refinement over
+  // compareThermalFit's own `distance`), not merely `fit` — otherwise every garment inside the
+  // uncertainty band scores identically and the band becomes an equivalence class (§16.2). Renamed
+  // from `fit.distance` when thermalRankingFit was introduced
+  // (docs/thermal-ranking-source-sensitivity-and-overshoot-policy-spec.md) to consolidate this
+  // file's ranking formula with buildVisualComposerRoster's previously-independent one and to let
+  // two garments in the same named bucket still rank apart by raw score.
+  assert.ok(live.includes('fit.offset'), 'ranking must read the thermalRankingFit offset')
 })
 
 test('the light-bottom carve-out survives the reason-string rename', () => {

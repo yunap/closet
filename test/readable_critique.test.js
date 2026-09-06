@@ -271,6 +271,86 @@ test('generated outfit image prompt omits the styling_instructions section when 
   assert.doesNotMatch(prompt, /Authoritative styling instructions \(how these garments relate to each other/)
 })
 
+// thread_1788495287089: a hooded, asymmetric-drape, double-breasted cardigan with zip pockets
+// rendered as a plain symmetric open cardigan. pieceFidelityChecklist (styling-engine/core.js) gave
+// every other category construction-specific fidelity language except outerwear, which fell to the
+// generic "preserve category, color, shape, and visible texture" fallback. These pin the new
+// outerwear branch: it fires per-feature only on evidence already in the piece's text blob (name,
+// reads_as, notes — see pieceTextBlob in rules.js), the same "only on evidence" contract top/bottom
+// already use above.
+test('generated outfit image prompt reinforces outerwear construction cues that are actually evidenced', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: { label: 'Evening', reason: 'Layer for the cool evening.' },
+    pieces: [{
+      name: 'olive hooded utility parka',
+      category: 'outerwear',
+      notes: 'An asymmetric, draped front with a large attached hood. Double-breasted button closure down the front, plus a separate zip-front inner layer. Two large zip pockets at the hip and a notched collar. Dropped-shoulder sleeve construction. Hits below the hip.',
+    }],
+  })
+
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape/)
+  assert.match(prompt, /preserve the asymmetric\/draped silhouette, not a symmetric closure/)
+  assert.match(prompt, /must remain hooded/)
+  assert.match(prompt, /preserve the button closure\/placket/)
+  assert.match(prompt, /preserve the zip closure/)
+  assert.match(prompt, /preserve the visible pockets, in their described style/)
+  assert.match(prompt, /preserve the collar\/lapel shape/)
+  assert.match(prompt, /preserve the sleeve construction\/shoulder line/)
+  assert.match(prompt, /must remain the listed length\/hem shape/)
+})
+
+// The other half of the same contract: absence of a feature in the text must never become a
+// negative claim ("no hood", "no pockets") — most outerwear legitimately lacks these features, and
+// the blob has no reliable way to confirm a true negative. Grounded in the actual incident piece's
+// real notes text (thread_1788495287089, piece id 157): describes the asymmetric drape and dropped
+// shoulder, says nothing about a hood, closure, or pockets, because the tagging pass never captured
+// them either.
+test('generated outfit image prompt never fabricates outerwear construction claims from absence', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: { label: 'Evening', reason: 'Layer for the cool evening.' },
+    pieces: [{
+      name: 'dark grey knit draped cardigan',
+      category: 'outerwear',
+      notes: 'Fit: the cardigan drapes over the body with asymmetrical front panels hanging below the hips; sleeves appear slightly long, touching the wrists. the shoulder seams seem dropped, leading to a relaxed fit.',
+    }],
+  })
+
+  // Even when nothing specific is known, the unconditional baseline still tells the model to
+  // inspect and preserve the reference photo's real construction — it just names no variant.
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape/)
+  assert.match(prompt, /preserve the asymmetric\/draped silhouette, not a symmetric closure/)
+  assert.match(prompt, /preserve the sleeve construction\/shoulder line/)
+  assert.doesNotMatch(prompt, /must remain hooded/)
+  assert.doesNotMatch(prompt, /preserve the button closure/)
+  assert.doesNotMatch(prompt, /preserve the zip closure/)
+  assert.doesNotMatch(prompt, /preserve the visible pockets/)
+  assert.doesNotMatch(prompt, /preserve the collar\/lapel shape/)
+  assert.doesNotMatch(prompt, /no hood/i)
+  assert.doesNotMatch(prompt, /no pocket/i)
+})
+
+// The requested "middle ground" case: a minimally tagged outerwear piece with NOTHING distinctive
+// in its blob (no notes, no reads_as beyond the bare name) must still get an explicit instruction
+// to preserve its visible hood/collar, closure, pockets, and construction — the unconditional
+// baseline is not gated on the tagger ever having captured those features in text, only the
+// evidence-specific lines are. It still asserts no variant ("must remain hooded" etc. stay absent):
+// this tells the model WHAT CLASSES to inspect in the reference photo, not WHICH ONES this garment
+// has.
+test('a minimally tagged outerwear piece still gets baseline construction-preservation instructions, without asserting which variants it has', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: { label: 'Casual', reason: 'Easy layering.' },
+    pieces: [{ name: 'grey wool cardigan', category: 'outerwear' }],
+  })
+
+  assert.match(prompt, /preserve the exact visible outerwear construction from the reference: collar\/hood configuration, front closure type and placement, pocket type\/placement, sleeve\/shoulder construction, hem\/length, and front-panel shape — do not simplify, regularize, add, or remove these details/)
+  assert.doesNotMatch(prompt, /must remain hooded/)
+  assert.doesNotMatch(prompt, /preserve the button closure/)
+  assert.doesNotMatch(prompt, /preserve the zip closure/)
+  assert.doesNotMatch(prompt, /preserve the visible pockets/)
+  assert.doesNotMatch(prompt, /preserve the collar\/lapel shape/)
+  assert.doesNotMatch(prompt, /preserve category, color, shape, and visible texture/)
+})
+
 test('normalizeGeneratedOutfitObject (selected-item composer/gate path) carries styling_instructions through, and defaults to empty when absent', () => {
   const selectedPiece = { id: 1, name: 'cream cardigan' }
   const candidatePieces = [

@@ -764,6 +764,13 @@ export function evaluateWearableOutfit(pieces = [], {
   includeLayerDirections = false,
   seenPieceIds = [],
   weatherContext = null,
+  // Trip cards with a shared packed layer (docs/README.md: trip roster architecture, "core outfit"
+  // ruling): the environmental-adequacy stage alone needs to see core-plus-assigned-layer as the
+  // effective worn outfit, while structure/dependency/layer-direction/construction stay core-only —
+  // those checks assume the pieces are shown together, which an off-card shared layer is not.
+  // Defaults to `pieces` so every existing caller (none of which know about assigned layers) is
+  // byte-identical.
+  environmentPieces = null,
 } = {}) {
   const normalizedPieces = Array.isArray(pieces) ? pieces : []
   const seenIds = seenPieceIds instanceof Set
@@ -796,8 +803,9 @@ export function evaluateWearableOutfit(pieces = [], {
   // authoritative resolved context. Every existing context-free call site is therefore unchanged:
   // no weatherContext, no stage, no findings. A caller must never manufacture a profile locally to
   // switch this on — pass the one resolveStylingContext already resolved, or pass nothing.
+  const normalizedEnvironmentPieces = Array.isArray(environmentPieces) ? environmentPieces : normalizedPieces
   const environment = weatherContext
-    ? evaluateOutfitEnvironmentalAdequacy(normalizedPieces, weatherContext)
+    ? evaluateOutfitEnvironmentalAdequacy(normalizedEnvironmentPieces, weatherContext)
     : null
   if (environment?.applicable) stages.push({ stage: 'environment', result: environment })
 

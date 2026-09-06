@@ -12,8 +12,8 @@ import { resolveOccasionProfile } from './occasions.js'
 // The thermal band (docs/thermal-comfort-band-spec.md §8 migration). Ranking reads the band rather
 // than `isCold`, which used to decide whether graded thermal reasoning existed at all.
 import { resolveExposureContext } from './exposure.js'
-import { requiredThermalBand, compareThermalFit } from './thermalDemand.js'
-import { garmentWarmthLevel } from './garmentWarmth.js'
+import { requiredThermalBand, thermalRankingFit } from './thermalDemand.js'
+import { garmentWarmthLevel, garmentWarmthScore } from './garmentWarmth.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
@@ -66,8 +66,10 @@ import {
   pieceMatchesFootwear,
   pieceMatchesPieceName,
   necklineWarmth,
-  sleeveCoverage
+  sleeveCoverage,
+  thermalMaterialVerdict
 } from './attributes.js'
+import { interiorConstruction } from './fiberTaxonomy.js'
 
 export function isStyleSelectedQuestion(question = '') {
   const q = String(question).toLowerCase()
@@ -177,6 +179,54 @@ export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js
 export { pieceWeatherEvidence, pieceWeatherScores } from './thermal.js'
 import { pieceWeatherScores } from './thermal.js'
 
+// The shared thermal FACT channel (docs/search-propose-signal-inventory.md). Any model-facing
+// surface that used to read weatherFitForPiece's verdict — search_wardrobe, suggest_slot_swaps —
+// reads this instead. One function, reused verbatim, so this is not a second judgment vocabulary
+// under a different name: the plan path (styling-engine/outfitSetPlanner.js) calls this exact
+// export too.
+//
+// `insulation` distinguishes three states deliberately — verified-none, never-asked, and insulated
+// — because collapsing "nobody asked" into "verified none" is exactly how an unrecorded sun hoodie
+// read as a real cool-weather layer (docs/model-facing-signal-inventory.md's founding case).
+export function thermalFactsForPiece(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return null
+  const verdict = thermalMaterialVerdict(piece)
+  const interior = interiorConstruction(piece)
+  return {
+    warmth: garmentWarmthLevel(piece) || null,
+    insulation: verdict === 'insulating' ? 'insulated' : verdict === 'non_insulating' ? 'none' : 'not recorded',
+    interior: interior && interior !== 'unknown' ? interior : null,
+    season: piece.season || null,
+    removable: group === 'outerwear' ? true : null,
+  }
+}
+
+// thread_1788518048013: thermalFactsForPiece's shoes/accessory exclusion is correct for warmth,
+// insulation, interior and removable — those are BODY-THERMAL CONSTRUCTION claims (does this
+// garment insulate the wearer), and a shoe's fabric_weight describes construction substance, not
+// body warmth (the same reasoning weatherFitForPiece already draws this exact line on). But
+// `season` was bundled into the same exclusion and answers a different question entirely: whether
+// the piece reads as warm-season/cool-season/year-round, a style/applicability signal that is just
+// as real for a shoe as for a top. A live trip run chose a season:'warm' shoe for a fall hiking
+// card with zero chance the compose-time model could weigh it — the catalog line never carried the
+// fact at all, for any category. Season is read independently of the group gate below.
+export function thermalFactsForPieceLine(piece = {}) {
+  const facts = thermalFactsForPiece(piece)
+  const bits = []
+  if (facts) {
+    bits.push(`warmth:${facts.warmth || 'not established'}`)
+    bits.push(`insulation:${facts.insulation}`)
+    if (facts.interior) bits.push(`interior:${facts.interior}`)
+    if (facts.removable) bits.push('removable:yes')
+  }
+  // Not a gate, not a thermal score — a plain factual style/applicability signal, stated the same
+  // way for every category. Deliberately checked from the piece directly rather than through
+  // `facts.season` so it survives even when `facts` itself is null (shoes/accessory).
+  if (piece.season) bits.push(`season:${piece.season}`)
+  return bits.join(' | ')
+}
+
 export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure = null } = {}) {
   const adjustments = []
   // fabric_weight/coverage/bareness/insulating-material on a shoe or accessory describe
@@ -211,21 +261,35 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure =
   // happens in a slot-less retrieval context, resolveExposureContext degrades honestly to `unknown`
   // exertion and mode rather than asserting stillness, and the demand is still graded.
   const exposureContext = exposure || resolveExposureContext({}, weatherProfile)
-  const demand = requiredThermalBand(exposureContext)
-  const fit = compareThermalFit(garmentWarmthLevel(piece), demand)
+  const slotDemand = requiredThermalBand(exposureContext)
+  // Outerwear answers to the LAYER demand, not the base's. The base demand carries the exertion
+  // discount, and an outer layer sized for the middle of a hike is a layer sized for the one moment
+  // it is not being worn. On an indoor slot the trip, not the destination, governs the coat — which
+  // is what `transit` has always meant. See requiredThermalBand for the live failure this fixes.
+  //
+  // Gated on a real `exposure` being SUPPLIED, not just resolvable — a slot-less caller (whole-
+  // wardrobe generation/critique, rules.js:3796/3809) never had a hiking-style exertion window to
+  // discount in the first place, and degrading through resolveExposureContext's own `unknown`
+  // fallback to reach `.layer` here silently changed outerwear ranking for those unrelated flows.
+  const demand = (exposure && wardrobeCategoryGroup(piece) === 'outerwear')
+    ? (slotDemand.layer || slotDemand)
+    : slotDemand
+  const fit = thermalRankingFit(garmentWarmthLevel(piece), garmentWarmthScore(piece), demand)
   if (demand.level && fit.fit !== 'unknown') {
-    // RANKING READS `distance`, NOT `fit`. Using fit alone made every garment inside the
+    // RANKING READS `offset`, NOT `fit`. Using fit alone made every garment inside the
     // uncertainty band score identically — on a 65/47 day a puffer, a cardigan and a light jacket
     // all came out "adequate", which is the band becoming a giant equivalence class and losing
     // exactly the preference the migration exists to create. `fit` answers validity under
-    // uncertainty; `distance` answers preference within it (§16.2).
+    // uncertainty; `offset` answers preference within it (§16.2) — continuous (docs/
+    // thermal-ranking-source-sensitivity-and-overshoot-policy-spec.md's raw-score refinement) and
+    // overshoot-weighted, rather than the old whole-bucket-index `distance`.
     //
     // Overshoot RANKS, it never excludes (§5.5): a wardrobe whose only layer is a heavy coat still
     // gets dressed. Magnitudes stay modest — this is preference; validity belongs to outfit adequacy.
-    const off = Math.abs(fit.distance ?? 0)
-    const score = Math.max(-8, 4 - 4 * off)
+    const off = Math.abs(fit.offset ?? 0)
+    const score = Math.max(-8, 4 - 2 * off)
     const label = off === 0 ? 'well matched to the conditions'
-      : (fit.distance > 0 ? 'warmer than these conditions call for'
+      : (fit.offset > 0 ? 'warmer than these conditions call for'
         : 'lighter than these conditions call for')
     adjustments.push({
       score,
@@ -1274,15 +1338,16 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   const candidateBlob = pieceTextBlob(candidate)
   const occasion = String(options.occasion || '').toLowerCase().trim()
 
-  // Weather appropriateness — independent term, applies to every candidate
-  const weather = options.weatherProfile || weatherProfileFromContext(options)
-  const weatherFit = weatherFitForPiece(candidate, weather)
-  if (weatherFit.adjustments.length) {
-    score += weatherFit.score
-    for (const adjustment of weatherFit.adjustments) {
-      reasons.push(adjustment.reason)
-    }
-  }
+  // No thermal term here (docs/search-propose-signal-inventory.md). This fed
+  // generateOutfitsForPieceInternal's "style this piece" candidate ranking and reason text — found
+  // during verification, not in the original inventory scope, because the call chain
+  // (selectAutomaticUseCandidatesForOutfitGeneration -> selectCandidatesForOutfitGeneration ->
+  // here) never contains the literal string "weatherFit". A derived thermal score affected both
+  // WHICH candidates surfaced and the "WHY RETRIEVED: hot weather: lightweight fabric" reason text
+  // shown to the model — the same hidden-ordering-plus-leaked-verdict pattern already removed from
+  // search_wardrobe and suggest_slot_swaps. buildPieceText (used downstream by every consumer of
+  // this ranking) already carries fabric_weight/fabric_category for every candidate, so this is not
+  // a net loss of thermal signal — the judgment, not the fact, is what's removed.
 
   const candidateFormalityFit = formalityFitForPiece(candidate, options)
   if (candidateFormalityFit.adjustments.length) {
@@ -1842,8 +1907,8 @@ export function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCuto
   }
 }
 
-export function buildPieceText(p) {
-  return buildWardrobePieceTruthText(p)
+export function buildPieceText(p, options) {
+  return buildWardrobePieceTruthText(p, options)
 }
 
 export function pieceStyleProfile(piece = {}) {
@@ -3267,9 +3332,15 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       //     is penalised. Ranking by fit rather than by mass is what makes the special case
       //     unnecessary, instead of merely re-tuned.
       const rosterDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
-      const rosterFit = compareThermalFit(garmentWarmthLevel(p), rosterDemand)
+      // thermalRankingFit (thermalDemand.js), not compareThermalFit directly — the shared ranking
+      // primitive both this roster and weatherFitForPiece now call, so a wool cardigan and a plain
+      // cotton jacket in the same named bucket still rank apart (docs/thermal-ranking-source-
+      // sensitivity-and-overshoot-policy-spec.md), and overshoot already carries its ranking-policy
+      // weight before this call site's own bottom/dress-only undershoot rule and magnitude-scaled
+      // overshoot penalty apply on top.
+      const rosterFit = thermalRankingFit(garmentWarmthLevel(p), garmentWarmthScore(p), rosterDemand)
       if (rosterDemand.level && rosterFit.fit !== 'unknown') {
-        const off = rosterFit.distance ?? 0
+        const off = rosterFit.offset ?? 0
         if (off < 0) {
           const catGroup = wardrobeCategoryGroup(p)
           if (catGroup === 'bottom' || catGroup === 'dress') {

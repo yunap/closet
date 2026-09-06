@@ -25,10 +25,12 @@ const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+const { extractStatedTripDateRange } = await import('../styling-engine/stylingIntent.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
-const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
-const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
+const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions, identifyColdLayerRepairableFailures } = await import('../styling-engine/outfitSetPlanner.js')
+const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt, tripPlanCompositionSchema, tripPlanCompositionSystemPrompt, repairTripColdLayerCardsSchema, repairTripColdLayerCardsSystemPrompt, atomicTripCompositionInstructions } = await import("../routes/ai.js")
+const { layerConstructionPromptRule, layerDirectionPromptRule, evaluateWearableOutfit } = await import('../styling-engine/outfitValidation.js')
+const { ENVIRONMENTAL_ADEQUACY_CODES } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -110,6 +112,11 @@ beforeEach(() => {
   db.prepare('DELETE FROM feedback_synthesis_batches').run()
   db.prepare('DELETE FROM pieces').run()
   seedWardrobe()
+  // weather.js's geocode/forecast caches are module-level and keyed by location+date-range, not
+  // per-test -- two tests using the same location/dates (several plan_outfit_set tests share
+  // "Vienna, Virginia" + Oct 12-18) would otherwise silently reuse an earlier test's mocked
+  // response instead of calling this test's own weatherFetchImpl.
+  _clearWeatherCachesForTests()
 })
 
 test('plan_outfit_set slot schema declares environment and requires activity', () => {
@@ -414,6 +421,1239 @@ test('a budgeted trip remains on the trip workbench and never enters capsule com
   assert.equal(toolContext.pendingPlan.planKind, 'trip')
   assert.equal(toolContext.pendingPlan.isSeasonalCapsule, false)
   assert.deepEqual(toolContext.pendingPlan.capsuleRoster, [])
+})
+
+test('plan_outfit_set: a real destination forces the trip workbench even when plan_kind is omitted', async () => {
+  // Live thread_1788484052964, reproduced at the tool boundary: a real Vienna destination,
+  // plan_kind left out entirely -- must still land on 'trip', not silently become a
+  // coordinated_plan (previously it did, and the packing-roster architecture never engaged).
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'Pack for a week in Vienna, Austria covering sightseeing, museums, and nature walks',
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    location: 'Vienna, Austria',
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.pendingPlan.planKind, 'trip')
+})
+
+test('plan_outfit_set: with a chooseTripRoster wired, the model-selected trip roster and its requirement slots actually reach pendingPlan', async () => {
+  // Closes the loop the earlier test above cannot: plan_kind resolving to 'trip' is necessary but
+  // not sufficient (thread_1788484052964, thread_1788488744055) -- buildPlanSlotWorkbench also
+  // needs a working chooseTripRoster, which chooseTripRosterWithProvider (routes/ai.js) now is.
+  // This exercises the same toolContext.chooseTripRoster wiring path executeTool uses in
+  // production, with a mock chooser standing in for the real provider call.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip roster top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip roster bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip roster shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'Pack for a week in Vienna, Austria',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    location: 'Vienna, Austria',
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.pendingPlan.planKind, 'trip')
+  assert.equal(toolContext.pendingPlan.tripRosterSource, 'model')
+  assert.deepEqual(
+    toolContext.pendingPlan.tripRoster.map(p => Number(p.id)).sort((a, b) => a - b),
+    [topId, bottomId, shoeId].sort((a, b) => a - b)
+  )
+  assert.equal(toolContext.pendingPlan.tripRequirementSlots.length, 1, 'the trip requirement slots (docs/README.md) must be captured alongside the chosen roster')
+  assert.equal(toolContext.pendingPlan.tripRequirementSlots[0].occasion, 'city')
+  assert.deepEqual(toolContext.pendingPlan.packingRoster, toolContext.pendingPlan.tripRoster, 'packingRoster is the provider-agnostic name a follow-up edit checks')
+})
+
+// ─── ATOMIC TRIP COMPOSITION (docs/trip-composition-parity-spec.md, ratified) ────────────────────
+// Mirrors the capsule atomic tests above exactly: same call-boundary shape (one injected
+// composeTripPlanOnce attempt per turn), same hard invariant that composition changes who composes
+// and what evidence they see, never what submit_plan_outfits accepts as valid.
+
+test('an initial trip plan uses the dedicated atomic composition path, not the general stylist tool loop', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => {
+      compositionCalls += 1
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id,
+        piece_ids: [topId, bottomId, shoeId],
+        title: 'Atomic City Look',
+        reason: 'A complete conventional trip formula.'
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(result.bounded_composition, true)
+  assert.equal(compositionCalls, 1)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
+  assert.equal(toolContext.pendingPlan, null)
+  assert.equal(toolContext.freeformDiagnostics.submitPlanCalls, 1)
+  // No tool-loop submit round was ever needed -- the atomic call already produced the final cards.
+  assert.equal(toolContext.freeformDiagnostics.submitPlanResubmits || 0, 0)
+
+  const lateSubmit = await executeTool('submit_plan_outfits', { outfits: [] }, toolContext)
+  assert.equal(lateSubmit.status, 'validation_error')
+  assert.match(lateSubmit.message, /No pending plan rosters/)
+})
+
+test('a same-turn re-plan attempt after atomic trip composition already ran is refused, mirroring capsule\'s one-shot-per-turn guard', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => {
+      compositionCalls += 1
+      const slot = workbench.slots[0]
+      return [{ slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'A complete conventional trip formula.' }]
+    }
+  }
+
+  const initial = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(initial.status, 'success')
+  assert.equal(compositionCalls, 1)
+
+  const retry = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days Again', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(retry.status, 'validation_error')
+  assert.match(retry.message, /already used its one bounded trip-composition attempt/)
+  assert.equal(compositionCalls, 1, 'the atomic composer must not be invoked a second time this turn')
+})
+
+test('a genuine cross-turn follow-up (fresh toolContext, persisted cards restored) lands on the ordinary tool-loop path, not atomic composition', async () => {
+  // docs/trip-composition-parity-spec.md §6, ruled: only the INITIAL plan becomes atomic. A real
+  // follow-up turn ("redo the nature walk slot") gets a FRESH toolContext per turn -- tripAtomicAttempted
+  // and pendingPlan are turn-scoped and never carry over -- but isPartialReplan (an existing,
+  // plan-kind-agnostic mechanism) still detects it via priorAssembledOutfits: this session already has
+  // plan_outfit_set-sourced cards restored from persisted state. No new replan-detection logic needed.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  let compositionCalls = 0
+  const composeTripPlanOnce = async workbench => {
+    compositionCalls += 1
+    const slot = workbench.slots[0]
+    return [{ slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'A complete conventional trip formula.' }]
+  }
+  const chooseTripRoster = async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) })
+
+  const turnOne = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a week in the city', chooseTripRoster, composeTripPlanOnce }
+  const initial = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, turnOne)
+  assert.equal(initial.status, 'success')
+  assert.equal(compositionCalls, 1)
+
+  // A fresh toolContext, as a new turn actually gets -- only the restored persisted cards carry
+  // over, never the turn-scoped tripAtomicAttempted/pendingPlan flags.
+  const turnTwo = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: turnOne.generatedOutfits,
+    question: 'actually, redo the city day',
+    chooseTripRoster,
+    composeTripPlanOnce
+  }
+  const followUp = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days Again', occasion: 'city', activity: 'walking', count: 1 }],
+  }, turnTwo)
+  assert.equal(followUp.status, 'slot_rosters', 'a genuine follow-up re-plan must land on the ordinary tool-loop path')
+  assert.equal(compositionCalls, 1, 'the atomic composer must not be invoked for a follow-up')
+})
+
+test('an empty atomic trip composition result is an engine error and cannot masquerade as a successful zero-card plan', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'atomic trip top' })
+  insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async () => []
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'error')
+  assert.equal(result.bounded_composition, true)
+  assert.match(result.message, /returned no outfits/)
+  assert.equal(toolContext.tripAtomicCompleted, true)
+  assert.equal(toolContext.generatedOutfits.length, 0)
+})
+
+test('the atomic trip composer\'s outfits pass through the exact existing submit_plan_outfits validator -- a duplicate-core pair is rejected exactly as the tool loop would reject it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    // Two "different" looks that are actually the identical core -- exactly what
+    // validateSubmittedPlanOutfits's tripOutfitKey duplicate check exists to catch.
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Look One', reason: 'r1' },
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Look Two (duplicate core)', reason: 'r2' },
+      ]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  // The duplicate is dropped, not accepted twice -- the same validator the tool loop uses caught it.
+  assert.equal(toolContext.generatedOutfits.length, 1, 'only the non-duplicate look must survive validation')
+})
+
+test('the atomic trip composer\'s cold_layer_decision is validated exactly as the tool loop validates it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+  // Never selected into the roster -- exactly the "not in the current packing roster" case
+  // test/tripPackingRoster.test.js already pins for the tool-loop path.
+  const outsideRosterId = insertPiece({ category: 'outerwear', name: 'never packed jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Assigned Layer Look', reason: 'r',
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: outsideRosterId }
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    // Cold, so cold_layer_required is true and the correction below (which only fires when a
+    // layer is NOT required at all) never applies here -- this slot legitimately needs a layer,
+    // so the gate-ineligibility check on the one it named must still fire.
+    weather_estimate: { high_f: 38, low_f: 25 },
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  // A card whose ONLY content is invalid must fail entirely -- proving the assigned-layer check
+  // fires inside the atomic path exactly as it does in the tool loop, not skipped or reinterpreted.
+  assert.equal(result.status, 'error')
+  assert.match(result.message, /not eligible as a layer/)
+  assert.equal(toolContext.generatedOutfits.length, 0)
+})
+
+// Live regression, thread_1788584505940: the atomic composer violates the schema's own "cold_layer_decision
+// must be 'not_required' when cold_layer_required is false" instruction often enough that a
+// museum slot's card was hard-rejected over an invisible layer relation that isn't even part of
+// the card's visual identity, with no repair round to recover it. Since this is a narrow,
+// deterministic, mechanically-detectable violation with exactly one correct fix, it is now
+// silently corrected (the decision normalized to not_required) before validation runs, rather
+// than costing the card.
+test('an assigned layer on a slot that does not require one is silently normalized, not rejected, in the atomic path', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Museum Look', reason: 'r',
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: jacketId }
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    // No weather_estimate -- mild/uncold, so cold_layer_required is false and this slot should
+    // never have carried a layer at all, exactly the museum shape.
+    slots: [{ label: 'Museum Days', occasion: 'gallery / art event', activity: 'none', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success', 'the card must survive on its otherwise-valid piece_ids')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b))
+  assert.equal(toolContext.generatedOutfits[0].assignedLayerIds, undefined, 'the normalized-away relation must not persist on the accepted card')
+
+  const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
+  assert.equal(debug.corrected.length, 1, 'the correction must be recorded in the diagnostic')
+  assert.equal(debug.corrected[0].title, 'Museum Look')
+  assert.deepEqual(debug.corrected[0].original_cold_layer_decision, { mode: 'assigned_packed_layer', assigned_layer_piece_id: jacketId })
+  assert.equal(debug.rejected.length, 0, 'a mechanically-corrected card is not a rejection')
+})
+
+// The ordinary tool loop is NOT in scope for this correction: it can retry within the same turn
+// (unlike the atomic path's one shot), so it should keep rejecting this exact violation and let
+// the model learn from the message, rather than silently absorbing it.
+test('the ordinary tool loop still rejects an assigned layer on a slot that does not require one -- the correction is scoped to the atomic path only', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'trip jacket', occasions: ['city', 'casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+  }
+  const planResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'Museum Days', occasion: 'gallery / art event', activity: 'none', count: 1 }],
+  }, toolContext)
+  assert.equal(planResult.status, 'slot_rosters', 'no composeTripPlanOnce wired -- this exercises the ordinary tool-loop path')
+
+  const slotId = toolContext.pendingPlan.slots[0].id
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: slotId, piece_ids: [topId, bottomId, shoeId], title: 'Museum Look', reason: 'r',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: jacketId }
+    }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'validation_error')
+  assert.match(submitted.message, /cold_layer_required is false/)
+  assert.equal(toolContext.generatedOutfits.length, 0, 'the tool loop must not silently correct this -- the model needs the rejection to learn from')
+})
+
+test('a valid cold_layer_decision from the atomic trip composer is accepted and persists on the final card', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'atomic trip jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, jacketId] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [{
+        slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Assigned Layer Look', reason: 'r',
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: jacketId }
+      }]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    // Cold, non-indoor -- cold_layer_required must read true so this assigned layer clears the
+    // invariant added below (a slot that doesn't require a cold layer must reject one entirely).
+    // A trip plan resolves weather through the structured contract, not a per-slot text
+    // heuristic, so a genuinely cold slot needs weather_estimate rather than slot.weather.
+    weather_estimate: { high_f: 38, low_f: 25 },
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.deepEqual(toolContext.generatedOutfits[0].assignedLayerIds, [jacketId])
+  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds.sort((a, b) => a - b), [topId, bottomId, shoeId].sort((a, b) => a - b), 'the assigned layer must not join the card\'s own core piece_ids, same as the tool-loop path')
+})
+
+// Traced live via thread_1788577086327/run 1336: gallery_lunch had cold_layer_required:false but
+// its accepted card still carried assigned_layer_piece_ids -- validateSubmittedPlanOutfits checked
+// only roster/gate eligibility, never cold_layer_required itself, even though the schema's own
+// prompt text (routes/ai.js's tripPlanCompositionSchema) already tells the model to omit the
+// relation entirely when the slot isn't cold. These pin the fix as a validator invariant, not a
+// prompt or eligibility change.
+test('a non-cold slot rejects a non-not_required cold_layer_decision, even when the layer itself is gate-eligible', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'invariant jacket', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Warm City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'warm' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), false, 'fixture needs a genuinely non-cold slot')
+  assert.ok(slot.gateAllowedIds.has(Number(jacketId)), 'fixture needs the layer to otherwise be gate-eligible, isolating the cold_layer_required check')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(jacketId) },
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('must be \'not_required\'') && reason.includes('cold_layer_required is false')),
+    'the invariant rejection must be the recorded reason'
+  )
+})
+
+test('a qualifying cold slot continues to accept a valid assigned_packed_layer cold_layer_decision', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'invariant jacket', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+  assert.notEqual(slot.environment, 'indoor', 'fixture needs a non-indoor slot so cold_layer_required actually reads true')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(jacketId) },
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(jacketId)])
+})
+
+// Piece-specific half of the cold-layer invariant. Gate 2 (hasMinimumWarmLayer) judges the WHOLE
+// outfit, so a heavy core garment can make the outfit warm enough even while the specific piece
+// the model named in assigned_layer_piece_ids is thermally useless -- laundering a bad choice
+// through a floor it never actually needed to satisfy. These four pin the fix without importing
+// severe-cold's coat/jacket ontology or the separate transitIsCold sleeve-coverage contract.
+test('a positively-inadequate assigned layer is rejected even when the base outfit is already warm enough to pass the whole-outfit floor', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Heavy top alone already satisfies hasMinimumWarmLayer's whole-outfit floor -- this is exactly
+  // the "warm base launders a nonsense assigned layer" scenario the audit identified.
+  const topId = insertPiece({ category: 'top', name: 'heavy invariant top', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const badLayerId = insertPiece({ category: 'outerwear', name: 'thin unlined shell', occasions: ['city'], formality: 'everyday', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('[]', 'unlined', badLayerId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+
+  // Sanity: the base outfit alone (heavy top, no layer at all) already clears the whole-outfit
+  // floor -- proving any rejection below comes from the new piece-level check, not the old one.
+  const withoutLayer = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+  }])
+  assert.equal(withoutLayer.accepted.length, 1, 'fixture sanity: the heavy top alone must already satisfy the whole-outfit floor')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(badLayerId) },
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('cannot serve as a cold layer')),
+    'the piece-specific rejection must fire even though the whole outfit would otherwise pass'
+  )
+})
+
+test('a medium/insulating cardigan continues to satisfy an ordinary cold slot\'s assigned-layer check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const cardiganId = insertPiece({ category: 'outerwear', name: 'medium knit cardigan', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["unknown"]', cardiganId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(cardiganId) },
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(cardiganId)], 'a cardigan is a legitimate cold layer -- category/garmentKind is never the question')
+})
+
+test('an insulating vest passes the warmth-only assigned-layer check -- category/garmentKind is not the question', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // "vest" only in name/garmentKind here -- sleeve_length is left unset (no positive bareness
+  // evidence), which is the fixture this check needs: a vest carrying genuine insulating evidence
+  // and nothing else, isolated from the separate sleeve-coverage question entirely.
+  const vestId = insertPiece({ category: 'outerwear', name: 'quilted vest', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["fleece"]', vestId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Cold City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), true, 'fixture needs a genuinely cold slot')
+  assert.equal(Boolean(slot.weatherProfile?.transitIsCold), false, 'fixture needs no cold-transit leg, isolating the warmth-only check from the separate sleeve contract')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(vestId) },
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(vestId)])
+})
+
+// [R2]'s cold-transit sleeve-bearing floor (NO_TRANSIT_LAYER_FOR_COLD) is keyed on transitIsCold,
+// a condition disjoint from cold_layer_required (isCold): a genuinely sleeveless piece is already
+// excluded from THIS slot's gateAllowedIds whenever isCold is true (the pre-existing "cold
+// weather: bare/sleeveless" hard gate, rules.js), so a sleeveless piece can never even reach
+// assigned_layer_piece_ids resolution on a cold_layer_required slot -- there is no double-jeopardy
+// scenario to construct there. The disjoint case this floor actually exists for is an INDOOR
+// destination (isCold false, base may stay bare) reached through cold transit -- exactly what this
+// test builds, submitting the sleeveless vest as an ordinary piece_ids member (not
+// assigned_layer_piece_ids, which is illegal here since cold_layer_required is false indoors) to
+// confirm the untouched transit contract still fires end to end.
+test('cold-transit sleeve-bearing coverage remains independently enforced, unchanged by the new warmth-only assigned-layer check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // Insulating (would clear the new warmth-only check with room to spare) AND explicitly
+  // sleeveless -- proving the transit rejection below comes from the untouched sleeve contract,
+  // not from thermal-evidence reasoning.
+  const vestId = insertPiece({ category: 'outerwear', name: 'quilted vest', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium', sleeve_length: 'sleeveless' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["fleece"]', vestId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Museum Visit', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.isCold), false, 'fixture needs an indoor destination, so the base may stay bare and the sleeveless vest stays gate-eligible')
+  assert.ok(slot.gateAllowedIds.has(Number(vestId)), 'fixture sanity: the vest must actually be gate-eligible, or this test proves nothing about the transit contract')
+  // Same direct-mutation technique other tests in this file already use to force deterministic
+  // weather without live lookups -- the indoor destination's own transit leg is genuinely cold.
+  slot.weatherProfile = { ...slot.weatherProfile, transitIsCold: true }
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(vestId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('sleeve-bearing')),
+    'the independent, untouched cold-transit contract must still reject a sleeveless layer'
+  )
+})
+
+// Weather-behavior checkpoint (docs/README.md's cold-layer garment-role audit): severe cold and
+// rain protection are unit-proven directly against evaluateOutfitEnvironmentalAdequacy but were
+// never asserted through the real validateSubmittedPlanOutfits pipeline. These close that gap
+// with no behavior change -- the severe-cold/rain machinery is untouched by this session's work.
+test('severe cold end-to-end: an indoor-layer-only card is rejected through the real pipeline, and a qualifying coat passes', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'heavy sweater', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy', sleeve_length: 'long' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'wool trousers', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'winter boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // garmentKind 'cardigan' is hard-insufficient in outerLayerSevereColdAdequacy regardless of its
+  // own thermal evidence -- an indoor layer, however warm, is not outdoor outerwear.
+  const cardiganId = insertPiece({ category: 'outerwear', name: 'knit cardigan', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium', sleeve_length: 'long' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["unknown"]', cardiganId)
+  // A genuine coat: construction (garmentKind) passes the outdoor-capability gate, and heavy
+  // insulating fill clears the severe-cold system-warmth floor alongside the heavy base above.
+  const coatId = insertPiece({ category: 'outerwear', name: 'puffer coat', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy', sleeve_length: 'long' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ? WHERE id = ?').run('["down"]', coatId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Severe Cold Day', occasion: 'city', activity: 'walking', count: 1, weather: 'cold, around 30F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  // Same direct-mutation technique already established in this file: isColdSevere only affects
+  // validateSubmittedPlanOutfits's own weatherContext read, not roster/gate construction (already
+  // computed above from the ordinary isCold this fixture's weather text already resolved).
+  slot.weatherProfile = { ...slot.weatherProfile, isColdSevere: true }
+
+  const indoorLayerResult = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(cardiganId)],
+    cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+  }])
+  assert.equal(indoorLayerResult.accepted.length, 0)
+  assert.equal(indoorLayerResult.failures.length, 1)
+  assert.ok(
+    indoorLayerResult.failures[0].reasons.some(reason => reason.includes('not outdoor outerwear for cold exposure')),
+    'the severe-cold indoor-layer-only finding must reject through the real pipeline'
+  )
+
+  const coatResult = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(coatId)],
+    cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+  }])
+  assert.equal(coatResult.failures.length, 0)
+  assert.equal(coatResult.accepted.length, 1, 'a genuine outdoor-capable, adequately warm coat must pass the same severe-cold pipeline')
+})
+
+// Caveat, discovered while writing this test: isWetExposure is derived only inside
+// stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
+// weather projection) -- resolveSlotWeather (outfitSetPlanner.js), the function that actually
+// builds a trip/plan slot's weatherProfile, never reads or attaches isWetExposure/isRainy from its
+// own resolved precipitation data (confirmed: zero references to either name anywhere in
+// outfitSetPlanner.js). So this test forces isWetExposure by direct mutation, same as the
+// severe-cold test above, to prove the VALIDATION contract behaves correctly (advisory, never
+// blocking) once that flag is true -- it does NOT demonstrate that a real plan_outfit_set/trip
+// turn can ever reach that state today. That gap is reported separately, not fixed here.
+test('wet exposure / rain: RAIN_PROTECTION_MISSING surfaces as advisory through the real pipeline and never blocks acceptance', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'invariant bottom', occasions: ['city'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'invariant shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const plainJacketId = insertPiece({ category: 'outerwear', name: 'plain jacket', occasions: ['city'], formality: 'everyday', fabric_weight: 'medium' })
+  const rainShellId = insertPiece({ category: 'outerwear', name: 'rain shell', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
+  // weather_protection alone is not enough: evaluateOuterwearCapability's capabilityTagged proxy
+  // (outerwearCapability.js) requires either a tagger confidence entry or a legacy outerwear_role
+  // value to trust a populated hazard array at all -- otherwise it reads as never-tagged and stays
+  // 'unknown', never 'pass'. The legacy role's VALUE is never read as evidence, only its presence.
+  db.prepare('UPDATE pieces SET weather_protection = ?, outerwear_role = ? WHERE id = ?').run('["rain"]', 'protective_shell', rainShellId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Rainy City Day', occasion: 'city', activity: 'walking', count: 1, weather: 'warm' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week in the city' })
+  const slot = workbench.pendingPlan.slots[0]
+  slot.weatherProfile = { ...slot.weatherProfile, isWetExposure: true }
+
+  // (a) Neither submission is blocked -- confirms the finding is advisory, not hard, through the
+  // real acceptance path exactly as docs/outerwear-weather-consolidation-spec.md §6 rules.
+  const withoutRainShell = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(plainJacketId)],
+    cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+  }])
+  assert.equal(withoutRainShell.failures.length, 0)
+  assert.equal(withoutRainShell.accepted.length, 1, 'missing rain protection must never block acceptance')
+
+  const withRainShell = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(topId), Number(bottomId), Number(shoeId), Number(rainShellId)],
+    cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+  }])
+  assert.equal(withRainShell.failures.length, 0)
+  assert.equal(withRainShell.accepted.length, 1)
+
+  // (b) The advisory finding actually fires (not silently absent) -- calling evaluateWearableOutfit
+  // with the identical weatherContext shape validateSubmittedPlanOutfits builds internally, since
+  // that function only ever surfaces hardFindings and discards advisories entirely.
+  const weatherContext = { weatherProfile: slot.weatherProfile, environment: slot.environment }
+  const withoutShellPieces = [topId, bottomId, shoeId, plainJacketId].map(id => allPieces.find(p => Number(p.id) === Number(id)))
+  const withoutShellEvaluation = evaluateWearableOutfit(withoutShellPieces, { requireShoes: true, weatherContext })
+  assert.ok(
+    withoutShellEvaluation.advisoryFindings.some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.RAIN_PROTECTION_MISSING),
+    'the advisory finding must actually fire when no layer has rain protection'
+  )
+
+  const withShellPieces = [topId, bottomId, shoeId, rainShellId].map(id => allPieces.find(p => Number(p.id) === Number(id)))
+  const withShellEvaluation = evaluateWearableOutfit(withShellPieces, { requireShoes: true, weatherContext })
+  assert.ok(
+    !withShellEvaluation.advisoryFindings.some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.RAIN_PROTECTION_MISSING),
+    'a rain-capable shell must satisfy the finding'
+  )
+})
+
+test('the atomic trip composer\'s pre-validation output and each rejected card\'s exact reason are captured in diagnostic-only debug, never in the model-facing result', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const topId2 = insertPiece({ category: 'top', name: 'atomic trip top 2' })
+  const bottomId2 = insertPiece({ category: 'bottom', name: 'atomic trip bottom 2' })
+  const shoeId2 = insertPiece({ category: 'shoes', name: 'atomic trip shoes 2', heel_height: 'flat', walk_support: 'high' })
+  // Never selected into the roster -- guarantees the second card is rejected.
+  const outsideRosterId = insertPiece({ category: 'outerwear', name: 'never packed jacket' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, topId2, bottomId2, shoeId2] }),
+    composeTripPlanOnce: async workbench => {
+      const slot = workbench.slots[0]
+      return [
+        { slot_id: slot.id, piece_ids: [topId, bottomId, shoeId], title: 'Accepted Look', reason: 'r1' },
+        // A gate-ineligible piece named directly in piece_ids -- unlike assigned_layer_piece_ids,
+        // piece_ids is never touched by the mechanical cold_layer_required correction, so this
+        // stays a genuine rejection regardless of whether the slot requires a cold layer.
+        {
+          slot_id: slot.id, piece_ids: [topId2, bottomId2, outsideRosterId], title: 'Rejected Look', reason: 'r2',
+        },
+      ]
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  // One card survives (partial success), the other is rejected -- exactly the mixed outcome
+  // thread_1788577086327/run 1336 had no recorded evidence for after the fact.
+  assert.equal(toolContext.generatedOutfits.length, 1)
+
+  const debugRaw = toolContext.freeformDiagnostics.tripAtomicCompositionDebug
+  assert.ok(debugRaw, 'diagnostic debug must be populated whenever the atomic trip path runs')
+  const debug = JSON.parse(debugRaw)
+
+  assert.equal(debug.submitted.length, 2, 'both cards the composer returned before validation must be recorded, accepted or not')
+  const submittedTitles = debug.submitted.map(entry => entry.title).sort()
+  assert.deepEqual(submittedTitles, ['Accepted Look', 'Rejected Look'])
+
+  assert.equal(debug.rejected.length, 1)
+  const [rejected] = debug.rejected
+  assert.equal(rejected.label, 'City Days')
+  assert.deepEqual(rejected.piece_ids.sort((a, b) => a - b), [topId2, bottomId2, outsideRosterId].sort((a, b) => a - b))
+  assert.deepEqual(rejected.assigned_layer_piece_ids, [])
+  assert.ok(
+    rejected.reasons.some(reason => reason.includes('not an active wardrobe piece') && reason.includes(String(outsideRosterId))),
+    'the exact validator failure reason, naming the rejected piece id, must be captured'
+  )
+
+  // Diagnostic-only: never in the model-facing tool result.
+  const serializedResult = JSON.stringify(result)
+  assert.ok(!serializedResult.includes('tripAtomicCompositionDebug'))
+  assert.ok(!serializedResult.includes('not an active wardrobe piece'), 'the rejected card\'s exact validator reason must not leak into the model-facing message')
+  assert.ok(!serializedResult.includes(String(outsideRosterId)), 'the rejected card\'s piece id must not leak into the model-facing message')
+  assert.equal(result.bounded_composition, true)
+})
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md §6 -- Part B unit tests on the pure
+// identification function. No provider call anywhere in this block; identifyColdLayerRepairableFailures
+// is deliberately pure (the actual repair composition call is the caller's job, tested separately
+// below via the atomic trip orchestration).
+test('identifyColdLayerRepairableFailures recognizes both the omission and false-claim failure shapes, given a qualifying candidate layer', () => {
+  const qualifyingLayer = { id: 900, name: 'plain trench', category: 'outerwear' }
+  const pendingPlan = {
+    slots: [
+      { id: 'city_day', label: 'City Day', allowedPieces: [qualifyingLayer] },
+      { id: 'evening_out', label: 'Evening Out', allowedPieces: [qualifyingLayer] },
+    ]
+  }
+  const failures = [
+    {
+      slot_id: 'city_day', label: 'City Day',
+      reasons: ['no warm layer for cold weather'],
+      outfit: { title: 'City Look', pieceIds: [1, 2, 3] },
+    },
+    {
+      slot_id: 'evening_out', label: 'Evening Out',
+      reasons: ["cold_layer_decision claims core_is_warm_enough for Evening Out but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false."],
+      outfit: { title: 'Evening Look', pieceIds: [4, 5, 6] },
+    },
+  ]
+
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 2, 'both the omission and the false-claim shape must be recognized as repairable')
+  const bySlot = new Map(repairable.map(entry => [entry.slot_id, entry]))
+  assert.deepEqual(bySlot.get('city_day').piece_ids, [1, 2, 3], 'the original piece_ids must be carried through verbatim')
+  assert.equal(bySlot.get('city_day').title, 'City Look')
+  assert.deepEqual(bySlot.get('evening_out').piece_ids, [4, 5, 6])
+  assert.equal(bySlot.get('evening_out').title, 'Evening Look')
+  assert.ok(bySlot.get('city_day').candidates.some(c => c.id === 900), 'the qualifying layer must be offered as a candidate')
+})
+
+test('identifyColdLayerRepairableFailures excludes a card that also carries a different, unrelated failure', () => {
+  const qualifyingLayer = { id: 900, name: 'plain trench', category: 'outerwear' }
+  const pendingPlan = { slots: [{ id: 'city_day', label: 'City Day', allowedPieces: [qualifyingLayer] }] }
+  const failures = [{
+    slot_id: 'city_day', label: 'City Day',
+    reasons: ['no warm layer for cold weather', 'top piece 1 repeats despite no_repeat'],
+    outfit: { title: 'City Look', pieceIds: [1, 2, 3] },
+  }]
+
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 0, 'a card with any other failure alongside the cold-layer one must never be bundled into repair')
+})
+
+test('identifyColdLayerRepairableFailures never sends a slot with no qualifying candidate layer to repair', () => {
+  // "outerwear" category but positively inadequate (ultralight + unlined -- 2 of the 3 negative
+  // signals outerwearLayerPositivelyInadequate checks), so it can never satisfy the cold floor.
+  const uselessLayer = { id: 901, name: 'thin unlined shell', category: 'outerwear', fabric_weight: 'ultralight', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const pendingPlan = { slots: [{ id: 'city_day', label: 'City Day', allowedPieces: [uselessLayer] }] }
+  const failures = [{
+    slot_id: 'city_day', label: 'City Day',
+    reasons: ['no warm layer for cold weather'],
+    outfit: { title: 'City Look', pieceIds: [1, 2, 3] },
+  }]
+
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 0, 'repairing toward a roster with nothing that could ever qualify is wasted cost -- must stay a disclosed failure')
+})
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md §6 -- the repair prompt's own wording
+// must actually carry the "fix only the decision, do not restyle" instruction, not just be
+// inferable from the schema shape.
+test('the repair composition system prompt explicitly instructs "fix only the decision", not a restyle', () => {
+  const prompt = repairTripColdLayerCardsSystemPrompt()
+  assert.match(prompt, /Do NOT change piece_ids, title, reason, or styling_instructions/)
+  assert.match(prompt, /targeted fix, not a chance to restyle/)
+  const schema = repairTripColdLayerCardsSchema(2)
+  const cardProps = Object.keys(schema.properties.cards.items.properties)
+  assert.ok(cardProps.includes('cold_layer_decision'))
+  assert.deepEqual(schema.properties.cards.items.required, ['slot_id', 'cold_layer_decision'])
+})
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md §6 -- the exact live failure shape,
+// pinned directly. thread_1788667759424: 5 of 7 cards silently disappeared because the composer
+// omitted the (then-optional) assigned_layer_piece_ids field on genuinely cold slots that had real,
+// gate-eligible packed layers sitting unused in the roster. Under the new mandatory schema the
+// model cannot omit cold_layer_decision entirely (the schema itself requires the field), so the
+// realistic equivalent of "the model forgot to name a layer" is the well-formed-but-empty shape:
+// mode 'assigned_packed_layer' with assigned_layer_piece_id left null. Reproduces the shape with 3
+// non-hiking slots, a roster containing a non-qualifying piece alongside a trench and a jacket
+// (both qualify and pass the occasion gate), and a mock composer that leaves every card's layer
+// unnamed. Asserts: first pass rejects all three, Part B's repair fires (not the no-candidates
+// branch), a mock repair response naming the trench for each is accepted, and the final count is 3
+// of 3 -- not 0.
+test('the exact live failure shape does not recur: an unnamed cold_layer_decision on every card is fully recovered by the one bounded repair pass', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topA = insertPiece({ category: 'top', name: 'sightseeing top' })
+  const bottomA = insertPiece({ category: 'bottom', name: 'sightseeing bottom' })
+  const topB = insertPiece({ category: 'top', name: 'city top' })
+  const bottomB = insertPiece({ category: 'bottom', name: 'city bottom' })
+  const topC = insertPiece({ category: 'top', name: 'nature walk top' })
+  const bottomC = insertPiece({ category: 'bottom', name: 'nature walk bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', heel_height: 'flat', walk_support: 'high' })
+  // Fails outerwearLayerPositivelyInadequate's own presence bar entirely differently -- a UPF hoodie
+  // is thermally useless (sun protection, not insulation) but that's not what excludes it here: it
+  // is simply never packed into the roster below, exactly like the live incident's redundant piece.
+  const uselessHoodie = insertPiece({ category: 'outerwear', name: 'UPF hoodie', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?').run('[]', 'unlined', uselessHoodie)
+  const trenchId = insertPiece({ category: 'outerwear', name: 'trench coat' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'olive jacket' })
+
+  const repairCalls = []
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topA, bottomA, topB, bottomB, topC, bottomC, shoeId, trenchId, jacketId] }),
+    composeTripPlanOnce: async workbench => workbench.slots.map((slot, index) => ({
+      slot_id: slot.id,
+      piece_ids: [[topA, bottomA], [topB, bottomB], [topC, bottomC]][index].concat([shoeId]),
+      title: `Look ${index + 1}`,
+      reason: 'r',
+      // Well-formed mode, but never names a packed layer -- the realistic "model forgot" shape
+      // under the new mandatory schema.
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+    })),
+    repairTripColdLayerCards: async ({ cards }) => {
+      repairCalls.push(cards)
+      return cards.map(card => ({
+        slot_id: card.slot_id,
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+      }))
+    },
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 55, low_f: 38 },
+    slots: [
+      { label: 'Sightseeing', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'City Errands', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'Nature Walk', occasion: 'casual', activity: 'walking', count: 1 },
+    ],
+  }, toolContext)
+
+  assert.equal(repairCalls.length, 1, 'Part B repair must fire exactly once, not the no-candidates branch')
+  assert.equal(repairCalls[0].length, 3, 'all three cards, sharing the identical omission failure, must be batched into the one repair call')
+  for (const card of repairCalls[0]) {
+    assert.ok(card.candidates.some(c => Number(c.id) === Number(trenchId)), 'the trench must be offered as a qualifying candidate')
+    assert.ok(card.candidates.some(c => Number(c.id) === Number(jacketId)), 'the jacket must be offered as a qualifying candidate')
+    assert.ok(!card.candidates.some(c => Number(c.id) === Number(uselessHoodie)), 'the never-packed hoodie is not even in the roster, so it cannot appear as a candidate')
+  }
+
+  assert.equal(result.status, 'success', `all three cards must be recovered by the repair pass, got: ${JSON.stringify(result)}`)
+  assert.equal(toolContext.generatedOutfits.length, 3, 'the exact live failure shape -- 3 of 3 lost to an omitted optional field -- must not recur')
+  for (const card of toolContext.generatedOutfits) {
+    assert.deepEqual(card.assignedLayerIds, [Number(trenchId)], 'the accepted card\'s assigned layer must trace back to the mock repair response, never a value synthesized by the orchestration code')
+  }
+
+  const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
+  assert.equal(debug.repaired.length, 3, 'the diagnostic must record all three cards as repaired, distinguishing "needed one narrow second chance" from "lost"')
+})
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md §4.3 -- a false core_is_warm_enough
+// claim and a plain omission are structurally different failures (distinct messages, for
+// diagnostics) but must converge on the exact same repairable path.
+test('a false core_is_warm_enough claim lands in the same repairable batch as an omission, and is recovered the same way', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topA = insertPiece({ category: 'top', name: 'thin top A' })
+  const bottomA = insertPiece({ category: 'bottom', name: 'bottom A' })
+  const topB = insertPiece({ category: 'top', name: 'thin top B' })
+  const bottomB = insertPiece({ category: 'bottom', name: 'bottom B' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const trenchId = insertPiece({ category: 'outerwear', name: 'trench coat' })
+
+  const repairCalls = []
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topA, bottomA, topB, bottomB, shoeId, trenchId] }),
+    composeTripPlanOnce: async workbench => [
+      {
+        slot_id: workbench.slots[0].id, piece_ids: [topA, bottomA, shoeId], title: 'Omission Look', reason: 'r',
+        // Omission: mode set but no layer named.
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+      },
+      {
+        slot_id: workbench.slots[1].id, piece_ids: [topB, bottomB, shoeId], title: 'False Claim Look', reason: 'r',
+        // False claim: piece_ids has no qualifying layer or heavy-fabric main, but claims it does.
+        cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
+      },
+    ],
+    repairTripColdLayerCards: async ({ cards }) => {
+      repairCalls.push(cards)
+      return cards.map(card => ({
+        slot_id: card.slot_id,
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+      }))
+    },
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 55, low_f: 38 },
+    slots: [
+      { label: 'Omission Day', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'False Claim Day', occasion: 'city', activity: 'walking', count: 1 },
+    ],
+  }, toolContext)
+
+  assert.equal(repairCalls.length, 1)
+  assert.equal(repairCalls[0].length, 2, 'both the omission and the false-claim card must land in the SAME repair batch')
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 2, 'both distinct failure shapes must be recoverable through the identical repair path')
+})
+
+test('capsule-only palette/budget/rotation semantics do not leak into trip composition', async () => {
+  // Structural: the trip composition schema carries no palette/category-shape/budget fields.
+  const schema = tripPlanCompositionSchema(3)
+  const outfitProps = Object.keys(schema.properties.outfits.items.properties)
+  assert.deepEqual(outfitProps.sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title'])
+  assert.ok(!('palette' in schema.properties), 'trip composition has no palette contract, unlike capsule')
+
+  // Prompt: trip's composition-only prompt states its own objective, not capsule's job-demonstration
+  // or enforced-distinct-core-across-the-rotation framing.
+  const prompt = tripPlanCompositionSystemPrompt()
+  assert.doesNotMatch(prompt, /prove the capsule works/)
+  assert.doesNotMatch(prompt, /Every piece in the roster was chosen for a job/)
+  assert.doesNotMatch(prompt, /enforced across the ENTIRE rotation/)
+  assert.match(prompt, /suitcase/i)
+
+  // Functional: the actual success message the model receives for a real atomic trip run must not
+  // carry capsule's evidence-boundary text ("requested colour", "hero piece") -- confirmed by
+  // running the real path, not just reading the prompt.
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'atomic trip top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'atomic trip bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'atomic trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => [{
+      slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Atomic City Look', reason: 'r'
+    }]
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  assert.doesNotMatch(result.message, /Capsule evidence boundary/)
+  assert.doesNotMatch(result.message, /requested colour may serve any visual role/)
+})
+
+test('atomic trip composition receives roster thumbnails and full authoritative garment truth, per its own dedicated function', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /export function tripPlanCompositionSystemPrompt\(\)/)
+  assert.match(routeSrc, /async function composeTripPlanOnce\(workbench, toolContext\)/)
+  assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `trip-plan:/)
+  assert.match(routeSrc, /atomicTripVisualPieces = visuallySeenIds\.length/)
+
+  // Read the composeTripPlanOnce function body specifically -- capsule's sibling function uses the
+  // byte-identical truthCatalog line, so a whole-file search alone cannot distinguish them.
+  const fnStart = routeSrc.indexOf('async function composeTripPlanOnce(workbench, toolContext)')
+  assert.ok(fnStart > -1)
+  const fnEndMarker = 'atomicTripVisualPieces = visuallySeenIds.length'
+  const fnEnd = routeSrc.indexOf(fnEndMarker, fnStart)
+  assert.ok(fnEnd > -1)
+  const fnBody = routeSrc.slice(fnStart, fnEnd + fnEndMarker.length)
+  assert.match(fnBody, /truthCatalog = rosterPieces\.map\(piece => `ID \$\{piece\.id\}: \$\{buildPieceText\(piece\)\}`\)/)
+  assert.doesNotMatch(fnBody, /planWorkbenchPieceLine\(/, 'must not CALL the compact line builder (the bare name appears only in an explanatory comment)')
+  assert.match(fnBody, /content\.push\(\{\s*type: 'image'/)
+  assert.match(fnBody, /maxPx: 800/)
+  // The tool-loop-only sentence in workbench.instructions must be rewritten, not embedded verbatim.
+  assert.match(fnBody, /instructions: atomicTripCompositionInstructions\(workbench\.instructions\)/)
+})
+
+// Live capture, thread_1788680648194/run 1348: reconstructing the exact atomic composition call
+// end to end found the workbench's shared `instructions` string telling the model to "submit ALL
+// slots in ONE submit_plan_outfits call" and "VIEW the pieces... [via a] Viewing pieces is cheap"
+// tool action -- immediately after the system prompt's own, correct "return... in one structured
+// response" instruction. That sentence is right for the ordinary tool-loop plan_outfit_set path
+// (submit_plan_outfits and view_pieces really are callable tools there, with a resubmission
+// chance), but the atomic composer has neither: it returns its answer as this call's structured
+// response, has no tools at all, and no resubmission round (boundedComposition: true). Pins the
+// fix scoped at the composeTripPlanOnce boundary, not the shared workbenchInstructions builder.
+test('the atomic composer rewrites the shared workbench instructions\' tool-loop-only sentence, not the tool-loop path\'s own copy', () => {
+  const toolLoopInstructions = 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Viewing pieces is cheap. VIEW the pieces of any outfit whose visual coherence you are uncertain about — print combinations, statement pieces, layering, anything sheer or revealing, silhouette pairings you haven\'t seen work. Compose directly from the catalog when pieces are solids and the combination is conventional. Do not bulk-browse the whole roster. If validation accepts some outfits and rejects others, resubmit only the failed slots. Reuse is set to maximize.'
+
+  const rewritten = atomicTripCompositionInstructions(toolLoopInstructions)
+  assert.doesNotMatch(rewritten, /submit_plan_outfits/, 'the atomic path has no such tool -- this sentence must not reach it')
+  assert.doesNotMatch(rewritten, /Viewing pieces is cheap/, 'the atomic path has no view_pieces tool either -- every photo is already attached unconditionally')
+  assert.doesNotMatch(rewritten, /resubmit only the failed slots/, 'the atomic path is one-shot -- there is no resubmission round to describe')
+  assert.match(rewritten, /return it as this call's own structured response/)
+  assert.match(rewritten, /Reuse is set to maximize\.$/, 'text after the rewritten sentence must survive untouched')
+
+  // A string that never carries the tool-loop-only sentence at all (already correct, or from some
+  // other caller) must pass through completely unchanged -- this is a targeted rewrite, not a
+  // blanket transform.
+  const alreadyFine = 'Some other instructions entirely.'
+  assert.equal(atomicTripCompositionInstructions(alreadyFine), alreadyFine)
+})
+
+// thread_1788501349296: a trip roster with zero outerwear made every submitted card fail
+// NO_REMOVABLE_COOL_LAYER; the model correctly repaired it by finding real, active outerwear via
+// search_wardrobe, but submit_plan_outfits rejected every one of those pieces as "not an active
+// wardrobe piece" -- they were active, just outside the roster plan_outfit_set originally selected.
+// These pin the fix: submit_plan_outfits must accept a genuinely gate-eligible non-roster piece as
+// a packing-roster addition (the same mutation semantics propose_outfit's follow-up editing already
+// has), not a hard rejection.
+test('submit_plan_outfits accepts a verified non-roster piece as a packing-roster addition when it passes the slot\'s own gates', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city', 'casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['city', 'casual'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // A real, active outerwear piece the roster chooser did NOT select -- exactly the "found via
+  // search_wardrobe, outside the frozen roster" scenario from the live incident.
+  const jacketId = insertPiece({ category: 'outerwear', name: 'real active jacket', occasions: ['city', 'casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    // The roster chooser omits outerwear entirely, same shape as the live incident.
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId] }),
+  }
+  const planResult = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(planResult.status, 'slot_rosters')
+  assert.ok(!toolContext.pendingPlan.tripRoster.some(p => Number(p.id) === jacketId), 'sanity: the jacket must genuinely start outside the roster')
+  // Force the removable-cool-layer condition deterministically, the same way
+  // test/tripPackingRoster.test.js's own SET-level test does, without needing live weather.
+  toolContext.pendingPlan.slots[0].weatherProfile = { ...toolContext.pendingPlan.slots[0].weatherProfile, needsRemovableCoolLayer: true, isCold: false }
+
+  const slotId = toolContext.pendingPlan.slots[0].id
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{ slot_id: slotId, piece_ids: [topId, bottomId, shoeId, jacketId], title: 'City Look', reason: 'a coordinated city look with a layer' }]
+  }, toolContext)
+
+  assert.equal(submitted.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].pieces.some(p => Number(p.id) === jacketId), true, 'the non-roster jacket must be accepted onto the card')
+  // The pending roster addition must persist onto the plan's own tripPlanContext -- the same
+  // packing-roster -> tripPlanContext -> packing_roster persistence path an initially-selected
+  // roster already uses, no separate plumbing.
+  assert.equal(toolContext.generatedOutfits[0].tripPlanContext.roster_ids.includes(jacketId), true, 'the roster addition must be disclosed in the client-facing packing roster, not silently absorbed into just this one card')
+})
+
+test('submit_plan_outfits distinguishes a genuinely inactive piece from an active piece outside the trip roster', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['casual', 'outdoor'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trip bottom', occasions: ['casual', 'outdoor'], formality: 'everyday' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  // Active, but a heeled/low-support shoe genuinely fails a hiking activity's hard footwear gate
+  // (evaluatePlannerAutomaticUsePool -> activity_profile_high_heel_unsuitable) -- occasion alone is
+  // not a hard gate in this app, so this is the reliable way to fail gates on purpose.
+  const heeledShoeId = insertPiece({ category: 'shoes', name: 'heeled shoe', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'high', walk_support: 'low' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week of nature walks',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'Nature Walks', occasion: 'casual', activity: 'hiking', count: 1 }],
+  }, toolContext)
+  const slotId = toolContext.pendingPlan.slots[0].id
+
+  const nonExistentId = 999999999
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: slotId, piece_ids: [topId, bottomId, nonExistentId], title: 'A', reason: 'r' },
+      { slot_id: slotId, piece_ids: [topId, bottomId, heeledShoeId], title: 'B', reason: 'r' },
+    ]
+  }, toolContext)
+
+  const failureTextFor = id => submitted.failures.flatMap(f => f.reasons).find(r => r.includes(String(id)))
+  assert.match(failureTextFor(nonExistentId), /is not an active wardrobe piece/, 'a piece that does not exist at all must still get the true message')
+  assert.match(failureTextFor(heeledShoeId), /is outside this trip's current packing roster/, 'an active piece that fails this slot\'s own gates must get the honest roster-membership message, not a false "not active" claim')
+  assert.doesNotMatch(failureTextFor(heeledShoeId), /is not an active wardrobe piece/)
+})
+
+// thread_1788501349296, Part 4: repair belongs inside the active trip-plan contract.
+test('generate_outfits is blocked while a trip plan is in progress, and does not block once the plan is resolved', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'trip top', occasions: ['city'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(toolContext.pendingPlan?.mode, 'model', 'sanity: a trip plan must be active')
+
+  const blocked = await executeTool('generate_outfits', { occasion: 'city' }, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /trip plan is already in progress/)
+
+  // Once the plan is cleared (resolved, however that happens), generate_outfits must not stay
+  // blocked forever -- the guard is scoped to an ACTIVE trip plan, not trips as a topic.
+  toolContext.pendingPlan = null
+  toolContext.declaredIntent = { want: 'cards' }
+  const afterResolved = await executeTool('generate_outfits', { occasion: 'city' }, toolContext)
+  assert.notEqual(afterResolved.status, 'validation_error')
+})
+
+// thread_1788501349296, Part 4 continued: an exhausted repair budget with nothing ever accepted
+// must end in an honest disclosure, not an unbounded validation_error loop -- that unbounded loop
+// is what burned the live incident's remaining tool-loop steps until the model gave up on the trip
+// contract entirely and switched products.
+test('submit_plan_outfits discloses an honest terminal gap instead of looping forever when nothing is ever accepted', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trip top', occasions: ['city'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId] }),
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  const slotId = toolContext.pendingPlan.slots[0].id
+
+  // Always submit an incomplete outfit (missing bottom/shoes) so nothing is ever accepted, across
+  // repeated attempts -- reproducing the live incident's "0 accepted, resubmits keep climbing" shape.
+  let last
+  for (let i = 0; i < 4; i++) {
+    last = await executeTool('submit_plan_outfits', {
+      outfits: [{ slot_id: slotId, piece_ids: [topId], title: `Attempt ${i}`, reason: 'incomplete on purpose' }]
+    }, toolContext)
+    if (last.status !== 'validation_error') break
+  }
+  assert.equal(last.status, 'error')
+  assert.match(last.message, /disclosed packing\/wardrobe gap/)
+  assert.match(last.message, /do not switch to generate_outfits/)
+  assert.equal(toolContext.pendingPlan, null, 'the exhausted plan must be cleared, not left open for further blind resubmits')
 })
 
 test('successful atomic capsule composition removes every tool from the final prose turn', () => {
@@ -766,6 +2006,130 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
   assert.ok(allowed.has(closedFlats), 'closed footwear remains allowed')
 })
 
+// Live regression, thread_1788584505940: effectiveSlotRegisterCeilingRank combined only occasion
+// + explicit slot.register, silently discarding the activity profile's own register_ceiling the
+// moment either became an explicit override passed into wholeWardrobePieceTrustDecision -- once
+// that override is set, the function skips its own occasion+activity derivation entirely. A slot
+// resolved as outdoor_daytime_social (occasion ceiling "elevated") + hiking (activity ceiling
+// "everyday", footwear-comfort.js) let elevated-formality pieces stay gate-eligible for a hike,
+// because the stricter activity ceiling never entered the computation. Fixed by having
+// effectiveSlotRegisterCeilingRank reuse resolveRegisterCeiling's own occasion+activity
+// strictest-wins combination (rules.js) instead of an occasion-only one.
+test('an elevated trench coat is excluded from a hiking slot even when its occasion alone permits elevated pieces', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // occasions deliberately does NOT include 'outdoor_daytime_social' -- matching the real live
+  // trench coat's own tags (["city","smart-casual"]). registerCeilingVerdict (rules.js) grants an
+  // explicit-occasion-tag exemption of up to one rank above the ceiling; including the slot's own
+  // occasion here would trigger that unrelated, pre-existing exemption (elevated is exactly one
+  // rank above hiking's everyday ceiling) and mask the fix under test.
+  const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
+  const everydayJacket = insertPiece({ category: 'outerwear', name: 'everyday zip jacket', formality: 'everyday', occasions: ['outdoor_daytime_social', 'city'] })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'hiking sneakers', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(trenchCoat)), false, 'an elevated coat must not be eligible for a hiking slot')
+  assert.ok(slot.gateAllowedIds.has(Number(everydayJacket)), 'an everyday-formality coat remains eligible')
+})
+
+// The control: the SAME elevated coat, on a slot sharing the identical occasion but an activity
+// with no register_ceiling of its own -- outdoor_daytime_social's own "elevated" ceiling must
+// still govern here, proving the fix narrows eligibility only when an activity actually demands
+// it, not universally.
+test('the same elevated trench coat remains eligible for a non-hiking outdoor-social slot where elevated is valid', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'outdoor social top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'outdoor social bottom', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'outdoor social shoes', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Outdoor Festival', occasion: 'outdoor_daytime_social', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'an outdoor festival' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.ok(slot.gateAllowedIds.has(Number(trenchCoat)), 'an elevated coat stays eligible when no stricter activity ceiling applies')
+})
+
+// Verifies the fix against the actual second bad candidate from the live run, not just the coat:
+// hiking's discouraged_pieces (dress) is a separate, deliberately-unenforced-here policy question
+// (flagged, not fixed) -- but the dress is ALSO elevated-formality, so the register ceiling alone
+// must already exclude it, independent of that open question.
+test('an elevated dress is also excluded from a hiking slot by the same register-ceiling fix', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Same tag choice as the trench coat test above, and for the same reason: excluding the slot's
+  // own occasion from the piece's tags avoids the pre-existing one-rank explicit-tag exemption.
+  const dress = insertPiece({ category: 'dress', name: 'elevated sheath dress', formality: 'elevated', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'hiking sneakers', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(dress)), false, 'an elevated dress must not be eligible for a hiking slot')
+})
+
+// Weather-behavior checkpoint follow-up: resolveSlotWeather (this file) never derived
+// isWetExposure/isRainy from its own resolved precipitation, unlike stylingContext.js's
+// profileFromResolvedWeatherContext (the general conversational-stylist path) -- so a real
+// plan_outfit_set/trip turn's resolved rain could never exclude wet-sensitive footwear at the
+// roster/gate level, no matter how rainy the weather. Fixed by reusing weather.js's
+// wetExposureFromPrecipitation (the same canonical rule, extracted rather than duplicated) in both
+// of resolveSlotWeather's return branches. Mirrors the existing cold-footwear pipeline test above
+// exactly, substituting resolved precipitation for resolved temperature.
+test('plan_outfit_set: resolved rainy trip weather excludes wet-sensitive footwear at the roster/gate level before composition', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const leatherShoe = insertPiece({ category: 'shoes', name: 'leather loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'leather' WHERE id = ?").run(leatherShoe)
+  const meshShoe = insertPiece({ category: 'shoes', name: 'mesh athletic sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'mesh' WHERE id = ?").run(meshShoe)
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a rainy week in the city' }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 60, low_f: 50, precipitation: 'rain' },
+    slots: [{ label: 'Rainy City Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.equal(allowed.has(meshShoe), false, 'mesh footwear must be excluded once resolved precipitation establishes wet exposure')
+  assert.ok(allowed.has(leatherShoe), 'non-wet-sensitive footwear remains allowed')
+})
+
+// The dry-weather control: the same wet-sensitive shoe stays eligible absent a rainy resolution,
+// proving the exclusion above tracks the resolved condition rather than firing unconditionally.
+test('plan_outfit_set: dry trip weather leaves wet-sensitive footwear eligible', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const meshShoe = insertPiece({ category: 'shoes', name: 'mesh athletic sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare("UPDATE pieces SET fabric_category = 'mesh' WHERE id = ?").run(meshShoe)
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'a dry week in the city' }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 60, low_f: 50, precipitation: 'none' },
+    slots: [{ label: 'Dry City Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  const allowed = new Set(result.slots[0].allowed_piece_ids)
+  assert.ok(allowed.has(meshShoe), 'wet-sensitive footwear must remain eligible when wet exposure is absent')
+})
+
 // Spec §9 item 25: "The exact Vienna request reaches plan_outfit_set once with
 // 65/45 estimate input, receives a cold-valid roster, and submits valid cards
 // without a weather retry or outfit repair." Uses replayStylistToolScript — the
@@ -831,6 +2195,9 @@ test('the representative Vienna VA week reaches one plan call and submits sights
                 slot_id: slot.id,
                 piece_ids: [tops[index], bottoms[index], coat, closedSneakers].filter(id => allowed.has(Number(id))),
                 reason: `A cold-valid layered ${slot.label.toLowerCase()} look for a 65/45 October day.`,
+                cold_layer_decision: slot.cold_layer_required
+                  ? { mode: 'core_is_warm_enough', assigned_layer_piece_id: null }
+                  : { mode: 'not_required', assigned_layer_piece_id: null },
               }
             })
           }
@@ -906,8 +2273,8 @@ test('plan_outfit_set + submit_plan_outfits: a shared coat may repeat across two
   const idsTwo = idsForSlot(slotTwo, 1)
   const submitted = await executeTool('submit_plan_outfits', {
     outfits: [
-      { slot_id: slotOne.id, piece_ids: [idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat] },
-      { slot_id: slotTwo.id, piece_ids: [idsTwo.get('top') ?? idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat] },
+      { slot_id: slotOne.id, piece_ids: [idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat], cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null } },
+      { slot_id: slotTwo.id, piece_ids: [idsTwo.get('top') ?? idsOne.get('top'), idsOne.get('bottom'), idsOne.get('shoes'), coat], cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null } },
     ]
   }, toolContext)
 
@@ -1017,6 +2384,7 @@ test('plan_outfit_set + submit_plan_outfits persists weatherUsed/resolvedWeather
     outfits: [{
       slot_id: toolContext.pendingPlan.slots[0].id,
       piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes'), ids.get('outerwear')],
+      cold_layer_decision: { mode: 'core_is_warm_enough', assigned_layer_piece_id: null },
     }]
   }, toolContext)
 
@@ -1254,6 +2622,168 @@ test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed p
   }, mixedToolContext)
   assert.equal(mixedResult.status, 'weather_context_required', 'one resolved slot must not let an unresolved sibling slot through')
   assert.match(mixedResult.message, /Coast Detour/)
+})
+
+// thread_1788499704803: plan_outfit_set's own date_range silently drifted to the current week
+// (Sep 4-11) despite the user stating "October 12th... for a week" in the SAME turn, and the
+// deterministic weather fallback then resolved LIVE hot September weather for the wrong dates
+// rather than correctly reporting the requested October trip as unforecastable. Traced the whole
+// date path: the weather fallback itself was already correct (an out-of-range date genuinely
+// returns 'unavailable' -- verified directly against the real API), so the actual defect was that
+// nothing deterministically extracted/enforced the user's own stated date, leaving the model's
+// tool-call argument unverified. This reproduces the exact failure shape and proves the fix: a
+// model date_range that disagrees with the deterministically-extracted one is corrected BEFORE it
+// ever reaches weather resolution, so the request lands on weather_context_required (asking for a
+// seasonal estimate) instead of silently substituting the wrong week's live weather.
+test('plan_outfit_set: a wrong model date_range is corrected to the user-stated date before weather resolves, never substituting the current week', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'city bottom', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'city shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const question = 'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.deepEqual(statedTripDateRange, { start: '2026-10-12', end: '2026-10-18', durationDays: 7, hasExplicitDuration: true, source: 'user_stated' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async (url) => {
+      if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+      // The real Open-Meteo rejection shape for a date outside its forecast window (verified
+      // directly against the live API while diagnosing this incident) -- only for the CORRECTED
+      // October dates. If the override failed to fire, the model's wrong Sep 4-11 argument would
+      // hit the branch below instead and get real-looking hot-week data, the same live weather
+      // the actual incident silently used.
+      if (url.includes('start_date=2026-10-12')) return { ok: false, json: async () => ({ error: true }) }
+      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [93.5], temperature_2m_min: [61.7] } }) }
+    }
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    // The model's own (wrong) argument -- the current week, not the stated October trip.
+    date_range: { start: '2026-09-04', end: '2026-09-11' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'weather_context_required', 'the corrected October date must be genuinely unforecastable, not silently resolved as hot September weather')
+  assert.deepEqual(result.date_range, { start: '2026-10-12', end: '2026-10-18' }, 'the model\'s wrong date_range must be corrected to the user-stated one, not passed through')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
+  assert.equal(toolContext.freeformDiagnostics.resolvedDateRange, '2026-10-12..2026-10-18')
+  assert.equal(toolContext.freeformDiagnostics.resolvedLocation, 'Vienna, Virginia')
+})
+
+// thread_1788501349296's rerun: start agreed at Oct 12, and the model's own end date (Oct 19) rode
+// through unchanged even though the user's own "for a week" already makes Oct 18 the complete,
+// settled fact -- agreement on start is not the same as the user having said nothing about the end.
+// Ownership must reflect exactly what the user supplied: start+duration owns both ends; start-only
+// leaves the model's end as genuine additional detail.
+test('plan_outfit_set: a stated duration owns the end date even when the model\'s start agrees but its end disagrees', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia on October 12th for a week'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.equal(statedTripDateRange.hasExplicitDuration, true, 'sanity: "for a week" must be recognized as an explicit duration')
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    // Start agrees with the extracted date; end does not (mirrors the live Oct 12-19 vs Oct 12-18
+    // rerun exactly).
+    date_range: { start: '2026-10-12', end: '2026-10-19' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-18', 'a stated duration owns the complete range -- the model\'s own end date must not survive just because its start agreed')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
+})
+
+test('plan_outfit_set: a start-only statement (no duration) leaves an agreeing model\'s own end date as genuine additional detail', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia starting October 12th'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  assert.equal(statedTripDateRange.hasExplicitDuration, false, 'sanity: no duration was stated')
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-10-12', end: '2026-10-15' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-15', 'with no stated duration, an agreeing model end date is genuine additional detail and must be kept')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated', 'the start is still user-owned even though the end came from the model')
+})
+
+test('plan_outfit_set: a start-only statement with a disagreeing model start falls back to the extracted single-day default, not the model\'s untrustworthy end', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+
+  const question = 'trip to Vienna, Virginia starting October 12th'
+  const statedTripDateRange = extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange,
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2026-09-04', end: '2026-09-11' },
+    slots: [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.date_range.start, '2026-10-12')
+  assert.equal(result.date_range.end, '2026-10-12', 'a disagreeing model start makes its end untrustworthy too -- fall back to the extracted single-day default, not the model\'s Sep 4-11')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
+})
+
+test('plan_outfit_set: with no user-stated date anywhere, the model\'s own date_range is used as before (no regression)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'weekend top', occasions: ['casual'], formality: 'everyday' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'outfits for the weekend',
+    weatherFetchImpl: async () => ({ ok: true, json: async () => ({ results: [] }) })
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'coordinated_plan',
+    date_range: { start: '2026-09-05', end: '2026-09-06' },
+    slots: [{ label: 'Weekend', occasion: 'casual', activity: 'none', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.equal(toolContext.freeformDiagnostics.resolvedDateRange, '2026-09-05..2026-09-06', 'the model\'s own date_range is used as-is when nothing in the text states a trip date')
+  assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'model')
 })
 
 test('plan_outfit_set: user_weather (stated_user) outranks an unresolved live forecast, and binds to location like weather_estimate', async () => {
@@ -3841,6 +5371,33 @@ test('sanitizePlanConstraintsForQuestion strips model-invented no_repeat from re
     'Build me a 24-piece summer capsule wardrobe, but do not repeat tops.'
   )
   assert.deepEqual(explicit, { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] })
+})
+
+// Live thread_1788484052964: a real Vienna destination-packing request went through
+// plan_outfit_set with no plan_kind:'trip' at all (missing or 'coordinated_plan'), so the
+// packing-roster architecture never engaged -- the run produced ordinary coordinated-plan
+// cards (verified after the fact: near-duplicate outfits reused across occasions, no
+// packing_roster in persisted state). Prompt wording ("use 'trip' for destination packing")
+// was not enough on its own. Fix: a real away-from-home `location` on the plan call is the
+// tool's own structural travel signal (its schema says to omit location for at-home plans)
+// and now overrides a missing/wrong plan_kind at the tool boundary, not just prose guidance.
+test('a plan_outfit_set call with a real destination cannot silently resolve to coordinated_plan', () => {
+  // No plan_kind at all -- exactly the shape the live run produced.
+  assert.equal(resolvePlanKind(undefined, 'pack for my trip', { location: 'Vienna, Austria' }), 'trip')
+  // An explicitly wrong plan_kind is overridden too -- the destination is the stronger signal.
+  assert.equal(resolvePlanKind('coordinated_plan', 'pack for my trip', { location: 'Vienna, Austria' }), 'trip')
+})
+
+test('a deliberately declared seasonal_capsule survives even with a real destination attached', () => {
+  // "A capsule for my Vienna trip" is still a capsule -- an explicit capsule choice must not be
+  // silently overridden into a packing roster just because a destination was also supplied.
+  assert.equal(resolvePlanKind('seasonal_capsule', 'a capsule for my Vienna trip', { location: 'Vienna, Austria' }), 'seasonal_capsule')
+})
+
+test('an at-home plan with no location is unaffected by the destination override', () => {
+  assert.equal(resolvePlanKind(undefined, 'outfits for the weekend'), 'coordinated_plan')
+  assert.equal(resolvePlanKind(undefined, 'outfits for the weekend', { location: '' }), 'coordinated_plan')
+  assert.equal(resolvePlanKind('coordinated_plan', 'outfits for the weekend', { location: '   ' }), 'coordinated_plan')
 })
 
 // Live thread_1785902365403 sent no_repeat ['tops','dresses'] on a capsule and,

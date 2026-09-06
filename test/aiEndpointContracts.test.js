@@ -3677,7 +3677,10 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   })
   assert.ok(Array.isArray(bottoms))
   const linen = bottoms.find(p => p.id === seeded.bottom)
-  assert.equal(linen.weatherFit, 'lightweight - good for heat')
+  // FACTS, not a verdict (docs/search-propose-signal-inventory.md): the light linen's own warmth
+  // fact, not a "good for heat" label computed against this call's weather. The model judges fit
+  // itself; search_wardrobe states what the garment is.
+  assert.match(linen.thermal, /warmth:/)
   assert.equal(bottoms.some(p => p.id === seeded.jeans), false, 'compose mode excludes the hard hot-weather failure')
 
   const explainedBottoms = await executeTool('search_wardrobe', {
@@ -3687,7 +3690,7 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
     intent: 'explain',
   })
   const denim = explainedBottoms.find(p => p.id === seeded.jeans)
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat', 'explain mode preserves the rejected piece and annotation')
+  assert.match(denim.thermal, /warmth:/, 'explain mode preserves the rejected piece and its thermal facts')
 
   const hikingShoes = await executeTool('search_wardrobe', {
     category: 'shoes',
@@ -3781,8 +3784,12 @@ test('executeTool search_wardrobe uses a structured toolContext weather profile 
 
   const linen = bottoms.find(p => p.id === seeded.bottom)
   const denim = bottoms.find(p => p.id === seeded.jeans)
-  assert.equal(linen.weatherFit, 'lightweight - good for heat')
-  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
+  // The behavior under test is that resolution completes using toolContext's weatherProfile when
+  // the model's own call omits weather args — not a verdict text (docs/search-propose-signal-
+  // inventory.md removed weatherFit). Both pieces resolving with their thermal facts intact proves
+  // the toolContext-sourced profile reached stylingContext rather than the call short-circuiting.
+  assert.match(linen.thermal, /warmth:/)
+  assert.match(denim.thermal, /warmth:/)
 })
 
 test('freeform eligibility evaluates current season against the resolved request date', async () => {
@@ -3870,6 +3877,134 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   assert.equal(card.stylingInstructions, 'Leave the top untucked over the wide-leg pants.')
   assert.equal(card.result.disposition, 'accepted')
   assert.equal(card.result.provenance.flow, 'freeform_propose_outfit')
+})
+
+// docs/README.md: trip roster architecture. propose_outfit must not silently mutate the suitcase
+// -- a piece outside the active packing roster is an explicit, disclosed packing-set change.
+test('executeTool propose_outfit: pieces from the active roster produce no roster change', async () => {
+  const toolContext = {
+    occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+    packingRosterIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+  }
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Roster-only restyle',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'reason',
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+  assert.equal(toolContext.pendingRosterChange, undefined, 'no field the persistence layer would read as a roster change')
+  assert.equal(toolContext.generatedOutfits[0].packingRosterChange, undefined)
+})
+
+test('executeTool propose_outfit: a piece outside the active roster is an explicit, disclosed packing-set change', async () => {
+  const toolContext = {
+    occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+    // The roster deliberately omits seeded.shoe -- this card reaches for a piece the roster does
+    // not have, the exact "genuinely needed piece outside the roster" case.
+    packingRosterIds: new Set([seeded.top, seeded.bottom]),
+  }
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Needs a new shoe',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'reason',
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+  assert.deepEqual(toolContext.pendingRosterChange.addedIds, [seeded.shoe], 'exactly the piece outside the roster, not the whole card')
+  const card = toolContext.generatedOutfits[0]
+  assert.deepEqual(card.packingRosterChange.addedIds, [seeded.shoe])
+  assert.equal(card.packingRosterChange.addedPieces[0].id, seeded.shoe)
+})
+
+test('executeTool propose_outfit: explicit removal, never inferred from a card simply not showing a piece', async () => {
+  const toolContext = {
+    occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+    packingRosterIds: new Set([seeded.top, seeded.bottom, seeded.shoe, seeded.boot]),
+    packingRosterPieces: [{ id: seeded.boot, name: 'roster boot' }],
+  }
+  // This card omits the boot entirely, without saying anything about removal -- must NOT be read
+  // as dropping it from the suitcase, the exact "not inferred" rule the owner asked for.
+  const noOpEdit = await executeTool('propose_outfit', {
+    label: 'Restyle, boot just not in this look',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'reason',
+  }, toolContext)
+  assert.equal(noOpEdit.status, 'success')
+  assert.equal(toolContext.pendingRosterChange, undefined, 'omission is not removal')
+
+  // Explicit removal via roster_piece_ids_removed.
+  const explicitRemoval = await executeTool('propose_outfit', {
+    label: 'Swap out the boot',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'the boots did not suit the forecast after all',
+    roster_piece_ids_removed: [seeded.boot],
+  }, toolContext)
+  assert.equal(explicitRemoval.status, 'success')
+  assert.deepEqual(toolContext.pendingRosterChange.removedIds, [seeded.boot])
+  assert.equal(toolContext.pendingRosterChange.removedPieces[0].id, seeded.boot)
+})
+
+test('executeTool propose_outfit: with no active roster, packingRosterChange never fires (ordinary ad-hoc requests unaffected)', async () => {
+  const toolContext = {
+    occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+    // No packingRosterIds at all -- most conversations, not a trip in progress.
+  }
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Ordinary outfit', pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    occasion: 'city', season: 'current season', why_it_works: 'reason',
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+  assert.equal(toolContext.pendingRosterChange, undefined)
+  assert.equal(toolContext.generatedOutfits[0].packingRosterChange, undefined)
+})
+
+test('propose_outfit: an explicit removal that breaks trip coverage is disclosed, not blocked', async () => {
+  // Set-level re-check (docs/README.md: trip roster architecture, item 5) against the trip's own
+  // persisted requirement slots — never a proxy reconstructed from accepted cards.
+  const hikeShoeId = insertPiece({ category: 'shoes', name: 'the only hiking-capable shoe', occasions: ['casual', 'outdoor'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const eveningShoeId = insertPiece({ category: 'shoes', name: 'indoor evening shoe', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    occasion: 'casual', season: 'current season', declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, hikeShoeId, eveningShoeId]),
+    generatedOutfits: [],
+    packingRosterIds: new Set([seeded.top, seeded.bottom, hikeShoeId]),
+    packingRosterPieces: [{ id: hikeShoeId, name: 'the only hiking-capable shoe' }],
+    // The trip's real, originally-persisted "Nature Walks" use-case slot (serialized shape).
+    packingRosterSlots: [{ id: 'nature_walks', label: 'Nature Walks', occasion: 'casual', activity: 'hiking', season: 'current season' }],
+  }
+  const result = await executeTool('propose_outfit', {
+    label: 'Remove the only hiking shoe',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: eveningShoeId, role: 'shoes' }],
+    occasion: 'casual', activity: 'none', why_it_works: 'staying in for the evening',
+    roster_piece_ids_removed: [hikeShoeId],
+  }, toolContext)
+  assert.equal(result.status, 'success', 'the edit itself is never blocked by the advisory check')
+  assert.deepEqual(toolContext.pendingRosterChange.removedIds, [hikeShoeId])
+  assert.ok(Array.isArray(toolContext.pendingRosterChange.coverageGaps) && toolContext.pendingRosterChange.coverageGaps.length, 'removing the only hiking-capable shoe must surface a coverage gap')
+})
+
+test('executeTool search_wardrobe: in_packing_roster marks membership without excluding non-roster pieces', async () => {
+  const outsideTopId = insertPiece({ category: 'top', name: 'second top not in the roster', occasions: ['city'], formality: 'everyday' })
+  const toolContext = { retrievedPieceIds: new Set(), packingRosterIds: new Set([seeded.top]) }
+  const results = await executeTool('search_wardrobe', { category: 'top' }, toolContext)
+  const own = results.find(r => r.id === seeded.top)
+  assert.equal(own?.in_packing_roster, true)
+  const outside = results.find(r => r.id === outsideTopId)
+  assert.ok(outside, 'the non-roster piece must still be returned, never dropped')
+  assert.equal(outside.in_packing_roster, false)
+})
+
+test('executeTool search_wardrobe: with no active roster, in_packing_roster is absent entirely', async () => {
+  const results = await executeTool('search_wardrobe', { category: 'top' }, { retrievedPieceIds: new Set() })
+  const own = results.find(r => r.id === seeded.top)
+  assert.equal('in_packing_roster' in (own || {}), false)
 })
 
 test('executeTool propose_outfit defaults stylingInstructions to an empty string when the model omits it', async () => {
@@ -4051,7 +4186,6 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
   const result = [{
     id: 42,
     name: 'linen top',
-    weatherFit: 'lightweight - good for heat',
     ruleFit: 'preferred',
     image: { mime: 'image/jpeg', base64: 'abc123' },
     text: 'linen top details'
@@ -4063,7 +4197,8 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
 
   const extracted = extractToolResultImages(result)
   assert.equal(extracted.images.length, 1)
-  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred, lightweight - good for heat')
+  // item.weatherFit removed (docs/search-propose-signal-inventory.md) along with the field it read.
+  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred')
   assert.equal(extracted.images[0].mime, 'image/jpeg')
   assert.equal(extracted.images[0].base64, 'abc123')
   assert.ok(!JSON.parse(extracted.textResult)[0].image)
@@ -6215,8 +6350,10 @@ test('search_wardrobe trims to judgment only when the manifest is actually in th
   const full = withoutManifest.find(p => p.id)
   assert.ok(trimmed && full)
 
-  // Trimmed: judgment plus the join key into the manifest.
-  assert.ok('ruleFit' in trimmed && 'weatherFit' in trimmed, 'per-request judgment always survives')
+  // Trimmed: per-request info plus the join key into the manifest. weatherFit is gone
+  // (docs/search-propose-signal-inventory.md); its replacement, `thermal`, is null for shoes (the
+  // category this test searches), so it is not asserted here.
+  assert.ok('ruleFit' in trimmed, 'per-request judgment always survives')
   assert.equal(trimmed.silhouette, undefined, 'stable truth is left to the cached manifest')
   assert.equal(trimmed.fabric_category, undefined)
   assert.equal(trimmed.occasions, undefined)
@@ -6350,6 +6487,27 @@ test('buildStylistConversationPayload persists per-outfit weatherUsed/resolvedWe
   assert.match(String(payload.system), /Cambria, CA/)
 })
 
+// thread_1788508369689 arc, product ruling "use B": same "kept in sync" convention as the weather
+// projection above, for the assigned packed-layer relation validateSubmittedPlanOutfits attaches to
+// an accepted cold-slot outfit. Found dropped silently at this exact whitelist boundary — present
+// on the accepted outfit, absent from persisted current_outfit_set. JSON.stringify(threadState) is
+// what actually reaches the model as THREAD STATE, so anything missing from this object is
+// invisible to a follow-up turn, not merely unlabeled.
+test('buildStylistConversationPayload persists assignedLayerIds onto current_outfit_set as assigned_layer_piece_ids', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const payload = await buildStylistConversationPayload({
+    question: 'What did you pair with the Nature Walk look?',
+    conversationMode: 'new_request',
+    sessionId: 'assigned-layer-persist-payload',
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      assignedLayerIds: [seeded.jacket],
+    }],
+  })
+  assert.deepEqual(payload.threadState.current_outfit_set[0].assigned_layer_piece_ids, [seeded.jacket])
+})
+
 // Spec §7 continuity, the gap found by external review: buildStylistConversationPayload's OWN save
 // (inside it, before the model/tool call) can only persist cards the browser already echoed back
 // from the PREVIOUS turn — it has no way to know about cards THIS turn's tool loop is about to
@@ -6406,6 +6564,134 @@ test('persistFullStylistTurnState: a fresh plan_outfit_set result survives to th
   persistFullStylistTurnState({ toolContext: proseOnlyContext, answer: 'Just a quick note.', freeformTurnToken: 'tok-2', sessionId })
   const afterProseOnlyTurn = getStylistConversationState(sessionId)
   assert.equal(afterProseOnlyTurn.current_outfit_set?.[0]?.label, 'Vienna Evening', 'a turn with no fresh cards must leave the prior set untouched, not clear it')
+})
+
+// thread_1788508369689 arc, product ruling "use B": the full four-hop trace the assigned-layer
+// relation must survive — (1) accepted outfit storage (validateSubmittedPlanOutfits ->
+// toolContext.generatedOutfits), (2) persisted current_outfit_set, (3) thread-state restoration on
+// a later turn with no browser echo, (4) availability in that later turn's payload.threadState for
+// follow-up editing context. Same shape as the weather round trip above, proving the SAME boundary
+// that dropped weather disclosure until spec §7 doesn't silently drop this relation too.
+test('persistFullStylistTurnState: assignedLayerIds survives accepted-outfit storage through persistence to a later turn\'s payload', async () => {
+  const { persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `assigned-layer-persist-${Date.now()}`
+
+  // Hop 1: standing in for validateSubmittedPlanOutfits's accepted outfit, exactly as
+  // assembleSubmittedPlanOutfits hands it to toolContext.generatedOutfits (camelCase assignedLayerIds).
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      assignedLayerIds: [seeded.jacket],
+    }],
+  }
+  persistFullStylistTurnState({ toolContext, answer: 'Here is your Nature Walk look.', freeformTurnToken: 'tok-1', sessionId })
+
+  // Hop 2: persisted current_outfit_set.
+  const afterTurnOne = getStylistConversationState(sessionId)
+  assert.deepEqual(afterTurnOne.current_outfit_set?.[0]?.assigned_layer_piece_ids, [seeded.jacket],
+    'the relation must reach persisted state, not just the in-memory accepted outfit')
+
+  // Hops 3-4: a genuine follow-up turn with no browser echo, restored from server state, and the
+  // relation must still be present in what actually reaches the model (payload.threadState).
+  const payload = await buildStylistConversationPayload({
+    question: 'what layer did you use with the nature walk look?',
+    conversationMode: 'followup',
+    sessionId,
+    // generatedOutfits intentionally omitted — the browser-echo-omitted case.
+  })
+  assert.deepEqual(payload.threadState.current_outfit_set?.[0]?.assigned_layer_piece_ids, [seeded.jacket],
+    'a follow-up turn restored from server state must still see the assigned layer, not just piece_ids')
+})
+
+// docs/README.md: trip roster architecture, item 5's static lifecycle proof -- a card edit must
+// not silently mutate the suitcase, and the packing roster must persist and evolve correctly
+// across turns the same way current_outfit_set already does.
+test('packing roster lifecycle: selected, carried forward, roster-only edit leaves it unchanged, outside-roster edit is an explicit change', async () => {
+  const { persistFullStylistTurnState, boundedConversationStateFromToolContext } = await import('../routes/ai.js')
+  const { getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const sessionId = `packing-roster-lifecycle-${Date.now()}`
+
+  const JACKET = { id: 8001, name: 'shared jacket', category: 'outerwear' }
+  const CITY_TOP = { id: 8002, name: 'city top', category: 'top' }
+  const CITY_BOTTOM = { id: 8003, name: 'city bottom', category: 'bottom' }
+  const CITY_SHOES = { id: 8004, name: 'city shoes', category: 'shoes' }
+  const NEW_CARDIGAN = { id: 8005, name: 'new cardigan', category: 'outerwear' }
+  // The trip's original normalized use-case slot -- persisted once at plan time and never
+  // reconstructed from accepted cards on later turns.
+  const TRIP_SLOT = { id: 'city_walking', label: 'City Walking', occasion: 'casual', activity: 'walking', season: 'current season' }
+
+  // Turn 1: initial trip plan is submitted. The card itself does not carry the jacket (the whole
+  // point of the set-level demotion two commits back) -- the roster does, via tripPlanContext.
+  const planTurnContext = {
+    generatedOutfits: [{
+      label: 'City Walking', pieceIds: [8002, 8003, 8004], pieces: [CITY_TOP, CITY_BOTTOM, CITY_SHOES],
+      tripPlanContext: { version: 1, roster_ids: [8001, 8002, 8003, 8004], roster_pieces: [JACKET, CITY_TOP, CITY_BOTTOM, CITY_SHOES], slots: [TRIP_SLOT] },
+    }],
+  }
+  persistFullStylistTurnState({ toolContext: planTurnContext, answer: 'Here is your packing plan.', freeformTurnToken: 'tok-1', sessionId })
+  const afterPlan = getStylistConversationState(sessionId)
+  assert.deepEqual(afterPlan.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004], 'the roster must persist even though no card in it shows the jacket')
+  assert.deepEqual(afterPlan.packing_roster.slots, [TRIP_SLOT], 'the trip requirement slots must persist alongside the roster')
+
+  // Turn 2: the roster reaches the NEXT turn's payload/threadState -- confirming toolContext would
+  // see it via payload.threadState.packing_roster, the same path currentOutfitSet already uses.
+  const payloadTurn2 = await buildStylistConversationPayload({ question: 'restyle the city look', conversationMode: 'followup', sessionId })
+  assert.deepEqual(payloadTurn2.threadState.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004])
+  assert.deepEqual(payloadTurn2.threadState.packing_roster.slots, [TRIP_SLOT], 'the next turn must see the same persisted trip requirement slots')
+
+  // Turn 2, continued: a card edit using ONLY roster pieces (a genuine restyle, no suitcase change)
+  // must leave the roster untouched -- no tripPlanContext, no pendingRosterChange.
+  const restyleTurnContext = { generatedOutfits: [{ label: 'City Walking (revised)', pieceIds: [8002, 8003, 8004], pieces: [CITY_TOP, CITY_BOTTOM, CITY_SHOES] }] }
+  const restyleFreshState = boundedConversationStateFromToolContext(restyleTurnContext)
+  assert.equal(restyleFreshState.packing_roster, undefined, 'an ordinary roster-only edit must not itself claim a roster change')
+  persistFullStylistTurnState({ toolContext: restyleTurnContext, answer: 'Restyled within your packed pieces.', freeformTurnToken: 'tok-2', sessionId })
+  const afterRestyle = getStylistConversationState(sessionId)
+  assert.deepEqual(afterRestyle.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004], 'roster unchanged by a roster-only edit')
+
+  // Turn 3: an edit that genuinely needs a piece outside the roster. propose_outfit's own
+  // packingRosterChange detection is exercised in the tools.js-level test below; here the
+  // downstream persistence contract is what is under test -- an explicit pendingRosterChange
+  // must produce a GROWN roster (existing + added), never a silent one.
+  const additionTurnContext = {
+    generatedOutfits: [{ label: 'City Walking (new layer)', pieceIds: [8002, 8003, 8004, 8005], pieces: [CITY_TOP, CITY_BOTTOM, CITY_SHOES, NEW_CARDIGAN], packingRosterChange: { addedIds: [8005], addedPieces: [NEW_CARDIGAN] } }],
+    packingRosterIds: new Set([8001, 8002, 8003, 8004]),
+    packingRosterPieces: [JACKET, CITY_TOP, CITY_BOTTOM, CITY_SHOES],
+    packingRosterSlots: [TRIP_SLOT],
+    pendingRosterChange: { addedIds: [8005], addedPieces: [NEW_CARDIGAN] },
+  }
+  const additionFreshState = boundedConversationStateFromToolContext(additionTurnContext)
+  assert.deepEqual(additionFreshState.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004, 8005], 'the addition must be explicit and additive, not a replacement of the prior roster')
+  assert.deepEqual(additionFreshState.packing_roster.slots, [TRIP_SLOT], 'a roster addition must not alter the trip requirement slots, only membership')
+  persistFullStylistTurnState({ toolContext: additionTurnContext, answer: 'Added a cardigan to your packing list.', freeformTurnToken: 'tok-3', sessionId })
+  const afterAddition = getStylistConversationState(sessionId)
+  assert.deepEqual(afterAddition.packing_roster.roster_ids.sort((a, b) => a - b), [8001, 8002, 8003, 8004, 8005])
+  assert.ok(afterAddition.packing_roster.roster_pieces.some(p => p.id === 8005), 'the new cardigan must be a first-class roster member, not just an id')
+
+  // Turn 4: an explicit removal/substitution -- the jacket is swapped out. Completes item 5's full
+  // static lifecycle: the removed piece must no longer appear as packed anywhere in persisted state.
+  const removalTurnContext = {
+    generatedOutfits: [{ label: 'City Walking (swapped layer)', pieceIds: [8002, 8003, 8004, 8005], pieces: [CITY_TOP, CITY_BOTTOM, CITY_SHOES, NEW_CARDIGAN], packingRosterChange: { addedIds: [], addedPieces: [], removedIds: [8001], removedPieces: [JACKET] } }],
+    packingRosterIds: new Set([8001, 8002, 8003, 8004, 8005]),
+    packingRosterPieces: [JACKET, CITY_TOP, CITY_BOTTOM, CITY_SHOES, NEW_CARDIGAN],
+    packingRosterSlots: [TRIP_SLOT],
+    pendingRosterChange: { addedIds: [], addedPieces: [], removedIds: [8001], removedPieces: [JACKET] },
+  }
+  const removalFreshState = boundedConversationStateFromToolContext(removalTurnContext)
+  assert.ok(!removalFreshState.packing_roster.roster_ids.includes(8001), 'the removed jacket must be gone from the roster immediately')
+  assert.deepEqual(removalFreshState.packing_roster.slots, [TRIP_SLOT], 'a roster removal must not alter the trip requirement slots either')
+  persistFullStylistTurnState({ toolContext: removalTurnContext, answer: 'Swapped the jacket for the cardigan in your packing list.', freeformTurnToken: 'tok-4', sessionId })
+  const afterRemoval = getStylistConversationState(sessionId)
+  assert.deepEqual(afterRemoval.packing_roster.roster_ids.sort((a, b) => a - b), [8002, 8003, 8004, 8005], 'the jacket is gone; everything else survives')
+  assert.ok(!afterRemoval.packing_roster.roster_pieces.some(p => p.id === 8001), 'the removed piece must not appear as packed in the structured roster either')
+
+  // And the next turn reads the post-removal roster back, same as every earlier turn boundary.
+  const payloadTurn5 = await buildStylistConversationPayload({ question: 'what am I packing now?', conversationMode: 'followup', sessionId })
+  assert.deepEqual(payloadTurn5.threadState.packing_roster.roster_ids.sort((a, b) => a - b), [8002, 8003, 8004, 8005])
+  assert.deepEqual(payloadTurn5.threadState.packing_roster.slots, [TRIP_SLOT], 'the trip requirement slots survive to the following turn unchanged by roster mutation')
 })
 
 test('freeform current-season prompts receive applicable calendar-season lessons', async () => {

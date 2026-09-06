@@ -9,7 +9,10 @@ import { weatherProfileFromContext } from './rules.js'
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 const HOT_F = 80
-const COLD_F = 45
+// Exported (docs/cold-layer-exposure-trigger-spec.md) so the trip-slot cold-trigger relaxation can
+// compare a waking-window exposure temperature against THE SAME threshold isCold already uses,
+// rather than inventing a second number for the same question.
+export const COLD_F = 45
 // docs/cool-weather-tier-spec.md, ruled 2026-09-01. The temperature at which the cold end of a day
 // warrants something the wearer can put ON — distinct from COLD_F, which asks how warm the base
 // itself should be. Deliberately read off the LOW: the low is when a removable layer is wanted.
@@ -236,6 +239,24 @@ const TEMP_MAX_F = 140
 export const PRECIPITATION_VALUES = ['none', 'rain', 'snow', 'mixed', 'unknown']
 export const WIND_VALUES = ['calm', 'breezy', 'windy', 'unknown']
 export const TEMPERATURE_BAND_VALUES = ['hot', 'cold', 'mild']
+
+// THE canonical structured-precipitation → wet-exposure rule. Two projections of a resolved
+// ResolvedWeatherContext need this fact — stylingContext.js's profileFromResolvedWeatherContext
+// (the general conversational-stylist path) and resolveSlotWeather (outfitSetPlanner.js, the
+// trip/plan slot path) — and until now only the first one computed it, so a real plan_outfit_set/
+// trip turn's resolved rain/mixed precipitation never became isWetExposure/isRainy on that slot's
+// weatherProfile: RAIN_PROTECTION_MISSING and the wet-sensitive-footwear gate could never fire for
+// a trip card no matter how rainy the resolved weather was. Extracted here, rather than left as two
+// copies of the same two-line expression, specifically so the next consumer reuses this instead of
+// re-deriving a third interpretation — precisely the drift this file's own header docstring exists
+// to prevent for every other structured-weather rule.
+export function wetExposureFromPrecipitation(precipitationValue) {
+  const value = String(precipitationValue || '')
+  return {
+    isRainy: value === 'rain',
+    isWetExposure: value === 'rain' || value === 'mixed',
+  }
+}
 
 // Requires an ACTUAL number, not merely a coercible value: `Number(null)`
 // is 0 and `Number("65")` is 65, so a coercing check would silently accept

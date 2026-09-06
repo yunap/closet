@@ -60,6 +60,98 @@ test('MILD cold: a heavy main still satisfies the floor without any layer — un
   assert.deepEqual(hardCodes(result), [])
 })
 
+// thread_1788513419132: a live trip card passed this exact floor on a "thin UPF technical hoodie"
+// purely because its category was 'outerwear' -- its own tagged facts (ultralight, explicitly
+// uninsulated, explicitly unlined) said the opposite of "minimum warm layer." Deliberately does NOT
+// use outerwear_role (docs/outerwear-role-ontology-spec.md: deprecated, no replacement tag, value
+// must not be read as garment evidence) even though the real piece happened to carry
+// outerwear_role: 'indoor_layer' -- the fix must stand on the other four facts alone.
+const UPF_SUN_HOODIE = {
+  id: 30, category: 'outerwear', name: 'thin UPF technical hoodie',
+  fabric_weight: 'ultralight',
+  insulating_layer_materials: [], // manually asserted empty -> thermalMaterialVerdict: non_insulating
+  interior_construction: 'unlined', // manually asserted -> only a human can write this value
+  weather_protection: [],
+  fiber_content: ['polyester', 'spandex'],
+  fabric_category: 'technical/performance',
+  outerwear_role: 'indoor_layer', // present on the real piece; must NOT be why this test passes
+}
+
+test('MILD cold: an ultralight, uninsulated, unlined outerwear piece does NOT satisfy the minimum-warmth floor', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), UPF_SUN_HOODIE], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'category alone must no longer override three converging negative facts')
+})
+
+test('MILD cold: any ONE negative fact alone is not enough -- convergence, not a single-field rule', () => {
+  // Ultralight alone (construction and material both genuinely unknown, not asserted negative) must
+  // not be penalized -- an ultralight rain shell or an ultralight piece nobody has fully tagged yet
+  // is not automatically inadequate.
+  const onlyUltralight = { id: 31, category: 'outerwear', name: 'untagged ultralight layer', fabric_weight: 'ultralight' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), onlyUltralight], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [], 'a single negative fact, with the rest unknown, must not hard-fail')
+})
+
+test('MILD cold: weather_protection does NOT rescue an ultralight, explicitly non-insulating, unlined shell', () => {
+  // This function answers a WARMTH-presence question, not a protection question. A wind/rain shell
+  // can be doing a real protective job while providing essentially no insulation -- passing it on
+  // weather_protection alone would conflate this contract with the separate protection/capability
+  // one (outerwearCapability.js). Its weather-protection value still matters there, just not here.
+  const windShell = { ...UPF_SUN_HOODIE, id: 32, weather_protection: ['wind'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), windShell], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'weather_protection answers a different contract and must not cancel explicit thermal inadequacy')
+})
+
+test('MILD cold: full_lining cancels only the unlined vote it controls, flipping a borderline 2-signal case', () => {
+  // Two negative facts (ultralight + unlined; material genuinely unknown, not asserted negative)
+  // converge to inadequate.
+  const ultralightUnlined = { id: 35, category: 'outerwear', name: 'thin unlined layer', fabric_weight: 'ultralight', interior_construction: 'unlined' }
+  const unlinedResult = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), ultralightUnlined], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(unlinedResult), [C.NO_WARM_LAYER_FOR_COLD],
+    'sanity: two converging negative facts (ultralight + unlined) do fail the floor')
+
+  // Replacing 'unlined' with an ordinary lining removes exactly that one vote, dropping back to a
+  // single negative fact (ultralight) -- per prompts.js, an ordinary lining is explicitly NOT an
+  // insulating layer, so it is not itself positive evidence; it only stops the unlined vote.
+  const ultralightLined = { ...ultralightUnlined, id: 36, interior_construction: 'full_lining' }
+  const linedResult = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), ultralightLined], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(linedResult), [],
+    'one remaining negative fact (ultralight alone) must not fail it -- construction cancelled its own vote, nothing more')
+})
+
+test('MILD cold: full_lining does not rescue a piece whose OTHER negative facts still independently converge', () => {
+  // UPF_SUN_HOODIE with full_lining instead of unlined: the unlined vote is gone, but ultralight and
+  // explicitly non-insulating still converge at 2 on their own -- construction is not a blanket
+  // override, it only ever controls the one vote that is its own.
+  const linedButThin = { ...UPF_SUN_HOODIE, id: 37, interior_construction: 'full_lining' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), linedButThin], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD],
+    'construction can only cancel the unlined vote -- it cannot rescue independently-converging negative facts')
+})
+
+test('MILD cold: outerwear_role value alone (indoor_layer, no other negative facts) must not fail the floor', () => {
+  // Proves the fix does not secretly key on outerwear_role -- an indoor_layer-tagged piece with no
+  // OTHER negative evidence stays adequate, exactly like it did before this fix (category presence).
+  const indoorLayerOnly = { id: 33, category: 'outerwear', name: 'legacy-tagged layer', outerwear_role: 'indoor_layer' }
+  const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), indoorLayerOnly], {
+    weatherProfile: { isCold: true },
+  })
+  assert.deepEqual(hardCodes(result), [])
+})
+
 test('SEVERE cold: an indoor layer alone IS a hard failure', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), CARDIGAN], {
     weatherProfile: { isCold: true, isColdSevere: true },
@@ -243,6 +335,37 @@ test('evaluateWearableOutfit stays silent without weatherContext and composes wi
   assert.equal(withContext.hardValid, false)
 })
 
+// thread_1788508369689 arc, product ruling "use B": a trip card's shared packed layer is not part
+// of its visual identity, so structure/dependency/layer-direction checks must stay core-only while
+// only the environmental-adequacy stage sees core-plus-layer as the effective worn outfit.
+test('environmentPieces feeds only the environment stage; every other stage still evaluates the bare pieces', () => {
+  const coreOnly = [top(), bottom(), shoes()]
+  const withLayer = [...coreOnly, WOOL_COAT]
+
+  const bareCore = evaluateWearableOutfit(coreOnly, {
+    requireShoes: true,
+    weatherContext: { weatherProfile: { isCold: true } },
+  })
+  assert.ok(bareCore.hardFindings.some(f => f.message === 'no warm layer for cold weather'),
+    'sanity: the bare core alone must fail the cold floor')
+
+  const withEnvironmentPieces = evaluateWearableOutfit(coreOnly, {
+    requireShoes: true,
+    weatherContext: { weatherProfile: { isCold: true } },
+    environmentPieces: withLayer,
+  })
+  assert.ok(!withEnvironmentPieces.hardFindings.some(f => f.message === 'no warm layer for cold weather'),
+    'the assigned layer, passed only via environmentPieces, must satisfy the cold floor')
+
+  // Structure isn't affected by environmentPieces: a 4-piece outfit (WOOL_COAT included) would still
+  // pass structure regardless, so prove non-effect a different way -- outfitStructure findings are
+  // identical whether or not environmentPieces is supplied, since that stage always reads `pieces`.
+  const withoutOverride = evaluateWearableOutfit(coreOnly, { requireShoes: true })
+  assert.deepEqual(withEnvironmentPieces.stages.find(s => s.stage === 'structure').result,
+    withoutOverride.stages.find(s => s.stage === 'structure').result,
+    'structure must be computed from the bare pieces, never from environmentPieces')
+})
+
 // --- [R1] severity actually survives the real plumbing -------------------------------------------
 
 test('isColdSevere survives resolveWeatherContext and its serialize/restore round trip', () => {
@@ -297,6 +420,25 @@ test('COOL: an outfit with no layer at all is a hard finding', () => {
   })
   assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
   assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'supply-sensitive findings name a legal move')
+})
+
+// SET LEVEL vs CARD LEVEL (docs/README.md: trip roster architecture). A card composed from an
+// already roster-validated trip packing set must not have to re-carry a layer the set already has.
+test('COOL: packingRosterHasLayer stands the per-card finding down entirely', () => {
+  // packingRosterHasLayer is a resolvedContext-level field (a sibling of weatherProfile), the exact
+  // shape outfitSetPlanner.js's weatherContext object passes — not part of the weather profile
+  // itself, which describes conditions, not what was packed.
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { needsRemovableCoolLayer: true }, packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL TRANSIT: packingRosterHasLayer stands the transit finding down too', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor', packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
 })
 
 test('COOL: any layer satisfies it — an indoor_layer cardigan counts', () => {
@@ -405,6 +547,31 @@ test('COOL: a see-through layer does not satisfy the tier', () => {
   // Live regression of my own making: `!layers.length` is Boolean(layer) — the exact shortcut §7 of
   // the consolidation spec deletes from the cold branch, reintroduced one tier up. Two cards
   // satisfied "you need something to put on" with a semi_sheer shrug scoring -8.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true },
+  })
+  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+})
+
+// docs/README.md: trip roster architecture, item 3 — adjudicated rather than left behind. This
+// finding answers a physical-construction question (does the tagged opacity mean the garment
+// provides meaningful coverage at all), not a thermal styling judgment, so it survives the
+// facts-not-judgments pass and stays a hard finding — but it inherits the SET-level demotion too.
+test('COOL: a card pairing a sheer layer with real protection packed elsewhere in the roster is not rejected', () => {
+  // The owner's own example: a sheer layer may be perfectly legitimate aesthetically when the trip
+  // roster separately contains real weather protection — the engine must not reject it merely
+  // because it is not itself insulating.
+  const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
+    weatherProfile: { needsRemovableCoolLayer: true }, packingRosterHasLayer: true,
+  })
+  assert.deepEqual(codes(result), [])
+})
+
+test('COOL: outside an active trip (no roster at all), a see-through layer is still rejected exactly as before', () => {
+  // No regression to the ordinary, non-trip case: packingRosterHasLayer is simply absent/false, and
+  // this finding behaves identically to the unmodified original.
   const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
     weatherProfile: { needsRemovableCoolLayer: true },

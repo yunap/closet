@@ -228,11 +228,11 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   const readyCards = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
     : 0
-  // An atomic capsule attempt deliberately degrades to accepted cards + honest
-  // gaps after one composition call. Re-entering the generic delivery retries
-  // here would undo that cost boundary and restart search/propose/replan.
+  // An atomic capsule (or, per docs/trip-composition-parity-spec.md, trip) attempt deliberately
+  // degrades to accepted cards + honest gaps after one composition call. Re-entering the generic
+  // delivery retries here would undo that cost boundary and restart search/propose/replan.
   const boundedCompositionCompleted = Boolean(
-    toolContext?.capsuleAtomicAttempted || toolContext?.atomicMultiLookCompleted
+    toolContext?.capsuleAtomicAttempted || toolContext?.tripAtomicAttempted || toolContext?.atomicMultiLookCompleted
   )
   // Declared cards, delivered none, and didn't ask the user anything: the
   // turn's contract is unmet. An answer containing a question is treated as the
@@ -966,7 +966,9 @@ export function extractToolResultImages(result) {
     const { image, ...rest } = item
     const normalizedImage = normalizeToolImage(image)
     if (normalizedImage) {
-      const flags = [item.ruleFit, item.weatherFit].filter(f => f && f !== 'neutral').join(', ')
+      // item.weatherFit no longer exists (docs/search-propose-signal-inventory.md) — this silently
+      // dropped to undefined and got filtered out, not a crash, but a stale reference worth clearing.
+      const flags = [item.ruleFit].filter(f => f && f !== 'neutral').join(', ')
       images.push({
         ...normalizedImage,
         label: `ID ${item.id}: ${item.name || 'unnamed garment'}${flags ? ` — ${flags}` : ''}`
@@ -1454,7 +1456,16 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
     name: 'freeform_execution_route',
     description: 'Choose one narrow execution profile only when its contract and supplied compact context are sufficient.',
-    maxTokens: 350,
+    // Gemini bills thinking tokens out of this same cap (normalizeAiUsage folds
+    // total_thought_tokens into outputTokens) and thinking_level 'low' still lets that vary a
+    // lot per request. A live call for an ambiguous multi-day-trip request (thread_1788430055577,
+    // ai_call_log id 819) spent 333 of a 350-token budget on reasoning and had room for only ~165
+    // characters of the classification JSON before hitting the cap — a routine, not edge-case,
+    // failure that silently converts a cheap router call into a wasted billed one before the
+    // catch in routes/ai.js falls back to full_stylist anyway. 350 was sized for Anthropic's
+    // forced tool_choice path, which never spends budget on prose; Gemini's plain-JSON path needs
+    // real headroom on top of the ~150-token ceiling this schema's own output can reach.
+    maxTokens: 900,
     providerOverride
   })
 }

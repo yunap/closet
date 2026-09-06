@@ -2019,6 +2019,40 @@ function pieceFidelityChecklist(pieces) {
       if (/\b(jean|trouser|pant|wide|straight|bootcut|crop)\b/.test(blob)) constraints.push('must remain the listed pant/jean silhouette')
       if (/\b(floral|botanical|paisley|abstract|stripe|striped|pattern|abstract|tapestry)\b/.test(blob)) constraints.push('preserve the bottom print/pattern scale and colors')
     }
+    // thread_1788495287089: a hooded, asymmetric-drape, double-breasted cardigan with zip pockets
+    // rendered as a plain symmetric open cardigan — outerwear had no branch here at all, only the
+    // generic fallback below, while every other category got construction-specific language. Same
+    // shape as top/bottom above: each line fires only on evidence already in the blob (name,
+    // reads_as, notes, trusted structured fields — see pieceTextBlob). Never push a claim from
+    // category alone, and never state an absence ("no hood", "no pockets") — most outerwear
+    // legitimately lacks these features, and blob has no reliable way to confirm a true negative.
+    if (group === 'outerwear') {
+      // Baseline, unconditional for every outerwear piece — does NOT assert which variant a piece
+      // has (that would be exactly the fabrication-from-absence this whole function refuses to do).
+      // It tells the image model which classes of visible construction to inspect IN THE REFERENCE
+      // PHOTO and not simplify away, independent of whether the tagger ever captured them in text.
+      // The evidence-gated lines below still layer specific known facts on top when the record
+      // actually says so — this baseline exists for the (common) case where it doesn't, so fidelity
+      // is not gated on the tagging-schema project (a separate, larger piece of work) ever landing.
+      constraints.push('preserve the exact visible outerwear construction from the reference: collar/hood configuration, front closure type and placement, pocket type/placement, sleeve/shoulder construction, hem/length, and front-panel shape — do not simplify, regularize, add, or remove these details')
+      if (/\b(asymmetric|asymmetrical|asymmetry|drape|draped|draping|waterfall)\b/.test(blob)) constraints.push('preserve the asymmetric/draped silhouette, not a symmetric closure') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bhood(ed)?\b/.test(blob)) constraints.push('must remain hooded') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\b(button|buttoned|button-front|button-up|double-breasted)\b/.test(blob)) constraints.push('preserve the button closure/placket') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bzip(per)?[- ]?(front|up|closure)\b/.test(blob)) constraints.push('preserve the zip closure') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\bpocket/.test(blob)) constraints.push('preserve the visible pockets, in their described style') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      if (/\b(collar|lapel)\b/.test(blob)) constraints.push('preserve the collar/lapel shape') // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+      // "dropped shoulder" as an adjacent phrase, or the two words apart in either order (real
+      // tagging notes are prose, not keywords — thread_1788495287089's own notes read "the
+      // shoulder seams seem dropped", not "dropped shoulder").
+      if (/\b(dropped[- ]shoulder|drop[- ]shoulder|raglan|batwing|kimono sleeve)\b/.test(blob) || // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+          (/\bshoulder/.test(blob) && /\bdropped\b/.test(blob))) { // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+        constraints.push('preserve the sleeve construction/shoulder line')
+      }
+      if (/\b(above|below|hits?)\s+the\s+(hip|hips|knee|knees|thigh|thighs|waist|calf|calves)\b/.test(blob) || // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+          /\b(mid[- ]thigh|knee[- ]length|hip[- ]length|thigh[- ]length|waist[- ]length|cropped|longline|oversized)\b/.test(blob)) { // ratchet-allow: outerwear construction fidelity, no structured field exists for this
+        constraints.push('must remain the listed length/hem shape')
+      }
+    }
     if (group === 'dress') constraints.push('must remain one dress, not separates')
     if (group === 'shoes') constraints.push('preserve shoe type, color, heel/sole shape, and openness/coverage')
     if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
@@ -4019,6 +4053,21 @@ function isGeneratedSetCoverageAudit(question = '') {
   return /\b(coverage|cover|enough|same outfit|only one|backup|laundry|repeat|re-wear|rewear|additional|another|more options?)\b/.test(q) // ratchet-allow: user intent routing for multi-outfit coverage audits
 }
 
+// A follow-up asking about the FACTS of an already-generated plan/capsule — the weather it assumed,
+// its piece budget, its date range, the location it resolved — rather than asking for a revision.
+// thread_1788556165595: "what was the temperature range you made this capsule for?" reached
+// plan_outfit_set again instead of reading the answer already sitting in current_outfit_set's own
+// weather_used/resolved_weather_context (populated by outfitSetPlanner.js), and produced a second,
+// materially different 8-look capsule for a purely informational question. The generation facts are
+// already in THREAD STATE by the time this question is asked; the model does not need a tool call —
+// let alone a new plan — to read them back. Deliberately narrow (facts about the existing plan, not
+// "make it different"): a revision request like "actually, less rust" must still reach the composing
+// tools, so this must not match on garment/style words.
+const GENERATION_FACTS_QUESTION_RE = /\b(what|which)\b[^?.!]{0,40}\b(temperature|weather|climate|forecast|budget|piece count|price range|date range|location|city|season)\b|\bhow many\s+(pieces|outfits|looks)\b/i
+export function isGenerationFactsQuestion(question = '') {
+  return GENERATION_FACTS_QUESTION_RE.test(String(question || ''))
+}
+
 // Historical outfit-set addressability (docs: current_outfit_set stays the default referent;
 // earlier sets and their critiques are historical and surface only on an explicit backward
 // reference — see the spec discussed against thread_1787435527800). Ordinal/positional ("the first
@@ -4369,6 +4418,11 @@ export async function buildStylistConversationPayload(body) {
     // (routes/ai.js), which projects the same two fields for the other current_outfit_set path.
     ...(o?.weatherUsed ? { weather_used: o.weatherUsed } : {}),
     ...(o?.resolvedWeatherContext ? { resolved_weather_context: o.resolvedWeatherContext } : {}),
+    // See the matching addition in boundedConversationStateFromToolContext (routes/ai.js) — same
+    // "must stay in sync" convention as weather_used/resolved_weather_context above.
+    ...(Array.isArray(o?.assignedLayerIds) && o.assignedLayerIds.length
+      ? { assigned_layer_piece_ids: o.assignedLayerIds.map(Number).filter(Boolean) }
+      : {}),
     piece_ids: (Array.isArray(o?.pieceIds) && o.pieceIds.length
       ? o.pieceIds
       : (Array.isArray(o?.pieces) ? o.pieces.map(piece => piece?.id) : [])
@@ -4380,6 +4434,24 @@ export async function buildStylistConversationPayload(body) {
     : (requestedConversationMode !== 'new_request' && Array.isArray(restoredState.current_outfit_set)
       ? restoredState.current_outfit_set
       : [])
+  // The active trip packing roster (docs/README.md: trip roster architecture) — SET-level state, a
+  // sibling of current_outfit_set rather than folded into it, since the roster spans every card in
+  // the plan, not one. Same carry-forward shape as current_outfit_set: prefer a fresh roster this
+  // turn's echoed cards carry (a NEW or regenerated plan), else keep whatever was persisted, so
+  // editing one card via propose_outfit (which does not attach tripPlanContext) does not silently
+  // erase the roster memory established by the plan turn before it.
+  const rosterBearingOutfit = (Array.isArray(generatedOutfits) ? generatedOutfits : []).find(o => o?.tripPlanContext)
+  const packingRoster = rosterBearingOutfit?.tripPlanContext
+    ? {
+        roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [],
+        roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [],
+        // The plan's own normalized trip requirements (docs/README.md: trip roster architecture) —
+        // carried the same way roster_ids/roster_pieces already are, never reconstructed later.
+        slots: rosterBearingOutfit.tripPlanContext.slots || [],
+      }
+    : (requestedConversationMode !== 'new_request' && restoredState.packing_roster
+      ? restoredState.packing_roster
+      : null)
 
   const threadState = {
     turn_mode: conversationMode,
@@ -4405,6 +4477,7 @@ export async function buildStylistConversationPayload(body) {
       }
     } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
     // docs/bounded-multi-context-continuity-spec.md §5.2. Continuation context ONLY — pieces the
     // immediately preceding accepted answer discussed, not verified this turn. Deliberately a
     // separate key from current_outfit_set (which IS this turn's verified truth for outfit cards)
@@ -4427,6 +4500,7 @@ export async function buildStylistConversationPayload(body) {
     established: establishedStylingContext,
     ...(effectiveWeatherProfile ? { weather_profile: serializeWeatherProfile(effectiveWeatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
   }, sessionId)
 
   // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
@@ -4441,6 +4515,16 @@ export async function buildStylistConversationPayload(body) {
 
   const conversationDirective = buildStylistConversationDirective(conversationMode)
   const generatedSetCoverageAudit = Boolean(generatedOutfitContextText && isGeneratedSetCoverageAudit(question))
+  // thread_1788556165595: a plain informational follow-up about an existing plan/capsule's own
+  // facts (its assumed weather, budget, date range...) reached plan_outfit_set again instead of
+  // reading current_outfit_set's own weather_used/resolved_weather_context, producing a second,
+  // materially different capsule for a question that needed no tool call at all. The generic
+  // followup directive above ("do not restart the full evaluation flow") is prose-only and was not
+  // enough on its own. Scoped to conversationMode === 'followup' specifically — not 'correction' —
+  // so an explicit revision request ("actually, less rust") still reaches the composing tools.
+  const restrictToInformationalTools = Boolean(
+    conversationMode === 'followup' && currentOutfitSet.length && isGenerationFactsQuestion(question)
+  )
 
   // The whole-closet manifest: the stylist "knows the wardrobe" by reading it.
   // Deterministic ordering (group, then id) keeps the prompt prefix stable for
@@ -4598,10 +4682,16 @@ export async function buildStylistConversationPayload(body) {
     'FIT CONCERNS: when the user states a fit problem (baggy, loose waist, clingy, riding up), address it head-on in prose FIRST — belting, tucking, proportion balancing, silhouette pairing — then compose cards that implement the advice. Do not ignore the stated concern and just assemble an outfit.',
     'INDOOR TRANSIT WEATHER: indoor describes a climate-controlled destination, not a weather escape hatch. In a multi-outfit plan, the outside forecast still governs the base outfit and transit. During extreme heat, build a breathable hot-weather base and use only an optional light layer for AC; never solve AC with a heavy main garment. Indoor suppresses direct-sun and outdoor-activity styling, not temperature itself.',
     freeformToolRoutingInstruction(conversationMode),
-    extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
+    // weatherFit removed (docs/search-propose-signal-inventory.md) — this instructed obedience to a
+    // field that no longer exists. search_wardrobe results now carry a `thermal` fact line; judge
+    // suitability from that and the established conditions, rather than a delivered verdict.
+    extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and judge each candidate's thermal fit from its own facts (warmth, insulation, season) and these conditions.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
     `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${prompts.PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
     'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version. For trip or multi-outfit plans, if the user asks to revise, add, check variety, or show/render the outfits, update or use the Current outfit set instead of treating the latest suggestion as a standalone note.',
+    restrictToInformationalTools
+      ? 'This turn asks about a FACT of the plan already generated (its assumed weather, budget, date range, or location), not for a revision. No tool that produces new outfits is available this turn on purpose. Answer from THREAD STATE\'s current_outfit_set — each card carries its own weather_used and resolved_weather_context — and from the plan details already shown above. If a specific number was never resolved (e.g. weatherSource was a heuristic guess with no high_f/low_f), say so plainly instead of inventing one.'
+      : '',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
@@ -4612,6 +4702,9 @@ export async function buildStylistConversationPayload(body) {
     'CURRENT-SET AUTHORITY: current_outfit_set is the default referent for unqualified discussion ("these outfits", "the second one", "add a layer", "which works best?") — always reason from it, not from an earlier turn\'s conversational framing. Earlier outfit sets and critiques of them are historical context, discussable only when the user explicitly refers back (see HISTORICAL OUTFIT SETS below if supplied this turn). A critique or rejection recorded against an earlier set — "these don\'t work," "too elevated," any objection — must NOT be applied to current_outfit_set unless the user states or repeats that same critique about the current set now. Regenerating the set resolves the earlier objection; do not re-litigate it from memory of the prior turn.',
     threadState.recently_discussed_pieces
       ? 'RECENTLY DISCUSSED PIECES: threadState.recently_discussed_pieces lists pieces the immediately preceding answer discussed. These are CONTINUATION SUBJECTS ONLY — they have not been verified this turn. If the user is continuing that discussion (e.g. "yes, put those together", "make outfits from those"), call view_pieces on them before composing or citing them; do not cite or compose from them until they have been re-verified this turn this way. Do not assume they are still relevant if the user has moved on to something unrelated.'
+      : '',
+    threadState.packing_roster
+      ? 'ACTIVE PACKING ROSTER: threadState.packing_roster is the trip\'s explicit packing set — the suitcase, not just this turn\'s cards. A card edit ("this trail outfit is too summery", "swap the shoes") should restyle from roster_ids first; search_wardrobe marks each result in_packing_roster so you can tell which. Reaching outside the roster for a genuinely needed piece is allowed, but it is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — say plainly what is being added (or, if you know what it replaces, what leaves the suitcase) so the packing list and the card never silently disagree about what was decided.'
       : '',
     '',
     historicalOutfitContextText,
@@ -4702,6 +4795,7 @@ export async function buildStylistConversationPayload(body) {
     // docs/search-payload-spec.md §5. search_wardrobe trims its rows to per-request judgment only
     // when the model can actually see the full-truth manifest. The tiered discovery index does not
     // qualify: it owns identity only, so search must return the missing stable truth.
-    wardrobeManifestIncluded: Boolean(wardrobeManifestText)
+    wardrobeManifestIncluded: Boolean(wardrobeManifestText),
+    restrictToInformationalTools
   }
 }

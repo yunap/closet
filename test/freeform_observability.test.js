@@ -66,6 +66,22 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // One stage later than the roster pick: distinguishes a token-cap truncation on the
     // composition call from a genuine model refusal (thread_1787717774384).
     capsuleCompositionFailureCode: '',
+    // thread_1788484052964: what plan_outfit_set actually resolved plan_kind to, and whether the
+    // trip roster model call (mirroring the capsule roster's own counters just above) ever fired.
+    planKindResolved: '',
+    tripRosterModelCalls: 0,
+    tripRosterModelRepairs: 0,
+    tripRosterModelFallbacks: 0,
+    // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually used
+    // (never the raw model argument — the resolved value can silently diverge from it), and
+    // whether the date came from the deterministic user-stated extraction or the model's own
+    // argument.
+    resolvedDateRange: '',
+    resolvedLocation: '',
+    dateRangeSource: '',
+    // docs/trip-composition-parity-spec.md follow-up (thread_1788577086327/run 1336): the atomic
+    // trip composer's complete pre-validation output, diagnostic-only.
+    tripAtomicCompositionDebug: '',
     // Which tools ran in which iteration — the shape of a turn, not just its size.
     toolSequence: '',
     providerIterations: 0,
@@ -1165,6 +1181,22 @@ test('a completed bounded capsule does not re-enter generic card delivery retrie
   assert.equal(result.block, false)
 })
 
+// docs/trip-composition-parity-spec.md: the atomic trip composer degrades to accepted cards +
+// honest gaps after one composition call, the same as capsule's -- boundedCompositionCompleted
+// must recognize tripAtomicAttempted too, or a partial/honest trip result would incorrectly trip
+// the generic "cardsNotDelivered"/"outfitCount" retry nudges this flag exists to suppress.
+test('a completed bounded trip composition does not re-enter generic card delivery retries', () => {
+  const toolContext = {
+    question: 'Pack for a week in Vienna with 6 looks',
+    declaredIntent: { want: 'cards', outfitCount: 6 },
+    generatedOutfits: [],
+    tripAtomicAttempted: true,
+    freeformDiagnostics: {}
+  }
+  const result = applyFreeformOutputChecks('I could not validate a credible look for one use case, so I am disclosing the gap.', toolContext, new Set())
+  assert.equal(result.block, false)
+})
+
 test('bounded capsule final prose is replaced locally when it invents unvalidated outfits', () => {
   const toolContext = {
     capsuleAtomicAttempted: true,
@@ -2022,6 +2054,29 @@ test('bounded router state persists per-outfit weatherUsed/resolvedWeatherContex
   assert.equal(state.current_outfit_set[0].resolved_weather_context.overall_source, 'live')
   assert.equal(state.current_outfit_set[1].weather_used, undefined, 'an outfit with no resolved weather must not fabricate a disclosure')
   assert.equal(state.current_outfit_set[1].resolved_weather_context, undefined)
+})
+
+// thread_1788508369689 arc, product ruling "use B": validateSubmittedPlanOutfits puts
+// assignedLayerIds on an accepted trip outfit (the shared packed layer used with a cold look,
+// deliberately kept off pieceIds), but this whitelist serializer was found to drop it silently on
+// the way into persisted current_outfit_set -- a follow-up edit had no way to know a cold card's
+// worn outfit depended on a specific packed layer at all.
+test('bounded router state persists assignedLayerIds onto current_outfit_set as assigned_layer_piece_ids', () => {
+  const state = boundedConversationStateFromToolContext({
+    generatedOutfits: [{
+      label: 'Nature Walk',
+      pieceIds: [1, 2, 3],
+      pieces: [{ id: 1, name: 'top' }, { id: 2, name: 'bottom' }, { id: 3, name: 'shoes' }],
+      assignedLayerIds: [8],
+    }, {
+      label: 'City Day',
+      pieceIds: [4, 5, 6],
+      pieces: [{ id: 4, name: 'top' }, { id: 5, name: 'bottom' }, { id: 6, name: 'shoes' }],
+    }]
+  })
+  assert.deepEqual(state.current_outfit_set[0].assigned_layer_piece_ids, [8])
+  assert.equal(state.current_outfit_set[1].assigned_layer_piece_ids, undefined,
+    'an outfit with no assigned layer must not fabricate one')
 })
 
 test('stored weather physics survive echoed display prose but yield to explicit turn weather', async () => {
