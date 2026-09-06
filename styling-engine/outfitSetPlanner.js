@@ -4830,6 +4830,50 @@ export function slotColdLayerRequired(slot = {}) {
   return Boolean(requiresWarmLayer) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
 }
 
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Pure identification
+// only -- no provider call lives here. The caller (tools.js's atomic trip branch) owns invoking the
+// actual repair composition with these candidates and re-validating the response through
+// validateSubmittedPlanOutfits, unchanged. Live thread thread_1788667759424: 5 of 7 cards failed for
+// exactly this reason with real, gate-eligible layers sitting unused in the roster.
+//
+// Deliberately narrow on both axes: a card with ANY other failure alongside the cold-layer one is
+// excluded entirely (never bundled into a repair meant only to fix a layer decision), and a slot
+// whose roster genuinely has no qualifying layer is excluded too (repairing toward nothing is wasted
+// cost, and cold_floor_infeasible should already have caught this before composition ever ran).
+//
+// A false core_is_warm_enough claim and a plain omission are structurally different failures
+// (validateSubmittedPlanOutfits gives them distinct messages, on purpose, for diagnostics) but
+// converge on the exact same recoverable path here — both are, at this level, "the model's stated
+// cold-layer decision for this card doesn't hold up."
+const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
+  /^no warm layer for cold weather$/,
+  /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
+]
+
+export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
+  const slotById = new Map((Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).map(slot => [slot.id, slot]))
+  const repairable = []
+  for (const failure of Array.isArray(failures) ? failures : []) {
+    const reasons = Array.isArray(failure?.reasons) ? failure.reasons : []
+    if (!reasons.length) continue
+    const isColdLayerOnly = reasons.every(reason => COLD_LAYER_ONLY_FAILURE_PATTERNS.some(pattern => pattern.test(reason)))
+    if (!isColdLayerOnly) continue
+    const slot = slotById.get(failure.slot_id)
+    if (!slot) continue
+    const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
+      .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+    if (!candidates.length) continue
+    repairable.push({
+      slot_id: failure.slot_id,
+      label: failure.label || slot.label || '',
+      title: failure.outfit?.title || '',
+      piece_ids: Array.isArray(failure.outfit?.pieceIds) ? failure.outfit.pieceIds.map(Number) : [],
+      candidates: candidates.map(piece => ({ id: Number(piece.id), name: piece.name || `piece ${piece.id}` })),
+    })
+  }
+  return repairable
+}
+
 export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
@@ -4944,39 +4988,75 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // packing roster, filtered to what is gate-eligible for this slot" (composePool for a trip plan
     // IS tripRosterSelection.roster) — an id passing it already proves both "in the current packing
     // roster" and "valid for that slot under existing hard gates" from the owner's requirements.
-    const assignedLayerIds = (Array.isArray(raw?.assigned_layer_piece_ids) ? raw.assigned_layer_piece_ids : [])
-      .map(id => Number(id)).filter(Boolean)
-    // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
-    // card): the schema's own description already tells the model to "omit entirely ... when
-    // cold_layer_required is false," but nothing here checked it — a non-cold slot could carry a
-    // packed layer relation unchallenged.
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part A, ratified): a mandatory,
+    // enum-style decision replaces the old optional assigned_layer_piece_ids array. Live thread
+    // thread_1788667759424: cold_layer_required reached the model correctly and gate-eligible
+    // layers genuinely existed on every one of 5 rejected cards — the model simply never populated
+    // an optional field, twice-instructed. A conditionally-meaningful optional array lets the
+    // omission pass silently; an always-required enum field cannot be silently skipped, and a
+    // boolean+nullable-ID shape was rejected in favor of this one specifically because it permits
+    // logically incoherent states (a "warm enough" claim carrying a layer ID too) that would need
+    // their own special-cased rejection just to name the incoherence.
     const coldLayerRequired = slotColdLayerRequired(slot)
-    if (assignedLayerIds.length && !coldLayerRequired) {
-      reasons.push(`assigned_layer_piece_ids is only valid when this slot's cold_layer_required is true; ${label} does not require a cold layer — omit assigned_layer_piece_ids entirely for this slot.`)
+    const decision = raw?.cold_layer_decision && typeof raw.cold_layer_decision === 'object' ? raw.cold_layer_decision : {}
+    const mode = String(decision.mode || '').trim()
+    const decisionLayerId = Number.isFinite(Number(decision.assigned_layer_piece_id)) && Number(decision.assigned_layer_piece_id) > 0
+      ? Number(decision.assigned_layer_piece_id)
+      : null
+    if (!coldLayerRequired) {
+      // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
+      // card): the schema's own description already tells the model to answer 'not_required' when
+      // cold_layer_required is false, but nothing here checked it — a non-cold slot could carry a
+      // packed layer relation unchallenged.
+      if (mode && mode !== 'not_required') {
+        reasons.push(`cold_layer_decision.mode must be 'not_required' for ${label} — this slot's cold_layer_required is false.`)
+      } else if (decisionLayerId !== null) {
+        reasons.push(`cold_layer_decision.assigned_layer_piece_id must be null for ${label} — this slot's cold_layer_required is false.`)
+      }
+    } else if (mode === 'not_required') {
+      reasons.push(`cold_layer_decision.mode cannot be 'not_required' for ${label} — this slot's cold_layer_required is true.`)
+    } else if (mode === 'core_is_warm_enough') {
+      if (decisionLayerId !== null) {
+        reasons.push(`cold_layer_decision.mode is 'core_is_warm_enough' for ${label} but assigned_layer_piece_id is also set — choose one.`)
+      } else if (!hasMinimumWarmLayer(pieces)) {
+        // The claim is never trusted at face value — mechanically checked against the identical
+        // fact NO_WARM_LAYER_FOR_COLD reads below. A distinct message from the omission case (never
+        // this codebase's generic "no warm layer for cold weather") so a future trace can tell "the
+        // model lied" from "the model forgot" without re-deriving it — and per the spec, both
+        // failure shapes are equally eligible for Part B's repair once diagnosed here.
+        reasons.push(`cold_layer_decision claims core_is_warm_enough for ${label}, but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false.`)
+      }
+    } else if (mode !== 'assigned_packed_layer') {
+      reasons.push(`cold_layer_decision.mode must be one of 'core_is_warm_enough', 'assigned_packed_layer', or 'not_required' for ${label}.`)
     }
+    // mode === 'assigned_packed_layer' with decisionLayerId === null (the omission case) is
+    // deliberately NOT rejected here with an explicit reason — assignedLayers simply stays empty
+    // and NO_WARM_LAYER_FOR_COLD below fires exactly as it always has, preserving that message for
+    // the plain-omission shape and keeping this block's own new reasons scoped to genuinely new
+    // validation surface (schema misuse, false claims) rather than duplicating the existing floor.
     const assignedLayers = []
-    for (const id of assignedLayerIds) {
+    if (coldLayerRequired && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
+      const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
         reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
-        continue
+      } else {
+        const layerPiece = planPiecesById.get(id)
+        if (layerPiece) {
+          // Piece-specific half of the cold-layer invariant: a warm CORE (a heavy top/dress, or a
+          // separately-adequate layer already in piece_ids) must not launder an explicitly-asserted
+          // but thermally-useless assigned-layer choice through the whole-outfit floor below.
+          // outerwearLayerPositivelyInadequate is Gate 2's own negative-evidence family (ultralight
+          // + non_insulating + unlined), reused verbatim rather than re-derived, and deliberately
+          // NOT gated on category/garmentKind here — the assigned relation can legitimately name a
+          // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
+          // evidence positively contradict the cold-layer claim," not "is it a coat."
+          if (outerwearLayerPositivelyInadequate(layerPiece)) {
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
+          } else {
+            assignedLayers.push(layerPiece)
+          }
+        }
       }
-      const layerPiece = planPiecesById.get(id)
-      if (!layerPiece) continue
-      // Piece-specific half of the cold-layer invariant: a warm CORE (a heavy top/dress, or a
-      // separately-adequate layer already in piece_ids) must not launder an explicitly-asserted but
-      // thermally-useless assigned_layer_piece_ids choice through the whole-outfit floor below.
-      // outerwearLayerPositivelyInadequate is Gate 2's own negative-evidence family (ultralight +
-      // non_insulating + unlined), reused verbatim rather than re-derived, and deliberately NOT
-      // gated on category/garmentKind here — the assigned relation can legitimately name a
-      // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
-      // evidence positively contradict the cold-layer claim," not "is it a coat." Only reachable
-      // when this slot actually requires a cold layer; a non-cold slot already rejects the
-      // relation outright above.
-      if (coldLayerRequired && outerwearLayerPositivelyInadequate(layerPiece)) {
-        reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer or omit assigned_layer_piece_ids.`)
-        continue
-      }
-      assignedLayers.push(layerPiece)
     }
     const outfit = {
       title: String(raw?.title || slot.label || '').trim(),

@@ -46,7 +46,8 @@ import {
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET,
   truthfulWeatherLabel,
-  slotColdLayerRequired
+  slotColdLayerRequired,
+  identifyColdLayerRepairableFailures
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -441,7 +442,7 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
 // anything user- or model-facing. Deliberately narrow: piece_ids/assigned_layer_piece_ids/slot/
 // reasons only, never the full resolved piece objects validateSubmittedPlanOutfits's own failures
 // carry (those repeat the entire garment record per rejected card and would bloat every row).
-export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [], corrected = [] } = {}) {
+export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [], corrected = [], repaired = [] } = {}) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   const debug = {
@@ -449,7 +450,9 @@ export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted =
       slot_id: entry?.slot_id ?? null,
       title: String(entry?.title || ''),
       piece_ids: (Array.isArray(entry?.piece_ids) ? entry.piece_ids : []).map(Number),
-      assigned_layer_piece_ids: (Array.isArray(entry?.assigned_layer_piece_ids) ? entry.assigned_layer_piece_ids : []).map(Number),
+      cold_layer_decision: entry?.cold_layer_decision && typeof entry.cold_layer_decision === 'object'
+        ? { mode: entry.cold_layer_decision.mode || null, assigned_layer_piece_id: entry.cold_layer_decision.assigned_layer_piece_id ?? null }
+        : null,
     })),
     rejected: (Array.isArray(failures) ? failures : []).map(failure => ({
       slot_id: failure?.slot_id ?? null,
@@ -465,7 +468,14 @@ export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted =
     corrected: (Array.isArray(corrected) ? corrected : []).map(entry => ({
       slot_id: entry?.slot_id ?? null,
       title: String(entry?.title || ''),
-      dropped_assigned_layer_piece_ids: (Array.isArray(entry?.dropped_assigned_layer_piece_ids) ? entry.dropped_assigned_layer_piece_ids : []).map(Number),
+      original_cold_layer_decision: entry?.original_cold_layer_decision || null,
+    })),
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B): cards recovered by the
+    // one bounded repair pass, distinct from both `rejected` (never recovered) and `corrected`
+    // (fixed before validation ever ran) — so a future trace can tell all three apart at a glance.
+    repaired: (Array.isArray(repaired) ? repaired : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
     })),
   }
   toolContext.freeformDiagnostics.tripAtomicCompositionDebug = JSON.stringify(debug)
@@ -843,6 +853,33 @@ const WEATHER_ESTIMATE_SCHEMA = {
   required: ["high_f", "low_f"]
 }
 
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part A, ratified). Shared by both
+// schemas that carry it (this tool's submit_plan_outfits below, and routes/ai.js's
+// tripPlanCompositionSchema for the atomic path) so the two definitions cannot drift the way
+// assigned_layer_piece_ids's near-duplicate descriptions already had. Always required on every
+// outfit -- a conditionally-required field lets the model skip the question the same way an
+// optional array already did (thread_1788667759424: 5 of 7 cards, twice-instructed, never
+// populated it). Enum-style rather than boolean+nullable-ID: that shape permits logically
+// incoherent states (a "warm enough" claim carrying a layer ID too) a plain enum cannot represent.
+export function coldLayerDecisionSchemaProperty() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mode: {
+        type: "string",
+        enum: ["core_is_warm_enough", "assigned_packed_layer", "not_required"],
+        description: "core_is_warm_enough: piece_ids alone (its own outerwear piece, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: piece_ids is not warm enough on its own, and assigned_layer_piece_id names the packed roster layer worn WITH this look. not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
+      },
+      assigned_layer_piece_id: {
+        type: ["integer", "null"],
+        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity -- not part of the card's own visual identity, do not also put it in piece_ids. Must be null for every other mode."
+      }
+    },
+    required: ["mode", "assigned_layer_piece_id"]
+  }
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -1148,9 +1185,9 @@ export const STYLIST_TOOLS = [
               title: { type: "string", description: "Optional short card title." },
               reason: { type: "string", description: "Optional one-sentence styling rationale." },
               styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order, where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments. Concrete and actionable, not a restatement of `reason` — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision." },
-              assigned_layer_piece_ids: { type: "array", items: { type: "integer" }, description: "For a cold slot whose core look (piece_ids) is not warm enough on its own: the packed roster layer piece ID(s) actually worn WITH this look, chosen for fit with this specific outfit and its occasion/activity. This is a shared packed layer, not part of the card's own visual identity — do not also put it in piece_ids, and do not add one just because a slot is cold if piece_ids already includes a qualifying warm layer or heavy-fabric main piece. Must be a piece from the current packing roster that is eligible for this slot." }
+              cold_layer_decision: coldLayerDecisionSchemaProperty()
             },
-            required: ["slot_id", "piece_ids"]
+            required: ["slot_id", "piece_ids", "cold_layer_decision"]
           }
         }
       },
@@ -3321,28 +3358,30 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }
           }
           // Mechanical pre-validation correction (live regression, thread_1788584505940): the
-          // composer violates the schema's own "omit assigned_layer_piece_ids when
-          // cold_layer_required is false" instruction often enough that the one-shot atomic path
-          // was silently losing whole cards to it — a museum slot's card was hard-rejected over an
-          // invisible layer relation that isn't even part of the card's visual identity, with no
-          // repair round to recover it. This is a narrow, deterministic violation with exactly one
-          // correct fix (drop the relation), unlike a missing structural piece
-          // (completeSubmittedPlanOutfits' job, which must choose a replacement) — so it is
-          // corrected here, before validation runs, rather than left to cost the card. The hard
-          // invariant itself (slotColdLayerRequired / validateSubmittedPlanOutfits) is unchanged
-          // and still rejects this exact violation for the ordinary tool-loop submit_plan_outfits
-          // case below, which can retry within the same turn and should keep learning from the
-          // rejection message — this correction is scoped to the one-shot path that cannot.
+          // composer violates the schema's own "answer not_required when cold_layer_required is
+          // false" instruction often enough that the one-shot atomic path was silently losing whole
+          // cards to it — a museum slot's card was hard-rejected over an invisible layer relation
+          // that isn't even part of the card's visual identity, with no repair round to recover it.
+          // This is a narrow, deterministic violation with exactly one correct fix (force
+          // not_required/null), unlike a missing structural piece (completeSubmittedPlanOutfits'
+          // job, which must choose a replacement) — so it is corrected here, before validation runs,
+          // rather than left to cost the card. The hard invariant itself (slotColdLayerRequired /
+          // validateSubmittedPlanOutfits) is unchanged and still rejects this exact violation for
+          // the ordinary tool-loop submit_plan_outfits case below, which can retry within the same
+          // turn and should keep learning from the rejection message — this correction is scoped to
+          // the one-shot path that cannot. Updated for docs/trip-cold-layer-decision-contract-and-
+          // repair-spec.md's enum-style cold_layer_decision, replacing the old array field.
           const slotById = new Map(pendingPlan.slots.map(slot => [slot.id, slot]))
-          const correctedAssignedLayers = []
+          const correctedColdLayerDecisions = []
           const sanitizedOutfits = submittedOutfits.map(outfit => {
-            const assignedLayerIds = Array.isArray(outfit?.assigned_layer_piece_ids) ? outfit.assigned_layer_piece_ids : []
-            if (!assignedLayerIds.length) return outfit
+            const decision = outfit?.cold_layer_decision
+            if (!decision || typeof decision !== 'object') return outfit
+            const isAlreadyNotRequired = decision.mode === 'not_required' && decision.assigned_layer_piece_id == null
+            if (isAlreadyNotRequired) return outfit
             const slot = slotById.get(String(outfit?.slot_id || ''))
             if (!slot || slotColdLayerRequired(slot)) return outfit
-            correctedAssignedLayers.push({ slot_id: outfit.slot_id, title: outfit.title || '', dropped_assigned_layer_piece_ids: assignedLayerIds })
-            const { assigned_layer_piece_ids, ...rest } = outfit
-            return rest
+            correctedColdLayerDecisions.push({ slot_id: outfit.slot_id, title: outfit.title || '', original_cold_layer_decision: decision })
+            return { ...outfit, cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }
           })
           // Hard invariant (docs/trip-composition-parity-spec.md §7): the atomic call changes who
           // composes and what evidence they see, never what counts as a valid trip outfit. These are
@@ -3350,15 +3389,66 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // same gate-eligibility/duplicate-core/assigned-layer/environmental-hard-gate checks, no
           // parallel validation semantics.
           const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
-          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, sanitizedOutfits, {
+          let { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, sanitizedOutfits, {
             visuallySeenPieceIds: seenForValidation
           })
+          // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified): one
+          // narrow, bounded repair pass, scoped to cards whose ONLY failure is the cold-layer
+          // decision and for which a qualifying, gate-eligible packed layer genuinely exists.
+          // Everything else about the atomic composer's zero-repair design is unchanged — this is
+          // not a general resubmit loop, just a second chance at the one question the live incident
+          // showed the model reliably fails to answer unprompted.
+          let repairedOutfits = []
+          const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+          if (repairable.length && typeof toolContext.repairTripColdLayerCards === 'function') {
+            let repairResponses = []
+            try {
+              repairResponses = await toolContext.repairTripColdLayerCards({ cards: repairable })
+            } catch (err) {
+              repairResponses = []
+            }
+            if (Array.isArray(repairResponses) && repairResponses.length) {
+              const repairedBySlot = new Map(repairResponses.map(entry => [String(entry?.slot_id || ''), entry]))
+              const repairableSlotIds = new Set(repairable.map(entry => entry.slot_id))
+              const stillNeedsRepair = failures.filter(failure => !repairableSlotIds.has(failure.slot_id))
+              const originalBySlot = new Map(failures.map(failure => [failure.slot_id, failure.outfit]))
+              const resubmission = repairable
+                .map(entry => repairedBySlot.get(String(entry.slot_id)))
+                .filter(Boolean)
+                .map(entry => ({
+                  slot_id: entry.slot_id,
+                  // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
+                  // supplied its own warmer piece_ids -- the repair call is instructed not to
+                  // restyle otherwise, but the model still owns that one legitimate escape hatch.
+                  piece_ids: Array.isArray(entry.piece_ids) && entry.piece_ids.length
+                    ? entry.piece_ids
+                    : (originalBySlot.get(entry.slot_id)?.pieceIds || []),
+                  title: entry.title || originalBySlot.get(entry.slot_id)?.title || '',
+                  reason: entry.reason || originalBySlot.get(entry.slot_id)?.reason || '',
+                  styling_instructions: entry.styling_instructions || originalBySlot.get(entry.slot_id)?.stylingInstructions || '',
+                  cold_layer_decision: entry.cold_layer_decision,
+                }))
+              const repairValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, {
+                visuallySeenPieceIds: seenForValidation
+              })
+              repairedOutfits = repairValidation.accepted
+              accepted = [...accepted, ...repairedOutfits]
+              failures = [...stillNeedsRepair, ...repairValidation.failures]
+            }
+          }
           // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the
           // console.log below was the ONLY record of a rejected card's content/reason, and it went
           // to a process stdout with no accessible log afterward). `submitted` stays the composer's
           // ORIGINAL output (pre-correction) so a trace can still see what the model actually did;
-          // `corrected` records what this call site silently fixed before validation ran.
-          setFreeformTripAtomicCompositionDebug(toolContext, { submitted: submittedOutfits, failures, corrected: correctedAssignedLayers })
+          // `corrected` records what this call site silently fixed before validation ran; `repaired`
+          // records what Part B's bounded repair pass recovered, so a future trace can tell "the
+          // card was lost" from "the card needed one narrow second chance" without re-deriving it.
+          setFreeformTripAtomicCompositionDebug(toolContext, {
+            submitted: submittedOutfits,
+            failures,
+            corrected: correctedColdLayerDecisions,
+            repaired: repairedOutfits.map(outfit => ({ slot_id: outfit._slotId, title: outfit.title || '' })),
+          })
           if (failures.length) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
             console.log('[Atomic Trip Validation]', failures)

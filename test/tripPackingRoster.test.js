@@ -484,13 +484,15 @@ test('a card with no layer of its own is still rejected when the packing roster\
     'a useless hoodie sitting in the roster must not suppress the per-card removable-layer finding')
 })
 
-// ─── COLD FLOOR: assigned_layer_piece_ids (thread_1788508369689 arc, product ruling "use B") ─────
+// ─── COLD FLOOR: cold_layer_decision (thread_1788508369689 arc, product ruling "use B"; enum shape
+// per docs/trip-cold-layer-decision-contract-and-repair-spec.md) ──────────────────────────────
 // A cold slot is physically different from the cool-edge case above: "packed somewhere in the
 // roster" does not make THIS card's worn outfit warm. packingRosterHasLayer must NOT suppress
 // NO_WARM_LAYER_FOR_COLD (that would create a real hole — a puffer packed for one mountain day
 // cannot retroactively warm an unrelated thin-blouse-and-skirt cold card). Instead the card names
-// the specific packed layer(s) it uses via assigned_layer_piece_ids, kept separate from piece_ids
-// (a trip card is a representative CORE outfit, not a literal enumeration of every shared layer).
+// the specific packed layer(s) it uses via cold_layer_decision (mode 'assigned_packed_layer'),
+// kept separate from piece_ids (a trip card is a representative CORE outfit, not a literal
+// enumeration of every shared layer).
 test('cold_layer_required is disclosed to the model as a resolved fact, true only when isCold and not indoor', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] })
   const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
@@ -513,14 +515,16 @@ test('a genuinely cold slot rejects a core-only card with no warm layer, exactly
   // floor, not the hiking-specific relaxation, so force both fields consistently.
   workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
-  const coreOnlyCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer, no assignment
+  // No layer, no assignment -- omission case: mode 'assigned_packed_layer' with a null id is not
+  // itself rejected, letting NO_WARM_LAYER_FOR_COLD fire naturally below.
+  const coreOnlyCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null } }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [coreOnlyCard])
   assert.equal(result.accepted.length, 0)
   assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))),
     'packingRosterHasLayer must NOT suppress the cold floor — a jacket existing in the roster does not warm an outfit that does not use it')
 })
 
-test('assigned_layer_piece_ids lets a cold card pass using a packed layer it does not visually enumerate in piece_ids', async () => {
+test('cold_layer_decision (assigned_packed_layer) lets a cold card pass using a packed layer it does not visually enumerate in piece_ids', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] })
   const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
@@ -528,7 +532,7 @@ test('assigned_layer_piece_ids lets a cold card pass using a packed layer it doe
   })
   workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
-  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [8] }
+  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: 8 } }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
   assert.equal(result.failures.length, 0)
   assert.equal(result.accepted.length, 1)
@@ -546,7 +550,7 @@ test('an assigned layer outside the packing roster or ineligible for the slot is
   })
   workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
-  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [8] }
+  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: 8 } }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
   assert.equal(result.accepted.length, 0)
   assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('not eligible as a layer'))))
@@ -568,7 +572,7 @@ test('an assigned layer that is packed and slot-eligible but still not warm enou
   })
   workbench.pendingPlan.slots[0].weatherProfile = { ...workbench.pendingPlan.slots[0].weatherProfile, isCold: true, requiresWarmLayerForColdExposure: true }
 
-  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], assigned_layer_piece_ids: [20] }
+  const assignedCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3], cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: 20 } }
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [assignedCard])
   assert.equal(result.accepted.length, 0)
   assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no warm layer for cold weather'))),

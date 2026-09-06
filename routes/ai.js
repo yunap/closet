@@ -70,7 +70,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -4059,9 +4059,11 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
 }
 
 // docs/trip-composition-parity-spec.md — same shape as capsulePlanCompositionSchema, with
-// assigned_layer_piece_ids added: a trip card names a shared packed layer separately from its own
+// cold_layer_decision added: a trip card names a shared packed layer separately from its own
 // piece_ids (owner ruling, thread_1788508369689 arc) rather than being forced to visually enumerate
-// it. No palette/category-shape fields — a trip roster has no palette contract, unlike a capsule.
+// it, via a mandatory enum decision rather than an optional array
+// (docs/trip-cold-layer-decision-contract-and-repair-spec.md). No palette/category-shape fields — a
+// trip roster has no palette contract, unlike a capsule.
 export function tripPlanCompositionSchema(targetOutfits = 1) {
   const exactCount = Math.max(1, Number(targetOutfits) || 1)
   return {
@@ -4081,9 +4083,9 @@ export function tripPlanCompositionSchema(targetOutfits = 1) {
             title: { type: 'string' },
             reason: { type: 'string' },
             styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." },
-            assigned_layer_piece_ids: { type: 'array', items: { type: 'integer' }, description: "For a cold slot whose core look (piece_ids) is not warm enough on its own: the packed roster layer piece ID(s) actually worn WITH this look, chosen for fit with this specific outfit and its occasion/activity. Not part of the card's own visual identity — do not also put it in piece_ids, and omit entirely when piece_ids is already warm enough or the slot's cold_layer_required is false." }
+            cold_layer_decision: coldLayerDecisionSchemaProperty()
           },
-          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions']
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions', 'cold_layer_decision']
         }
       }
     },
@@ -4650,7 +4652,7 @@ export function tripPlanCompositionSystemPrompt() {
 
 Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Two looks in this rotation must never share the identical set of piece_ids — reuse across DIFFERENT looks is the entire point of a packed suitcase (a top or a layer that earns its place across multiple use cases is a strength, not a compromise), so vary at least one piece between any two looks that would otherwise be identical. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
-This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. When a slot's own instructions state a cold-weather layering requirement, follow them exactly as given — including using assigned_layer_piece_ids for a shared packed layer rather than forcing it into piece_ids.
+This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. Every outfit requires a cold_layer_decision: when a slot's own instructions state a cold-weather layering requirement, decide whether the core pieces are already warm enough on their own (mode 'core_is_warm_enough') or name a shared packed layer separately from piece_ids (mode 'assigned_packed_layer' with assigned_layer_piece_id) rather than forcing it into piece_ids; when no cold-weather layering requirement applies, use mode 'not_required' with assigned_layer_piece_id null.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -4827,6 +4829,68 @@ async function composeTripPlanOnce(workbench, toolContext) {
   recordToolLoopUsage(toolContext, usage)
   toolContext.freeformDiagnostics.atomicTripVisualPieces = visuallySeenIds.length
   return Array.isArray(value?.outfits) ? value.outfits : []
+}
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Deliberately
+// text-only (no thumbnails) and narrowly scoped to just the repairable cards
+// (identifyColdLayerRepairableFailures, outfitSetPlanner.js) — this is a targeted second chance at
+// one specific decision, not a second composition pass, and stays cheap relative to the original
+// call by design.
+export function repairTripColdLayerCardsSchema(count) {
+  const exactCount = Math.max(1, Number(count) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      cards: {
+        type: 'array',
+        minItems: exactCount,
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            piece_ids: { type: 'array', items: { type: 'integer' }, description: "Return exactly as given unless mode is 'core_is_warm_enough' and the original piece_ids genuinely is not warm enough on its own -- only then may this be revised to a warmer core." },
+            title: { type: 'string' },
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string' },
+            cold_layer_decision: coldLayerDecisionSchemaProperty()
+          },
+          required: ['slot_id', 'cold_layer_decision']
+        }
+      }
+    },
+    required: ['cards']
+  }
+}
+
+export function repairTripColdLayerCardsSystemPrompt() {
+  return `You are fixing exactly one thing on a small set of trip outfit cards: each was rejected only because its cold_layer_decision did not hold up — either it was missing/invalid, or it claimed the core was already warm enough when it was not.
+
+For EACH card listed, answer cold_layer_decision correctly: mode 'core_is_warm_enough' only if piece_ids genuinely contains a qualifying layer or heavy-fabric main on its own, or mode 'assigned_packed_layer' with assigned_layer_piece_id set to one of that card's own listed candidate packed layers.
+
+Do NOT change piece_ids, title, reason, or styling_instructions for any card unless you are choosing mode 'core_is_warm_enough' and the original piece_ids genuinely is not warm enough on its own — in that one case only, you may revise piece_ids to a genuinely warmer core. Otherwise return piece_ids exactly as given. This is a targeted fix, not a chance to restyle the outfit.`
+}
+
+async function repairTripColdLayerCards({ cards } = {}, toolContext) {
+  const list = Array.isArray(cards) ? cards : []
+  if (!list.length) return []
+  const content = [{
+    type: 'text',
+    text: `Fix the cold_layer_decision for exactly these ${list.length} card(s):\n${JSON.stringify(list)}`
+  }]
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: repairTripColdLayerCardsSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: repairTripColdLayerCardsSchema(list.length),
+    name: 'trip_cold_layer_repair',
+    description: 'Correct the cold-layer decision for a small set of trip outfit cards that failed only for that reason.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(list.length, { tokensPerItem: 200, base: 300, floor: 500, ceiling: 2000 })
+  })
+  recordToolLoopUsage(toolContext, usage)
+  return Array.isArray(value?.cards) ? value.cards : []
 }
 
 // A capsule expansion is deliberately not a freeform tool loop. The original plan already paid
@@ -5293,6 +5357,10 @@ router.post('/ask', async (req, res) => {
     // docs/trip-composition-parity-spec.md — same one-shot structured composer shape as capsule's,
     // for the initial trip plan only; always wired (no feature flag) since the spec is ratified.
     toolContext.composeTripPlanOnce = workbench => composeTripPlanOnce(workbench, toolContext)
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B) — one narrow, bounded
+    // repair pass for cold-layer-decision-only failures; always wired alongside composeTripPlanOnce
+    // since both are the same ratified atomic-composition arc.
+    toolContext.repairTripColdLayerCards = payload => repairTripColdLayerCards(payload, toolContext)
     // Stage 2 roster selection is opt-in. With the flag off, toolContext never
     // gets a chooser and the capsule path is byte-identical to what shipped.
     if (modelCapsuleRosterEnabled()) {
