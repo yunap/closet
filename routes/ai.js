@@ -4757,6 +4757,27 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
 // exact same validateSubmittedPlanOutfits/assembleSubmittedPlanOutfits path a tool-loop-composed
 // trip already goes through — this function's only job is composing candidates, never judging them
 // valid.
+// buildPlanSlotWorkbench's `instructions` string (outfitSetPlanner.js's workbenchInstructions) is
+// shared verbatim with the ordinary tool-loop plan_outfit_set path, where its opening sentence --
+// "submit ALL slots in ONE submit_plan_outfits call", "Viewing pieces is cheap, VIEW the pieces..."
+// (a view_pieces tool call), "resubmit only the failed slots" -- is correct: that path really does
+// have submit_plan_outfits and view_pieces as callable tools, and a real chance to resubmit. The
+// atomic composer has neither: this call's tools list is empty (it returns its answer as this
+// call's own structured response, per tripPlanCompositionSystemPrompt above) and, being one-shot
+// (boundedComposition: true), has no resubmission round at all. Left unfiltered, the model reads
+// this sentence immediately after the system prompt's correct "return in one structured response"
+// line, in the same call -- a live, direct contradiction about how to submit its answer (found by
+// reconstructing an exact capture and reading it end to end, not by inspection of the source alone).
+// Every piece's photo is already attached unconditionally below regardless (see visuallySeenIds
+// below), so the print/layering/sheer visual-judgment guidance stays relevant even without a
+// separate viewing action.
+const ATOMIC_TRIP_TOOL_LOOP_ONLY_INSTRUCTION = 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Viewing pieces is cheap. VIEW the pieces of any outfit whose visual coherence you are uncertain about — print combinations, statement pieces, layering, anything sheer or revealing, silhouette pairings you haven\'t seen work. Compose directly from the catalog when pieces are solids and the combination is conventional. Do not bulk-browse the whole roster. If validation accepts some outfits and rejects others, resubmit only the failed slots.'
+const ATOMIC_TRIP_COMPOSITION_INSTRUCTION = 'Compose the complete rotation yourself and return it as this call\'s own structured response for every slot in one shot — there is no tool call to submit it and no resubmission round, so get it right the first time. Use piece_catalog for garment details and pick only from each slot\'s allowed_piece_ids; every piece\'s photo is already attached below, so judge print combinations, statement pieces, layering, anything sheer or revealing, and any silhouette pairing by sight rather than guessing. Compose directly from the catalog when pieces are solids and the combination is conventional.'
+
+export function atomicTripCompositionInstructions(instructions) {
+  return String(instructions || '').replace(ATOMIC_TRIP_TOOL_LOOP_ONLY_INSTRUCTION, ATOMIC_TRIP_COMPOSITION_INSTRUCTION)
+}
+
 async function composeTripPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -4774,7 +4795,7 @@ async function composeTripPlanOnce(workbench, toolContext) {
   // spec's §3.2 finding.
   const truthCatalog = rosterPieces.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const promptPayload = {
-    instructions: workbench.instructions,
+    instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
     slots: workbench.slots,
     piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog

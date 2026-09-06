@@ -28,7 +28,7 @@ const { resolveOccasionProfile } = await import('../styling-engine/occasions.js'
 const { extractStatedTripDateRange } = await import('../styling-engine/stylingIntent.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions, identifyColdLayerRepairableFailures } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt, tripPlanCompositionSchema, tripPlanCompositionSystemPrompt, repairTripColdLayerCardsSchema, repairTripColdLayerCardsSystemPrompt } = await import("../routes/ai.js")
+const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt, tripPlanCompositionSchema, tripPlanCompositionSystemPrompt, repairTripColdLayerCardsSchema, repairTripColdLayerCardsSystemPrompt, atomicTripCompositionInstructions } = await import("../routes/ai.js")
 const { layerConstructionPromptRule, layerDirectionPromptRule, evaluateWearableOutfit } = await import('../styling-engine/outfitValidation.js')
 const { ENVIRONMENTAL_ADEQUACY_CODES } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
 
@@ -1480,6 +1480,34 @@ test('atomic trip composition receives roster thumbnails and full authoritative 
   assert.doesNotMatch(fnBody, /planWorkbenchPieceLine\(/, 'must not CALL the compact line builder (the bare name appears only in an explanatory comment)')
   assert.match(fnBody, /content\.push\(\{\s*type: 'image'/)
   assert.match(fnBody, /maxPx: 800/)
+  // The tool-loop-only sentence in workbench.instructions must be rewritten, not embedded verbatim.
+  assert.match(fnBody, /instructions: atomicTripCompositionInstructions\(workbench\.instructions\)/)
+})
+
+// Live capture, thread_1788680648194/run 1348: reconstructing the exact atomic composition call
+// end to end found the workbench's shared `instructions` string telling the model to "submit ALL
+// slots in ONE submit_plan_outfits call" and "VIEW the pieces... [via a] Viewing pieces is cheap"
+// tool action -- immediately after the system prompt's own, correct "return... in one structured
+// response" instruction. That sentence is right for the ordinary tool-loop plan_outfit_set path
+// (submit_plan_outfits and view_pieces really are callable tools there, with a resubmission
+// chance), but the atomic composer has neither: it returns its answer as this call's structured
+// response, has no tools at all, and no resubmission round (boundedComposition: true). Pins the
+// fix scoped at the composeTripPlanOnce boundary, not the shared workbenchInstructions builder.
+test('the atomic composer rewrites the shared workbench instructions\' tool-loop-only sentence, not the tool-loop path\'s own copy', () => {
+  const toolLoopInstructions = 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Viewing pieces is cheap. VIEW the pieces of any outfit whose visual coherence you are uncertain about — print combinations, statement pieces, layering, anything sheer or revealing, silhouette pairings you haven\'t seen work. Compose directly from the catalog when pieces are solids and the combination is conventional. Do not bulk-browse the whole roster. If validation accepts some outfits and rejects others, resubmit only the failed slots. Reuse is set to maximize.'
+
+  const rewritten = atomicTripCompositionInstructions(toolLoopInstructions)
+  assert.doesNotMatch(rewritten, /submit_plan_outfits/, 'the atomic path has no such tool -- this sentence must not reach it')
+  assert.doesNotMatch(rewritten, /Viewing pieces is cheap/, 'the atomic path has no view_pieces tool either -- every photo is already attached unconditionally')
+  assert.doesNotMatch(rewritten, /resubmit only the failed slots/, 'the atomic path is one-shot -- there is no resubmission round to describe')
+  assert.match(rewritten, /return it as this call's own structured response/)
+  assert.match(rewritten, /Reuse is set to maximize\.$/, 'text after the rewritten sentence must survive untouched')
+
+  // A string that never carries the tool-loop-only sentence at all (already correct, or from some
+  // other caller) must pass through completely unchanged -- this is a targeted rewrite, not a
+  // blanket transform.
+  const alreadyFine = 'Some other instructions entirely.'
+  assert.equal(atomicTripCompositionInstructions(alreadyFine), alreadyFine)
 })
 
 // thread_1788501349296: a trip roster with zero outerwear made every submitted card fail

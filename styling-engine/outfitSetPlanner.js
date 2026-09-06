@@ -4354,9 +4354,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // this states below is a pass/fail structural gate (NO_WARM_LAYER_FOR_COLD), not a preference,
     // and nothing told the model its actual criterion. Names the criterion, not a garment ("add a
     // jacket") — owner ruling: card = representative core outfit, so a cold slot's fix is not
-    // forcing the layer into piece_ids, it's the new assigned_layer_piece_ids relation.
+    // forcing the layer into piece_ids, it's the cold_layer_decision relation
+    // (docs/trip-cold-layer-decision-contract-and-repair-spec.md). Updated for the enum-style
+    // mandatory decision replacing the old optional assigned_layer_piece_ids array — this string
+    // had drifted stale after that migration, still naming the old field to the model even though
+    // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
+    // was built to remove.
     planKind === 'trip'
-      ? 'When a slot\'s cold_layer_required is true, its submitted outfit itself must actually be warm: either piece_ids already includes an outerwear piece, or a heavy-fabric top/dress as the main piece. If neither is true, choose a packed layer from the current packing roster that fits this specific look and its occasion/activity, and name its ID in assigned_layer_piece_ids — do not put it in piece_ids just to satisfy this, and do not add one when piece_ids is already warm enough or cold_layer_required is false.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. When a slot\'s cold_layer_required is true, its submitted outfit itself must actually be warm: either piece_ids already includes an outerwear piece, or a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). If neither is true, choose a packed layer from the current packing roster that fits this specific look and its occasion/activity, and name its ID via cold_layer_decision (mode \'assigned_packed_layer\', assigned_layer_piece_id set) — do not put it in piece_ids just to satisfy this. When cold_layer_required is false, use mode \'not_required\' with assigned_layer_piece_id null.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
