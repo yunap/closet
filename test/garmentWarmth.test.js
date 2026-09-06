@@ -4,7 +4,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
-import { garmentWarmthLevel, warmthPlacementState, warmthIsRemovable, WARMTH_LEVELS } from '../styling-engine/garmentWarmth.js'
+import { garmentWarmthLevel, garmentWarmthScore, warmthPlacementState, warmthIsRemovable, WARMTH_LEVELS } from '../styling-engine/garmentWarmth.js'
 
 const at = l => WARMTH_LEVELS.indexOf(l)
 const G = {
@@ -39,11 +39,13 @@ test('gate 2 — coverage is represented, and a bare cut is decisive', () => {
   // read coverage, while the evidence layer scored it -2.
   assert.ok(at(garmentWarmthLevel(G.woolShellBare)) < at(garmentWarmthLevel(G.woolSweater)),
     'the same wool, bare, must sit below the long-sleeved version')
-  // `moderate` since the light/moderate boundary moved (garmentWarmth.js): the anchors put a thin
-  // sleeveless scoop-neck at 0.23 and thick trousers at 0.24, so a bare wool shell sitting alongside
-  // substantial bottoms is anchor-consistent. What matters is the ORDERING against its long-sleeved
-  // twin, which is asserted above and still holds.
-  assert.equal(garmentWarmthLevel(G.woolShellBare), 'moderate')
+  // Was `moderate` before docs/source-sensitive-insulating-credit-spec.md's fiber-credit fix
+  // (+2 -> +0.5 for face-fabric-only evidence): substance(1) + credit(0.5) + bare-cut(-2) = -0.5,
+  // now `very light` — the exact, explicitly-flagged consequence of reducing an oversized fiber
+  // credit that was previously CANCELLING an also-oversized bare-cut penalty by coincidence, not by
+  // calibration (spec §2, §5). The bare-cut penalty itself is a separate, not-yet-ratified
+  // follow-up calibration; this pins today's actual behavior, not an endorsement of `-2`.
+  assert.equal(garmentWarmthLevel(G.woolShellBare), 'very light')
   assert.equal(garmentWarmthLevel(G.linenDress), 'very light')
 })
 
@@ -52,8 +54,13 @@ test('gate 3 — the pinned orderings are supportable', () => {
   // by absolute warmth. Which one wins on a given day is the demand mapping's job, not this one's.
   assert.ok(at(garmentWarmthLevel(G.puffer)) > at(garmentWarmthLevel(G.cardigan)),
     'a down puffer is absolutely warmer than a knit cardigan')
-  assert.ok(at(garmentWarmthLevel(G.cardigan)) > at(garmentWarmthLevel(G.unlinedJacket)),
-    'and an insulating cardigan above an unlined cotton jacket')
+  // The named LEVEL no longer distinguishes these two (both `moderate` since the fiber-credit fix
+  // — deliberately: docs/source-sensitive-insulating-credit-spec.md's own census found the bucket
+  // system too coarse to name this real but modest difference, and ratified letting the raw SCORE
+  // carry it instead of re-inflating the bucket). The raw score still orders them correctly.
+  assert.equal(garmentWarmthLevel(G.cardigan), garmentWarmthLevel(G.unlinedJacket), 'same named bucket, by design')
+  assert.ok(garmentWarmthScore(G.cardigan) > garmentWarmthScore(G.unlinedJacket),
+    'an insulating cardigan still scores above an unlined cotton jacket in raw terms')
 
   // Secondary coverage must not outweigh a fabric-weight class. A first attempt gave sleeves, hem
   // and neckline a full step each, and a medium fleece with a warm collar tied the down puffer.
@@ -126,7 +133,13 @@ test('ordinary clothing with a recorded face fabric places — it cannot conceal
   const B = (fw, cat, fib) => ({ category: 'bottom', fabric_weight: fw, fabric_category: cat, fiber_content: fib })
   assert.equal(garmentWarmthLevel(B('medium', 'cotton', ['cotton'])), 'moderate')
   assert.equal(garmentWarmthLevel(B('medium', 'denim', ['denim'])), 'moderate')
-  assert.equal(garmentWarmthLevel(B('medium', 'wool', ['wool'])), 'warm')
+  // Was `warm` before docs/source-sensitive-insulating-credit-spec.md's fiber-credit fix — the
+  // exact two-bucket-jump-from-a-fiber-name-alone case that census's isolated short-sleeve
+  // comparison (5 real cotton tops vs. a matched wool dress) proved wrong. Still ranks above the
+  // cotton bottoms in raw score (asserted via garmentWarmthScore below).
+  assert.equal(garmentWarmthLevel(B('medium', 'wool', ['wool'])), 'moderate')
+  assert.ok(garmentWarmthScore(B('medium', 'wool', ['wool'])) > garmentWarmthScore(B('medium', 'cotton', ['cotton'])),
+    'wool still scores above cotton at the same weight, just not enough to cross a bucket alone')
 
   // The separation the live thread needed: a light summer pant is NOT the same as denim.
   assert.equal(garmentWarmthLevel(B('light', 'cotton', ['cotton'])), 'light')

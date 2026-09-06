@@ -243,7 +243,15 @@ test('composer scoring: a merely-chilly evening must not surface the heaviest co
   const chillyJacket = (chilly[mediumJacket.id] || []).join(' ')
   assert.match(chillyCoat, /warmer than the conditions/,
     'a merely-chilly evening penalises the heaviest coat rather than rewarding it')
-  assert.match(chillyJacket, /well matched/, 'and prefers the piece that actually fits the evening')
+  // Was "well matched" before docs/source-sensitive-insulating-credit-spec.md's fiber-credit fix:
+  // the wool jacket's own rating dropped from an exact match (`warm`) to a genuine, mild undershoot
+  // (`moderate`, ranking offset -1.25 from the demand's target) — the fiber-only credit that used to
+  // make it read as fully "warm" was itself the miscalibration this spec corrected. Undershoot on
+  // outerwear is silenced by this call site's own pre-existing, unrelated rule ("a light layer gets
+  // layered over" — bottom/dress only get an undershoot penalty), so the jacket now carries no
+  // thermal-band text at all rather than a false-positive "well matched" claim. It still isn't
+  // penalised, and the coat's clear overshoot penalty is what actually decides the ranking.
+  assert.doesNotMatch(chillyJacket, /thermal band/, 'no false "well matched" claim, and no penalty either')
 
   const severe = roster(structuredCold(30, 20))
   const severeCoat = (severe[heavyCoat.id] || []).join(' ')

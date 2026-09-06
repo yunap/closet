@@ -12,8 +12,8 @@ import { resolveOccasionProfile } from './occasions.js'
 // The thermal band (docs/thermal-comfort-band-spec.md §8 migration). Ranking reads the band rather
 // than `isCold`, which used to decide whether graded thermal reasoning existed at all.
 import { resolveExposureContext } from './exposure.js'
-import { requiredThermalBand, compareThermalFit } from './thermalDemand.js'
-import { garmentWarmthLevel } from './garmentWarmth.js'
+import { requiredThermalBand, thermalRankingFit } from './thermalDemand.js'
+import { garmentWarmthLevel, garmentWarmthScore } from './garmentWarmth.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
@@ -274,20 +274,22 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}, { exposure =
   const demand = (exposure && wardrobeCategoryGroup(piece) === 'outerwear')
     ? (slotDemand.layer || slotDemand)
     : slotDemand
-  const fit = compareThermalFit(garmentWarmthLevel(piece), demand)
+  const fit = thermalRankingFit(garmentWarmthLevel(piece), garmentWarmthScore(piece), demand)
   if (demand.level && fit.fit !== 'unknown') {
-    // RANKING READS `distance`, NOT `fit`. Using fit alone made every garment inside the
+    // RANKING READS `offset`, NOT `fit`. Using fit alone made every garment inside the
     // uncertainty band score identically — on a 65/47 day a puffer, a cardigan and a light jacket
     // all came out "adequate", which is the band becoming a giant equivalence class and losing
     // exactly the preference the migration exists to create. `fit` answers validity under
-    // uncertainty; `distance` answers preference within it (§16.2).
+    // uncertainty; `offset` answers preference within it (§16.2) — continuous (docs/
+    // thermal-ranking-source-sensitivity-and-overshoot-policy-spec.md's raw-score refinement) and
+    // overshoot-weighted, rather than the old whole-bucket-index `distance`.
     //
     // Overshoot RANKS, it never excludes (§5.5): a wardrobe whose only layer is a heavy coat still
     // gets dressed. Magnitudes stay modest — this is preference; validity belongs to outfit adequacy.
-    const off = Math.abs(fit.distance ?? 0)
-    const score = Math.max(-8, 4 - 4 * off)
+    const off = Math.abs(fit.offset ?? 0)
+    const score = Math.max(-8, 4 - 2 * off)
     const label = off === 0 ? 'well matched to the conditions'
-      : (fit.distance > 0 ? 'warmer than these conditions call for'
+      : (fit.offset > 0 ? 'warmer than these conditions call for'
         : 'lighter than these conditions call for')
     adjustments.push({
       score,
@@ -3330,9 +3332,15 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       //     is penalised. Ranking by fit rather than by mass is what makes the special case
       //     unnecessary, instead of merely re-tuned.
       const rosterDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
-      const rosterFit = compareThermalFit(garmentWarmthLevel(p), rosterDemand)
+      // thermalRankingFit (thermalDemand.js), not compareThermalFit directly — the shared ranking
+      // primitive both this roster and weatherFitForPiece now call, so a wool cardigan and a plain
+      // cotton jacket in the same named bucket still rank apart (docs/thermal-ranking-source-
+      // sensitivity-and-overshoot-policy-spec.md), and overshoot already carries its ranking-policy
+      // weight before this call site's own bottom/dress-only undershoot rule and magnitude-scaled
+      // overshoot penalty apply on top.
+      const rosterFit = thermalRankingFit(garmentWarmthLevel(p), garmentWarmthScore(p), rosterDemand)
       if (rosterDemand.level && rosterFit.fit !== 'unknown') {
-        const off = rosterFit.distance ?? 0
+        const off = rosterFit.offset ?? 0
         if (off < 0) {
           const catGroup = wardrobeCategoryGroup(p)
           if (catGroup === 'bottom' || catGroup === 'dress') {

@@ -38,7 +38,9 @@ test('gate 1 — row 2: a mild base plus a removable layer beats a permanently w
 test('gate 2 — base and removable warmth stay distinguishable', () => {
   const c = outfitThermalContribution([P.mildTop, P.cardigan])
   assert.equal(c.base, 'light')
-  assert.equal(c.removable, 'warm')
+  // Was `warm` before docs/source-sensitive-insulating-credit-spec.md's fiber-credit fix (a wool
+  // knit cardigan with no recorded fill no longer earns the same +2 a genuinely filled coat gets).
+  assert.equal(c.removable, 'moderate')
   assert.equal(c.hasRemovableLayer, true)
   assert.equal(outfitThermalContribution([P.heavyTop]).hasRemovableLayer, false)
 })
