@@ -2710,6 +2710,37 @@ export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
   }
 }
 
+// docs/trip-roster-season-eligibility-spec.md (ratified): a hard, roster-selection-time exclusion,
+// distinct from seasonFitPieceAdvisory above (which stays ranking-only, every category, unchanged).
+// A trip roster has a fixed, scarce number of slots chosen once for the whole trip -- a
+// season-mismatched bottom/shoe/dress taking one of them is a roster-construction defect regardless
+// of whether the model would go on to override the advisory for one outfit.
+//
+// `top` is exempt: it may serve as an indoor base layer under something warmer, the one category
+// with a plausible job despite the mismatch. `dress` is NOT exempt -- an outfit-defining piece, not
+// a layering component; the museum sleeveless-dress case is exactly why this stays hard for dress.
+//
+// `outerwear` gets its own rule, stated in terms of the PIECE's own season tag, never trip
+// "direction": a piece tagged for WARM weather is excluded like any other mismatched piece (a
+// warm-season blazer is exactly as useless on a cold trip as a warm-season pair of pants -- warm-
+// season means lightweight construction, not insulation). A piece tagged COOL/COLD is never
+// excluded as outerwear, on any trip -- it may be the one thing warm enough for an unexpectedly cold
+// day or evening. Same asymmetry capsuleSeasonEligiblePool already grants outerwear on a summer
+// capsule; this generalizes it to every calendar season rather than leaving it summer-specific.
+export function tripSeasonEligiblePool(pool = [], calendarSeason = '') {
+  const calendar = String(calendarSeason || '').toLowerCase().trim()
+  if (!calendar) return pool
+  return pool.filter(piece => {
+    const season = String(piece?.season || '').toLowerCase().trim()
+    const mismatched = season && season !== 'year-round' && OUT_OF_SEASON[calendar] === season
+    if (!mismatched) return true
+    const group = wardrobeCategoryGroup(piece)
+    if (group === 'top') return true
+    if (group === 'outerwear') return season !== 'warm'
+    return false
+  })
+}
+
 // "how much warmth do these conditions call for", as a short phrase the model can act on.
 export function slotThermalDemandLabel(exposure = null) {
   const demand = requiredThermalBand(exposure)
@@ -3693,9 +3724,10 @@ function diversityInterleavedByBucket(rankedPieces) {
 // complete gate-valid core (top+bottom-or-dress, plus a shoe) within the bench, the same mechanism
 // selectCapsuleRoster's own bench uses, because "can this use case be covered at all" is structural,
 // not a taste question either abstraction should re-derive separately.
-function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE } = {}) {
+function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE, calendarSeason = '' } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
-  const eligible = capsulePiecesEligibleForAnySlot(pool, normalizedSlots, {})
+  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason)
+  const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const gateSlots = normalizedSlots.map((slot, index) => {
     const slotEligible = slotGateEligiblePieces(eligible, slot, {})
@@ -3931,11 +3963,12 @@ export async function selectTripRosterViaModel({
   pool = [],
   slots = [],
   benchSize = TRIP_BENCH_SIZE,
+  calendarSeason = '',
   chooseRoster = null,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
-  const bench = buildTripBench(pool, { slots, benchSize })
+  const bench = buildTripBench(pool, { slots, benchSize, calendarSeason })
   const benchById = pieceMapForPieces(bench)
 
   if (typeof chooseRoster !== 'function') {
@@ -4089,9 +4122,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // the bench is ranked by cross-use-case reuse rather than capsule versatility.
   let tripRosterSelection = null
   if (typeof chooseTripRoster === 'function' && planKind === 'trip') {
+    // A trip roster is chosen ONCE for the whole trip, not per slot -- the first slot's already-
+    // resolved calendarSeason stands in for the whole trip (docs/trip-roster-season-eligibility-
+    // spec.md §5: a documented simplification, not solved here, for the rare trip whose slots span
+    // a season boundary).
     tripRosterSelection = await selectTripRosterViaModel({
       pool: allPieces,
       slots,
+      calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
       chooseRoster: chooseTripRoster,
       onDiagnostic,
     })

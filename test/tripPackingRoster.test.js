@@ -7,7 +7,7 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { selectTripRosterViaModel } from '../styling-engine/outfitSetPlanner.js'
+import { selectTripRosterViaModel, tripSeasonEligiblePool } from '../styling-engine/outfitSetPlanner.js'
 import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
 
 // docs/database-safety.md: routes/ai.js reaches db.js on import, so this must isolate
@@ -184,6 +184,76 @@ test('bench diversity applies to any category with many tied candidates, not onl
   const benchIds = new Set(result.bench.map(p => Number(p.id)))
   assert.ok(benchIds.has(950), 'a materially different top construction must survive truncation even at high id, same guarantee as outerwear')
 })
+
+// ─── SEASON ELIGIBILITY (docs/trip-roster-season-eligibility-spec.md, ratified) ─────────────────
+// Live thread thread_1788650429394: a winter Vienna, Virginia trip's 14-piece roster spent two
+// scarce slots on a warm-tagged pair of pants and a warm-tagged pair of sneakers. seasonFitPieceAdvisory
+// correctly scored both `discouraged`, but that advisory is deliberately non-blocking (a warm-season
+// piece is marked, never removed, per the owner's own ruling) -- the real defect is one stage
+// earlier, at roster SELECTION, which had no season filter at all. tripSeasonEligiblePool is a hard
+// pool-level exclusion, category-aware where capsule's sibling (capsuleSeasonEligiblePool) is
+// category-blind: top stays eligible (may layer indoors), bottom/shoes/dress do not, and outerwear
+// is excluded only when the PIECE ITSELF is warm-tagged -- a cool/cold-tagged layer is never
+// excluded, on any trip, since it may be the one thing warm enough for an unexpectedly cold moment.
+{
+  const WARM_BOTTOM = piece(101, 'bottom', { season: 'warm' })
+  const WARM_SHOES = piece(102, 'shoes', { season: 'warm' })
+  const WARM_TOP = piece(103, 'top', { season: 'warm' })
+  const WARM_DRESS = piece(104, 'dress', { season: 'warm' })
+  const WARM_OUTERWEAR = piece(105, 'outerwear', { season: 'warm' })
+  const COOL_OUTERWEAR = piece(106, 'outerwear', { season: 'cool' })
+  const COLD_OUTERWEAR = piece(107, 'outerwear', { season: 'cold' })
+  const YEAR_ROUND_TOP = piece(108, 'top', { season: 'year-round' })
+
+  test('tripSeasonEligiblePool excludes warm-tagged bottom/shoes/dress on a winter trip', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS], 'winter')
+    assert.deepEqual(result, [])
+  })
+
+  test('tripSeasonEligiblePool keeps a warm-tagged top on a winter trip -- may layer indoors', () => {
+    const result = tripSeasonEligiblePool([WARM_TOP], 'winter')
+    assert.deepEqual(result, [WARM_TOP])
+  })
+
+  test('tripSeasonEligiblePool excludes warm-tagged outerwear on a winter trip -- warm-season means lightweight, not insulating', () => {
+    const result = tripSeasonEligiblePool([WARM_OUTERWEAR], 'winter')
+    assert.deepEqual(result, [])
+  })
+
+  test('tripSeasonEligiblePool never excludes cool/cold-tagged outerwear, on any trip', () => {
+    assert.deepEqual(tripSeasonEligiblePool([COOL_OUTERWEAR], 'summer'), [COOL_OUTERWEAR],
+      'cool-tagged outerwear may be needed for an unexpectedly cold evening on a summer trip')
+    assert.deepEqual(tripSeasonEligiblePool([COLD_OUTERWEAR], 'spring'), [COLD_OUTERWEAR])
+    assert.deepEqual(tripSeasonEligiblePool([COOL_OUTERWEAR], 'winter'), [COOL_OUTERWEAR],
+      'cool-tagged outerwear is not itself mismatched on a winter trip in the first place')
+  })
+
+  test('tripSeasonEligiblePool excludes a mismatched bottom on a summer trip too -- symmetric, not winter-only', () => {
+    const coolBottom = piece(109, 'bottom', { season: 'cool' }) // OUT_OF_SEASON.summer === 'cool'
+    assert.deepEqual(tripSeasonEligiblePool([coolBottom], 'summer'), [])
+  })
+
+  test('tripSeasonEligiblePool never excludes a year-round piece, regardless of category or trip season', () => {
+    assert.deepEqual(tripSeasonEligiblePool([YEAR_ROUND_TOP], 'winter'), [YEAR_ROUND_TOP])
+  })
+
+  test('tripSeasonEligiblePool excludes nothing when calendarSeason is unresolved -- same early return as seasonFitPieceAdvisory', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR], '')
+    assert.deepEqual(result, [WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR])
+  })
+
+  test('selectTripRosterViaModel: a season-mismatched bottom/shoes never reaches the bench on a winter trip', async () => {
+    // CITY_BOTTOM/CITY_SHOES (no season tag) give the slot a legal complete outfit so the bench can
+    // form at all -- WARM_BOTTOM/WARM_SHOES are the extra, season-mismatched candidates under test.
+    const pool = [WARM_BOTTOM, WARM_SHOES, WARM_TOP, CITY_TOP, CITY_BOTTOM, CITY_SHOES]
+    const result = await selectTripRosterViaModel({
+      pool, slots: [SLOTS[0]], chooseRoster: null, calendarSeason: 'winter',
+    })
+    const benchIds = new Set(result.bench.map(p => Number(p.id)))
+    assert.ok(!benchIds.has(101) && !benchIds.has(102), 'warm-tagged bottom/shoes must not reach the roster bench on a winter trip')
+    assert.ok(benchIds.has(103), 'the warm-tagged top stays eligible')
+  })
+}
 
 // ─── ROSTER-LEVEL FEASIBILITY (thread_1788501349296) ────────────────────────────────────────────
 // A roster chooser can return something schema-valid and every-use-case-coverable
