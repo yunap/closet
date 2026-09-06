@@ -2826,6 +2826,31 @@ export default function StylistChat({
       label,
       pieces: capsuleRoster.filter(piece => String(piece?.category || '').toLowerCase() === category)
     })).filter(group => group.pieces.length)
+    // Same shape as capsulePlanContext (styling-engine/outfitSetPlanner.js: both build
+    // roster_ids/roster_pieces with id/name/category/photo/worn_photo/colors), so the same
+    // hydrate-and-group treatment applies unchanged — the packing list was text-only before this,
+    // making it hard to see what's actually packed.
+    const tripPackingContext = allOutfits.find(outfit => outfit?.tripPlanContext)?.tripPlanContext || null
+    const tripPackingRoster = (() => {
+      if (!tripPackingContext) return []
+      const supplied = Array.isArray(tripPackingContext.roster_pieces) ? tripPackingContext.roster_pieces : []
+      const suppliedById = new Map(supplied.map(piece => [Number(piece?.id), piece]))
+      return (Array.isArray(tripPackingContext.roster_ids) ? tripPackingContext.roster_ids : [])
+        .map(id => hydrateDisplayPiece(suppliedById.get(Number(id)) || { id: Number(id) }))
+        .filter(piece => Number(piece?.id))
+    })()
+    const tripPackingGroups = [
+      ['top', 'Tops'],
+      ['bottom', 'Bottoms'],
+      ['dress', 'Dresses'],
+      ['outerwear', 'Layers'],
+      ['shoes', 'Shoes'],
+      ['accessory', 'Accessories'],
+    ].map(([category, label]) => ({
+      category,
+      label,
+      pieces: tripPackingRoster.filter(piece => String(piece?.category || '').toLowerCase() === category)
+    })).filter(group => group.pieces.length)
 
     return (
       <div className="stylist-response-shell">
@@ -3133,6 +3158,53 @@ export default function StylistChat({
             </div>
           </section>
         )}
+        {tripPackingRoster.length > 0 && (
+          <section className="stylist-capsule-roster" aria-labelledby={`trip-roster-${messageIndex}`}>
+            <div className="stylist-capsule-roster-heading">
+              <div>
+                <h3 id={`trip-roster-${messageIndex}`}>What to pack</h3>
+                <p>{tripPackingRoster.length} pieces selected from your wardrobe</p>
+              </div>
+            </div>
+            <div className="stylist-capsule-groups">
+              {tripPackingGroups.map(group => (
+                <section className="stylist-capsule-group" key={group.category}>
+                  <div className="stylist-capsule-group-heading">
+                    <h4>{group.label}</h4>
+                    <span>{group.pieces.length}</span>
+                  </div>
+                  <div className="stylist-capsule-piece-grid">
+                    {group.pieces.map(piece => {
+                      const photo = piece?.photo || piece?.worn_photo
+                      return (
+                        <div className="stylist-capsule-piece" key={piece.id} title={piece.name || 'Garment'}>
+                          <button
+                            type="button"
+                            className="stylist-capsule-piece-photo"
+                            disabled={!photo}
+                            onClick={event => {
+                              if (!photo) return
+                              previewReturnFocusRef.current = event.currentTarget
+                              setPreviewImage({ src: `/uploads/${photo}`, title: piece.name || 'Garment', meta: group.label, pieceId: piece.id })
+                            }}
+                            aria-label={photo ? `Open ${piece.name || 'garment'} preview` : undefined}
+                          >
+                            {photo ? (
+                              <img src={resolveUploadThumbnailSrc(photo, 'chat-garment')} alt={piece.name || 'Garment'} loading="lazy" decoding="async" />
+                            ) : (
+                              <span>needs photo</span>
+                            )}
+                          </button>
+                          <div className="stylist-capsule-piece-name">{piece.name || 'Garment'}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        )}
         {tripNotes.length > 0 && (
           <div className="stylist-overview">
             <div className="stylist-overview-title">{getPlanNotesTitle(outfits)}</div>
@@ -3154,10 +3226,10 @@ export default function StylistChat({
             </details>
           </div>
         )}
-        {capsuleRoster.length > 0 && responseSections.length > 0 && (
+        {(capsuleRoster.length > 0 || tripPackingRoster.length > 0) && responseSections.length > 0 && (
           <div className="stylist-example-outfits-heading">
             <h3>Example outfits</h3>
-            <p>Ways to wear the capsule pieces</p>
+            <p>{capsuleRoster.length > 0 ? 'Ways to wear the capsule pieces' : 'Ways to wear the packed pieces'}</p>
           </div>
         )}
         {responseSections.map((section, sectionIndex) => (
