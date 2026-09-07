@@ -1732,6 +1732,28 @@ ranks correctly without necessarily producing an adequacy overshoot afterward.
 After live QA, inspect whether that matters in real flows. If it does, specify the missing context
 threading **narrowly**. It is a plumbing question; thermal demand is not to be redesigned for it.
 
+### 25.2.1 Calendar season must not be allowed to do weather's job
+
+Added 2026-09-03 with the season advisory. That axis is deliberately COARSE — its verdict is
+identical for fall and winter, which is the test proving it consumes no thermal value, and equally
+the proof that it cannot reason about conditions.
+
+```text
+garment thermal contribution     jeans > light cotton
+actual exposure profile          October 65 peak may be cool-dominant
+                                 June 65 plateau may be mild-dominant
+calendar suitability             warm-season pants discouraged in October
+        -> three separate pieces of evidence -> the model chooses
+```
+
+**The middle row does not exist yet.** `exposure.js` estimates a waking window from the daily
+envelope (§10.4) and cannot distinguish an October 65°F peak from a June 65°F plateau. The season
+advisory improves the October pants choice, and it is not a substitute for that.
+
+**So hourly/duration-aware exposure conditions stay on this plan.** If they are dropped because the
+calendar advisory made a symptom go away, the next 65°F edge case will expose it again — and the
+advisory will be quietly carrying weather's work, which §6's boundary exists to prevent.
+
 ### 25.3 Parallel-contract calibration — the next project, its own spec
 
 Decompose the 13 by actual question: removable-layer requirement · transit sleeve-bearing coverage ·

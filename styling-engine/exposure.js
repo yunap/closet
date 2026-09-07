@@ -103,8 +103,15 @@ function estimateWakingWindow(highF, lowF) {
 // the demand is the band's decision; establishing the pipe is this module's.
 function resolveConditions(resolvedWeather = null) {
   const t = resolvedWeather?.temperature || resolvedWeather || null
-  const highF = Number.isFinite(t?.highF) ? t.highF : null
-  const lowF = Number.isFinite(t?.lowF) ? t.lowF : null
+  // An indoor-destination profile deliberately carries NO highF/lowF — resolveSlotWeather puts the
+  // outside temperature under transit* so the indoor base is not gated by outdoor cold. Reading only
+  // highF/lowF therefore made an indoor slot conditions-UNKNOWN, which is not the same claim at all:
+  // the trip's weather is perfectly well known, it is just stored under its own name. The whole
+  // thermal model then went silent on museum days — no demand, every piece `neutral` — which is how
+  // thread_1788427130315 put a down puffer on an October museum day with nothing to say against it.
+  // §5.7 is explicit that an indoor destination excuses the base, never the trip.
+  const highF = Number.isFinite(t?.highF) ? t.highF : (Number.isFinite(t?.transitHighF) ? t.transitHighF : null)
+  const lowF = Number.isFinite(t?.lowF) ? t.lowF : (Number.isFinite(t?.transitLowF) ? t.transitLowF : null)
   const rawWind = resolvedWeather?.wind?.value ?? resolvedWeather?.wind ?? 'unknown'
   const wind = typeof rawWind === 'string' ? rawWind : 'unknown'
   const source = t?.source || resolvedWeather?.overallSource || 'unknown'

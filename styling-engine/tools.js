@@ -5,7 +5,7 @@
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, thermalFactsForPieceLine, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
 import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
@@ -45,7 +45,9 @@ import {
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET,
-  truthfulWeatherLabel
+  truthfulWeatherLabel,
+  slotColdLayerRequired,
+  identifyColdLayerRepairableFailures
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -88,8 +90,19 @@ export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question
 export const DEFAULT_SEASONAL_CAPSULE_BUDGET = 24
 export const PLAN_KINDS = new Set(['trip', 'seasonal_capsule', 'coordinated_plan'])
 
-export function resolvePlanKind(rawKind = '', question = '') {
+export function resolvePlanKind(rawKind = '', question = '', { location = '' } = {}) {
   const explicit = String(rawKind || '').trim().toLowerCase()
+  // A real away-from-home destination on the SAME plan_outfit_set call is the tool's own
+  // structural signal for travel -- its own schema says "Omit for at-home plans with no
+  // travel" -- not prose inference. thread_1788484052964 is the reason this exists: a real
+  // Vienna destination went through with no plan_kind:'trip' at all (rawKind was missing or
+  // 'coordinated_plan'), so the roster architecture never engaged and the model-facing prompt
+  // instruction ("use 'trip' for destination packing") was evidently not load-bearing enough
+  // on its own. An unambiguous destination-packing call must not be able to silently fall back
+  // to coordinated_plan just because the model's plan_kind argument was wrong or omitted --
+  // this overrides everything except an explicit, deliberate 'seasonal_capsule' choice (a
+  // capsule for an upcoming trip is still a capsule, not a packing roster).
+  if (String(location || '').trim() && explicit !== 'seasonal_capsule') return 'trip'
   if (PLAN_KINDS.has(explicit)) return explicit
   // Intent fallback only. The model-facing schema owns the normal path, but
   // this keeps older clients and malformed tool calls from turning a plainly
@@ -209,7 +222,8 @@ function shouldBroadenSparseOccasionSearch(occasion = '') {
 // The full stable-truth row a retrieval tool hands back. Extracted so `search_wardrobe` and
 // `wardrobe_coverage` return garments under ONE contract: a coverage answer that judged a piece from
 // a different field set than a search would have is a second truth surface, and this codebase has
-// paid for those before. Judgment fields (weatherFit/ruleFit) are per-request and stay with search.
+// paid for those before. Per-request fields (thermal facts, ruleFit) stay with search — this row is
+// stable truth only, independent of any turn's occasion/weather.
 export function wardrobeTruthRow(p = {}) {
   return {
     id: p.id,
@@ -281,6 +295,23 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelFallbacks: 0,
       capsuleRosterFailureCodes: '',
       capsuleCompositionFailureCode: '',
+      planKindResolved: '',
+      tripRosterModelCalls: 0,
+      tripRosterModelRepairs: 0,
+      tripRosterModelFallbacks: 0,
+      // thread_1788499704803: the authoritative resolved date/location plan_outfit_set actually
+      // used, and whether the date came from the deterministic user-stated extraction or the
+      // model's own argument — not the raw model argument itself, which is exactly what left this
+      // incident unobservable (a report of "date_range: {Oct 12}" would have looked fine; what
+      // actually mattered was that the resolved value silently differed).
+      resolvedDateRange: '',
+      resolvedLocation: '',
+      dateRangeSource: '',
+      // docs/trip-composition-parity-spec.md follow-up (thread_1788577086327/run 1336): the atomic
+      // trip composer's complete pre-validation output logged only to console, an unrecoverable
+      // dead end once the request finished. Diagnostic-only -- never read by the model or surfaced
+      // in user-visible prose.
+      tripAtomicCompositionDebug: '',
       toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
@@ -400,6 +431,54 @@ export function setFreeformCapsuleCompositionFailureCode(toolContext, code = '')
   if (!toolContext || !code) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.capsuleCompositionFailureCode = code
+}
+
+// docs/trip-composition-parity-spec.md follow-up: makes the atomic trip composer's pre-validation
+// output and each rejected card's exact validator reason inspectable after the fact, without
+// reaching into console output the running process may no longer expose. Diagnostic-only by
+// construction — this never touches the tool result returned to the model, pendingPlan.coverageGaps,
+// or any other user-visible surface; it writes to freeformDiagnostics only, which
+// persistFreeformGenerationRun (routes/ai.js) already carries into its own DB row untouched by
+// anything user- or model-facing. Deliberately narrow: piece_ids/assigned_layer_piece_ids/slot/
+// reasons only, never the full resolved piece objects validateSubmittedPlanOutfits's own failures
+// carry (those repeat the entire garment record per rejected card and would bloat every row).
+export function setFreeformTripAtomicCompositionDebug(toolContext, { submitted = [], failures = [], corrected = [], repaired = [] } = {}) {
+  if (!toolContext) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  const debug = {
+    submitted: (Array.isArray(submitted) ? submitted : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
+      piece_ids: (Array.isArray(entry?.piece_ids) ? entry.piece_ids : []).map(Number),
+      cold_layer_decision: entry?.cold_layer_decision && typeof entry.cold_layer_decision === 'object'
+        ? { mode: entry.cold_layer_decision.mode || null, assigned_layer_piece_id: entry.cold_layer_decision.assigned_layer_piece_id ?? null }
+        : null,
+    })),
+    rejected: (Array.isArray(failures) ? failures : []).map(failure => ({
+      slot_id: failure?.slot_id ?? null,
+      label: failure?.label || '',
+      reasons: Array.isArray(failure?.reasons) ? failure.reasons : [],
+      piece_ids: (Array.isArray(failure?.outfit?.pieceIds) ? failure.outfit.pieceIds : []).map(Number),
+      assigned_layer_piece_ids: (Array.isArray(failure?.outfit?.assignedLayerIds) ? failure.outfit.assignedLayerIds : []).map(Number),
+    })),
+    // Mechanical pre-validation corrections (live regression, thread_1788584505940): recorded here,
+    // distinct from `rejected`, precisely so a future trace can tell "the card was lost" from "the
+    // card survived because this specific, narrow violation was silently repaired" without
+    // re-deriving it from the submitted/rejected diff by hand.
+    corrected: (Array.isArray(corrected) ? corrected : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
+      original_cold_layer_decision: entry?.original_cold_layer_decision || null,
+    })),
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B): cards recovered by the
+    // one bounded repair pass, distinct from both `rejected` (never recovered) and `corrected`
+    // (fixed before validation ever ran) — so a future trace can tell all three apart at a glance.
+    repaired: (Array.isArray(repaired) ? repaired : []).map(entry => ({
+      slot_id: entry?.slot_id ?? null,
+      title: String(entry?.title || ''),
+    })),
+  }
+  toolContext.freeformDiagnostics.tripAtomicCompositionDebug = JSON.stringify(debug)
 }
 
 // Direct explicit weather remains authoritative, while typed user/model fields
@@ -774,6 +853,33 @@ const WEATHER_ESTIMATE_SCHEMA = {
   required: ["high_f", "low_f"]
 }
 
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part A, ratified). Shared by both
+// schemas that carry it (this tool's submit_plan_outfits below, and routes/ai.js's
+// tripPlanCompositionSchema for the atomic path) so the two definitions cannot drift the way
+// assigned_layer_piece_ids's near-duplicate descriptions already had. Always required on every
+// outfit -- a conditionally-required field lets the model skip the question the same way an
+// optional array already did (thread_1788667759424: 5 of 7 cards, twice-instructed, never
+// populated it). Enum-style rather than boolean+nullable-ID: that shape permits logically
+// incoherent states (a "warm enough" claim carrying a layer ID too) a plain enum cannot represent.
+export function coldLayerDecisionSchemaProperty() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mode: {
+        type: "string",
+        enum: ["core_is_warm_enough", "assigned_packed_layer", "not_required"],
+        description: "core_is_warm_enough: piece_ids alone (its own outerwear piece, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: piece_ids is not warm enough on its own, and assigned_layer_piece_id names the packed roster layer worn WITH this look. not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
+      },
+      assigned_layer_piece_id: {
+        type: ["integer", "null"],
+        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity -- not part of the card's own visual identity, do not also put it in piece_ids. Must be null for every other mode."
+      }
+    },
+    required: ["mode", "assigned_layer_piece_id"]
+  }
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -790,7 +896,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a weatherFit and a ruleFit tier: honour them. Use weatherFit to keep heavy fabrics off hot daytime looks and reserve heavier pieces for cool-evening layers.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, insulation, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1078,9 +1184,10 @@ export const STYLIST_TOOLS = [
               piece_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs chosen only from that slot's allowed piece list." },
               title: { type: "string", description: "Optional short card title." },
               reason: { type: "string", description: "Optional one-sentence styling rationale." },
-              styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order, where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments. Concrete and actionable, not a restatement of `reason` — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision." }
+              styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order, where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments. Concrete and actionable, not a restatement of `reason` — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision." },
+              cold_layer_decision: coldLayerDecisionSchemaProperty()
             },
-            required: ["slot_id", "piece_ids"]
+            required: ["slot_id", "piece_ids", "cold_layer_decision"]
           }
         }
       },
@@ -1117,7 +1224,8 @@ export const STYLIST_TOOLS = [
         location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
         date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
         user_weather: USER_WEATHER_SCHEMA,
-        weather_estimate: WEATHER_ESTIMATE_SCHEMA
+        weather_estimate: WEATHER_ESTIMATE_SCHEMA,
+        roster_piece_ids_removed: { type: "array", items: { type: "integer" }, description: "ONLY when a trip has an active packing roster and you are confident a piece is no longer needed for the trip — not merely unused in this one card. Explicit substitution ('swap the sandals for the boots because the forecast changed') belongs here; do not infer a removal just because this card happens not to use a roster piece, since one card not showing a shared item is normal and expected." }
       },
       required: ["pieces"]
     }
@@ -1393,7 +1501,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             ? explicitlyOccasionCompatible
             : beforeOccasionFilter
           if (!explicitlyOccasionCompatible.length) {
-            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
+            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
           }
         }
         const automaticGateFiltered = !searchEligibility ? automaticGatePool : automaticGatePool.filter(p => {
@@ -1428,7 +1536,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               filtered = occasionQueryFiltered
             } else {
               filtered = beforeOccasionQueryFilter
-              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
+              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
             }
           } else {
             filtered = filtered.filter(p =>
@@ -1450,22 +1558,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         
         let results = filtered
-        // One shared resolver owns stated/live/saved/heuristic weather precedence and records
-        // provenance. Search remains retrieval policy; it does not gain a complete-outfit gate.
-        // MIGRATED (§8 step 5). This was gated on `isHot || isCold`, which made it THE decision about
-        // whether the model hears any thermal evidence for the garments it is choosing between. At
-        // 65/47 neither flag fires, so search results carried no weatherFit at all and the model
-        // composed with nothing to go on — §6's defect on the EVIDENCE side rather than ranking.
-        //
-        // weatherFitForPiece now reads the band and returns 0 with no adjustments when there is
-        // nothing to say, so the gate is unnecessary: labels appear whenever a temperature exists,
-        // and a garment whose placement is unknown contributes no adjustment and so gets no label.
-        const weatherFits = results.map(p => weatherFitForPiece(p, resolvedWeather))
-        if (weatherFits.some(fit => fit.adjustments.length)) {
-          results = results
-            .map((p, i) => ({ ...p, weatherFit: weatherFits[i].label, weatherFitScore: weatherFits[i].score }))
-            .sort((a, b) => (b.weatherFitScore || 0) - (a.weatherFitScore || 0))
-        }
+        // FACTS, not a verdict (docs/search-propose-signal-inventory.md). This used to attach a
+        // weatherFit label/score computed from the resolved conditions and SORT results by that
+        // score — a derived judgment delivered by position, the same defect already removed from
+        // the plan path. thermalFactsForPieceLine states what the garment IS (warmth, insulation,
+        // interior construction, season, removability); the model judges fit against the resolved
+        // conditions itself, which the turn's system/thread context already carries. No sort here:
+        // order is retrieval order, not a delivered opinion.
+        results = results.map(p => ({ ...p, thermalFacts: thermalFactsForPieceLine(p) }))
 
         if (requestText) {
           results = results.filter(p => {
@@ -1569,6 +1669,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
               Math.max(toolContext.freeformDiagnostics.searchVisualMaxCategoryCount || 0, visualCategoryCount)
           }
         }
+        // Roster membership, not exclusion (docs/README.md: trip roster architecture). An active
+        // packing roster narrows what to PREFER, never what search can return — the owner's own
+        // instruction was explicit not to hard-prohibit outside-roster search, since that would
+        // make a genuinely bad packing selection unfixable. Only present at all when a roster is
+        // active, so an ordinary non-trip search carries no new field.
+        const activeSearchRosterIds = toolContext?.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
           // The cap is per CATEGORY, not per call: batching three category searches into one must
@@ -1608,10 +1714,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
               id: p.id,
               name: p.name,          // kept: the model cites pieces by name in its prose
               category: p.category,  // kept: cheap, and searches are often cross-category
-              weatherFit: p.weatherFit,
+              thermal: p.thermalFacts || undefined,
               ruleFit: p.ruleFit,
               ruleFitLabel: p.ruleFitLabel,
               notes: p.notes ? p.notes.slice(0, 120) : '',
+              ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
               ...(image ? { image } : {})
             }
           }
@@ -1649,7 +1756,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             length_hits_at: p.length_hits_at,
             hem_finish: p.hem_finish,
             tuck_behavior: p.tuck_behavior,
-            weatherFit: p.weatherFit,
+            thermal: p.thermalFacts || undefined,
+            ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
             ruleFit: p.ruleFit,
             ruleFitLabel: p.ruleFitLabel,
             notes: p.notes ? p.notes.slice(0, 120) : '',
@@ -1753,7 +1861,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate, roster_piece_ids_removed = [] } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -2082,6 +2190,62 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const removedForRecovery = supersededBroken
           ? (supersededBroken.pieces || []).find(piece => !proposedPieceIdSet.has(Number(piece?.id)))
           : null
+        // A card edit must not silently mutate the suitcase (docs/README.md: trip roster
+        // architecture). When a thread has an active packing roster (toolContext.packingRosterIds,
+        // read from threadState.packing_roster), a piece this card uses that the roster does not
+        // already contain is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — disclosed on
+        // the card explicitly and handed to toolContext so the end-of-turn persist can fold it into
+        // the roster going forward. Only computed when a roster is actually active: an ordinary
+        // ad-hoc outfit request (no trip in progress) is unaffected.
+        const activeRosterIds = toolContext.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
+        const packingRosterChange = activeRosterIds.size
+          ? (() => {
+              const addedPieces = resolved.filter(piece => !activeRosterIds.has(Number(piece.id)))
+              // Removal is explicit only (roster_piece_ids_removed) — never inferred from a piece
+              // simply being absent from this one card. One card not showing a shared item is the
+              // ordinary, expected case this whole architecture exists to make unremarkable.
+              const removedIds = (Array.isArray(roster_piece_ids_removed) ? roster_piece_ids_removed : [])
+                .map(Number).filter(id => activeRosterIds.has(id))
+              if (!addedPieces.length && !removedIds.length) return null
+              const removedPieces = (toolContext.packingRosterPieces || []).filter(piece => removedIds.includes(Number(piece.id)))
+              return {
+                addedIds: addedPieces.map(piece => Number(piece.id)),
+                addedPieces: addedPieces.map(piece => ({ id: Number(piece.id), name: piece.name, category: piece.category, photo: piece.photo || null, worn_photo: piece.worn_photo || null, colors: Array.isArray(piece.colors) ? piece.colors : [] })),
+                removedIds,
+                removedPieces,
+              }
+            })()
+          : null
+        if (packingRosterChange) {
+          toolContext.pendingRosterChange = packingRosterChange
+          // SET-level re-check (docs/README.md: trip roster architecture, item 5) against the trip's
+          // own persisted requirement slots (packing_roster.slots) — never reconstructed from
+          // currentOutfitSet's accepted cards, which are representative outfits, not the trip
+          // specification. Reconstructing from cards would silently narrow "does the packing set
+          // cover the whole trip" down to "does it cover the outfits the user happened to accept,"
+          // which is exactly the roster/cards separation this architecture exists to prevent.
+          // Advisory only: it discloses a potential gap in the response, it does not block the edit
+          // or resurrect the removed piece, since the model (not this check) owns whether a gap is
+          // acceptable for this trip.
+          try {
+            const priorRosterPieces = toolContext.packingRosterPieces || []
+            const removedIdSet = new Set(packingRosterChange.removedIds || [])
+            const newRosterPieces = [
+              ...priorRosterPieces.filter(piece => !removedIdSet.has(Number(piece.id))),
+              ...packingRosterChange.addedPieces,
+            ]
+            const persistedSlots = toolContext.packingRosterSlots || []
+            if (persistedSlots.length) {
+              const { validateTripRoster, restoreTripRequirementSlot } = await import('./outfitSetPlanner.js')
+              const tripSlots = persistedSlots.map(restoreTripRequirementSlot)
+              const check = validateTripRoster(newRosterPieces, { slots: tripSlots })
+              if (!check.ok) packingRosterChange.coverageGaps = check.failures.map(f => f.message)
+            }
+          } catch (err) {
+            // Advisory machinery failing must never block a real edit — log and move on.
+            console.warn('packing roster coverage re-check failed:', err.message)
+          }
+        }
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -2099,6 +2263,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           debug: outfitDebug,
           previewOnly: true,
           ...weatherCardFields(stylingContext),
+          ...(packingRosterChange ? { packingRosterChange } : {}),
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: supersededEngineNote ? 'annotated' : 'accepted',
@@ -2320,7 +2485,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
             const ruleFit = (occasionProfile || activityProfile)
               ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
               : { tier: 'neutral', label: '' }
-            const weatherFit = weatherFitForPiece(piece, resolvedWeather)
             const occasionScore = pieceOccasionCompatible(piece, resolvedOccasion) ? 12 : 0
             const newnessScore = currentIdSet.has(Number(piece.id)) ? -20 : 0
             const queryScore = slotSwapQueryScore(piece, query)
@@ -2329,9 +2493,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
               piece,
               trust,
               ruleFit,
-              weatherFit,
               colorScore,
-              score: newnessScore + occasionScore + queryScore + colorScore + (weatherFit.score || 0) - ((tierRank[ruleFit.tier] ?? 1) * 8)
+              // No thermal term (docs/search-propose-signal-inventory.md): weatherFit.score used to
+              // be the single largest weighted term here — larger than any factual bonus above —
+              // which made this candidate ranking a second, hidden stylist. Mechanical diversity/
+              // newness/query/color signals stay; thermal fit is the model's judgment to make.
+              score: newnessScore + occasionScore + queryScore + colorScore - ((tierRank[ruleFit.tier] ?? 1) * 8)
             }
           })
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
@@ -2391,7 +2558,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               swappedIn: { id: Number(replacement.id), name: replacement.name },
               colorPreference: color ? { requested: color, matched: candidate.colorScore > 0, score: candidate.colorScore } : null,
               ruleFit: candidate.ruleFit.label || candidate.ruleFit.tier,
-              weatherFit: candidate.weatherFit.label
+              thermal: thermalFactsForPieceLine(replacement) || undefined
             },
             engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
             previewOnly: true
@@ -2660,6 +2827,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             message: "This turn already used its one bounded capsule-composition attempt. Present the accepted cards and disclosed gaps; do not re-plan or retry the capsule in this turn."
           }
         }
+        // docs/trip-composition-parity-spec.md: mirrors the capsule guard immediately above — the
+        // atomic trip composer is a one-shot-per-turn call, same reasoning as capsule's.
+        if (toolContext.tripAtomicAttempted) {
+          return {
+            status: "validation_error",
+            message: "This turn already used its one bounded trip-composition attempt. Present the accepted cards and disclosed gaps; do not re-plan or retry the trip in this turn."
+          }
+        }
         // Spec 23 Part 1: detect a partial re-plan BEFORE anything below
         // mutates toolContext.pendingPlan — a plan already in progress this
         // turn (held outfits still pending submit, and/or cards from an
@@ -2682,10 +2857,49 @@ async function executeToolInternal(name, args, toolContext = {}) {
               dayBreakdown: String(args?.day_breakdown || '').trim()
             }
           : null
-        const planDateRange = {
+        const modelDateRange = {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()
         }
+        // thread_1788499704803: the model's own date_range drifted to the current week despite the
+        // user stating "October 12th... for a week" in the same turn, and nothing caught the
+        // mismatch before it silently resolved LIVE weather for the wrong dates (hot early-September
+        // conditions, not the requested October trip) — the deterministic weather fallback itself is
+        // correct (an out-of-range date genuinely returns 'unavailable', proven directly against the
+        // real forecast API), so the defect was upstream: a stated trip date is factual request
+        // state, not something the model should have to re-derive correctly on every tool call. Same
+        // tool-boundary-correction shape resolvePlanKind's destination override already uses above.
+        //
+        // Ownership is scoped to exactly what the user actually supplied (thread_1788501349296's
+        // rerun: start agreed at Oct 12, but the model's own end date, Oct 19, quietly rode through
+        // unchanged even though the user's stated "for a week" makes Oct 18 the complete, already-
+        // settled fact — agreement on start is not the same as the user having said nothing about
+        // the end):
+        //   - start AND duration stated -> the extracted range owns BOTH; there is nothing left for
+        //     the model to add, so its own end date is discarded even when its start agreed.
+        //   - start stated, no duration -> the extracted start wins; the model's own end date is
+        //     genuine additional detail and is kept when its start agreed (a wrong start makes its
+        //     end untrustworthy too, so the extracted single-day default is used instead).
+        //   - nothing deterministically stated -> unchanged, the model's argument is used as before.
+        const statedTripDateRange = toolContext.statedTripDateRange || null
+        let dateRangeSource
+        let planDateRange
+        if (statedTripDateRange) {
+          dateRangeSource = 'user_stated'
+          const startAgrees = modelDateRange.start === statedTripDateRange.start
+          const modelEndIsAdditionalDetail = !statedTripDateRange.hasExplicitDuration && startAgrees && modelDateRange.end
+          planDateRange = {
+            start: statedTripDateRange.start,
+            end: modelEndIsAdditionalDetail ? modelDateRange.end : statedTripDateRange.end,
+          }
+        } else {
+          dateRangeSource = modelDateRange.start ? 'model' : 'none'
+          planDateRange = modelDateRange
+        }
+        toolContext.freeformDiagnostics.dateRangeSource = dateRangeSource
+        toolContext.freeformDiagnostics.resolvedDateRange = planDateRange.start
+          ? `${planDateRange.start}${planDateRange.end && planDateRange.end !== planDateRange.start ? `..${planDateRange.end}` : ''}`
+          : ''
         // Reject a timezone identifier passed as a location (the model reads
         // "Time zone: America/Los_Angeles" from context and sometimes hands it in
         // as the plan/slot location — it's not a place, so geocoding fails and
@@ -2693,6 +2907,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // search_wardrobe already applies.
         const rawPlanLocation = String(args?.location || toolContext.location || '').trim()
         const fallbackLocation = looksLikeTimezoneIdentifier(rawPlanLocation) ? '' : rawPlanLocation
+        toolContext.freeformDiagnostics.resolvedLocation = fallbackLocation
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )
@@ -2702,7 +2917,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // toolContext.weather (established display/season text, not physical
         // weather) still seeds the heuristic no-location fallback below.
         const planWeather = toolContext.weather || ''
-        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '')
+        // resolvePlanKind's own signal is a destination NAMED ON THIS CALL, not fallbackLocation —
+        // fallbackLocation deliberately includes toolContext.location's home-location fallback for
+        // weather resolution below, but that same fallback is always truthy, so passing it here made
+        // resolvePlanKind read every ordinary at-home plan_outfit_set call as travel.
+        const explicitPlanLocation = looksLikeTimezoneIdentifier(String(args?.location || '').trim())
+          ? ''
+          : String(args?.location || '').trim()
+        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '', { location: explicitPlanLocation })
+        // Directly observable so "did the trip roster architecture engage this turn" is a query,
+        // not an inference from a live thread's persisted state after the fact (thread_1788484052964
+        // took reconstructing this from scratch to even notice it never fired).
+        toolContext.freeformDiagnostics.planKindResolved = planKind
         // Capsule safety net: "N-piece capsule" states an explicit budget. The
         // model routinely forgets to set piece_budget (live: a "14-piece capsule"
         // came through with none, so the roster never enforced and 5 of 14 were
@@ -2820,6 +3046,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // roster is chosen deterministically exactly as before.
           chooseCapsuleRoster: typeof toolContext.chooseCapsuleRoster === 'function'
             ? toolContext.chooseCapsuleRoster
+            : null,
+          // Same opt-in shape as chooseCapsuleRoster. Absent, buildPlanSlotWorkbench's own
+          // trip-roster gate never fires and the plan falls through to the ordinary pool
+          // (thread_1788484052964/thread_1788488744055: this was missing entirely, so plan_kind
+          // resolving to 'trip' was necessary but not sufficient).
+          chooseTripRoster: typeof toolContext.chooseTripRoster === 'function'
+            ? toolContext.chooseTripRoster
             : null,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
@@ -3066,6 +3299,195 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }))
           }
         }
+        // docs/trip-composition-parity-spec.md, ratified: initial trip composition becomes atomic
+        // (whole-roster images, full garment truth, a dedicated composition-only prompt); follow-up
+        // trip edits stay in this conversational tool loop unchanged (they reach propose_outfit, or
+        // a re-plan that lands in the isPartialReplan branch just below — never here). Gated the
+        // same way capsule's atomic gate is: only the initial plan_outfit_set call this session
+        // (!isPartialReplan), and only once per turn (tripAtomicAttempted).
+        const useAtomicTripComposition =
+          planKind === 'trip' &&
+          typeof toolContext.composeTripPlanOnce === 'function' &&
+          !isPartialReplan
+        if (useAtomicTripComposition) {
+          toolContext.tripAtomicAttempted = true
+          const pendingPlan = {
+            ...workbench.pendingPlan,
+            mode: 'model',
+            // Same reasoning as capsule's identical flag: one composition call, one validation
+            // pass, no repair round — a set-level soft-splice check must not drop an otherwise
+            // valid card here just because no resubmit exists to fix it.
+            boundedComposition: true
+          }
+          let submittedOutfits = []
+          let compositionError = null
+          try {
+            submittedOutfits = await toolContext.composeTripPlanOnce({
+              status: workbench.status,
+              instructions: workbench.instructions,
+              piece_catalog: workbench.piece_catalog,
+              slots: workbench.slots,
+              constraints: workbench.constraints
+            })
+          } catch (err) {
+            compositionError = err
+          }
+          bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
+          if (compositionError || !Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            setFreeformTripAtomicCompositionDebug(toolContext, {
+              submitted: Array.isArray(submittedOutfits) ? submittedOutfits : [],
+              failures: compositionError ? [{ slot_id: null, label: 'composition call', reasons: [String(compositionError.message || compositionError)] }] : []
+            })
+            toolContext.generatedOutfits = []
+            toolContext.source = 'plan_outfit_set'
+            toolContext.sourceLocked = true
+            toolContext.pendingPlan = null
+            toolContext.tripAtomicCompleted = true
+            if (compositionError?.isTruncation) {
+              return {
+                status: 'error',
+                bounded_composition: true,
+                message: 'The bounded trip composer ran out of output budget composing this many looks and returned an incomplete result. Do not build the plan manually or call other styling tools in this turn; explain that this specific trip size hit a system limit during composition, and suggest asking for fewer looks or a shorter/simpler trip instead of an identical retry.'
+              }
+            }
+            return {
+              status: 'error',
+              bounded_composition: true,
+              message: 'The bounded trip composer returned no outfits even though the packing roster has valid capacity. Do not build the plan manually or call other styling tools in this turn; explain that composition failed and ask the user to retry after the engine issue is corrected.'
+            }
+          }
+          // Mechanical pre-validation correction (live regression, thread_1788584505940): the
+          // composer violates the schema's own "answer not_required when cold_layer_required is
+          // false" instruction often enough that the one-shot atomic path was silently losing whole
+          // cards to it — a museum slot's card was hard-rejected over an invisible layer relation
+          // that isn't even part of the card's visual identity, with no repair round to recover it.
+          // This is a narrow, deterministic violation with exactly one correct fix (force
+          // not_required/null), unlike a missing structural piece (completeSubmittedPlanOutfits'
+          // job, which must choose a replacement) — so it is corrected here, before validation runs,
+          // rather than left to cost the card. The hard invariant itself (slotColdLayerRequired /
+          // validateSubmittedPlanOutfits) is unchanged and still rejects this exact violation for
+          // the ordinary tool-loop submit_plan_outfits case below, which can retry within the same
+          // turn and should keep learning from the rejection message — this correction is scoped to
+          // the one-shot path that cannot. Updated for docs/trip-cold-layer-decision-contract-and-
+          // repair-spec.md's enum-style cold_layer_decision, replacing the old array field.
+          const slotById = new Map(pendingPlan.slots.map(slot => [slot.id, slot]))
+          const correctedColdLayerDecisions = []
+          const sanitizedOutfits = submittedOutfits.map(outfit => {
+            const decision = outfit?.cold_layer_decision
+            if (!decision || typeof decision !== 'object') return outfit
+            const isAlreadyNotRequired = decision.mode === 'not_required' && decision.assigned_layer_piece_id == null
+            if (isAlreadyNotRequired) return outfit
+            const slot = slotById.get(String(outfit?.slot_id || ''))
+            if (!slot || slotColdLayerRequired(slot)) return outfit
+            correctedColdLayerDecisions.push({ slot_id: outfit.slot_id, title: outfit.title || '', original_cold_layer_decision: decision })
+            return { ...outfit, cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }
+          })
+          // Hard invariant (docs/trip-composition-parity-spec.md §7): the atomic call changes who
+          // composes and what evidence they see, never what counts as a valid trip outfit. These are
+          // the exact same functions the ordinary tool-loop submit_plan_outfits case below calls —
+          // same gate-eligibility/duplicate-core/assigned-layer/environmental-hard-gate checks, no
+          // parallel validation semantics.
+          const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          let { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, sanitizedOutfits, {
+            visuallySeenPieceIds: seenForValidation
+          })
+          // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified): one
+          // narrow, bounded repair pass, scoped to cards whose ONLY failure is the cold-layer
+          // decision and for which a qualifying, gate-eligible packed layer genuinely exists.
+          // Everything else about the atomic composer's zero-repair design is unchanged — this is
+          // not a general resubmit loop, just a second chance at the one question the live incident
+          // showed the model reliably fails to answer unprompted.
+          let repairedOutfits = []
+          const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+          if (repairable.length && typeof toolContext.repairTripColdLayerCards === 'function') {
+            let repairResponses = []
+            try {
+              repairResponses = await toolContext.repairTripColdLayerCards({ cards: repairable })
+            } catch (err) {
+              repairResponses = []
+            }
+            if (Array.isArray(repairResponses) && repairResponses.length) {
+              const repairedBySlot = new Map(repairResponses.map(entry => [String(entry?.slot_id || ''), entry]))
+              const repairableSlotIds = new Set(repairable.map(entry => entry.slot_id))
+              const stillNeedsRepair = failures.filter(failure => !repairableSlotIds.has(failure.slot_id))
+              const originalBySlot = new Map(failures.map(failure => [failure.slot_id, failure.outfit]))
+              const resubmission = repairable
+                .map(entry => repairedBySlot.get(String(entry.slot_id)))
+                .filter(Boolean)
+                .map(entry => ({
+                  slot_id: entry.slot_id,
+                  // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
+                  // supplied its own warmer piece_ids -- the repair call is instructed not to
+                  // restyle otherwise, but the model still owns that one legitimate escape hatch.
+                  piece_ids: Array.isArray(entry.piece_ids) && entry.piece_ids.length
+                    ? entry.piece_ids
+                    : (originalBySlot.get(entry.slot_id)?.pieceIds || []),
+                  title: entry.title || originalBySlot.get(entry.slot_id)?.title || '',
+                  reason: entry.reason || originalBySlot.get(entry.slot_id)?.reason || '',
+                  styling_instructions: entry.styling_instructions || originalBySlot.get(entry.slot_id)?.stylingInstructions || '',
+                  cold_layer_decision: entry.cold_layer_decision,
+                }))
+              const repairValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, {
+                visuallySeenPieceIds: seenForValidation
+              })
+              repairedOutfits = repairValidation.accepted
+              accepted = [...accepted, ...repairedOutfits]
+              failures = [...stillNeedsRepair, ...repairValidation.failures]
+            }
+          }
+          // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the
+          // console.log below was the ONLY record of a rejected card's content/reason, and it went
+          // to a process stdout with no accessible log afterward). `submitted` stays the composer's
+          // ORIGINAL output (pre-correction) so a trace can still see what the model actually did;
+          // `corrected` records what this call site silently fixed before validation ran; `repaired`
+          // records what Part B's bounded repair pass recovered, so a future trace can tell "the
+          // card was lost" from "the card needed one narrow second chance" without re-deriving it.
+          setFreeformTripAtomicCompositionDebug(toolContext, {
+            submitted: submittedOutfits,
+            failures,
+            corrected: correctedColdLayerDecisions,
+            repaired: repairedOutfits.map(outfit => ({ slot_id: outfit._slotId, title: outfit.title || '' })),
+          })
+          if (failures.length) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            console.log('[Atomic Trip Validation]', failures)
+          }
+          const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+          toolContext.pendingPlan = null
+          toolContext.tripAtomicCompleted = true
+          if (!planOutfits.length) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.generatedOutfits = []
+            toolContext.source = 'plan_outfit_set'
+            toolContext.sourceLocked = true
+            const failureText = failures
+              .map(failure => `${failure.label}: ${failure.reasons.join('; ')}`)
+              .join(' | ')
+            return {
+              status: 'error',
+              bounded_composition: true,
+              message: `The bounded trip composer's rotation failed validation entirely and nothing was accepted. Do not build the plan manually or call other styling tools in this turn; present this honestly as a disclosed packing/wardrobe gap. Last failures: ${failureText}`
+            }
+          }
+          if (failures.length) bumpFreeformDiagnostic(toolContext, 'submitPlanPartialAccepts')
+          toolContext.generatedOutfits = planOutfits
+          toolContext.source = 'plan_outfit_set'
+          toolContext.sourceLocked = true
+          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          return {
+            status: 'success',
+            bounded_composition: true,
+            message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            plan_lines: planLinesForResponse,
+            outfit_summaries: planOutfits.map(outfit => ({
+              slot: outfit.label,
+              coverage: outfit.coveragePosition,
+              weather: outfit.slotWeather || '',
+              pieceNames: (outfit.pieces || []).map(piece => piece.name)
+            }))
+          }
+        }
         if (isPartialReplan) {
           const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
             explicitConstraintsProvided,
@@ -3105,8 +3527,31 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const pendingPlan = toolContext.pendingPlan
         const submittedOutfits = coerceSubmitPlanOutfitsArg(args?.outfits) || []
+        // thread_1788501349296: a trip roster with a genuine coverage gap (no removable cool layer)
+        // left the model no legal move — it found real, active outerwear via search_wardrobe, but
+        // submit_plan_outfits rejected every one of them as "not an active wardrobe piece" because
+        // they were outside the roster plan_outfit_set originally selected. validateSubmittedPlanOutfits
+        // (outfitSetPlanner.js, a pure module with no DB access) can now accept a genuinely gate-eligible
+        // non-roster piece as a packing-roster addition instead of a hard rejection, but it needs the
+        // piece resolved as active first — that DB lookup belongs here, the one place in this call that
+        // has it. One batched query, only for the trip-plan case, only for IDs not already known to the
+        // roster/pendingPlan.
+        let verifiedNonRosterPiecesById = new Map()
+        if (pendingPlan.planKind === 'trip') {
+          const knownIds = pendingPlan.piecesById instanceof Map ? pendingPlan.piecesById : new Map()
+          const candidateIds = [...new Set(
+            submittedOutfits.flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])
+              .map(id => Number(id))
+              .filter(id => Number.isFinite(id) && id > 0 && !knownIds.has(id))
+          )]
+          if (candidateIds.length) {
+            const rows = db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${candidateIds.map(() => '?').join(',')})`).all(...candidateIds)
+            verifiedNonRosterPiecesById = new Map(rows.map(row => [Number(row.id), parsePiece(row)]))
+          }
+        }
         const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
-          visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set(),
+          verifiedNonRosterPiecesById
         })
         const alreadyHeld = Array.isArray(pendingPlan.heldOutfits) ? pendingPlan.heldOutfits : []
         const heldPlusAccepted = [...alreadyHeld, ...accepted]
@@ -3134,12 +3579,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const failureText = failures
             .map(failure => `${failure.label}: ${failure.reasons.join('; ')}`)
             .join(' | ')
-          if (pendingPlan.resubmits <= 2 || !pendingPlan.heldOutfits.length) {
+          if (pendingPlan.resubmits <= 2) {
             return {
               status: "validation_error",
               message: `${accepted.length} outfit${accepted.length === 1 ? '' : 's'} accepted and held. Fix these plan outfit issues in ONE submit_plan_outfits call, resubmitting ONLY the failed/missing slots: ${failureText}`,
               accepted_count: accepted.length,
               held_count: pendingPlan.heldOutfits.length,
+              failures
+            }
+          }
+          if (!pendingPlan.heldOutfits.length) {
+            // thread_1788501349296: the repair budget above is exhausted and NOTHING has ever been
+            // accepted — the previous behavior kept returning validation_error with no upper bound,
+            // which is exactly what burned this turn's remaining steps until the model gave up on
+            // the trip contract entirely and switched to generate_outfits. An honest terminal
+            // disclosure keeps repair inside the trip-plan contract per the guard in generate_outfits
+            // above: state the real gap, do not keep asking for another blind resubmit.
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.pendingPlan = null
+            return {
+              status: "error",
+              message: `This trip plan could not be composed after repeated attempts and nothing was accepted. Present this honestly as a disclosed packing/wardrobe gap — do not retry submit_plan_outfits again this turn and do not switch to generate_outfits or propose_outfit to paper over it. Last failures: ${failureText}`,
+              accepted_count: 0,
               failures
             }
           }
@@ -3157,7 +3618,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             partial: true,
-            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.${pendingPlan.isSeasonalCapsule ? CAPSULE_PLAN_EVIDENCE_BOUNDARY : ''}`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
@@ -3182,7 +3643,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
         return {
           status: "success",
-          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
+          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${pendingPlan.isSeasonalCapsule ? CAPSULE_PLAN_EVIDENCE_BOUNDARY : ''}`,
           plan_lines: planLinesForResponse,
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,
@@ -3193,6 +3654,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
       }
       case 'generate_outfits': {
+        // thread_1788501349296: two failed submit_plan_outfits attempts against an active, already-
+        // selected trip plan escaped into generate_outfits + a nested composer — silently switching
+        // the product from "packing roster + representative looks" to five unrelated wardrobe
+        // outfits, with no packing roster and no WHAT TO PACK surface. Repair belongs inside the
+        // active trip-plan contract (plan_outfit_set/submit_plan_outfits), not a fallback to a
+        // different tool that knows nothing about the roster or its requirement slots. Scoped to
+        // 'trip' specifically — a capsule or coordinated plan's own atomic composition already has
+        // its own bounded-attempt handling and this guard is not about those.
+        if (toolContext.pendingPlan?.mode === 'model' && toolContext.pendingPlan?.planKind === 'trip') {
+          return {
+            status: "validation_error",
+            message: "A trip plan is already in progress (plan_outfit_set has a selected packing roster). Keep repairing it with submit_plan_outfits — resubmit only the failed/missing slots, or call plan_outfit_set again for just those slots if the roster itself needs to change. Do not switch to generate_outfits mid-trip-plan; that abandons the packing roster and WHAT TO PACK surface entirely. If the trip genuinely cannot be composed from the current roster after repair, submit_plan_outfits will disclose the honest gap instead — present that, do not paper over it with unrelated cards."
+          }
+        }
         const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
         const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))

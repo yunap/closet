@@ -55,6 +55,73 @@ export function extractWeatherContext(text = '') {
   return ''
 }
 
+const MONTH_NAMES = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4,
+  jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+}
+const MONTH_NAME_PATTERN = Object.keys(MONTH_NAMES).sort((a, b) => b.length - a.length).join('|')
+const trimDateComponent = date => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+const isoDate = date => date.toISOString().slice(0, 10)
+
+// A stated trip date is factual request state, not something the model should have to re-derive
+// correctly on every plan_outfit_set call (thread_1788499704803: the model's own date_range
+// drifted to the current week despite the user stating "October 12th... for a week" in the same
+// turn, and nothing caught the mismatch before it silently resolved live weather for the wrong
+// dates). Extracted once, deterministically, from the user's own words -- conservative by
+// construction: returns null rather than guessing whenever the text isn't an unambiguous month +
+// day statement, since a wrong extracted date is worse than none. No year inference beyond "the
+// next occurrence of this month/day from `currentDate`", matching how a person actually means a
+// bare "October 12th" mentioned in September.
+export function extractStatedTripDateRange(text = '', { currentDate = new Date() } = {}) {
+  const normalized = String(text || '').toLowerCase()
+  const dateMatch = normalized.match(new RegExp(`\\b(${MONTH_NAME_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`))
+  if (!dateMatch) return null
+  const month = MONTH_NAMES[dateMatch[1]]
+  const day = Number(dateMatch[2])
+  if (!Number.isInteger(day) || day < 1 || day > 31) return null
+
+  const now = currentDate instanceof Date && !Number.isNaN(currentDate.getTime()) ? currentDate : new Date()
+  const today = trimDateComponent(now)
+  let year = dateMatch[3] ? Number(dateMatch[3]) : now.getUTCFullYear()
+  let startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
+  if (Number.isNaN(startDate.getTime())) return null
+  // No explicit year stated and the bare month/day already passed this year -- assume next
+  // year's occurrence (a person saying "October 12th" in September means THIS October, but the
+  // same words in November mean NEXT October, never a date already in the past).
+  if (!dateMatch[3] && startDate < today) {
+    year += 1
+    startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
+  }
+
+  const durationMatch = normalized.match(/\bfor\s+(a|one|\d+)\s+(day|days|night|nights|week|weeks)\b/) ||
+    normalized.match(/\b(a|one|\d+)\s+(day|days|night|nights|week|weeks)\s+(?:trip|stay|visit)\b/)
+  let durationDays = 1
+  if (durationMatch) {
+    const countRaw = durationMatch[1]
+    const count = countRaw === 'a' || countRaw === 'one' ? 1 : Number(countRaw)
+    const unit = durationMatch[2]
+    durationDays = unit.startsWith('week') ? count * 7 : unit.startsWith('night') ? count + 1 : count
+  }
+  const endDate = new Date(startDate.getTime() + (Math.max(1, durationDays) - 1) * 86400000)
+
+  return {
+    start: isoDate(startDate),
+    end: isoDate(endDate),
+    durationDays: Math.max(1, durationDays),
+    // Distinguishes "the person said how long" from "nothing was said, defaulted to a single day"
+    // — thread_1788501349296's live rerun: the extractor's own end (Oct 18, from the explicitly
+    // stated "for a week") is the complete, user-owned fact when a duration was actually stated: it
+    // must not be silently swapped back out for whatever end date the model separately supplied
+    // (Oct 19), even when the model's start happened to agree. Ownership at the plan_outfit_set
+    // boundary (styling-engine/tools.js) reads this flag to decide whether the model's own end date
+    // is additional detail worth keeping (no duration stated) or a fact already settled by the user
+    // (duration stated).
+    hasExplicitDuration: Boolean(durationMatch),
+    source: 'user_stated',
+  }
+}
+
 export function isTravelOrPackingRequest(text = '', occasion = '') {
   const q = String(text || '').toLowerCase()
   const occ = String(occasion || '').toLowerCase()

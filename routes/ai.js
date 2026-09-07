@@ -62,6 +62,7 @@ import {
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
+  extractStatedTripDateRange,
   isTravelOrPackingRequest,
   normalizeActivity,
   normalizeOccasion
@@ -69,7 +70,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -181,6 +182,7 @@ import {
   addEvaluationImage,
   resolveStylistConversationMode,
   buildStylistConversationDirective,
+  isGenerationFactsQuestion,
   getStylistConversationState,
   saveStylistConversationState,
   buildStylistConversationPayload,
@@ -685,8 +687,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false, freeformTurnToken = '' } = {}) {
   try {
     const info = db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, card_prose_inconsistent_blocks, atomic_multi_look_calls, execution_router_calls, tool_sequence, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, capsule_composition_failure_code, plan_kind_resolved, trip_roster_model_calls, trip_roster_model_repairs, trip_roster_model_fallbacks, resolved_date_range, resolved_location, date_range_source, trip_atomic_composition_debug, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source, history_messages_received, history_messages_included, history_chars_removed, execution_profile, search_visual_images_attached, search_visual_max_category_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -717,6 +719,21 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       // table is a diagnostic, not a second copy of the wardrobe.
       String(diagnostics.capsuleRosterFailureCodes || ''),
       String(diagnostics.capsuleCompositionFailureCode || ''),
+      String(diagnostics.planKindResolved || ''),
+      Number(diagnostics.tripRosterModelCalls) || 0,
+      Number(diagnostics.tripRosterModelRepairs) || 0,
+      Number(diagnostics.tripRosterModelFallbacks) || 0,
+      String(diagnostics.resolvedDateRange || ''),
+      String(diagnostics.resolvedLocation || ''),
+      String(diagnostics.dateRangeSource || ''),
+      // Diagnostic-only, never read by the model or shown in user-visible prose (docs/
+      // trip-composition-parity-spec.md follow-up). Piece-ID-scoped, unlike the free-text
+      // validator reasons it also carries verbatim — a few of those reasons do name a garment
+      // (e.g. the footwear-comfort and 4th-shoe-reuse messages), narrower than what
+      // console.log('[Atomic Capsule Validation]', failures) already writes uncontrolled for
+      // capsule (full resolved piece objects), but not as strictly ID-only as the
+      // capsule_roster_failure_codes/capsule_composition_failure_code columns above.
+      String(diagnostics.tripAtomicCompositionDebug || ''),
       turnFailed ? 1 : 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
@@ -802,6 +819,15 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     // single shared weather_profile below (which cannot distinguish slots).
     ...(outfit?.weatherUsed ? { weather_used: outfit.weatherUsed } : {}),
     ...(outfit?.resolvedWeatherContext ? { resolved_weather_context: outfit.resolvedWeatherContext } : {}),
+    // thread_1788508369689 arc, product ruling "use B": the assigned packed-layer relation was
+    // being silently dropped at exactly this whitelist boundary — present on the accepted outfit,
+    // absent from persisted current_outfit_set, so a follow-up edit had no way to know a cold
+    // card's worn outfit depended on a specific packed layer. See the matching addition in
+    // core.js's outfitSetFromBody, which projects the same field for the other current_outfit_set
+    // path (kept in sync by the same convention as weather_used/resolved_weather_context above).
+    ...(Array.isArray(outfit?.assignedLayerIds) && outfit.assignedLayerIds.length
+      ? { assigned_layer_piece_ids: outfit.assignedLayerIds.map(Number).filter(Boolean) }
+      : {}),
     piece_ids: (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
@@ -818,8 +844,37 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
     ...(toolContext?.boundedWeatherSummary ? { weather: toolContext.boundedWeatherSummary } : {}),
     ...(toolContext?.boundedWeatherUnavailable ? { weather_resolution: 'forecast unavailable; do not infer temperature' } : {})
   }
+  // The active trip packing roster (docs/README.md: trip roster architecture). Two ways this turn
+  // can produce a fresh one: a plan turn attaches tripPlanContext to its cards (the roster the
+  // model just selected), or propose_outfit records pendingRosterChange when a card edit reaches
+  // for a piece outside the roster it was handed — an explicit addition, not a silent one. Neither
+  // present means this turn made no roster change; the caller (persistFullStylistTurnState) leaves
+  // the prior persisted roster untouched by simply not overwriting it, the same "layers onto"
+  // pattern current_outfit_set already uses.
+  const rosterBearingOutfit = outfits.find(outfit => outfit?.tripPlanContext)
+  const packingRoster = rosterBearingOutfit?.tripPlanContext
+    ? {
+        roster_ids: rosterBearingOutfit.tripPlanContext.roster_ids || [],
+        roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [],
+        slots: rosterBearingOutfit.tripPlanContext.slots || [],
+      }
+    : (toolContext?.pendingRosterChange
+      ? (() => {
+          const removedIdSet = new Set(toolContext.pendingRosterChange.removedIds || [])
+          const survivingIds = [...(toolContext.packingRosterIds || [])].filter(id => !removedIdSet.has(Number(id)))
+          const survivingPieces = (toolContext.packingRosterPieces || []).filter(piece => !removedIdSet.has(Number(piece?.id)))
+          return {
+            roster_ids: [...new Set([...survivingIds, ...toolContext.pendingRosterChange.addedIds])],
+            roster_pieces: [...survivingPieces, ...toolContext.pendingRosterChange.addedPieces],
+            // The trip's requirement slots are immutable facts about the itinerary, not something a
+            // roster edit changes — carried forward unchanged from what this turn was handed.
+            slots: toolContext.packingRosterSlots || [],
+          }
+        })()
+      : null)
   return {
     established,
+    ...(packingRoster ? { packing_roster: packingRoster } : {}),
     ...(serializeWeatherProfile(toolContext?.weatherProfile) ? { weather_profile: serializeWeatherProfile(toolContext.weatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {})
   }
@@ -860,6 +915,7 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   saveStylistConversationState({
     ...priorConversationState,
     ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
+    ...(freshState?.packing_roster ? { packing_roster: freshState.packing_roster } : {}),
     ...(freshState?.weather_profile ? { weather_profile: freshState.weather_profile } : {}),
     recently_discussed_piece_ids: {
       piece_ids: recentlyDiscussedPieceIdsFromAnswer(answer, toolContext),
@@ -4002,11 +4058,50 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
   }
 }
 
+// docs/trip-composition-parity-spec.md — same shape as capsulePlanCompositionSchema, with
+// cold_layer_decision added: a trip card names a shared packed layer separately from its own
+// piece_ids (owner ruling, thread_1788508369689 arc) rather than being forced to visually enumerate
+// it, via a mandatory enum decision rather than an optional array
+// (docs/trip-cold-layer-decision-contract-and-repair-spec.md). No palette/category-shape fields — a
+// trip roster has no palette contract, unlike a capsule.
+export function tripPlanCompositionSchema(targetOutfits = 1) {
+  const exactCount = Math.max(1, Number(targetOutfits) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      outfits: {
+        type: 'array',
+        minItems: exactCount,
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            piece_ids: { type: 'array', items: { type: 'integer' } },
+            title: { type: 'string' },
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." },
+            cold_layer_decision: coldLayerDecisionSchemaProperty()
+          },
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions', 'cold_layer_decision']
+        }
+      }
+    },
+    required: ['outfits']
+  }
+}
+
 // Spec §3 stage 2 — the model picks the roster from a bench the engine gated.
 // Default ON: model picks the roster from the gated 70-piece bench. Can be set
 // to 'false' via environment variable if deterministic roster pick is needed.
 export function modelCapsuleRosterEnabled() {
   return String(process.env.WARDROBE_MODEL_CAPSULE_ROSTER || 'true').toLowerCase() !== 'false'
+}
+
+export function modelTripRosterEnabled() {
+  return String(process.env.WARDROBE_MODEL_TRIP_ROSTER || 'true').toLowerCase() !== 'false'
 }
 
 export function capsuleRosterSelectionSchema(budget = 24) {
@@ -4323,6 +4418,197 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
   return value || {}
 }
 
+// Trip packing roster (docs/README.md: trip roster architecture). Same bench -> model -> contract-
+// validate -> repair shape as the capsule roster immediately above, deliberately NOT the same
+// prompt or schema: no fixed size (packing efficiency is the model's own per-turn judgment, not a
+// budget), no palette contract, no category starting shape. What replaces those is coverage: every
+// trip use-case slot must come out of this roster wearable, and a piece earning a suitcase place by
+// working across MULTIPLE use cases is the point, not an accident.
+export function tripRosterSelectionSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: 1, uniqueItems: true },
+      packing_reasoning: { type: 'string' },
+      piece_jobs: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { piece_id: { type: 'integer' }, job: { type: 'string' } },
+          required: ['piece_id', 'job']
+        }
+      },
+      repair_changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            removed_piece_id: { type: 'integer' },
+            added_piece_id: { type: 'integer' },
+            reason: { type: 'string' }
+          },
+          required: ['removed_piece_id', 'added_piece_id', 'reason']
+        }
+      }
+    },
+    required: ['roster_piece_ids', 'packing_reasoning', 'piece_jobs', 'repair_changes']
+  }
+}
+
+// Used verbatim for both the initial call and the bounded repair, same reasoning as
+// capsuleRosterSelectionSystemPrompt.
+export function tripRosterSelectionSystemPrompt() {
+  return `You are choosing what to pack for a trip. The conversational stylist has already interpreted the request and fixed the trip's use-case slots (Sightseeing Days, Museum Days, Nature Walks, and so on); a deterministic engine has already gated the candidates you are given to what is structurally eligible for at least one of those use cases.
+
+Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY from the supplied candidates. There is no fixed count: packing efficiency is your own judgment call for THIS trip, not a formula. A roster that is too small leaves a use case unwearable; a roster that is too large defeats the point of packing light. Both are real failures, weighed against each other, not just against a target number.
+
+Cover every stated use case. A roster that leaves one use case without a complete, gate-valid outfit is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits, with footwear that suits it.
+
+Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster where one use case's need for 3 distinct outfits can only actually produce 1 before every remaining option is a piece-for-piece repeat has not covered that use case, even though every individual outfit in isolation would pass its gates.
+
+REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a capsule wardrobe: a top or a layer that works for both sightseeing and a nature walk earns its place twice over, and should be preferred over two narrower pieces that each cover only one use case, all else equal. Judge each candidate by how many of the stated use cases it can genuinely serve, not just whether it is eligible for one.
+
+FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers.
+
+LAYERING / OUTERWEAR THAT SUITS THE TRIP. Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions; do not choose a layer merely because one is required structurally.
+
+A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
+
+For every selected ID, give exactly one piece_jobs entry naming the job it does on this trip — which use case(s) it serves and why it earned a place. Include no unselected IDs and do not repeat an ID.
+
+In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible.
+
+On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
+
+Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.`
+}
+
+// Mirrors capsuleRosterRepairText — same "fix exactly these problems, keep the rest" contract,
+// without the capsule-specific judgment list.
+export function tripRosterRepairText({ failures = [], previousRosterIds = [] } = {}) {
+  return `YOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]
+Fix exactly these problems, keeping the rest of your selection:
+${(failures || []).map(entry => `- ${entry.message}`).join('\n')}
+
+The replacements you bring in are held to the same standard as the original picks: cover the use case(s) that need it, prefer a piece that also works for other use cases already in the roster, and give it a distinct job. Whatever you drop to make room should be the piece doing the least work across the trip, not simply the easiest one to remove.`
+}
+
+export function tripRosterSelectionUserText({
+  bench = [], slots = [], attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
+} = {}) {
+  // includeVisualRoles:false (thread_1788518048013): hero_piece/color_accent/etc. are a capsule-era
+  // styling-role judgment, not an authoritative garment fact for trip packing -- surfacing them in
+  // text would shape the roster model the same way the now-disabled image-fidelity boost did.
+  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece, { includeVisualRoles: false })}`)
+  const slotLines = slots.map(slot => {
+    const distinctOutfits = Math.max(1, Number(slot.targetOutfits) || 1)
+    return `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}) — needs ${distinctOutfits} distinct outfit${distinctOutfits === 1 ? '' : 's'}: ${slot.bestFor || slot.label}`
+  })
+  const repairBlock = attempt > 1
+    ? `\n\n${tripRosterRepairText({ failures, previousRosterIds })}`
+    : ''
+  const ownerRulesBlock = Array.isArray(ownerRules) && ownerRules.length
+    ? `\n\nOWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds. If a rule makes a genuinely usable roster impossible, say so in your packing_reasoning rather than bending the rule. Apply to every piece you select: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+    : ''
+  const acceptedLessonsBlock = String(acceptedLessons || '').trim()
+    ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
+    : ''
+  return `USE CASES THIS TRIP MUST COVER:
+${slotLines.join('\n')}${ownerRulesBlock}${acceptedLessonsBlock}
+
+CANDIDATES:
+${truthCatalog.join('\n')}${repairBlock}`
+}
+
+// Same cache-prefix invariant as capsuleRosterSelectionContent: everything through the last
+// cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
+// the initial call wrote instead of re-paying for every thumbnail.
+export function tripRosterSelectionContent({
+  bench = [], slots = [], ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+} = {}) {
+  const content = [{
+    type: 'text',
+    text: tripRosterSelectionUserText({
+      bench, slots, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: []
+    }),
+    cache_control: { type: 'ephemeral' }
+  }]
+  content.push(...imageParts)
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
+    }
+  }
+  if (attempt > 1) {
+    content.push({ type: 'text', text: tripRosterRepairText({ failures, previousRosterIds }) })
+  }
+  return content
+}
+
+// The production trip-roster chooser. Exists precisely because it did not: buildPlanSlotWorkbench
+// and selectTripRosterViaModel (styling-engine/outfitSetPlanner.js) already had every piece of the
+// contract this function fulfils, and test/tripPackingRoster.test.js already exercised that
+// contract against a mock chooseRoster — but nothing ever called the real model with it in
+// production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
+// plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
+// output, because this function did not exist to be wired in.
+export async function chooseTripRosterWithProvider({ bench, slots, attempt, failures, previousRosterIds }, toolContext) {
+  const imageParts = []
+  for (const piece of bench) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      // useVisualRoles:false (thread_1788518048013): hero_piece/color_accent/sharpener_piece are a
+      // capsule-era styling-role judgment with no trip-specific evidentiary meaning -- image
+      // fidelity here should track only whether the garment itself is hard to read (pattern,
+      // texture), not which piece a different planning objective would cast as the "hero."
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece, { useVisualRoles: false })
+      const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
+      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.error(`Error loading trip roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+
+  const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: bench.map(piece => piece.id),
+    contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
+      occasion: slot?.occasion || '',
+      activity: slot?.activity || '',
+      season: slot?.requestedSeason || slot?.transitSeason || slot?.season || '',
+      currentDate: slot?.stylingContext?.date || slot?.date || null,
+      weatherText: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+      requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
+    })),
+  })
+  const content = tripRosterSelectionContent({
+    bench, slots, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
+    attempt, failures, previousRosterIds, imageParts
+  })
+
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripRosterSelectionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: tripRosterSelectionSchema(),
+    name: 'trip_roster_selection',
+    description: 'Choose what to pack for this trip from the supplied candidates.',
+    providerOverride: toolContext?.providerOverride || null,
+    // No budget to scale against (the whole point is the model decides the count), so size against
+    // the candidate bench itself — same reasoning as the capsule roster's per-item scaling, applied
+    // to the pool the model is choosing from rather than a fixed target.
+    maxTokens: structuredResponseMaxTokens(bench.length, { tokensPerItem: 90, base: 1500, floor: 1500, ceiling: 6000 })
+  })
+  if (toolContext) recordToolLoopUsage(toolContext, usage)
+  return value || {}
+}
+
 // Step 5 criterion 8: the rotation is the capsule's evidence, so it has to
 // demonstrate what the roster claims. The roster-specific version of this
 // ("show the layer, show each dependent piece over a different base, give each
@@ -4336,6 +4622,37 @@ export function capsulePlanCompositionSystemPrompt() {
 The rotation is what proves the capsule works. Every piece in the roster was chosen for a job, so the set of looks you return must demonstrate those jobs — a layer worn somewhere, a piece that cannot stand alone shown over a base, a specialised shoe in a look that genuinely calls for it — and not merely touch most of the pieces. A rotation that uses almost every ID while never showing a whole function has not demonstrated the capsule. Where a piece's job genuinely cannot be shown well, say so plainly in the reason of the look that comes closest rather than passing over it in silence.
 
 Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit. Allowed pieces include the whole roster; you must read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+
+STYLE CONSTITUTION — BODY CONTRACT:
+${prompts.BODY_CONTRACT}
+
+PROVEN FORMULAS:
+${prompts.PROVEN_FORMULAS}
+
+AESTHETIC GRAVITY:
+${prompts.AESTHETIC_GRAVITY}
+
+LANE NEUTRALITY:
+${prompts.LANE_NEUTRALITY}
+
+WORKING STYLE:
+${prompts.WORKING_STYLE}`
+}
+
+// docs/trip-composition-parity-spec.md — trip's dedicated composition-only sibling of
+// capsulePlanCompositionSystemPrompt. Deliberately NOT capsule's rotation objective: a trip roster
+// has no palette contract and no "every piece must prove its job" framing (a trip card is a
+// representative CORE outfit from a packed suitcase, not a demonstration that every roster piece
+// earned its place) — see the owner ruling recorded on outfitSetPlanner.js's assignedLayerIds. What
+// IS shared verbatim is the style constitution, and the mechanical contract (allowed_piece_ids
+// only, exact target_outfits count, read formality/occasions from the catalog rather than trusting
+// allowed_piece_ids alone) — those are true of any fixed-roster composition, not capsule-specific.
+export function tripPlanCompositionSystemPrompt() {
+  return `You are the composition stage of a trip-packing tool. The conversational stylist has already interpreted the request, chosen the trip's use-case slots, and the packing roster is already fixed.
+
+Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Two looks in this rotation must never share the identical set of piece_ids — reuse across DIFFERENT looks is the entire point of a packed suitcase (a top or a layer that earns its place across multiple use cases is a strength, not a compromise), so vary at least one piece between any two looks that would otherwise be identical. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+
+This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. Every outfit requires a cold_layer_decision: when a slot's own instructions state a cold-weather layering requirement, decide whether the core pieces are already warm enough on their own (mode 'core_is_warm_enough') or name a shared packed layer separately from piece_ids (mode 'assigned_packed_layer' with assigned_layer_piece_id) rather than forcing it into piece_ids; when no cold-weather layering requirement applies, use mode 'not_required' with assigned_layer_piece_id null.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -4431,6 +4748,170 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
   recordToolLoopUsage(toolContext, usage)
   toolContext.freeformDiagnostics.atomicCapsuleVisualPieces = visuallySeenIds.length
   return Array.isArray(value?.outfits) ? value.outfits : []
+}
+
+// docs/trip-composition-parity-spec.md §5/§7 — trip's sibling of composeCapsulePlanOnce. Same
+// shape (full truth catalog, unconditional whole-roster images, dedicated schema-enforced call),
+// trip's own objective and prompt. Deliberately does NOT reimplement validation: the caller
+// (tools.js's plan_outfit_set atomic branch) feeds this function's returned outfits through the
+// exact same validateSubmittedPlanOutfits/assembleSubmittedPlanOutfits path a tool-loop-composed
+// trip already goes through — this function's only job is composing candidates, never judging them
+// valid.
+// buildPlanSlotWorkbench's `instructions` string (outfitSetPlanner.js's workbenchInstructions) is
+// shared verbatim with the ordinary tool-loop plan_outfit_set path, where its opening sentence --
+// "submit ALL slots in ONE submit_plan_outfits call", "Viewing pieces is cheap, VIEW the pieces..."
+// (a view_pieces tool call), "resubmit only the failed slots" -- is correct: that path really does
+// have submit_plan_outfits and view_pieces as callable tools, and a real chance to resubmit. The
+// atomic composer has neither: this call's tools list is empty (it returns its answer as this
+// call's own structured response, per tripPlanCompositionSystemPrompt above) and, being one-shot
+// (boundedComposition: true), has no resubmission round at all. Left unfiltered, the model reads
+// this sentence immediately after the system prompt's correct "return in one structured response"
+// line, in the same call -- a live, direct contradiction about how to submit its answer (found by
+// reconstructing an exact capture and reading it end to end, not by inspection of the source alone).
+// Every piece's photo is already attached unconditionally below regardless (see visuallySeenIds
+// below), so the print/layering/sheer visual-judgment guidance stays relevant even without a
+// separate viewing action.
+const ATOMIC_TRIP_TOOL_LOOP_ONLY_INSTRUCTION = 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Viewing pieces is cheap. VIEW the pieces of any outfit whose visual coherence you are uncertain about — print combinations, statement pieces, layering, anything sheer or revealing, silhouette pairings you haven\'t seen work. Compose directly from the catalog when pieces are solids and the combination is conventional. Do not bulk-browse the whole roster. If validation accepts some outfits and rejects others, resubmit only the failed slots.'
+const ATOMIC_TRIP_COMPOSITION_INSTRUCTION = 'Compose the complete rotation yourself and return it as this call\'s own structured response for every slot in one shot — there is no tool call to submit it and no resubmission round, so get it right the first time. Use piece_catalog for garment details and pick only from each slot\'s allowed_piece_ids; every piece\'s photo is already attached below, so judge print combinations, statement pieces, layering, anything sheer or revealing, and any silhouette pairing by sight rather than guessing. Compose directly from the catalog when pieces are solids and the combination is conventional.'
+
+export function atomicTripCompositionInstructions(instructions) {
+  return String(instructions || '').replace(ATOMIC_TRIP_TOOL_LOOP_ONLY_INSTRUCTION, ATOMIC_TRIP_COMPOSITION_INSTRUCTION)
+}
+
+async function composeTripPlanOnce(workbench, toolContext) {
+  const targetOutfitCount = (workbench.slots || [])
+    .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
+  const rosterIds = [...new Set((workbench.slots || [])
+    .flatMap(slot => Array.isArray(slot?.allowed_piece_ids) ? slot.allowed_piece_ids : [])
+    .map(Number)
+    .filter(id => Number.isInteger(id) && id > 0))]
+  const rosterPieces = rosterIds.length
+    ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${rosterIds.map(() => '?').join(',')})`)
+      .all(...rosterIds)
+      .map(parsePiece)
+    : []
+  // Full garment truth (buildPieceText), not planWorkbenchPieceLine's compact line — the same
+  // pairing-requirements/do-not-pair evidence capsule composition already gets, per the ratified
+  // spec's §3.2 finding.
+  const truthCatalog = rosterPieces.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  const promptPayload = {
+    instructions: atomicTripCompositionInstructions(workbench.instructions),
+    constraints: workbench.constraints,
+    slots: workbench.slots,
+    piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog
+  }
+  const content = [{
+    type: 'text',
+    text: `Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    cache_control: { type: 'ephemeral' }
+  }]
+  // Unconditional, whole-roster image attachment — the same policy capsule composition uses, not
+  // pieceVisualDetailPolicy's gated selection (that policy governs roster-SELECTION candidate
+  // thumbnails, a different call with a different tradeoff; composition already has a fixed,
+  // bounded roster, so every piece gets shown).
+  const visuallySeenIds = []
+  for (const piece of rosterPieces) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const thumb = await prepareWardrobeThumb(filePath, `trip-plan:${piece.id}:${photoFile}`, { maxPx: 800 })
+      content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      content.push({
+        type: 'image',
+        detail: 'auto',
+        source: { type: 'base64', media_type: thumb.media_type, data: thumb.data }
+      })
+      visuallySeenIds.push(Number(piece.id))
+    } catch (err) {
+      console.error(`Error loading atomic trip thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
+    }
+  }
+  if (!(toolContext.retrievedPieceIds instanceof Set)) toolContext.retrievedPieceIds = new Set()
+  if (!(toolContext.visuallySeenPieceIds instanceof Set)) toolContext.visuallySeenPieceIds = new Set()
+  for (const piece of rosterPieces) toolContext.retrievedPieceIds.add(Number(piece.id))
+  for (const id of visuallySeenIds) toolContext.visuallySeenPieceIds.add(id)
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripPlanCompositionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: tripPlanCompositionSchema(targetOutfitCount),
+    name: 'trip_plan_composition',
+    description: 'Compose the complete representative trip packing rotation from the fixed roster and slots.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(targetOutfitCount, { tokensPerItem: 550, base: 900, floor: 2200, ceiling: 7500 })
+  })
+  recordToolLoopUsage(toolContext, usage)
+  toolContext.freeformDiagnostics.atomicTripVisualPieces = visuallySeenIds.length
+  return Array.isArray(value?.outfits) ? value.outfits : []
+}
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Deliberately
+// text-only (no thumbnails) and narrowly scoped to just the repairable cards
+// (identifyColdLayerRepairableFailures, outfitSetPlanner.js) — this is a targeted second chance at
+// one specific decision, not a second composition pass, and stays cheap relative to the original
+// call by design.
+export function repairTripColdLayerCardsSchema(count) {
+  const exactCount = Math.max(1, Number(count) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      cards: {
+        type: 'array',
+        minItems: exactCount,
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            piece_ids: { type: 'array', items: { type: 'integer' }, description: "Return exactly as given unless mode is 'core_is_warm_enough' and the original piece_ids genuinely is not warm enough on its own -- only then may this be revised to a warmer core." },
+            title: { type: 'string' },
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string' },
+            cold_layer_decision: coldLayerDecisionSchemaProperty()
+          },
+          required: ['slot_id', 'cold_layer_decision']
+        }
+      }
+    },
+    required: ['cards']
+  }
+}
+
+export function repairTripColdLayerCardsSystemPrompt() {
+  return `You are fixing exactly one thing on a small set of trip outfit cards: each was rejected only because its cold_layer_decision did not hold up — either it was missing/invalid, or it claimed the core was already warm enough when it was not.
+
+For EACH card listed, answer cold_layer_decision correctly: mode 'core_is_warm_enough' only if piece_ids genuinely contains a qualifying layer or heavy-fabric main on its own, or mode 'assigned_packed_layer' with assigned_layer_piece_id set to one of that card's own listed candidate packed layers.
+
+Do NOT change piece_ids, title, reason, or styling_instructions for any card unless you are choosing mode 'core_is_warm_enough' and the original piece_ids genuinely is not warm enough on its own — in that one case only, you may revise piece_ids to a genuinely warmer core. Otherwise return piece_ids exactly as given. This is a targeted fix, not a chance to restyle the outfit.`
+}
+
+async function repairTripColdLayerCards({ cards } = {}, toolContext) {
+  const list = Array.isArray(cards) ? cards : []
+  if (!list.length) return []
+  const content = [{
+    type: 'text',
+    text: `Fix the cold_layer_decision for exactly these ${list.length} card(s):\n${JSON.stringify(list)}`
+  }]
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: repairTripColdLayerCardsSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: repairTripColdLayerCardsSchema(list.length),
+    name: 'trip_cold_layer_repair',
+    description: 'Correct the cold-layer decision for a small set of trip outfit cards that failed only for that reason.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(list.length, { tokensPerItem: 200, base: 300, floor: 500, ceiling: 2000 })
+  })
+  recordToolLoopUsage(toolContext, usage)
+  return Array.isArray(value?.cards) ? value.cards : []
 }
 
 // A capsule expansion is deliberately not a freeform tool loop. The original plan already paid
@@ -4824,6 +5305,17 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
+    // Same owner/scope as extractedWeather immediately above (this turn's question, plus recent
+    // thread context so a date stated an earlier turn still survives into a later plan_outfit_set
+    // call) — a stated trip date is factual request state, not something re-derived per tool call.
+    // See extractStatedTripDateRange's own header comment (thread_1788499704803) for why this
+    // exists: the deterministic override lives at the plan_outfit_set tool boundary in tools.js,
+    // this is only the one extraction this turn computes it from.
+    const statedTripDateRange = extractStatedTripDateRange([
+      req.body.question || '',
+      req.body.threadContext || '',
+      req.body.generatedContext || ''
+    ].join('\n'), { currentDate: req.body.currentDate ? new Date(req.body.currentDate) : new Date() })
     // A capsule often spans two turns: the first names the season/palette and
     // the second answers the stylist's lifestyle clarification. The plan tool
     // used to receive only turn two, silently dropping "in yellow" before
@@ -4846,6 +5338,7 @@ router.post('/ask', async (req, res) => {
       // established req.body.location both still take priority over it, per tools.js's merge order.
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
+      statedTripDateRange,
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.
@@ -4882,10 +5375,20 @@ router.post('/ask', async (req, res) => {
     // use this one-shot structured composer instead of returning a workbench
     // that starts an open-ended submit/replan loop.
     toolContext.composeCapsulePlanOnce = workbench => composeCapsulePlanOnce(workbench, toolContext)
+    // docs/trip-composition-parity-spec.md — same one-shot structured composer shape as capsule's,
+    // for the initial trip plan only; always wired (no feature flag) since the spec is ratified.
+    toolContext.composeTripPlanOnce = workbench => composeTripPlanOnce(workbench, toolContext)
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B) — one narrow, bounded
+    // repair pass for cold-layer-decision-only failures; always wired alongside composeTripPlanOnce
+    // since both are the same ratified atomic-composition arc.
+    toolContext.repairTripColdLayerCards = payload => repairTripColdLayerCards(payload, toolContext)
     // Stage 2 roster selection is opt-in. With the flag off, toolContext never
     // gets a chooser and the capsule path is byte-identical to what shipped.
     if (modelCapsuleRosterEnabled()) {
       toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
+    }
+    if (modelTripRosterEnabled()) {
+      toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
@@ -5167,6 +5670,17 @@ router.post('/ask', async (req, res) => {
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
+    // The active trip packing roster (docs/README.md: trip roster architecture) — read the same
+    // way currentOutfitSet is, so search_wardrobe/propose_outfit see this turn's roster regardless
+    // of whether it came from a fresh plan or was carried forward from an earlier one.
+    toolContext.packingRosterIds = new Set(
+      (payload.threadState?.packing_roster?.roster_ids || []).map(Number).filter(Boolean)
+    )
+    toolContext.packingRosterPieces = payload.threadState?.packing_roster?.roster_pieces || []
+    // The trip's original normalized use-case slots (occasion/activity/weather facts), persisted
+    // alongside the roster so a later roster edit can be validated against the real trip
+    // specification instead of reconstructed from whichever cards the user happened to accept.
+    toolContext.packingRosterSlots = payload.threadState?.packing_roster?.slots || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [
         ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),
@@ -5174,6 +5688,13 @@ router.post('/ask', async (req, res) => {
       ]
         .map(Number).filter(Boolean)
     )]
+    // thread_1788556165595: a plain "what did you use" question about an existing plan reached
+    // plan_outfit_set again and produced a second, different capsule. buildStylistConversationPayload
+    // already told the model the answer sits in current_outfit_set — this removes the tool that let
+    // it ignore that and regenerate instead, mirroring the outfit-critique-followup restriction below.
+    if (payload.restrictToInformationalTools) {
+      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details']
+    }
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,
       toolContext

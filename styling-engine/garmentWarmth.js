@@ -17,7 +17,7 @@
 // to an oracle. Owner ruling 2026-09-03. Disagreement is a question to investigate, not an error to
 // minimise: if this places a sleeveless wool shell at `light` while `cold` says -2, the old score may
 // simply be wrong in a different way.
-import { thermalMaterialVerdict, fabricWeight, wardrobeCategoryGroup, sleeveCoverage, pieceHemCoverage, pieceExposureDegree, necklineWarmth } from './attributes.js'
+import { thermalMaterialVerdict, fabricWeight, wardrobeCategoryGroup, sleeveCoverage, pieceHemCoverage, pieceExposureDegree, necklineWarmth, insulatingLayerMaterials } from './attributes.js'
 
 export const WARMTH_LEVELS = ['very light', 'light', 'moderate', 'warm', 'very warm']
 
@@ -27,6 +27,21 @@ export const WARMTH_LEVELS = ['very light', 'light', 'moderate', 'warm', 'very w
 // The §13.5 table is approximate and pending verification against primary ASHRAE 55 / ISO 9920
 // material — no boundary here may be treated as authoritative until that lands (§12 Slice 2 step 3).
 const SUBSTANCE = { ultralight: -1, light: 0, medium: 1, heavy: 2 }
+
+// Is the FACE fabric recorded? Deliberately not "is it warm" — that is thermalMaterialVerdict's
+// question. A list containing only `unknown`, or no list at all, is absent evidence; a list naming
+// real fibres is present evidence even when none of them is insulating.
+//
+// fabric_category counts too: a piece tagged `denim` or `leather` has its face material established
+// whatever fiber_content says, which is the same reasoning hasPositiveInsulatingEvidence already
+// uses in the other direction.
+function hasFaceMaterialEvidence(piece = {}) {
+  const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
+  const named = fibers.map(f => String(f).toLowerCase().trim()).filter(f => f && f !== 'unknown')
+  if (named.length) return true
+  const category = String(piece?.fabric_category || '').toLowerCase().trim()
+  return Boolean(category) && category !== 'other' && category !== 'unknown'
+}
 
 /**
  * Can this garment be placed at all, and if not, why?
@@ -58,7 +73,34 @@ export function warmthPlacementState(piece = {}) {
   //
   // This replaces the old THERMALLY_UNCHARACTERIZED_FABRIC_CATEGORIES allowlist, which reached for
   // the same predicate through fabric_category and caught 9 pieces instead of 88.
-  if (substance >= 1 && thermalMaterialVerdict(piece) === 'unknown') return 'material_unestablished'
+  // CORRECTED 2026-09-03, live QA. The predicate above tested `thermalMaterialVerdict === 'unknown'`,
+  // which asks whether INSULATING evidence exists — not whether MATERIAL evidence exists. Those are
+  // different questions, and conflating them silenced 80 of 97 "unplaceable" garments that have
+  // perfectly good recorded fibres: every pair of jeans, medium cotton trousers, linen blouses.
+  //
+  // A medium cotton trouser with fiber_content ["cotton"] is not unknown. It is KNOWN
+  // NON-INSULATING: the face fabric is recorded, cotton is not a warm fibre, and nothing suggests a
+  // hidden layer. Refusing to place it left the roster with no basis to rank bottoms at all, which
+  // is how a plan came back with a warm-season pant in five outfits out of five.
+  //
+  // What genuinely blocks placement is a substantial garment whose FACE FABRIC is unrecorded, where
+  // the unstated material could be anything — the black puffer's original ["polyester","nylon"]
+  // shape, or a bare ["unknown"].
+  if (substance >= 1 && thermalMaterialVerdict(piece) === 'unknown') {
+    // OUTERWEAR IS THE EXCEPTION, and it is the case this entire arc came from. A coat's shell says
+    // nothing about its fill: the black puffer's ["polyester","nylon"] was a true, complete statement
+    // about its face and silent about the down inside. So for a layer, known face material is NOT
+    // enough — the interior question must be answered, and reaching here means it is not.
+    //
+    // (An outerwear piece whose layer IS answered never reaches this branch: `[]` makes the verdict
+    // non_insulating and a named fill makes it insulating. Only a genuinely unanswered coat stays
+    // unknown, which is exactly the intent.)
+    if (group === 'outerwear') return 'material_unestablished'
+    // Ordinary clothing cannot plausibly conceal a fill, so a recorded face fabric settles it.
+    // Trousers, jeans, blouses, knits: a medium cotton trouser with fiber_content ["cotton"] is
+    // known NON-INSULATING, not unknown.
+    if (!hasFaceMaterialEvidence(piece)) return 'material_unestablished'
+  }
   return 'placeable'
 }
 
@@ -102,12 +144,57 @@ function coverageAdjustment(piece) {
 //
 // Consumers must treat it as a BOUNDED CEILING: no `very warm+`, no "extreme" tier, no numeric
 // distance above the verified range.
+//
+// Exported (docs/thermal-ranking-source-sensitivity-and-overshoot-policy-spec.md) so
+// thermalDemand.js's ranking primitive can place a raw score against a demand's RAW interval using
+// these exact four numbers, rather than a second, independently-drifting copy of them.
+export const LEVEL_RAW_BOUNDARIES = [-0.5, 0.5, 2.5, 4]
+
 function levelForRawScore(raw) {
-  if (raw <= -1) return 'very light'
-  if (raw <= 1) return 'light'
-  if (raw <= 2.5) return 'moderate'
-  if (raw <= 4) return 'warm'
+  // The light/moderate boundary moved from 1 to 0.5 on 2026-09-03. `light` had spanned TWO full
+  // substance steps, so a light cotton pant (raw 0) and medium denim (raw 1) came out identical and
+  // the roster had no way to prefer either — a warm-season pant then appeared in five outfits of
+  // five on an October trip.
+  //
+  // The anchors say they are different: thin trousers 0.15, thick trousers 0.24 (§15.2). That gap is
+  // the same clo distance as t-shirt 0.08 -> thin trousers 0.15, which the scale already treats as a
+  // level boundary. Treating one as a boundary and not the other was inconsistent.
+  //
+  // Only this boundary moved. The bands are deliberately NARROWER AT THE LOW END and wider at the
+  // top, matching the anchors: 0.08/0.15/0.24 are tightly spaced while 0.36/0.48 are not.
+  for (let i = 0; i < LEVEL_RAW_BOUNDARIES.length; i++) {
+    if (raw <= LEVEL_RAW_BOUNDARIES[i]) return WARMTH_LEVELS[i]
+  }
   return 'very warm'
+}
+
+// docs/source-sensitive-insulating-credit-spec.md (ratified): thermalMaterialVerdict's 'insulating'
+// verdict is decisive from either a genuine recorded fill/construction (insulating_layer_materials
+// -- a direct, engineered warmth signal) or a face-fabric fiber name alone (wool, fleece, cashmere,
+// ... -- hasPositiveInsulatingEvidence). Those are not equally strong evidence: a full-wardrobe
+// census found 23 of 34 real pieces with fiber-only evidence reaching `warm` from the same flat `+2`
+// a genuinely filled coat gets, and an isolated short-sleeve comparison (no coverage/bare-cut
+// confound) showed the fiber term alone jumping a wool dress two buckets past an identical-cut
+// cotton top. thermalMaterialVerdict itself is unchanged -- other consumers correctly need its
+// plain insulating/non_insulating/unknown fact -- only the CREDIT SIZE this one consumer applies to
+// that verdict is source-sensitive.
+export function insulatingCreditWeight(piece) {
+  if (thermalMaterialVerdict(piece) !== 'insulating') return 0
+  const layer = insulatingLayerMaterials(piece)
+  if (Array.isArray(layer) && layer.length) return 2
+  return 0.5
+}
+
+// The canonical raw calculation, extracted so a ranking consumer can distinguish two garments the
+// named 5-level scale places in the same bucket (docs/source-sensitive-insulating-credit-spec.md's
+// own census: same-bucket garments are not equally warm, and buckets are deliberately coarse -- see
+// levelForRawScore's own comments on anchor spacing). NEVER exposed to the model or any prompt text
+// -- named levels stay the only model-facing representation (§12.1's own ruling on this scale).
+// Returns null exactly when garmentWarmthLevel would return null (unplaceable evidence).
+export function garmentWarmthScore(piece = {}) {
+  if (warmthPlacementState(piece) !== 'placeable') return null
+  const substance = SUBSTANCE[fabricWeight(piece)] ?? 0
+  return substance + insulatingCreditWeight(piece) + coverageAdjustment(piece)
 }
 
 /**
@@ -115,12 +202,8 @@ function levelForRawScore(raw) {
  *   null is "unknown", and per §12.1 row 6 it must never be read as neutral warmth.
  */
 export function garmentWarmthLevel(piece = {}) {
-  if (warmthPlacementState(piece) !== 'placeable') return null
-  const substance = SUBSTANCE[fabricWeight(piece)] ?? 0
-  // Positive insulating evidence is the single largest ordinal step, matching the reference spread
-  // between an uninsulated and an insulated garment of the same substance.
-  const insulating = thermalMaterialVerdict(piece) === 'insulating' ? 2 : 0
-  return levelForRawScore(substance + insulating + coverageAdjustment(piece))
+  const score = garmentWarmthScore(piece)
+  return score === null ? null : levelForRawScore(score)
 }
 
 // Base warmth vs removable warmth. §13.4 measured the minimum information needed and found it

@@ -325,6 +325,27 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'Only the genuinely open-ended case — no occasion stated, just "I\'m going on a trip" / "help me pack" — should trigger the clarifying question.',
         'Only the genuinely open-ended case — no occasion stated, just "I\'m going on a trip" / "help me pack" — should trigger the clarifying question. \'search_wardrobe\', \'propose_outfit\', and \'generate_outfits\' resolve weather the same structured way as \'plan_outfit_set\' (live forecast, then \`weather_estimate\`, then \`user_weather\`) and can likewise return \`status: "weather_context_required"\` when a named future destination/date falls outside live coverage with no estimate supplied — for a destination dated more than ~2 weeks out, pass a conservative \`weather_estimate\` (\`high_f\`/\`low_f\`) alongside \`location\`/\`date\` on the SAME call to avoid that round trip; if it stops anyway, re-call the same tool with \`weather_estimate\` filled in before searching, proposing, or composing.'
       )
+    // 2026-09-03: docs/search-propose-signal-inventory.md — thermal/season policy removed from the
+    // prompt itself, not just from search_wardrobe's payload. Three deltas: (1) the alternative-swap
+    // bullet stops naming the removed `weatherFit` field; (2) the compose-mode bullet stops
+    // instructing the model to "favor `preferred`" and states what the tiers mean instead of what to
+    // do about them; (3) the INDOOR bullet stops prescribing "do not serve sleeveless" as a blanket
+    // rule and states the two fed facts (heated rooms, a coat is not necessarily worn indoors)
+    // instead — the exact leak that let a no-tool turn reproduce this policy with zero tool calls.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        'Search with the same occasion/activity/weather context and choose alternatives whose `ruleFit` and `weatherFit` still support that register.',
+        'Search with the same occasion/activity/weather context; each result carries its own thermal facts (warmth, insulation, season) and `ruleFit` for occasion/register fit — judge the replacement\'s suitability yourself from those facts and the conditions already established this turn, the same way you would judge any other candidate.'
+      )
+      expected = expected.replace(
+        'results are already filtered to what is wearable for the requested occasion/activity — `prohibited` pieces are removed for you, so compose freely from what comes back without self-rejecting anything; treat `discouraged` pieces as legitimate judgment calls (permitted, not preferred), favor `preferred`, and note that `unknown` means the piece lacks the metadata to judge.',
+        'results are already filtered to what is wearable for the requested occasion/activity — `prohibited` pieces are removed for you, so compose freely from what comes back without self-rejecting anything. `ruleFit` states the engine\'s own occasion/register read (`discouraged` is a legitimate, permitted choice, not a piece to avoid by default; `unknown` means the piece lacks the metadata to judge, not that it fails) — weigh it as one input alongside the garment\'s own facts and the outfit\'s visual thesis, the way you would any other piece of evidence, rather than defaulting to whichever piece the tier ranks highest.'
+      )
+      expected = expected.replace(
+        'or cold — an office in a July heatwave is still air-conditioned, so do not serve sleeveless, breezy, or beachy pieces as if she\'ll be outside in the sun (offices often run cool, if anything). Reserve',
+        'or cold. An office in a July heatwave is still air-conditioned and often runs cool rather than warm; judge the base\'s warmth for an ordinary indoor room, not for the day outside, and remember any layer worn for the walk there and back is not necessarily worn once indoors — the same distinction applies at arrival and departure regardless of season. Reserve'
+      )
+    }
     }
     // 2026-08-26: sleeve taxonomy rewrite — sleeve_shape's fashion-name enum
     // (fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown) replaced with a

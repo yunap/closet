@@ -27,8 +27,9 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
+import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate } from './outfitEnvironmentalAdequacy.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -37,7 +38,13 @@ import {
   hasRejectedReference,
   getAcceptedFeedbackSynthesisMemory,
   getOwnerRuleNotes,
+  weatherFitForPiece,
+  thermalFactsForPieceLine,
+  resolveRegisterCeiling,
 } from './rules.js'
+import { resolveExposureContext } from './exposure.js'
+import { garmentWarmthLevel } from './garmentWarmth.js'
+import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
@@ -65,7 +72,7 @@ import {
   pieceCoverage,
   shoeCoverage,
   sleeveCoverage,
-  pieceRequiresBaseLayer
+  pieceRequiresBaseLayer,
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
@@ -174,16 +181,37 @@ function collectPieceRoster(outfits = []) {
 // with a no_repeat rule leads with the repeat schedule (its success is "nothing
 // repeats"); everything else keeps the packing-reuse headline. Returns the
 // report lines to append to the shared plan lines.
+// WHAT TO PACK, as its own section — the roster is authoritative, cards are examples drawn from it
+// (docs/README.md: trip roster architecture). Deliberately NOT card annotations: a shared jacket
+// does not get a "remember to add jacket" note pasted onto every card that omits it, which is the
+// per-card noise this whole architecture exists to stop producing. Selected-but-not-demonstrated
+// pieces are named explicitly, the same disclosure discipline the capsule roster already gets.
+function buildTripPackingLines(tripRoster = [], tripOutfits = []) {
+  if (!tripRoster.length) return []
+  const shownIds = new Set(tripOutfits.flatMap(outfit => (outfit.pieces || []).map(piece => Number(piece?.id))))
+  const names = tripRoster.map(piece => piece?.name || 'Garment')
+  const undemonstrated = tripRoster.filter(piece => !shownIds.has(Number(piece?.id)))
+  const lines = [`WHAT TO PACK (${tripRoster.length}): ${names.join(', ')}`]
+  if (undemonstrated.length) {
+    lines.push(`Packed but not shown on a card: ${undemonstrated.map(p => p?.name || 'Garment').join(', ')} — still part of the travel system even when no representative look happens to display it.`)
+  }
+  return lines
+}
+
 function buildPlanReport(pieceReuse, tripOutfits = [], {
   reuseMode = '',
   noRepeatCats = new Set(),
   pieceBudget = 0,
   capsuleRoster = [],
   capsuleCapacity = 0,
-  statedPalette = []
+  statedPalette = [],
+  tripRoster = []
 } = {}) {
   const outfitCount = tripOutfits.length
   const lines = []
+  if (tripRoster.length) {
+    return [...buildTripPackingLines(tripRoster, tripOutfits), `OUTFITS: ${outfitCount} representative look${outfitCount === 1 ? '' : 's'} drawn from the roster above.`]
+  }
   if (pieceBudget > 0) {
     const roster = Array.isArray(capsuleRoster) && capsuleRoster.length
       ? capsuleRoster.map(piece => piece?.name || 'Garment')
@@ -711,14 +739,35 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
-  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette })
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster })
   const weatherLine = buildWeatherLine(slotWeather)
   const gapLines = buildCoverageGapLines(coverageGaps)
+  // WHAT TO PACK, structured for the client the same way capsulePlanContext already is — same
+  // shape, deliberately not the same object: trip has no piece_budget/capacity/palette/
+  // is_winter_capsule, and carries per-use-case coverage instead of per-slot capsule capacity.
+  const tripPlanContext = tripRoster.length ? {
+    version: 1,
+    roster_ids: tripRoster.map(piece => Number(piece?.id)).filter(Boolean),
+    // Same reasoning as capsulePlanContext.roster_pieces: the packing list is the product, cards
+    // are examples, so a piece with no example outfit still needs a visible record here.
+    roster_pieces: tripRoster.map(piece => ({
+      id: Number(piece?.id),
+      name: String(piece?.name || 'Garment'),
+      category: String(piece?.category || ''),
+      photo: piece?.photo || null,
+      worn_photo: piece?.worn_photo || null,
+      colors: Array.isArray(piece?.colors) ? piece.colors : []
+    })).filter(piece => piece.id),
+    // The plan's own normalized trip requirements (docs/README.md: trip roster architecture),
+    // carried alongside the roster through the SAME client-echo/server-restore round trip —
+    // never reconstructed later from accepted cards. See serializeTripRequirementSlot.
+    slots: tripRequirementSlots
+  } : null
   const capsulePlanContext = capsuleRoster.length ? {
     version: 1,
     piece_budget: pieceBudget,
@@ -772,6 +821,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', comp
       ...outfit,
       composedBy,
       ...(capsulePlanContext ? { capsulePlanContext } : {}),
+      ...(tripPlanContext ? { tripPlanContext } : {}),
       pieceReuse,
       coverageLine: coverageBySlot.get(key) || '',
       tripPlanLines: [
@@ -1018,6 +1068,13 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
         transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
         transitHighF: t.highF, transitLowF: t.lowF,
+        // Mirrors stylingContext.js's profileFromResolvedWeatherContext, the general
+        // conversational-stylist projection: wet exposure is NOT neutralized for an indoor
+        // destination the way isCold is above -- rain is a hazard for the walk there and back
+        // regardless of how climate-controlled the destination is, so that projection never zeroes
+        // it for indoor either (profileForEnvironment's indoor branch overrides isCold/severity/
+        // needsRemovableCoolLayer only; isWetExposure/isRainy pass through unchanged).
+        ...wetExposureFromPrecipitation(context.precipitation?.value),
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
@@ -1030,6 +1087,14 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),
       needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
+      // docs/README.md weather-behavior checkpoint follow-up: resolveSlotWeather never derived
+      // isWetExposure/isRainy from its own resolved precipitation at all, unlike
+      // stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
+      // path) -- so RAIN_PROTECTION_MISSING and the wet-sensitive-footwear gate could never fire
+      // for a real plan_outfit_set/trip card no matter how rainy the resolved weather was. Reuses
+      // the same canonical rule (weather.js's wetExposureFromPrecipitation) rather than a second
+      // interpretation.
+      ...wetExposureFromPrecipitation(context.precipitation?.value),
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
@@ -1335,12 +1400,28 @@ function slotRegisterRank(slot = {}) {
 // floor the ceiling forbids. Only ever LIFTS the ceiling — a declared register
 // at or below the occasion's own ceiling changes nothing, so undeclared and
 // non-escalating slots keep today's occasion ceilings exactly.
+//
+// Bug fix (live regression, thread_1788584505940): this used to combine only occasion +
+// explicit slot.register, silently discarding the activity profile's own register_ceiling
+// (hiking: "everyday") the moment either value became an explicit override passed into
+// wholeWardrobePieceTrustDecision downstream -- once options.registerCeiling is set, that
+// function skips its own occasion+activity derivation entirely (rules.js). A slot resolved as
+// outdoor_daytime_social (occasion ceiling "elevated") + hiking (activity ceiling "everyday")
+// let an elevated-formality trench coat and dress stay gate-eligible for a hike, because the
+// stricter activity ceiling never entered the computation at all. Reuses resolveRegisterCeiling's
+// own occasion+activity strictest-wins combination (rules.js) rather than a second interpretation
+// of the same question; the explicit-escalation semantics above are unchanged and still apply on
+// top of that combined structural ceiling. Activities with no register_ceiling of their own
+// (walking, or no activity) leave this byte-identical to the occasion-only ceiling it replaces.
 function effectiveSlotRegisterCeilingRank(slot = {}) {
-  const occasionRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
+  const occasionProfile = resolveOccasionProfile(slot?.occasion)
+  const activity = slot?.stylingContext?.activity || slot?.activity || ''
+  const activityProfile = resolveActivityProfile({ activity, occasion: slot?.occasion })
+  const structuralRank = formalityRank(resolveRegisterCeiling({ occasionProfile, activityProfile }))
   const slotRank = slotRegisterRank(slot)
-  if (occasionRank === null) return slotRank
-  if (slotRank === null) return occasionRank
-  return Math.max(occasionRank, slotRank)
+  if (structuralRank === null) return slotRank
+  if (slotRank === null) return structuralRank
+  return Math.max(structuralRank, slotRank)
 }
 
 function strictestRegisterCeilingRank(occasions = []) {
@@ -2513,6 +2594,8 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
 // Exported under a test-only alias: the line itself is internal, but Slice E's cross-projection
 // parity fixture has to prove capability reaches THIS surface too, not just the shared truth text.
 export { planWorkbenchPieceLine as _planWorkbenchPieceLineForTests }
+// thermalFactsForPieceLine moved to rules.js — shared with search_wardrobe (docs/search-propose-signal-inventory.md), not a second copy under a different name.
+
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
   const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
@@ -2544,6 +2627,12 @@ function planWorkbenchPieceLine(piece = {}) {
     pieceRequiresBaseLayer(piece) ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
+    // THERMAL FACTS, not a thermal verdict (docs/model-facing-signal-inventory.md, finding 1).
+    // The catalog line was the only per-piece fact channel and it carried none of these, so the
+    // model was told a trench was `discouraged` while never being told it is moderate, uninsulated,
+    // removable and year-round — a verdict it had no means to check. These are the inputs the
+    // engine's own thermal reasoning runs on; handing them over is what lets the model disagree.
+    thermalFactsForPieceLine(piece),
     piece.visual_weight ? `weight:${piece.visual_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
@@ -2576,6 +2665,151 @@ export function slotRequiresOperationalEase(slot = {}) {
     .join(' ')
     .toLowerCase()
   return /\b(indoor play|home base|low-key (?:home|day|days)|downtime at home)\b/.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
+}
+
+// THE PLAN PATH'S MISSING THERMAL SIGNAL (live QA, thread_1788421510368).
+//
+// planPieceAssessments carried extreme_heat, movement and operational_ease — and nothing at all for
+// cold. So on a 65/48 October week the model was told "every city/museum look needs a removable
+// layer" and handed a roster with no indication of how much layer, and put a down puffer on all
+// seven cards. The ranker already knew the puffer was 31st of 34; the plan path could not see it,
+// because nothing on this path consumed the band.
+//
+// EVIDENCE, NOT A GATE (§19.1). Every allowed piece stays in the roster; a supply-poor slot keeps
+// whatever it has. This only tells the model what it is choosing between.
+// CALENDAR SEASON — a separate axis from thermal, deliberately (exposure-conditions-spec §6).
+//
+// Live QA (thread_1788422794114): after the puffer was fixed, five outfits of five used a
+// `season: warm` bottom on an October trip. Every piece carries the tag and nothing read it.
+//
+// "October at 70°F does not become summer." This asks what is contextually right for the time of
+// year, NOT what is warm enough — and it must never be derived from the thermal band, which is why
+// it reads `piece.season` and the calendar directly and touches no thermal value.
+//
+// Advisory, and deliberately one-directional: an out-of-season piece is flagged, an in-season one
+// earns nothing. A warm-season linen shirt on an unusually hot October day is still wearable — the
+// owner's ruling — so this marks it rather than removing it.
+const OUT_OF_SEASON = {
+  fall: 'warm',
+  winter: 'warm',
+  summer: 'cool',
+  // Missing until now — spring got zero mismatch advisories regardless of piece season tag. 'cold'
+  // (deep-winter heavy pieces), the same "opposite extreme" pairing summer:'cool' already uses.
+  spring: 'cold',
+}
+
+export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
+  const season = String(piece?.season || '').toLowerCase().trim()
+  const calendar = String(calendarSeason || '').toLowerCase().trim()
+  if (!season || season === 'year-round' || !calendar) return { tier: 'neutral', score: 0, reason: '' }
+  if (OUT_OF_SEASON[calendar] !== season) return { tier: 'neutral', score: 0, reason: '' }
+  return {
+    tier: 'discouraged',
+    score: -6,
+    reason: `tagged ${season}-season clothing; this is a ${calendar} trip`,
+  }
+}
+
+// docs/trip-roster-season-eligibility-spec.md (ratified): a hard, roster-selection-time exclusion,
+// distinct from seasonFitPieceAdvisory above (which stays ranking-only, every category, unchanged).
+// A trip roster has a fixed, scarce number of slots chosen once for the whole trip -- a
+// season-mismatched bottom/shoe/dress taking one of them is a roster-construction defect regardless
+// of whether the model would go on to override the advisory for one outfit.
+//
+// `top` is exempt: it may serve as an indoor base layer under something warmer, the one category
+// with a plausible job despite the mismatch. `dress` is NOT exempt -- an outfit-defining piece, not
+// a layering component; the museum sleeveless-dress case is exactly why this stays hard for dress.
+//
+// `outerwear` gets its own rule, stated in terms of the PIECE's own season tag, never trip
+// "direction": a piece tagged for WARM weather is excluded like any other mismatched piece (a
+// warm-season blazer is exactly as useless on a cold trip as a warm-season pair of pants -- warm-
+// season means lightweight construction, not insulation). A piece tagged COOL/COLD is never
+// excluded as outerwear, on any trip -- it may be the one thing warm enough for an unexpectedly cold
+// day or evening. Same asymmetry capsuleSeasonEligiblePool already grants outerwear on a summer
+// capsule; this generalizes it to every calendar season rather than leaving it summer-specific.
+export function tripSeasonEligiblePool(pool = [], calendarSeason = '') {
+  const calendar = String(calendarSeason || '').toLowerCase().trim()
+  if (!calendar) return pool
+  return pool.filter(piece => {
+    const season = String(piece?.season || '').toLowerCase().trim()
+    const mismatched = season && season !== 'year-round' && OUT_OF_SEASON[calendar] === season
+    if (!mismatched) return true
+    const group = wardrobeCategoryGroup(piece)
+    if (group === 'top') return true
+    if (group === 'outerwear') return season !== 'warm'
+    return false
+  })
+}
+
+// "how much warmth do these conditions call for", as a short phrase the model can act on.
+export function slotThermalDemandLabel(exposure = null) {
+  const demand = requiredThermalBand(exposure)
+  if (!demand?.level) return ''
+  return demand.certain ? demand.level : `${demand.level} (estimated exposure window)`
+}
+
+// The slot's conditions as FACTS the model can size a layer from itself, replacing the
+// `thermal_demand` target the engine used to compute for it. The waking window is the honest
+// exposure range (band spec's ~35%-above-trough estimate), not the 5am trough nobody dresses for,
+// and its certainty is stated rather than implied. Returns '' when conditions are genuinely
+// unknown — an empty field is the truthful answer there, and inventing a range would be exactly
+// the fake precision this arc keeps paying for.
+export function slotExposureConditions(exposure = null) {
+  const c = exposure?.conditions
+  if (!c?.known || !Number.isFinite(c.wakingLowF)) return ''
+  const bits = [`${c.wakingLowF}-${c.wakingHighF}°F likely exposure`]
+  if (exposure.exertion && exposure.exertion !== 'unknown') bits.push(exposure.exertion)
+  if (exposure.exposureMode === 'indoor_destination') bits.push('indoor destination, outdoor transit')
+  else if (exposure.exposureMode === 'sustained_outdoor') bits.push('sustained outdoor')
+  bits.push(c.coarse ? 'estimated window' : 'hourly')
+  return bits.join(' · ')
+}
+
+// Evidence, never a gate: every allowed piece stays, only the order changes.
+//
+// Ordering combines thermal fit and calendar season; the two ADVISORIES stay separate, because they
+// answer different questions and §6 forbids deriving one from the other. Mixing them here is a
+// ranking heuristic, not a semantic merge — the model still receives both verdicts independently
+// and can override either. Without this an out-of-season pant that happens to suit the temperature
+// still led the roster, which is exactly what the live thread produced.
+function rosterFitScore(piece, weatherProfile, exposure, calendarSeason) {
+  return weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {}).score
+    + seasonFitPieceAdvisory(piece, calendarSeason).score
+}
+
+function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null, calendarSeason = '') {
+  if (!weatherProfile) return pieces
+  return [...pieces].sort((a, b) =>
+    rosterFitScore(b, weatherProfile, exposure, calendarSeason) -
+    rosterFitScore(a, weatherProfile, exposure, calendarSeason))
+}
+
+export function thermalFitPieceAdvisory(piece = {}, weatherProfile = {}, exposure = null) {
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes' || group === 'accessory') return { tier: 'neutral', score: 0, reason: '' }
+  const fit = weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {})
+  const adjustment = fit.adjustments.find(a => String(a.reason || '').startsWith('thermal band'))
+  if (!adjustment) return { tier: 'neutral', score: 0, reason: '' }
+  // TIER BY DISTANCE, not by direction. The first version read only the label's direction, so every
+  // overshoot was `discouraged` and every undershoot `workable` — a distance-blind reading of an
+  // adjustment that already carries distance (rules.js scores 4 / 0 / -4 / -8 by |distance|).
+  // thread_1788425468666 is what that cost: straight-leg denim, one step over a `light` hiking
+  // demand at 65°F, was marked `discouraged` next to a down puffer three steps over. The model
+  // rightly ignored it — and a signal that cries wolf on jeans is not one worth teaching it to obey.
+  //
+  // One step out is a real preference and no more: `workable` in BOTH directions. Two or more is
+  // `discouraged`. The old asymmetry was never argued for; it just fell out of reading the label.
+  // Undershoot losing its blanket `workable` is the point, not collateral — summer clothing on an
+  // October trip is exactly a multi-step undershoot. Validity is still adequacy's job, never this
+  // advisory's: NO_WARM_LAYER_FOR_COLD remains the hard error (§5.5, presence vs amount).
+  const label = String(adjustment.label || '')
+  const direction = label.startsWith('warmer than') ? 'warmer than these conditions call for'
+    : label.startsWith('lighter than') ? 'lighter than these conditions call for'
+    : ''
+  if (!direction) return { tier: 'preferred', score: adjustment.score, reason: 'well matched to these conditions' }
+  // score 0 is exactly |distance| === 1; anything further out is negative.
+  const tier = adjustment.score >= 0 ? 'workable' : 'discouraged'
+  return { tier, score: adjustment.score, reason: direction }
 }
 
 export function extremeHeatPieceAdvisory(piece = {}, weatherProfile = {}) {
@@ -2648,7 +2882,7 @@ export function operationalEasePieceAdvisory(piece = {}, operationalEase = false
   return { tier: 'workable', score: -2, reason: 'heel height is unknown for an operationally easy use case' }
 }
 
-function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
+function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '' } = {}) {
   return {
     id: Number(piece?.id),
     extreme_heat: extremeHeatPieceAdvisory(piece, weatherProfile),
@@ -2997,7 +3231,7 @@ function suppressedReasonMap(suppressedPieces = []) {
   return map
 }
 
-function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
+function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '' } = {}) {
   const id = Number(piece.id)
   let score = 0
   if (anchorIds.has(id)) score += 100000
@@ -3015,16 +3249,46 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(),
   if (slotFloor !== null && pieceRank !== null) {
     score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
   }
-  if (fabricWeight(piece) === 'light') score += 5
+  // The blanket `+5 for light fabric` that used to sit here is gone: it was a season-blind thumb on
+  // the scale that, against a 4-piece outerwear quota, floated a sheer shrug and two knit cardigans
+  // over every real coat on a 48°F October morning. Fabric weight only means "cooler" RELATIVE TO
+  // conditions, which a bare tag cannot say.
+  //
+  // Its replacement is NOT a thermal verdict in the score. Ranking candidates by
+  // preferred/discouraged makes selection a second stylist operating one layer below the one we
+  // just removed from the model contract — the same abstraction error, harder to see. Thermal range
+  // is preserved structurally instead, by spreadThermalRange below.
   score += extremeHeatPieceAdvisory(piece, weatherProfile).score
   score += activeMovementPieceAdvisory(piece, activeMovement).score
   score += operationalEasePieceAdvisory(piece, operationalEase).score
   return score
 }
 
-export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
+// Preserve thermal RANGE in what the model is offered, rather than ranking candidates by a derived
+// stylistic verdict. Both Vienna failures were the same roster defect: the slot contained only one
+// kind of layer. Offering a puffer and nothing lighter forces the puffer; offering a sun hoodie and
+// nothing warmer forces the hoodie. Neither is a calibration problem.
+//
+// Deliberately NOT a quota. It takes the strongest candidate at each warmth level the group can
+// actually supply, then falls back to plain score order — so a wardrobe or slot with one warmth
+// level degrades to exactly the previous behaviour instead of manufacturing variety it does not
+// have. Pieces with no established warmth share the `unknown` bucket and are neither privileged nor
+// suppressed: not knowing is not a thermal property.
+function spreadThermalRange(items = []) {
+  const firstAtLevel = []
+  const rest = []
+  const seenLevels = new Set()
+  for (const item of items) {
+    const level = garmentWarmthLevel(item.piece) || 'unknown'
+    if (seenLevels.has(level)) rest.push(item)
+    else { seenLevels.add(level); firstAtLevel.push(item) }
+  }
+  return [...firstAtLevel, ...rest]
+}
+
+export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, exposure = null, calendarSeason = '', limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
   const scored = allowedPieces
-    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase }) }))
+    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure, calendarSeason }) }))
     .sort((a, b) => b.score - a.score || Number(b.piece.id || 0) - Number(a.piece.id || 0) || a.index - b.index)
   const selected = []
   const seen = new Set()
@@ -3044,9 +3308,8 @@ export function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { ancho
   for (const group of coverageGroups) {
     const quota = group === 'accessory' || group === 'outerwear' ? 4 : 8
     let taken = selected.filter(piece => wardrobeCategoryGroup(piece) === group).length
-    for (const item of scored) {
+    for (const item of spreadThermalRange(scored.filter(entry => wardrobeCategoryGroup(entry.piece) === group))) {
       if (taken >= quota || selected.length >= limit) break
-      if (wardrobeCategoryGroup(item.piece) !== group) continue
       const before = selected.length
       add(item)
       if (selected.length > before) taken += 1
@@ -3367,7 +3630,427 @@ export async function selectCapsuleRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// TRIP PACKING ROSTER (docs/README.md: trip roster architecture). A trip gets its own first-class
+// packing set, chosen by the model from a bench, structurally validated, with cards composed FROM
+// it — the same selected-set/representative-rotation abstraction the capsule already proved, with
+// the objective and validation deliberately NOT shared:
+//
+//   CAPSULE optimizes breadth/recombination/variety — piece_budget, palette, register-reserve.
+//   TRIP optimizes itinerary coverage/reuse/compactness — no budget, no palette, no reserve pass.
+//
+// Before this, "packed" had no representation at all for a trip: modelPlanPool fell straight
+// through to the whole wardrobe, and the union of whatever pieces ended up on accepted cards WAS
+// the only place "the suitcase" existed (visible only in describeTripPieceReuse's after-the-fact
+// summary). That forced every card to re-litigate "does this outfit have a warm layer" independently
+// — the exact defect behind thread_1788427903679/thread_1788430055577: a jacket packed once had no
+// way to count as packed unless it appeared on every single card.
+//
+// Validation here is STRUCTURAL ONLY, on purpose — ownership, per-use-case feasibility, footwear
+// capability, dependent-base availability. Never "is this jacket warm enough for 48°F": that is
+// exactly the deterministic-styling-judgment pattern this session spent its facts-vs-judgments pass
+// removing everywhere else, and re-adding it at the roster level would be the same mistake one layer
+// up (docs/search-propose-signal-inventory.md).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+const TRIP_BENCH_SIZE = 60
+
+// Ranks by how many of the trip's own requested use cases a piece could serve — "prefer pieces that
+// serve multiple jobs" as a real ranking term, not prose alone. A piece gate-eligible for 3 of 4
+// slots outranks one eligible for 1, before any per-piece taste judgment. Ties break by id for a
+// stable, arguable order (never a hidden verdict — see docs/search-propose-signal-inventory.md).
+function tripReuseScore(piece, slots, gateSlots) {
+  let count = 0
+  for (const { gateAllowedIds } of gateSlots) {
+    if (gateAllowedIds.has(Number(piece.id))) count += 1
+  }
+  return count
+}
+
+// A bench candidate's construction bucket — the same already-tagged attribute
+// (wardrobeCategoryGroup + garmentKind) outerLayerSevereColdAdequacy, pieceFidelityChecklist and the
+// rest of this file already use to distinguish real construction differences, not an invented
+// diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different buckets; two cardigans are
+// the same bucket regardless of color/pattern.
+function tripBenchBucketKey(piece) {
+  return `${wardrobeCategoryGroup(piece)}:${garmentKind(piece) || 'other'}`
+}
+
+// thread_1788504927533: buildCoveredCandidateSet (candidateSet.js) truncates its RANKED INPUT ORDER
+// at capacity once the structural coverage requirements below are satisfied — a flat sort by
+// (tripReuseScore desc, id asc) means that whenever many pieces tie on reuse score (the common case:
+// most pieces are gate-eligible for exactly one slot), ascending id alone decides who survives
+// truncation. Measured live: a wardrobe with 16 real jackets/coats/trenches and 6 cardigans put
+// EVERY cardigan in the bench and NONE of the 16 structured pieces in it, purely because the
+// cardigans' ids happened to be lower — the roster model was never shown a real jacket to weigh
+// against a cardigan, on a category or trip-relevance basis it had no way to know was missing. This
+// is a general property of the ranking this function feeds into buildCoveredCandidateSet, not
+// something specific to outerwear: the same truncation would silently narrow tops, bottoms, shoes or
+// dresses down to whichever construction bucket happens to have the most low-id members.
+//
+// Round-robins the already-ranked list across construction buckets (one pick per bucket per round,
+// each bucket internally keeping its own tripReuseScore/id ordering) so every construction bucket
+// gate-eligible for this trip gets an early turn instead of one bucket exhausting the whole capacity
+// before any other bucket is represented. This does not favor outerwear, or any other category —
+// every bucket, including six near-identical cardigans collapsing into one bucket, gets the same one
+// turn per round. It also does not change WHICH pieces are eligible or their relative rank within
+// their own bucket, only how eligible pieces from DIFFERENT buckets interleave before truncation.
+function diversityInterleavedByBucket(rankedPieces) {
+  const buckets = new Map()
+  for (const piece of rankedPieces) {
+    const key = tripBenchBucketKey(piece)
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key).push(piece)
+  }
+  const queues = [...buckets.values()]
+  const interleaved = []
+  let remaining = true
+  while (remaining) {
+    remaining = false
+    for (const queue of queues) {
+      if (!queue.length) continue
+      interleaved.push(queue.shift())
+      remaining = true
+    }
+  }
+  return interleaved
+}
+
+// The bench: every piece gate-eligible for at least one requested use case, capped for token
+// budget. No deterministic-roster seed (there is no deterministic trip selector to seed from, by
+// design — the model owns this set-level choice) and no capsule quotas/proportional-category
+// targets (those encode "recombination breadth," a capsule objective). The one guarantee carried
+// over is coverage: buildCoveredCandidateSet ensures every requested use case keeps at least one
+// complete gate-valid core (top+bottom-or-dress, plus a shoe) within the bench, the same mechanism
+// selectCapsuleRoster's own bench uses, because "can this use case be covered at all" is structural,
+// not a taste question either abstraction should re-derive separately.
+function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE, calendarSeason = '' } = {}) {
+  const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
+  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason)
+  const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
+    .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
+  const gateSlots = normalizedSlots.map((slot, index) => {
+    const slotEligible = slotGateEligiblePieces(eligible, slot, {})
+    const slotLabel = slot.slot || slot.label || `slot_${index}`
+    return {
+      slotLabel,
+      slotEligible,
+      gateAllowedIds: idSetForPieces(slotEligible),
+      requirement: restrictSupplyRequirement(
+        completeOutfitSupplyRequirement({ id: `trip_slot:${slotLabel}` }),
+        idSetForPieces(slotEligible),
+      ),
+    }
+  })
+  const ranked = [...eligible].sort((a, b) =>
+    (tripReuseScore(b, normalizedSlots, gateSlots) - tripReuseScore(a, normalizedSlots, gateSlots)) ||
+    (Number(a.id) - Number(b.id)))
+  const diversityOrdered = diversityInterleavedByBucket(ranked)
+  return buildCoveredCandidateSet({
+    rankedPieces: diversityOrdered,
+    initialSelection: [],
+    capacity: benchSize,
+    requirements: gateSlots.map(g => g.requirement),
+  }).pieces
+}
+
+// Structural failures only — see the header comment above for why. Every check here answers a
+// yes/no ownership/feasibility question the engine already has ratified authority over elsewhere;
+// none of them grade HOW WELL a piece serves, only WHETHER the roster can serve at all.
+// Shared by every roster/set-level "does a real layer exist" presence check, so it's answered once,
+// the same way f803d39 fixed it at card level — never by outerwear category alone. A thin, unlined
+// "technical hoodie" satisfies category but not outerwearLayerPositivelyInadequate's negative-evidence
+// read, and both this file's roster-level check and validateSubmittedPlanOutfits' set-level check
+// need to agree with the card-level check they're both standing in for.
+function rosterHasQualifyingWarmLayer(pieces = []) {
+  return pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+}
+
+function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
+  const normalizedRoster = Array.isArray(roster) ? roster : []
+  const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
+  const failures = []
+
+  const inactivePieces = normalizedRoster.filter(piece => piece?.status && piece.status !== 'active')
+  if (inactivePieces.length) {
+    failures.push({ code: 'roster_ownership', message: `roster includes ${inactivePieces.length} non-active piece(s): ${inactivePieces.map(piece => `ID ${piece.id}`).join(', ')}` })
+  }
+  if (Array.isArray(pool) && pool.length) {
+    const poolIds = idSetForPieces(pool)
+    const outsidePool = normalizedRoster.filter(piece => !poolIds.has(Number(piece?.id)))
+    if (outsidePool.length) {
+      failures.push({ code: 'roster_ownership', message: `roster includes ${outsidePool.length} piece(s) not in the supplied candidate list: ${outsidePool.map(piece => `ID ${piece.id}`).join(', ')}` })
+    }
+  }
+
+  const gateSlots = normalizedSlots.map((slot, index) => {
+    const slotEligible = slotGateEligiblePieces(normalizedRoster, slot, {})
+    return { slot, index, slotEligible, label: slot.slot || slot.label || `slot_${index}` }
+  })
+
+  // Every requested use case needs >=1 complete, gate-valid core inside the roster ITSELF — the
+  // same "slot_uncoverable" question validateCapsuleRoster already asks, reusing its own machinery
+  // rather than re-deriving it.
+  for (const { slot, index, slotEligible, label } of gateSlots) {
+    const cores = capsuleOutfitCoreCapacity(normalizedRoster, [{ ...slot, gateAllowedIds: idSetForPieces(slotEligible) }])
+    if (cores > 0) continue
+    const tops = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'top').length
+    const bottoms = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'bottom').length
+    const dresses = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'dress').length
+    const shoes = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').length
+    failures.push({ code: 'use_case_uncoverable', message: `${label} has ${shoes} eligible shoe(s), ${tops} eligible top(s), ${bottoms} eligible bottom(s), and ${dresses} eligible dress(es) in the roster, so it supports 0 complete outfits` })
+  }
+
+  // A dependent top (needs_base) needs a standalone base somewhere in the roster that also passes
+  // that use case's own gates — otherwise the roster spent a slot on a piece it cannot actually
+  // build an outfit around. Reuses the identical capsule check (pieceRequiresBaseLayer,
+  // isCapsuleBaseCandidate) — this question is not capsule-specific, only its supply-gap exemption
+  // (a wardrobe with no standalone base at all is a wardrobe gap, not a roster defect) is worth
+  // keeping, so it is kept here too.
+  for (const { slot, slotEligible, label } of gateSlots) {
+    const dependents = slotEligible.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece))
+    if (!dependents.length) continue
+    if (slotEligible.some(isCapsuleBaseCandidate)) continue
+    if (pool.length) {
+      const rosterIds = idSetForPieces(normalizedRoster)
+      const availableBases = slotGateEligiblePieces(pool.filter(piece => !rosterIds.has(Number(piece?.id))), slot, {})
+        .filter(isCapsuleBaseCandidate)
+      if (!availableBases.length) continue
+    }
+    failures.push({ code: 'dependent_base_unavailable', message: `${label} offers ${dependents.length} top(s) that cannot be worn alone (${dependents.map(p => p.name || `ID ${p.id}`).join(', ')}) but no standalone top in the roster passes that use case's gates` })
+  }
+
+  // "hiking-capable footwear exists for a hiking use case" needs no separate check: the shared
+  // hard gate (evaluatePlannerAutomaticUsePool, reached through slotGateEligiblePieces above) already
+  // excludes heel/support-incompatible shoes from a slot's eligible set — confirmed live, a shoe
+  // tagged excluded_heel_heights:'high' comes back `underlyingAllowed:false`,
+  // `code:'activity_profile_high_heel_unsuitable'`, `source:'hard_gate'`. A hiking use case with no
+  // wearable shoe therefore already surfaces as use_case_uncoverable (0 cores) above, not as a
+  // second, redundant condition re-deriving the same gate.
+
+  // Roster-level removable-cool-layer feasibility (thread_1788501349296): a roster can pass every
+  // check above — every slot individually gate-coverable, every dependent top based — and still be
+  // structurally unable to produce a single passing card, because submit_plan_outfits' own SET-level
+  // adequacy check (outfitEnvironmentalAdequacy.js's NO_REMOVABLE_COOL_LAYER, gated on the identical
+  // packingRosterHasLayer bar this reuses) requires a layer somewhere in the roster whenever a slot's
+  // resolved weather says needsRemovableCoolLayer and the slot is not already isCold or indoor. A
+  // roster with zero QUALIFYING outerwear pieces makes that requirement unsatisfiable by
+  // construction — not a styling defect in any one submitted card, a supply gap in the roster itself,
+  // caught here before any card is composed rather than discovered once per rejected submission.
+  // Presence-only, the same bar the downstream check already uses (outerwearLayerPositivelyInadequate,
+  // not category alone — a category-only bar let a thin, unlined "technical hoodie" count as a real
+  // layer, fixed at card level by f803d39 and reused here so the roster-level check doesn't reopen it)
+  // — this is not a new "is it warm enough" judgment, and it is not a category quota: a roster for an
+  // all-indoor or already-cold trip is never required to carry outerwear just because it's a trip.
+  const hasRosterLayer = rosterHasQualifyingWarmLayer(normalizedRoster)
+  if (!hasRosterLayer) {
+    const layerRequiredSlots = gateSlots.filter(({ slot }) => {
+      const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+      const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+      return weatherProfile.needsRemovableCoolLayer && !weatherProfile.isCold && !isIndoor
+    })
+    if (layerRequiredSlots.length) {
+      const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
+      failures.push({ code: 'missing_removable_cool_layer', message: `missing required removable coverage for slots ${labels}` })
+    }
+  }
+
+  // Roster-level cold-floor feasibility (thread_1788516198449): the SET-level check above only asks
+  // whether the roster contains a layer ANYWHERE — a genuine gap when a trip needs one but the
+  // roster is entirely lacking one. This is the narrower, per-slot question the live run exposed:
+  // the roster CAN contain a layer and still leave one specific isCold slot with none of it, because
+  // the only packed layer is gate-ineligible for that slot's own occasion/activity (a city-only
+  // trench cannot cover a hiking slot). submit_plan_outfits' own card-level check
+  // (NO_WARM_LAYER_FOR_COLD, hasMinimumWarmLayer) will reject every card composed for that slot no
+  // matter what the model tries — a deterministic impossibility, not a styling judgment, and knowable
+  // the moment the roster is chosen rather than after several rejected submissions.
+  //
+  // hasMinimumWarmLayer([piece]) reuses the identical criterion a submitted card is later held to,
+  // applied to one candidate at a time — no new warmth threshold, no outerwear-category rule. A slot
+  // passes here the moment ONE of its gate-eligible roster pieces would satisfy the real check on its
+  // own; this never asks whether a full outfit can be composed, only whether the raw material exists.
+  for (const { slot, slotEligible, label } of gateSlots) {
+    const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+    const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
+    // Reads the same relaxed fact slotColdLayerRequired uses (cold-layer-exposure-trigger-spec.md),
+    // not raw isCold directly — this loop is a third consumer of that question and was disagreeing
+    // with the card-level check it exists to predict for a mild, activity-relaxed cold slot.
+    if (isIndoor || !slotColdLayerRequired({ weatherProfile, environment: slot.environment })) continue
+    if (slotEligible.some(piece => hasMinimumWarmLayer([piece]))) continue
+    failures.push({
+      code: 'cold_floor_infeasible',
+      message: `${label} cannot form a cold-valid outfit from this roster: no slot-eligible qualifying warm layer or heavy main is available.`
+    })
+  }
+
+  return failures
+}
+
+// The exact fields slotGateEligiblePieces (and therefore tripRosterFailures) reads from a slot,
+// projected out for persistence — no more, no less. Follow-up validation must reuse the plan's own
+// normalized trip requirements, not a second interpretation reconstructed from accepted cards
+// (docs/README.md: trip roster architecture — the owner's own correction after the card-derived
+// proxy this file used before was flagged as partially undoing the roster/cards separation). This
+// is the one place that mapping is written down, so a future slotGateEligiblePieces field it starts
+// reading and this projection stops carrying is a one-file fix, not a silent gap.
+const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'isWetExposure', 'isRainy', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
+
+export function serializeTripRequirementSlot(slot = {}) {
+  const weatherSource = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+  const weatherProfile = {}
+  for (const key of TRIP_SLOT_WEATHER_FIELDS) if (weatherSource[key] !== undefined) weatherProfile[key] = weatherSource[key]
+  return {
+    id: slot.id,
+    label: slot.label || '',
+    bestFor: slot.bestFor || '',
+    coverage: slot.coverage || '',
+    planNote: slot.planNote || '',
+    statedWeather: slot.statedWeather || '',
+    environment: slot.environment || '',
+    register: slot.register || '',
+    occasion: slot.stylingContext?.occasion || slot.occasion || '',
+    activity: slot.stylingContext?.activity || slot.activity || '',
+    season: slot.stylingContext?.season || slot.season || '',
+    transitSeason: slot.transitSeason || '',
+    calendarSeason: slot.stylingContext?.calendarSeason || '',
+    date: slot.stylingContext?.date || slot.date || null,
+    weatherProfile,
+  }
+}
+
+// The inverse: a persisted requirement slot reconstructed into the shape slotGateEligiblePieces
+// expects (stylingContext holding the resolved facts, top-level fields as the fallback the `||`
+// chains in that function already read either from). Round-trips serializeTripRequirementSlot's
+// output back into something tripRosterFailures can validate against directly.
+export function restoreTripRequirementSlot(persisted = {}) {
+  return {
+    id: persisted.id,
+    label: persisted.label,
+    bestFor: persisted.bestFor,
+    coverage: persisted.coverage,
+    planNote: persisted.planNote,
+    statedWeather: persisted.statedWeather,
+    environment: persisted.environment,
+    register: persisted.register,
+    occasion: persisted.occasion,
+    activity: persisted.activity,
+    season: persisted.season,
+    transitSeason: persisted.transitSeason,
+    stylingContext: {
+      occasion: persisted.occasion,
+      activity: persisted.activity,
+      season: persisted.season,
+      calendarSeason: persisted.calendarSeason,
+      date: persisted.date,
+      weatherProfile: persisted.weatherProfile || {},
+    },
+  }
+}
+
+export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) {
+  const failures = tripRosterFailures(roster, { slots, pool })
+  return { ok: !failures.length, failures }
+}
+
+// Same bench -> model -> contract-validate -> repair shape as selectCapsuleRosterViaModel, with two
+// deliberate differences: no fixed size (the model decides how many pieces earn suitcase space —
+// "packing efficiency" is a real per-turn judgment, not a budget), and no deterministic fallback
+// on repeated failure, because no deterministic trip selector exists (by design — inventing one
+// would be exactly the roster-level styling judgment this architecture exists to avoid). The
+// fallback instead degrades honestly to the full coverage-guaranteed bench, disclosed as a
+// coverage gap rather than presented as a chosen roster.
+export async function selectTripRosterViaModel({
+  pool = [],
+  slots = [],
+  benchSize = TRIP_BENCH_SIZE,
+  calendarSeason = '',
+  chooseRoster = null,
+  onDiagnostic = null,
+} = {}) {
+  const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
+  const bench = buildTripBench(pool, { slots, benchSize, calendarSeason })
+  const benchById = pieceMapForPieces(bench)
+
+  if (typeof chooseRoster !== 'function') {
+    return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
+  }
+
+  const resolve = answer => {
+    const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+    const unique = [...new Set(ids)]
+    const outsideBench = unique.filter(id => !benchById.has(id))
+    const roster = unique.map(id => benchById.get(id)).filter(Boolean)
+    const contractFailures = outsideBench.length
+      ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
+      : []
+    return { roster, contractFailures }
+  }
+
+  const attemptChoose = async attemptArgs => {
+    try {
+      return resolve(await chooseRoster(attemptArgs))
+    } catch (err) {
+      const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
+      return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
+    }
+  }
+
+  bump('tripRosterModelCalls')
+  const first = await attemptChoose({ bench, slots, attempt: 1, failures: [] })
+  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
+  if (!failures.length) {
+    return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
+  }
+
+  bump('tripRosterModelRepairs')
+  const second = await attemptChoose({
+    bench, slots, attempt: 2, failures,
+    previousRosterIds: first.roster.map(piece => Number(piece.id)),
+  })
+  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
+  if (!secondFailures.length) {
+    return { roster: second.roster, source: 'model_repaired', failures: [], bench, coverageGaps: [] }
+  }
+
+  bump('tripRosterModelFallbacks')
+  return {
+    roster: bench,
+    source: 'bench_fallback',
+    failures: secondFailures,
+    bench,
+    coverageGaps: ['[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]'],
+  }
+}
+
+// docs/cold-layer-exposure-trigger-spec.md: a narrow, additive relaxation of the ordinary
+// isCold-driven cold-layer trigger for trip slots only -- computed once, here, where
+// activity/occasion/environment/weather are all already resolved. Never taught to shared Contract
+// C (outfitEnvironmentalAdequacy.js), which only ever reads the resulting boolean with a legacy
+// `?? weather.isCold` fallback for every other caller. Deliberately conservative: every gate below
+// must hold, or the slot keeps exactly today's isCold-only behavior -- no exertion-degree formula,
+// no requiredThermalBand dependency, no new temperature threshold (reuses weather.js's own COLD_F).
+//
+// The one activity this spec found actually classified as elevated exertion: ACTIVITY_VALUES is
+// exactly ['none', 'walking', 'hiking'], and 'hiking' is the only one with authored exertion above
+// baseline (footwear-comfort.js's own activity profiles). Not a formula -- a narrow, named
+// allowlist matching what the taxonomy already distinguishes.
+const COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES = new Set(['hiking'])
+
+export function computeRequiresWarmLayerForColdExposure(slot, weatherProfile, environment) {
+  if (!weatherProfile?.isCold) return false
+  if (weatherProfile.isColdSevere) return true // severe cold untouched -- never relaxed here
+  const isIndoor = environment === 'indoor' || weatherProfile.isIndoor === true
+  if (isIndoor) return true // indoor already neutralizes isCold upstream; unreachable in practice
+  if (!COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES.has(slot?.activity)) return true
+  // Explicit "evening" occasion only -- never inferred from prose, per the spec's own non-goal.
+  if (resolveOccasionProfile(slot?.occasion)?.id === 'evening_social') return true
+  const exposure = resolveExposureContext({ activity: slot?.activity, environment }, weatherProfile)
+  const conditions = exposure?.conditions
+  if (!conditions?.known || !Number.isFinite(conditions.wakingLowF)) return true
+  return !(conditions.wakingLowF > COLD_F)
+}
+
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
@@ -3377,7 +4060,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const weatherSlot = slot.statedWeather || slot.weather !== 'indoor'
       ? slot
       : { ...slot, statedWeather: 'indoor' }
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(weatherSlot, {
+    const { profile: weatherProfileResolved, label: weatherLabel } = await resolveSlotWeather(weatherSlot, {
       mood,
       question: weatherRequestText,
       dateRange,
@@ -3385,6 +4068,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       fetchImpl,
       seasonIsCalendarOnly: isSeasonalCapsule,
     })
+    // docs/cold-layer-exposure-trigger-spec.md: trip slots only -- a narrow refinement of the
+    // trip-plan cold-layer trigger, not a general thermal-model change. Added as one more field on
+    // the same resolved profile so both downstream readers (the top-level slot.weatherProfile
+    // field, and stylingContext.weatherProfile just below, built from this exact object) see it.
+    const weatherProfile = planKind === 'trip'
+      ? { ...weatherProfileResolved, requiresWarmLayerForColdExposure: computeRequiresWarmLayerForColdExposure(slot, weatherProfileResolved, slot.environment) }
+      : weatherProfileResolved
     const stylingContext = await resolveStylingContext({
       explicitRequest: {
         occasion: slot.occasion,
@@ -3426,8 +4116,28 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ownerRules
     })
   }
+  // Trip packing roster (docs/README.md: trip roster architecture; selectTripRosterViaModel above).
+  // Same stage-2 shape as the capsule roster immediately above — model picks, engine validates
+  // structurally — deliberately NOT the same call: no budget, no palette, no register reserve, and
+  // the bench is ranked by cross-use-case reuse rather than capsule versatility.
+  let tripRosterSelection = null
+  if (typeof chooseTripRoster === 'function' && planKind === 'trip') {
+    // A trip roster is chosen ONCE for the whole trip, not per slot -- the first slot's already-
+    // resolved calendarSeason stands in for the whole trip (docs/trip-roster-season-eligibility-
+    // spec.md §5: a documented simplification, not solved here, for the rare trip whose slots span
+    // a season boundary).
+    tripRosterSelection = await selectTripRosterViaModel({
+      pool: allPieces,
+      slots,
+      calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
+      chooseRoster: chooseTripRoster,
+      onDiagnostic,
+    })
+  }
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
+    : tripRosterSelection
+    ? tripRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
   const applicableOwnerRules = [...new Set([
     ...(Array.isArray(ownerRules) ? ownerRules : []),
@@ -3466,10 +4176,16 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // A layer allocation the wardrobe could not supply is disclosed, never
   // silently absorbed by another category (Step 5 criterion 1's graceful half).
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
+  if (Array.isArray(tripRosterSelection?.coverageGaps)) coverageGaps.push(...tripRosterSelection.coverageGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const weatherProfile = slot.stylingContext.weatherProfile
     const weatherLabel = slot.weatherLabel
+    // The slot already knows its activity and environment; this is the first time the plan path uses
+    // them thermally. Exertion and exposure mode are why a hike and an indoor dinner must not resolve
+    // to the same demand.
+    const slotExposure = resolveExposureContext(
+      { activity: slot.activity, environment: slot.environment }, weatherProfile)
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
@@ -3495,7 +4211,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
-    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })
+    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })
     const shownPieces = workbenchSelection.pieces
     const workbenchCoverage = workbenchSelection.report
     const targetOutfits = workbenchCoverage.complete
@@ -3509,6 +4225,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
     }
     const floorRank = slotRegisterRank(slot)
+    // ONE order for both lists — assessment[i] must describe allowed_piece_ids[i].
+    //
+    // The order no longer encodes a thermal verdict. Sorting the roster best-thermal-fit-first was
+    // a derived styling judgment delivered by position instead of by field, which is harder to
+    // argue with than a stated one, not easier. Selection preserves thermal RANGE (see
+    // selectPlanWorkbenchPieces); what the model does with that range is its own call.
+    const rosterOrder = shownPieces
     workbenchSlots.push({
       id: slot.id,
       label: slot.label,
@@ -3522,8 +4245,22 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       styling_context: slot.stylingContext,
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
-      allowed_piece_ids: shownPieces.map(piece => Number(piece.id)).filter(Boolean),
-      piece_assessments: shownPieces.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase })),
+      // CONDITIONS, not a target. `thermal_demand` used to state how much warmth the engine had
+      // decided this slot calls for — a derived styling judgment the model was then instructed to
+      // obey. The exposure window is the fact underneath it, and the model can size a layer from a
+      // temperature range on its own (docs/model-facing-signal-inventory.md).
+      exposure_conditions: slotExposureConditions(slotExposure),
+      // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
+      // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
+      // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
+      // inline — a hand-copied `isCold && !indoorDestination` here previously disagreed with the
+      // relaxed criterion validateSubmittedPlanOutfits actually enforces for a mild, activity-relaxed
+      // cold slot, so the model could be told a layer was required and then rejected for supplying
+      // one. One formula, read here and at validation, not two independent copies that can drift.
+      cold_layer_required: slotColdLayerRequired({ weatherProfile, environment: slot.environment }),
+      allowed_piece_ids: rosterOrder.map(piece => Number(piece.id)).filter(Boolean),
+      calendar_season: slot.stylingContext.calendarSeason || '',
+      piece_assessments: rosterOrder.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
       coverage_report: workbenchCoverage,
     })
@@ -3612,6 +4349,20 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
     'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // thread_1788508369689 arc: exposure_conditions deliberately gives only a temperature range
+    // (§2684's thermal_demand removal — a styling target must not be dictated), but the cold floor
+    // this states below is a pass/fail structural gate (NO_WARM_LAYER_FOR_COLD), not a preference,
+    // and nothing told the model its actual criterion. Names the criterion, not a garment ("add a
+    // jacket") — owner ruling: card = representative core outfit, so a cold slot's fix is not
+    // forcing the layer into piece_ids, it's the cold_layer_decision relation
+    // (docs/trip-cold-layer-decision-contract-and-repair-spec.md). Updated for the enum-style
+    // mandatory decision replacing the old optional assigned_layer_piece_ids array — this string
+    // had drifted stale after that migration, still naming the old field to the model even though
+    // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
+    // was built to remove.
+    planKind === 'trip'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. When a slot\'s cold_layer_required is true, its submitted outfit itself must actually be warm: either piece_ids already includes an outerwear piece, or a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). If neither is true, choose a packed layer from the current packing roster that fits this specific look and its occasion/activity, and name its ID via cold_layer_decision (mode \'assigned_packed_layer\', assigned_layer_piece_id set) — do not put it in piece_ids just to satisfy this. When cold_layer_required is false, use mode \'not_required\' with assigned_layer_piece_id null.'
+      : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
     // shawls") was present in the system-prompt tail but got out-composed by
@@ -3651,6 +4402,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   }))
   const statedPaletteResult = extractStatedPalette(question, allPieces)
   const capsuleRoster = isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET ? composePool : []
+  // The trip's own first-class packing set — see the header comment above selectTripRosterViaModel.
+  // Empty when no roster was selected this turn (chooseTripRoster absent, or planKind !== 'trip'),
+  // which keeps every non-trip caller byte-identical.
+  const tripRoster = planKind === 'trip' && tripRosterSelection ? composePool : []
+  // The plan's own normalized slot representation, snapshotted for persistence alongside the
+  // roster — never reconstructed later from accepted cards (see serializeTripRequirementSlot).
+  const tripRequirementSlots = tripRoster.length ? pendingSlots.map(serializeTripRequirementSlot) : []
   if (capsuleRoster.length) {
     pendingSlots = allocateCapsuleRepresentativeRotation(pendingSlots, capsuleRoster, {
       cap: capsuleTotalOutfitCap(pieceBudget)
@@ -3753,6 +4511,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       capsuleRosterPalette: capsuleRosterSelection?.palette || '',
       capsuleRosterJobs: capsuleRosterSelection?.jobs || [],
       capsuleRosterFailureCodes: capsuleRosterSelection?.failureCodes || [],
+      // Trip packing roster — carried the same way capsuleRoster already is, so the client's
+      // existing threadMemory/activeContext persistence (which already round-trips capsuleRoster
+      // across turns) round-trips this with no new persistence layer. `packingRoster` is the
+      // provider-agnostic name a follow-up edit checks regardless of which plan kind produced it.
+      tripRoster,
+      tripRosterSource: tripRosterSelection?.source || '',
+      tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
+      packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
+      tripRequirementSlots,
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -4050,7 +4817,69 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
   }
 }
 
-export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
+// Mirrors the exact cold_layer_required formula the model-facing workbench slot exposes
+// (buildPlanSlotWorkbench, same file). Exported so a caller that already knows a submission will
+// fail this specific, narrow, mechanically-detectable check can act on that fact BEFORE handing
+// the submission to validateSubmittedPlanOutfits, rather than only after — see
+// styling-engine/tools.js's atomic trip branch, which strips an assigned_layer_piece_ids the
+// composer attached to a non-cold slot rather than losing the whole card to a one-shot rejection.
+// One formula, not two independent copies that could drift.
+//
+// docs/cold-layer-exposure-trigger-spec.md: reads requiresWarmLayerForColdExposure (computed once
+// in buildPlanSlotWorkbench, trip slots only) with a `?? isCold` fallback, so this stays exactly
+// today's behavior for every non-trip caller and for any trip slot where the relaxation didn't
+// apply. This is the SAME fact NO_WARM_LAYER_FOR_COLD reads (outfitEnvironmentalAdequacy.js) — the
+// two must never independently recompute it.
+export function slotColdLayerRequired(slot = {}) {
+  const requiresWarmLayer = slot.weatherProfile?.requiresWarmLayerForColdExposure ?? slot.weatherProfile?.isCold
+  return Boolean(requiresWarmLayer) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+}
+
+// docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Pure identification
+// only -- no provider call lives here. The caller (tools.js's atomic trip branch) owns invoking the
+// actual repair composition with these candidates and re-validating the response through
+// validateSubmittedPlanOutfits, unchanged. Live thread thread_1788667759424: 5 of 7 cards failed for
+// exactly this reason with real, gate-eligible layers sitting unused in the roster.
+//
+// Deliberately narrow on both axes: a card with ANY other failure alongside the cold-layer one is
+// excluded entirely (never bundled into a repair meant only to fix a layer decision), and a slot
+// whose roster genuinely has no qualifying layer is excluded too (repairing toward nothing is wasted
+// cost, and cold_floor_infeasible should already have caught this before composition ever ran).
+//
+// A false core_is_warm_enough claim and a plain omission are structurally different failures
+// (validateSubmittedPlanOutfits gives them distinct messages, on purpose, for diagnostics) but
+// converge on the exact same recoverable path here — both are, at this level, "the model's stated
+// cold-layer decision for this card doesn't hold up."
+const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
+  /^no warm layer for cold weather$/,
+  /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
+]
+
+export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
+  const slotById = new Map((Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).map(slot => [slot.id, slot]))
+  const repairable = []
+  for (const failure of Array.isArray(failures) ? failures : []) {
+    const reasons = Array.isArray(failure?.reasons) ? failure.reasons : []
+    if (!reasons.length) continue
+    const isColdLayerOnly = reasons.every(reason => COLD_LAYER_ONLY_FAILURE_PATTERNS.some(pattern => pattern.test(reason)))
+    if (!isColdLayerOnly) continue
+    const slot = slotById.get(failure.slot_id)
+    if (!slot) continue
+    const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
+      .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+    if (!candidates.length) continue
+    repairable.push({
+      slot_id: failure.slot_id,
+      label: failure.label || slot.label || '',
+      title: failure.outfit?.title || '',
+      piece_ids: Array.isArray(failure.outfit?.pieceIds) ? failure.outfit.pieceIds.map(Number) : [],
+      candidates: candidates.map(piece => ({ id: Number(piece.id), name: piece.name || `piece ${piece.id}` })),
+    })
+  }
+  return repairable
+}
+
+export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
   const planPiecesById = pendingPlan?.piecesById instanceof Map
@@ -4063,6 +4892,14 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     pendingPlan?.isSeasonalCapsule ||
     (Array.isArray(pendingPlan?.capsuleRoster) && pendingPlan.capsuleRoster.length)
   ) && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
+  // SET LEVEL vs CARD LEVEL: computed once per plan, from the packing roster (trip) or capsule
+  // roster, and passed into every card's adequacy check below so the per-card removable-layer
+  // finding can stand down when the SET already covers it — see the matching comment in
+  // outfitEnvironmentalAdequacy.js. Presence only (does a QUALIFYING layer exist anywhere in what
+  // was selected, via rosterHasQualifyingWarmLayer — not category alone), the same bar the per-card
+  // check itself already used — not a new "is it warm enough" judgment at the roster level.
+  const packingRosterHasLayer = rosterHasQualifyingWarmLayer(
+    Array.isArray(pendingPlan?.packingRoster) ? pendingPlan.packingRoster : [])
   const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
   const usedCoreKeys = new Set(heldOutfits.map(outfit => outfitMainCoreKey(outfit)).filter(Boolean))
   const usedPieceIds = new Set()
@@ -4071,6 +4908,17 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   const accepted = []
   const failures = []
   const submitted = Array.isArray(submissions) ? submissions : []
+  // Trip-roster mutation during initial plan construction (thread_1788501349296): submit_plan_outfits
+  // used to treat the roster as immutable — a verified active piece outside it produced the false
+  // "piece X is not an active wardrobe piece" (that piece existed; it just was not selected into the
+  // roster). Same mutation semantics propose_outfit's follow-up editing already has: a genuinely
+  // gate-eligible piece the caller has verified as active (verifiedNonRosterPiecesById, resolved via
+  // DB by the tools.js caller, which has DB access this pure module does not) is accepted as a
+  // pending packing-roster ADDITION, never a removal — a card omitting an existing roster piece must
+  // never imply it was taken out of the suitcase (unchanged SET vs CARD principle). Collected across
+  // the whole submission batch so the roster and its coverage recheck grow exactly once per turn.
+  const isTripPlan = pendingPlan?.planKind === 'trip'
+  const rosterAdditionsById = new Map()
   for (const [index, raw] of submitted.entries()) {
     const slot = slotById.get(String(raw?.slot_id || ''))
     const label = slot?.label || raw?.slot_id || `outfit ${index + 1}`
@@ -4094,27 +4942,134 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (gateAllowedIds.has(id)) continue
       if (suppressedReasonsById.has(id)) {
         reasons.push(`piece ${id} failed this slot's gates: ${suppressedReasonsById.get(id).join('; ')}`)
-      } else {
-        // In an enforced capsule, a piece missing from gateAllowedIds is
-        // almost always active but simply outside the curated budget roster
-        // (the model may have just verified it via search) — "not active"
-        // reads as a false contradiction there.
-        reasons.push(isEnforcedCapsule
-          ? `piece ${id} is outside this capsule's curated ${pieceBudget}-piece roster`
-          : `piece ${id} is not an active wardrobe piece for this plan`)
+        unresolvedPieceIds.push(id)
+        continue
       }
+      const verifiedCandidate = isTripPlan ? verifiedNonRosterPiecesById?.get(id) : null
+      if (verifiedCandidate) {
+        // A real, active piece the caller has already verified this turn (search_wardrobe/
+        // view_pieces), just not part of the roster plan_outfit_set originally selected. Gate it
+        // against THIS slot on its own structural merits — being verified elsewhere does not make
+        // it eligible everywhere — and accept it as a packing-roster addition, not a substitute for
+        // the roster question, only when it genuinely passes.
+        const gateEligible = slotGateEligiblePieces([verifiedCandidate], slot, {})
+        if (gateEligible.length) {
+          gateAllowedIds.add(id)
+          if (!planPiecesById.has(id)) planPiecesById.set(id, verifiedCandidate)
+          rosterAdditionsById.set(id, verifiedCandidate)
+          continue
+        }
+        reasons.push(`piece ${id} is outside this trip's current packing roster and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
+        unresolvedPieceIds.push(id)
+        continue
+      }
+      // In an enforced capsule, a piece missing from gateAllowedIds is
+      // almost always active but simply outside the curated budget roster
+      // (the model may have just verified it via search) — "not active"
+      // reads as a false contradiction there. A trip plan gets the honest
+      // "outside the roster" distinction too, but ONLY above, inside the
+      // verifiedCandidate branch — reaching THIS fallback for a trip plan
+      // means the id was never found in verifiedNonRosterPiecesById at all
+      // (the caller's own DB lookup, WHERE status='active'), so it genuinely
+      // is not an active piece; claiming "outside the roster" for a
+      // nonexistent id would be its own false contradiction in the other
+      // direction (thread_1788501349296's regression test caught this).
+      reasons.push(isEnforcedCapsule
+        ? `piece ${id} is outside this capsule's curated ${pieceBudget}-piece roster`
+        : `piece ${id} is not an active wardrobe piece for this plan`)
       unresolvedPieceIds.push(id)
     }
     const pieces = dedupedIds
       .filter(id => gateAllowedIds.has(id))
       .map(id => planPiecesById.get(id))
       .filter(Boolean)
+    // Owner ruling (thread_1788508369689 arc, "product ruling: use B"): a trip card is a
+    // representative CORE outfit, not a literal enumeration of every shared packed layer worn with
+    // it. A cold slot's outfit is still validated as core-plus-layer (assignedLayers feeds only the
+    // environmental-adequacy check below, via evaluateWearableOutfit's environmentPieces), but the
+    // layer never joins `pieces`/`pieceIds` — it does not count toward this card's identity
+    // (duplicate/no-repeat/budget keys all stay core-only), and it is not required to be visually
+    // shown. gateAllowedIds is reused unchanged for eligibility: it is already exactly "this trip's
+    // packing roster, filtered to what is gate-eligible for this slot" (composePool for a trip plan
+    // IS tripRosterSelection.roster) — an id passing it already proves both "in the current packing
+    // roster" and "valid for that slot under existing hard gates" from the owner's requirements.
+    // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part A, ratified): a mandatory,
+    // enum-style decision replaces the old optional assigned_layer_piece_ids array. Live thread
+    // thread_1788667759424: cold_layer_required reached the model correctly and gate-eligible
+    // layers genuinely existed on every one of 5 rejected cards — the model simply never populated
+    // an optional field, twice-instructed. A conditionally-meaningful optional array lets the
+    // omission pass silently; an always-required enum field cannot be silently skipped, and a
+    // boolean+nullable-ID shape was rejected in favor of this one specifically because it permits
+    // logically incoherent states (a "warm enough" claim carrying a layer ID too) that would need
+    // their own special-cased rejection just to name the incoherence.
+    const coldLayerRequired = slotColdLayerRequired(slot)
+    const decision = raw?.cold_layer_decision && typeof raw.cold_layer_decision === 'object' ? raw.cold_layer_decision : {}
+    const mode = String(decision.mode || '').trim()
+    const decisionLayerId = Number.isFinite(Number(decision.assigned_layer_piece_id)) && Number(decision.assigned_layer_piece_id) > 0
+      ? Number(decision.assigned_layer_piece_id)
+      : null
+    if (!coldLayerRequired) {
+      // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
+      // card): the schema's own description already tells the model to answer 'not_required' when
+      // cold_layer_required is false, but nothing here checked it — a non-cold slot could carry a
+      // packed layer relation unchallenged.
+      if (mode && mode !== 'not_required') {
+        reasons.push(`cold_layer_decision.mode must be 'not_required' for ${label} — this slot's cold_layer_required is false.`)
+      } else if (decisionLayerId !== null) {
+        reasons.push(`cold_layer_decision.assigned_layer_piece_id must be null for ${label} — this slot's cold_layer_required is false.`)
+      }
+    } else if (mode === 'not_required') {
+      reasons.push(`cold_layer_decision.mode cannot be 'not_required' for ${label} — this slot's cold_layer_required is true.`)
+    } else if (mode === 'core_is_warm_enough') {
+      if (decisionLayerId !== null) {
+        reasons.push(`cold_layer_decision.mode is 'core_is_warm_enough' for ${label} but assigned_layer_piece_id is also set — choose one.`)
+      } else if (!hasMinimumWarmLayer(pieces)) {
+        // The claim is never trusted at face value — mechanically checked against the identical
+        // fact NO_WARM_LAYER_FOR_COLD reads below. A distinct message from the omission case (never
+        // this codebase's generic "no warm layer for cold weather") so a future trace can tell "the
+        // model lied" from "the model forgot" without re-deriving it — and per the spec, both
+        // failure shapes are equally eligible for Part B's repair once diagnosed here.
+        reasons.push(`cold_layer_decision claims core_is_warm_enough for ${label}, but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false.`)
+      }
+    } else if (mode !== 'assigned_packed_layer') {
+      reasons.push(`cold_layer_decision.mode must be one of 'core_is_warm_enough', 'assigned_packed_layer', or 'not_required' for ${label}.`)
+    }
+    // mode === 'assigned_packed_layer' with decisionLayerId === null (the omission case) is
+    // deliberately NOT rejected here with an explicit reason — assignedLayers simply stays empty
+    // and NO_WARM_LAYER_FOR_COLD below fires exactly as it always has, preserving that message for
+    // the plain-omission shape and keeping this block's own new reasons scoped to genuinely new
+    // validation surface (schema misuse, false claims) rather than duplicating the existing floor.
+    const assignedLayers = []
+    if (coldLayerRequired && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
+      const id = decisionLayerId
+      if (!gateAllowedIds.has(id)) {
+        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
+      } else {
+        const layerPiece = planPiecesById.get(id)
+        if (layerPiece) {
+          // Piece-specific half of the cold-layer invariant: a warm CORE (a heavy top/dress, or a
+          // separately-adequate layer already in piece_ids) must not launder an explicitly-asserted
+          // but thermally-useless assigned-layer choice through the whole-outfit floor below.
+          // outerwearLayerPositivelyInadequate is Gate 2's own negative-evidence family (ultralight
+          // + non_insulating + unlined), reused verbatim rather than re-derived, and deliberately
+          // NOT gated on category/garmentKind here — the assigned relation can legitimately name a
+          // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
+          // evidence positively contradict the cold-layer claim," not "is it a coat."
+          if (outerwearLayerPositivelyInadequate(layerPiece)) {
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
+          } else {
+            assignedLayers.push(layerPiece)
+          }
+        }
+      }
+    }
     const outfit = {
       title: String(raw?.title || slot.label || '').trim(),
       reason: String(raw?.reason || '').trim(),
       stylingInstructions: String(raw?.styling_instructions || raw?.stylingInstructions || '').trim(),
       pieces,
       pieceIds: dedupedIds,
+      ...(assignedLayers.length ? { assignedLayerIds: assignedLayers.map(piece => Number(piece.id)) } : {}),
       source: 'plan_outfit_set',
       composedBy: 'model',
       // Spec §7: persist the truthful weather disclosure and its serialized
@@ -4138,7 +5093,12 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // [O2]/[R2]: the plan slot owns a resolved weather profile, so it passes it and the shared
         // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
         // validateSlotOutfitConstraints below.
-        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment },
+        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment, packingRosterHasLayer },
+        // Only the environmental-adequacy stage sees assignedLayers — structure, required-base,
+        // layer-direction and layer-construction all stay core-only. A shared packed layer is not
+        // claimed to be visually shown with this look (that is exactly what "core outfit, not a
+        // literal enumeration" means), so it must not be fed into checks that assume it is.
+        ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
       })
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
@@ -4291,6 +5251,29 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       label: 'Shared anchor',
       reasons: [`include at least one shared anchor piece; it is allowed in: ${anchorAllowedSlots.join(', ')}`]
     })
+  }
+  // Persist this turn's accepted packing-roster additions (see rosterAdditionsById above) onto the
+  // pendingPlan itself, so assembleSubmittedPlanOutfits' existing tripRoster -> tripPlanContext ->
+  // packing_roster persistence path picks up the grown roster with no separate plumbing. Then an
+  // advisory-only recheck against the trip's own slots (already normalized this same turn, not
+  // reconstructed from any submitted card) — mutate roster -> validate against the real trip
+  // requirements -> surface real coverage gaps, the same contract propose_outfit's own follow-up
+  // mutation already established. Never blocks: it only adds a disclosed line to the plan's own
+  // coverageGaps, which the final plan_lines already surface honestly.
+  if (rosterAdditionsById.size) {
+    const existingRosterIds = idSetForPieces(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : [])
+    const newRosterPieces = [...rosterAdditionsById.values()].filter(piece => !existingRosterIds.has(Number(piece.id)))
+    if (newRosterPieces.length) {
+      pendingPlan.tripRoster = [...(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : []), ...newRosterPieces]
+      pendingPlan.packingRoster = pendingPlan.tripRoster
+      const rosterCheck = validateTripRoster(pendingPlan.tripRoster, { slots: pendingPlan.slots })
+      if (!rosterCheck.ok) {
+        pendingPlan.coverageGaps = [
+          ...(Array.isArray(pendingPlan.coverageGaps) ? pendingPlan.coverageGaps : []),
+          ...rosterCheck.failures.map(f => `[trip roster: ${f.message}]`)
+        ]
+      }
+    }
   }
   return { accepted, failures }
 }
@@ -4447,6 +5430,8 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     noRepeatCats,
     pieceBudget,
     capsuleRoster: pendingPlan?.capsuleRoster || [],
+    tripRoster: pendingPlan?.tripRoster || [],
+    tripRequirementSlots: pendingPlan?.tripRequirementSlots || [],
     capsuleCapacity: Number(pendingPlan?.capsuleCapacity) || 0,
     capsuleSlots: pendingPlan?.slots || [],
     isWinterCapsule: Boolean(pendingPlan?.isWinterCapsule),

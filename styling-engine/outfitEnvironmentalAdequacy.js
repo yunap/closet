@@ -20,6 +20,7 @@
 // Severity follows evaluateWearableOutfit's existing convention: `severity: 'error'` is a hard
 // finding, anything else is advisory.
 import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup, thermalMaterialVerdict, pieceWeatherProtection, garmentKind } from './attributes.js'
+import { interiorConstruction } from './fiberTaxonomy.js'
 import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 // §8 step 3: completed outfits compare against the band. Semantic signals only — the ranking slice
@@ -160,6 +161,29 @@ function outerLayerSevereColdAdequacy(piece = {}) {
 // original wording verbatim so no existing consumer's behaviour or message changes, while the new
 // severe-cold and hazard findings — the ones a wardrobe can genuinely be unable to satisfy — carry
 // the escape hatch.
+// Adds the half this requirement never carried: not just THAT a layer is needed, but that it should
+// be proportionate. Live QA (thread_1788421510368): stated only as "something removable is needed",
+// it was satisfied by a down puffer on a 65/48 day, seven times over.
+//
+// It deliberately does NOT restate a demand level. The plan roster resolves its own exposure —
+// including ACTIVITY, which this function does not receive — so naming a level here would risk
+// contradicting it: adequacy would say `warm` for a slot the roster had already resolved as
+// `moderate`. Two numbers that can disagree are worse than one, so this checks whether a level is
+// even computable rather than inventing a second one.
+//
+// docs/search-propose-signal-inventory.md: no longer prescribes HOW to pick a layer ("match to
+// conditions rather than reaching for the warmest") — that told the model to obey a verdict, the
+// exact pattern this session's cleanup removed everywhere else. It also referenced `thermal_fit`,
+// a field removed from the payload in an earlier commit (02ffa84) — a stale pointer nobody had
+// caught. Points at the facts that still exist (each candidate's own warmth/insulation) and leaves
+// the choice to the model.
+function demandHint(weather, resolvedContext = {}) {
+  const demand = requiredThermalBand(resolveExposureContext(
+    { environment: resolvedContext.environment || 'outdoor' }, weather))
+  if (!demand?.level) return ''
+  return ' — each candidate piece states its own warmth and insulation; choose accordingly'
+}
+
 function finding(code, message, { severity = 'error', evidence = {}, remedy = false } = {}) {
   return {
     code,
@@ -170,12 +194,83 @@ function finding(code, message, { severity = 'error', evidence = {}, remedy = fa
   }
 }
 
+// thread_1788513419132: hasMinimumWarmLayer's outerwear branch used to trust CATEGORY alone — any
+// outerwear piece satisfied a gate literally named "minimum warm layer," even one whose own tagged
+// facts say the opposite. A "thin UPF technical hoodie" (fabric_weight ultralight,
+// insulating_layer_materials manually asserted [], interior_construction manually asserted
+// unlined) passed cleanly on category membership while every one of its own facts said otherwise.
+// The top/dress branches below never had this defect — they already require proven heavy weight,
+// never trusting category alone — so only the outerwear branch needed this.
+//
+// Deliberately NOT outerwear_role. docs/outerwear-role-ontology-spec.md (owner ruling 2026-09-02):
+// the field is deprecated with no replacement tag, its two questions (outdoor job vs. thermal
+// substance) were shown incoherent on this exact wardrobe, and its VALUE must not be read as
+// garment evidence again — only its bare presence survives, elsewhere, as a legacy "was this piece
+// ever tagged" proxy.
+//
+// Convergence, not a single fact and not a category rule (no cardigan/vest/jacket/coat check,
+// unlike the severe-cold sibling `outerLayerSevereColdAdequacy`, which answers a different question
+// and is deliberately not reused here). Outerwear stays presumed adequate — the unchanged default —
+// unless MULTIPLE independent negative facts agree. Missing or unknown evidence never counts toward
+// the negative side (criterion 8) — only a fact with a genuine value, several of them human-asserted
+// here, contributes.
+//
+// weather_protection is deliberately NOT a positive override here, even though it is one for the
+// separate protection/capability contract (outerwearCapability.js). This function answers a
+// WARMTH-presence question; an ultralight, unlined, explicitly non-insulating wind/rain shell can
+// do a real protective job while providing essentially no insulation — passing it on
+// weather_protection alone would conflate two contracts this codebase keeps deliberately separate
+// (module header, points 1-3 above).
+//
+// interior_construction is deliberately NOT a positive override either, only a way to keep the
+// 'unlined' negative signal from firing. Per its own tagging contract (prompts.js): "A plain
+// polyester lining... is interior_construction: 'full_lining' and is NOT an insulating layer" — an
+// ordinary lining is explicitly documented as non-thermal construction, not warmth evidence, so
+// full_lining/full_second_face cannot promote a piece to adequate on their own; they only prevent
+// the unlined vote below from being cast.
+//
+// Reads raw fabric_weight directly rather than through fabricWeight() (attributes.js), which
+// deliberately collapses 'ultralight' into 'light' for its own callers — `fabricWeight(piece) ===
+// 'ultralight'` can never be true. softScoreFloors.js already reads the raw field the same way for
+// the same reason.
+function pieceFabricWeightIsUltralight(piece) {
+  return String(piece?.fabric_weight || '').toLowerCase().trim() === 'ultralight'
+}
+
+// Exported so validateSubmittedPlanOutfits (outfitSetPlanner.js) can hold an explicitly
+// model-assigned `assigned_layer_piece_ids` entry to the same warmth-evidence bar a layer already
+// present in the outfit gets here, piece-by-piece rather than only at whole-outfit granularity.
+// Deliberately the same function, not a re-derived copy: the two early returns below read
+// thermalMaterialVerdict/fabricWeight directly and never consult category or garmentKind, so
+// calling this on a cardigan/vest/blazer asks exactly the intended question ("does this garment's
+// own thermal evidence positively contradict a cold-layer claim") without smuggling in the
+// coat/jacket-only ontology outerLayerSevereColdAdequacy (below) deliberately keeps separate.
+export function outerwearLayerPositivelyInadequate(piece) {
+  if (thermalMaterialVerdict(piece) === 'insulating') return false
+  if (fabricWeight(piece) === 'heavy') return false
+
+  const negativeSignals = [
+    pieceFabricWeightIsUltralight(piece),
+    thermalMaterialVerdict(piece) === 'non_insulating',
+    interiorConstruction(piece) === 'unlined',
+  ].filter(Boolean).length
+  return negativeSignals >= 2
+}
+
 // Migrated verbatim from validateSlotOutfitConstraints ([R2]). This is the MINIMUM-WARMTH FLOOR and
 // it fires on any isCold, mild included: cold-severity-spec.md is explicit that isCold stays a
 // floor. Note it accepts a heavy main INSTEAD of a layer — that is deliberate and unchanged. The
 // severe-cold branch adds the outdoor-capability requirement on top rather than replacing this.
-function hasMinimumWarmLayer(pieces) {
-  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+//
+// Exported (thread_1788516198449) so tripRosterFailures (outfitSetPlanner.js) can ask, per slot,
+// "does at least one of this slot's gate-eligible roster pieces individually satisfy this same
+// floor" — hasMinimumWarmLayer([singlePiece]) answers exactly that, reusing the identical criterion
+// a submitted CARD is later held to rather than deriving a second one. A roster that cannot possibly
+// pass this for a cold_layer_required slot is a deterministic feasibility fact, knowable the moment
+// the roster is chosen — not a styling judgment discovered only after several rejected submissions.
+export function hasMinimumWarmLayer(pieces) {
+  const layer = pieces.find(piece =>
+    wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
   return Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
@@ -233,12 +328,39 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     : message
   if (warmSeasonBase) evidence.baseIsWarmSeasonOnly = true
 
+  // SET LEVEL vs CARD LEVEL (docs/README.md: trip roster architecture). "This outfit has no layer"
+  // used to mean "this CARD carries no layer" unconditionally — the exact defect that made a card
+  // demonstrate a jacket just to prove it was packed. When the caller is composing from an already
+  // roster-validated set (resolvedContext.packingRosterHasLayer), the question this finding answers
+  // is already settled at the SET level: the packed roster has a layer for the cooler part of the
+  // day, whether or not THIS card happens to show it. Suppressed, not downgraded to advisory noise
+  // on every card — a museum card and a trail card should not both carry a reminder about a jacket
+  // neither is required to display.
+  // AGENTS.md's negation test: a shared SET-level suppression is one guard around both tiers below,
+  // not `&& !layerCoveredByRoster` bolted onto each tier's own condition separately.
+  const layerCoveredByRoster = Boolean(resolvedContext.packingRosterHasLayer)
+  if (!layerCoveredByRoster) {
   if (weather.needsRemovableCoolLayer && !weather.isCold && !indoorDestination) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
-        corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed'),
+        // HOW MUCH, not just "a layer". Live QA (thread_1788421510368): this requirement said only
+        // that a removable layer was needed, so a down puffer satisfied it on a 65/48 day — seven
+        // times. The demand is stated so the requirement can be met proportionately.
+        corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
+      // ADJUDICATED (docs/README.md: trip roster architecture, item 3) rather than left unexamined
+      // once thermal coverage moved to the SET level: does this finding own a factual/physical
+      // question, or a thermal styling judgment now duplicated by the roster? someLayerContributesWarmth
+      // (above) keys purely on the tagged `opacity` field — sheer/semi_sheer — never on warmth level;
+      // an earlier version tried a warmth-level cutoff and was reverted (see that function's own
+      // comment) because no threshold could separate a sheer shrug from a legitimately light jacket
+      // without being arbitrary. So this answers "does the garment provide meaningful coverage at
+      // all," a construction fact closer to "no sole on this shoe" than to "not warm enough" — it
+      // survives facts-not-judgments on its own terms and stays a hard finding. It already inherits
+      // the roster demotion above (the shared `!layerCoveredByRoster` guard around both tiers): a
+      // card pairing a sheer layer with real protection packed elsewhere in the roster is exactly the
+      // owner's own example — legitimate aesthetic layering, not rejected for being non-insulating.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
         { evidence, remedy: true }))
@@ -259,7 +381,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   if (weather.transitNeedsRemovableCoolLayer && !weather.transitIsCold) {
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
-        corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back'),
+        corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
         { evidence, remedy: true }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
@@ -267,12 +389,20 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         { evidence, remedy: true }))
     }
   }
+  }
 
   // --- minimum warmth floor (any cold, mild included) --------------------------------------------
   // [R2]/[A3]: migrated from the plan specialization so every consumer of the canonical validator
   // shares it, with its semantics and message intact. Contract C now owns both tiers — the floor
   // here, the capability requirement below — which is what makes deleting the duplicate safe.
-  if (weather.isCold && !indoorDestination && !hasMinimumWarmLayer(list)) {
+  //
+  // docs/cold-layer-exposure-trigger-spec.md: requiresWarmLayerForColdExposure is an OPTIONAL,
+  // additive field a caller may set on the resolved weatherProfile (today: only the trip-plan path,
+  // computed once in buildPlanSlotWorkbench where activity/occasion/exposure are already resolved —
+  // this module never learns to resolve them itself). `?? weather.isCold` makes every existing
+  // caller that doesn't set it — which is every caller except trip plans — byte-identical to before.
+  const requiresWarmLayer = weather.requiresWarmLayerForColdExposure ?? weather.isCold
+  if (requiresWarmLayer && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
       'no warm layer for cold weather', { evidence }))
   }
