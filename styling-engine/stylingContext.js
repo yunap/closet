@@ -565,7 +565,10 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       activity: activityChoice.value,
       occasion,
       mood,
-      request: requestText,
+      // A caller with structured activity authority may forbid this secondary prose inference.
+      // This matters even when the authoritative value is `none`: otherwise model-authored text
+      // such as "gallery walk" can silently turn none back into walking after field resolution.
+      request: policy.inferActivityFromRequest === false ? '' : requestText,
     })
     const activity = activityChoice.value || 'none'
     const resolvedActivity = activityProfile?.id || activity

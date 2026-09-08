@@ -12,7 +12,11 @@ import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
+import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
+import { garmentWarmthLevel } from './garmentWarmth.js'
 import { evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
+import { ENVIRONMENTAL_ADEQUACY_CODES, outerwearPieces } from './outfitEnvironmentalAdequacy.js'
+import { buildSystemAwareWeatherRoster } from './candidateSet.js'
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -118,6 +122,90 @@ const SEARCH_WARDROBE_VISUAL_CAP = 16
 // ever pushed to a token-gesture image count just because the call also asked about others.
 const SEARCH_WARDROBE_VISUAL_TOTAL_CAP = 40
 const SEARCH_WARDROBE_VISUAL_FLOOR = 8
+
+function outerwearVisualEvidenceGroup(piece = {}) {
+  const layer = insulatingLayerMaterials(piece)
+  if (Array.isArray(layer) && layer.length) return 'engineered_insulation'
+  const interior = interiorConstruction(piece)
+  if (['partial_lining', 'full_lining', 'full_second_face'].includes(interior)) return 'constructed_interior'
+  if (interior === 'unlined' || (Array.isArray(layer) && layer.length === 0)) return 'verified_unfilled'
+  return 'construction_unknown'
+}
+
+// Image allocation is an evidence-coverage problem, not another styling verdict. A weather-aware
+// cross-category search used to spend all ten outerwear image slots on the first cardigans/shrugs
+// in retrieval order while the coats and jackets later in the same returned roster stayed text-
+// only. Preserve result order and every returned row; only spread the finite image slots over
+// distinct, structured outerwear-construction evidence groups. This deliberately does not use
+// names, `garmentKind`'s legacy unknown-outerwear-as-jacket fallback, or deprecated outerwear_role.
+// It gives the model constructed, filled, unfilled, and unknown examples to judge against the
+// weather instead of silently treating ten near-identical unknowns as complete visual evidence.
+export function searchVisualEvidenceOrder(results = [], { weatherAware = false } = {}) {
+  const list = Array.isArray(results) ? results : []
+  if (!weatherAware) return list
+  const outerwear = list.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  if (outerwear.length < 2) return list
+  const buckets = new Map([
+    ['constructed_interior', []],
+    ['construction_unknown', []],
+    ['engineered_insulation', []],
+    ['verified_unfilled', []],
+  ])
+  for (const piece of outerwear) buckets.get(outerwearVisualEvidenceGroup(piece)).push(piece)
+  const spread = []
+  const cycle = ['constructed_interior', 'construction_unknown', 'engineered_insulation', 'verified_unfilled']
+  while (spread.length < outerwear.length) {
+    let added = false
+    for (const key of cycle) {
+      const piece = buckets.get(key).shift()
+      if (!piece) continue
+      spread.push(piece)
+      added = true
+    }
+    if (!added) break
+  }
+  return list.map(piece => wardrobeCategoryGroup(piece) === 'outerwear' ? spread.shift() : piece)
+}
+
+// The compact one-outfit profile cannot send an unlimited truth roster, but its cap must not make
+// an entire structured warmth class invisible. Live run thread_1788822538467 returned ten light or
+// moderate outerwear pieces while the only warm, lined, wind-protective coat sat just beyond the
+// cap. The model then spent the whole tool loop rediscovering it by free-text search.
+//
+// This is evidence coverage, not weather-fit ranking: for numeric-weather searches, retain the
+// first outerwear example from every observed garmentWarmthLevel (including unknown), fill the
+// remaining slots in retrieval order, and finally restore retrieval order. No demand band,
+// occasion judgment, name, deprecated outerwear_role, or piece-specific exception participates.
+export function capSingleOutfitSearchResults(results = [], { perCategoryCap = 10, weatherAware = false } = {}) {
+  const list = Array.isArray(results) ? results : []
+  const byCategory = new Map()
+  for (const piece of list) {
+    const key = wardrobeCategoryGroup(piece) || piece?.category || 'other'
+    if (!byCategory.has(key)) byCategory.set(key, [])
+    byCategory.get(key).push(piece)
+  }
+
+  const retainedIds = new Set()
+  for (const [category, pieces] of byCategory) {
+    if (pieces.length <= perCategoryCap || category !== 'outerwear' || !weatherAware) {
+      for (const piece of pieces.slice(0, perCategoryCap)) retainedIds.add(piece.id)
+      continue
+    }
+
+    const firstByWarmth = new Map()
+    for (const piece of pieces) {
+      const band = garmentWarmthLevel(piece) || 'unknown'
+      if (!firstByWarmth.has(band)) firstByWarmth.set(band, piece)
+    }
+    const selected = new Set([...firstByWarmth.values()].slice(0, perCategoryCap).map(piece => piece.id))
+    for (const piece of pieces) {
+      if (selected.size >= perCategoryCap) break
+      selected.add(piece.id)
+    }
+    for (const id of selected) retainedIds.add(id)
+  }
+  return list.filter(piece => retainedIds.has(piece.id))
+}
 
 // Relaxation ladder for automatic broadening. Deliberately boring: code owns retrieval completeness,
 // not styling judgment, so the order is fixed and each rung is reported back rather than applied
@@ -342,7 +430,8 @@ export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId
   toolContext.declaredIntent = {
     want: 'cards',
     outfitCount: requestedCount,
-    turnMode: 'new_request'
+    turnMode: 'new_request',
+    layerRequirement: 'unspecified',
   }
   return true
 }
@@ -533,12 +622,31 @@ export async function resolveToolStylingContext({
   const resolver = weatherResolver
     ? createStylingContextResolver({ weatherResolver })
     : resolveStylingContext
+  // On a fresh /ask turn the execution router already classified activity from the user's words.
+  // That result is the authority for the whole turn. The stylist may omit activity, but may not
+  // invent "walking" later and thereby change footwear and thermal physics (live acceptance:
+  // thread_1788767789621). Plan slots remain independent; they do not resolve through this path.
+  const activityFromAuthority = toolContext.executionRouterActivityLocked === true
+    ? toolContext.executionRouterActivity
+    : explicitRequest.activity
   const context = await resolver({
-    explicitRequest: { ...explicitRequest, location: safeExplicitLocation },
+    explicitRequest: {
+      ...explicitRequest,
+      activity: activityFromAuthority,
+      location: safeExplicitLocation,
+      // The narrow one-outfit route extracts an explicit numeric range before the model call.
+      // Keep it authoritative even if the model omits the duplicate tool argument.
+      userWeather: explicitRequest.userWeather || toolContext.userWeather || null,
+    },
     actionArtifact,
     establishedState,
     inferred,
-    policy,
+    // Lock both structured override AND secondary request-text inference. The latter was the live
+    // escape hatch in thread_1788770518010: the model omitted the activity argument but wrote
+    // "gallery walk" in occasion_context, which resolveActivityProfile promoted back to walking.
+    policy: toolContext.executionRouterActivityLocked === true
+      ? { ...policy, inferActivityFromRequest: false }
+      : policy,
     toolContext,
   })
   toolContext.occasion = context.occasion
@@ -883,12 +991,13 @@ export function coldLayerDecisionSchemaProperty() {
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
-    description: "Declare what this turn should produce, when a later operation needs that contract. Required before propose_outfit, generate_outfits or render_preview, which are blocked until the turn declares want:'cards' or want:'image'. NOT required to answer in prose: an explanation, comparison, critique, garment question or recalled detail needs no declaration, and declaring want:'text' merely to answer costs a whole extra model round-trip for nothing. Re-call to update if the goal changes mid-turn. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
+    description: "Declare what this turn should produce, when a later operation needs that contract. Required before propose_outfit, generate_outfits or render_preview, which are blocked until the turn declares want:'cards' or want:'image'. A cards declaration must also say whether the user's CURRENT message explicitly requires a removable layer; omission is a validation error, while 'unspecified' leaves the styling choice open. NOT required to answer in prose: an explanation, comparison, critique, garment question or recalled detail needs no declaration, and declaring want:'text' merely to answer costs a whole extra model round-trip for nothing. Re-call to update if the goal changes mid-turn. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
     input_schema: {
       type: "object",
       properties: {
         want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits); 'image' = a rendered outfit image (not available in chat — declare it anyway so the gap is handled honestly)." },
         outfit_count: { type: "integer", minimum: 1, maximum: 5, description: "When want='cards' and the user asked for a specific number of outfits/looks/ideas, that number. Omit if unspecified." },
+        layer_requirement: { type: "string", enum: ["required", "unspecified"], description: "Required whenever want='cards'. Use 'required' only when the user's CURRENT message explicitly asks that the outfit include a removable layer; otherwise use 'unspecified'. 'Unspecified' does not forbid a layer — choose one when the weather facts support it. Never infer this with garment names or use it as a warmth verdict." },
         turn_mode: { type: "string", enum: ["new_request", "followup", "correction", "explanation", "preference_reaction"], description: "Optional: your read of the conversational turn type, recorded for diagnostics." }
       },
       required: ["want"]
@@ -896,7 +1005,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, insulation, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category — the image budget is per category, so batching costs you no photographs. On the single-outfit profile, a batched compose search containing a complete outfit's categories also returns `system_roster`: mechanically feasible whole paths with an atomic rich/image working set plus the complete compact eligible index. Treat those paths as starting evidence, not aesthetic recommendations; inspect one compact-index alternative with view_pieces when it could materially improve the result, and never claim a wardrobe gap from absence in the visual subset. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Each result carries a `thermal` fact line (warmth, recorded insulating layer, insulating face-material evidence, interior construction, season, removability) — the garment truth, not a verdict about whether it suits today's conditions; judge that yourself against the resolved weather already in context. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1064,7 +1173,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose fresh visual outfit card options from the saved wardrobe. Use only when the user asks to be styled with fresh cards, not for ordinary text advice or to show an outfit already discussed. An ordinary new 'what should I wear?' request defaults to 2 options; explicit 'one/best/pick one' or a stated count overrides that default.",
+    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' request defaults to 2 options; an explicit count from 2 to 5 overrides that default. For exactly one outfit, use declare_intent + visual search_wardrobe + propose_outfit instead.",
     input_schema: {
       type: "object",
       properties: {
@@ -1077,7 +1186,7 @@ export const STYLIST_TOOLS = [
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
-        limit: { type: "integer", description: "Number of outfits to generate (1 to 5). Default to 2 for an ordinary new 'what should I wear?' request. Honor an explicit count; use 1 when the user asks for one best look or says to pick one." },
+        limit: { type: "integer", minimum: 2, maximum: 5, description: "Number of outfits to generate (2 to 5). Default to 2 for an ordinary new 'what should I wear?' request. For one/best/pick-one, use the serial search_wardrobe + propose_outfit path." },
         piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
       },
       required: ["occasion", "season"]
@@ -1219,8 +1328,8 @@ export const STYLIST_TOOLS = [
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
-        season: { type: "string", description: "Season/environment context. Optional. For an indoor occasion (office, restaurant, meeting, gallery), pass season:'indoor'. The indoor base is climate-controlled, but matching resolved destination weather still governs arrival/departure: when transit is cold, include removable sleeve-bearing coverage and cold-appropriate footwear." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." },
+        season: { type: "string", description: "Season context. Optional. Preserve the season already resolved for this request. Use season:'indoor' only when the relevant wearing period is actually climate-controlled; an indoor occasion label such as gallery or restaurant does not erase explicitly stated sustained outdoor time between venues. Matching destination weather still governs any stated outdoor exposure and arrival/departure." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the activity already resolved from the user's request. A value here cannot override that turn-level fact." },
         location: { type: "string", description: "Real destination, only when relevant and different from an already-searched location this turn (usually omit — this outfit already came from a search_wardrobe call that resolved weather for the right place/date)." },
         date: { type: "string", description: "YYYY-MM-DD for the destination day. Pairs with `location`; usually omit for the same reason." },
         user_weather: USER_WEATHER_SCHEMA,
@@ -1370,17 +1479,32 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const turnMode = ['new_request', 'followup', 'correction', 'explanation', 'preference_reaction'].includes(args?.turn_mode)
           ? args.turn_mode
           : null
-        toolContext.declaredIntent = { want, outfitCount, turnMode }
+        const layerRequirement = ['required', 'unspecified'].includes(args?.layer_requirement)
+          ? args.layer_requirement
+          : null
+        if (want === 'cards' && !layerRequirement) {
+          return {
+            status: "validation_error",
+            message: "declare_intent with want:'cards' also needs layer_requirement:'required' when the user's current message explicitly asks for a removable layer, or layer_requirement:'unspecified' otherwise. Repeat the declaration; omission is not silently treated as unspecified."
+          }
+        }
+        toolContext.declaredIntent = { want, outfitCount, turnMode, layerRequirement }
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
+          if (toolContext?.executionProfile === 'single_outfit') {
+            return {
+              status: "success",
+              message: `Intent recorded: one outfit card; removable layer ${layerRequirement === 'required' ? 'required' : 'not explicitly required'}. Make one batched visual search for the complete outfit. Its system_paths are mechanically feasible starting points, not aesthetic recommendations: choose from their photographs, or inspect one eligible_piece_index alternative with view_pieces if it could materially improve the outfit. ${layerRequirement === 'required' ? 'Include one real, visually verified outerwear piece and judge the cold endpoint with it on and the warm endpoint after one outerwear piece comes off. ' : ''}Then submit one complete card through propose_outfit. If validation rejects the card, follow its repair instruction and resubmit; never present a rejected card as the answer. Report a wardrobe gap only when the complete path result establishes one, never because a piece is absent from the visual subset.`
+            }
+          }
           const boundedBatchContract = (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
             outfitCount >= 2
             ? `For 2–5 fresh outfits sharing one occasion, activity, and weather context, call generate_outfits exactly once with limit:${outfitCount}; its returned cards are complete and must not be rebuilt with search_wardrobe or propose_outfit. `
             : ''
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}; removable layer ${layerRequirement === 'required' ? 'explicitly required' : 'not explicitly required'}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -1635,6 +1759,51 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }
           }
         }
+        const resolvedTemperatureValues = resolvedWeather
+          ? [resolvedWeather.highF ?? resolvedWeather.high_f, resolvedWeather.lowF ?? resolvedWeather.low_f]
+          : []
+        const weatherAwareSearch = resolvedTemperatureValues.some(value =>
+          value !== null && value !== '' && Number.isFinite(Number(value)))
+        // The single-outfit weather roster is selected as complete systems, not independent category
+        // prefixes. The complete hard-eligible pool remains available as a compact index; only the
+        // richer/image-bearing rows are bounded to pieces belonging to atomic feasible paths. A
+        // narrow follow-up search that does not contain complete-outfit supply keeps the legacy cap.
+        const resultGroups = new Set(results.map(piece => wardrobeCategoryGroup(piece) || piece.category))
+        const requestedGroups = new Set(categories.length ? categories : resultGroups)
+        const systemRosterApplicable = toolContext?.executionProfile === 'single_outfit' &&
+          intent !== 'explain' && requestedGroups.has('shoes') &&
+          (requestedGroups.has('dress') || (requestedGroups.has('top') && requestedGroups.has('bottom'))) &&
+          (toolContext?.declaredIntent?.layerRequirement !== 'required' || requestedGroups.has('outerwear'))
+        const completeEligibleResults = results
+        const systemRoster = systemRosterApplicable
+          ? buildSystemAwareWeatherRoster({
+              pieces: completeEligibleResults,
+              weatherProfile: resolvedWeather,
+              activity: resolvedActivity,
+              environment: stylingContext.environment || 'outdoor',
+              layerRequired: toolContext?.declaredIntent?.layerRequirement === 'required',
+              targetPaths: 4,
+              totalImageCap: SEARCH_WARDROBE_VISUAL_TOTAL_CAP,
+              categoryImageCap: 6,
+            })
+          : null
+        if (systemRoster) {
+          const visualIds = new Set(systemRoster.visualPieceIds.map(Number))
+          results = completeEligibleResults.filter(piece => visualIds.has(Number(piece.id)))
+          toolContext.systemAwareRoster = {
+            pathKeys: new Set(systemRoster.systemPaths.map(path =>
+              path.piece_ids.map(Number).sort((a, b) => a - b).join('|'))),
+            eligibleIds: new Set(systemRoster.eligiblePieceIndex.map(piece => Number(piece.id))),
+            visualIds,
+          }
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.systemAwareWeatherRoster = systemRoster.report
+        } else if (toolContext?.executionProfile === 'single_outfit') {
+          results = capSingleOutfitSearchResults(results, {
+            perCategoryCap: 10,
+            weatherAware: weatherAwareSearch,
+          })
+        }
         const gateExcludedCount = hardGateExcludedIds.size
         const requestExcludedCount = requestExcludedIds.size
         
@@ -1642,10 +1811,15 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // cap it is omitted and the full rows are the model's only view of a garment.
         const trimToJudgment = toolContext?.wardrobeManifestIncluded === true
         console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
-        // Rank within each category so the per-category image budget is independent.
+        // Rank within each category so the per-category image budget is independent. For a
+        // weather-aware call, spread outerwear sight across construction groups; this does not
+        // reorder or remove result rows, it only decides which finite set receives photographs.
+        const visualEvidenceOrder = systemRoster
+          ? results
+          : searchVisualEvidenceOrder(results, { weatherAware: weatherAwareSearch })
         const visualRankByPiece = new Map()
         const seenPerCategory = new Map()
-        for (const p of results) {
+        for (const p of visualEvidenceOrder) {
           const key = wardrobeCategoryGroup(p) || p.category || 'other'
           const rank = seenPerCategory.get(key) ?? 0
           visualRankByPiece.set(p.id, rank)
@@ -1656,10 +1830,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // multiplying the ceiling by category count, floored so no category is starved to a
         // token-gesture count by division alone.
         const visualCategoryCount = seenPerCategory.size
+        const narrowVisualCap = toolContext?.executionProfile === 'single_outfit' ? 6 : SEARCH_WARDROBE_VISUAL_CAP
         const perCategoryVisualCap = visualCategoryCount <= 1
-          ? SEARCH_WARDROBE_VISUAL_CAP
+          ? narrowVisualCap
           : Math.min(
-              SEARCH_WARDROBE_VISUAL_CAP,
+              narrowVisualCap,
               Math.max(SEARCH_WARDROBE_VISUAL_FLOOR, Math.floor(SEARCH_WARDROBE_VISUAL_TOTAL_CAP / visualCategoryCount))
             )
         if (visual) {
@@ -1769,6 +1944,30 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'searchVisualImagesAttached', resultList.filter(r => r.image).length)
         }
 
+        if (systemRoster) {
+          const modelFacingSelectionReport = {
+            eligible_piece_count: systemRoster.report.eligible_piece_count,
+            eligible_by_category: systemRoster.report.eligible_by_category,
+            candidate_path_count: systemRoster.report.candidate_path_count,
+            evaluated_path_count: systemRoster.report.evaluated_path_count,
+            path_enumeration_complete: systemRoster.report.path_enumeration_complete,
+            known_feasible_path_count: systemRoster.report.known_feasible_path_count,
+            unknown_path_count: systemRoster.report.unknown_path_count,
+            visually_presented_path_count: systemRoster.report.visually_presented_path_count,
+            omitted_feasible_path_count: systemRoster.report.omitted_feasible_path_count,
+            outcome: systemRoster.report.outcome,
+          }
+          resultList.push({
+            system_roster: {
+              system_paths: systemRoster.systemPaths,
+              visual_piece_ids: systemRoster.visualPieceIds,
+              eligible_piece_index: systemRoster.eligiblePieceIndex,
+              selection_report: modelFacingSelectionReport,
+              note: 'These paths establish mechanical and weather feasibility only, not aesthetic approval. Judge the attached garment photographs and choose the strongest complete outfit. You may inspect a compact-index alternative with view_pieces before proposing; a wardrobe-gap claim must come from the complete path result, never from the visual subset.',
+            },
+          })
+        }
+
         if (fallbackNote) {
           resultList.push({ note: fallbackNote })
         }
@@ -1796,7 +1995,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
 
         if (!relaxationPass) bumpFreeformDiagnostic(toolContext, 'searchCalls')
 
-        recordRetrievedPieces(toolContext, resultList.filter(item => item.id).map(item => item.id))
+        recordRetrievedPieces(toolContext, systemRoster
+          ? systemRoster.eligiblePieceIndex.map(item => item.id)
+          : resultList.filter(item => item.id).map(item => item.id))
         recordRetrievedPieces(toolContext, resultList.filter(item => item.image).map(item => item.id), { seen: true })
 
         // Spec 3 Part 0b: a free-text named-garment query that returned nothing is a known-false claim
@@ -1810,14 +2011,15 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // result set is the unit. This is the only thing that triggers broadening: a request that
         // found something is never second-guessed, because "enough" is the stylist's judgment.
         const returnedByCategory = {}
-        for (const piece of resultList) {
+        const categoryCountPieces = systemRoster ? systemRoster.eligiblePieceIndex : resultList.filter(piece => piece?.id)
+        for (const piece of categoryCountPieces) {
           if (!piece?.id) continue
           const key = wardrobeCategoryGroup(piece) || piece.category || 'other'
           returnedByCategory[key] = (returnedByCategory[key] || 0) + 1
         }
         const shortfalls = categories.length
           ? categories.filter(category => !returnedByCategory[category])
-          : (resultList.some(item => item.id) ? [] : ['(any)'])
+          : ((systemRoster?.eligiblePieceIndex.length || resultList.some(item => item.id)) ? [] : ['(any)'])
 
         const nextRung = SEARCH_RELAXATION_LADDER[relaxationPass]
         const relaxable = nextRung ? nextRung.filter(name => args[name]) : []
@@ -1967,13 +2169,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // (lining, sheerness, true texture) — the model must have SEEN the photo
         // this turn. Pieces with no photo at all are exempt.
         const unseenLayerPieces = resolved.filter(p =>
-          (p.role === 'layer_top' || p.role === 'layer_bottom') &&
+          (p.role === 'layer_top' || p.role === 'layer_bottom' || p.role === 'outerwear') &&
           (p.photo || p.worn_photo) &&
           !seenIdsThisTurn.has(Number(p.id)) &&
           !unverifiedPieces.some(u => Number(u.id) === Number(p.id)))
         if (unseenLayerPieces.length) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
           contractIssues.push(`layer pieces must be visually verified this turn: call view_pieces (size:'large') for [${unseenLayerPieces.map(p => Number(p.id)).join(', ')}] and confirm each works as a layer`)
+        }
+        if (toolContext.declaredIntent?.layerRequirement === 'required' && !outerwearPieces(resolved).length) {
+          contractIssues.push("the user explicitly required a removable layer, but this card contains no outerwear piece. Search wardrobe category:'outerwear' with visual:true and include one verified outerwear piece in this card's ordinary piece IDs. If the search reports no eligible owned outerwear, present that as an honest wardrobe gap instead of omitting the layer or making a paid repair call")
         }
         // Spec 27 Part 1: print-pairing sight gate, parallel to the layer-sight
         // rule above — parity with validateSubmittedPlanOutfits's plan-path check.
@@ -1989,7 +2194,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // [O2]: the freeform tools own a resolved profile, so they feed the shared Contract C
           // stage. Always the CANONICAL resolved profile — never a locally derived one — and null
           // when nothing resolved, which keeps the stage silent rather than guessing.
-          weatherContext: stylingContext.weatherProfile ? { weatherProfile: stylingContext.weatherProfile } : null,
+          weatherContext: stylingContext.weatherProfile ? {
+            weatherProfile: stylingContext.weatherProfile,
+            activity: stylingContext.activity,
+            requireThermalAdequacy: toolContext.declaredIntent?.layerRequirement === 'required',
+          } : null,
         })
         if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
           const idsToSee = wearableValidation.unresolvedSightPieceIds
@@ -2075,9 +2284,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
           toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
+          const coldThermalUndershoot = hardFindings.some(
+            finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)
+          const warmEndThermalUndershoot = hardFindings.some(
+            finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT)
+          const retryInstruction = coldThermalUndershoot
+            ? "Replace the removable outerwear with a warmer visually verified outerwear candidate, then call propose_outfit again with the complete corrected card. Do not keep or add pieces merely to preserve the rejected card."
+            : warmEndThermalUndershoot
+              ? "Replace or supplement the upper-body pieces beneath the outer layer so everything still worn after that layer comes off is suitable for the warm endpoint, then call propose_outfit again with the complete corrected card. A heavy bottom cannot supply missing upper-body warmth."
+            : `${roleOutfitStructurePromptRule()} COMPLETE the outfit instead of resending it: keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`
           return {
             status: "validation_error",
-            message: `The proposed outfit has an unresolved structure. ${projectOutfitValidationFindings(hardFindings)} ${roleOutfitStructurePromptRule()} COMPLETE the outfit instead of resending it: keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`,
+            message: `The proposed outfit failed a hard wearability check. ${projectOutfitValidationFindings(hardFindings)} ${retryInstruction}`,
             issues
           }
         }
@@ -2288,7 +2506,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
                 roleAware: true,
                 includeLayerDirections: true,
                 // [O2]: same canonical profile the surrounding propose_outfit call resolved.
-                weatherContext: stylingContext.weatherProfile ? { weatherProfile: stylingContext.weatherProfile } : null,
+                weatherContext: stylingContext.weatherProfile ? {
+                  weatherProfile: stylingContext.weatherProfile,
+                  activity: stylingContext.activity,
+                  requireThermalAdequacy: toolContext.declaredIntent?.layerRequirement === 'required',
+                } : null,
               }),
               context: { flow: 'freeform_propose_outfit', supersededLabel: supersededBroken.label || '' },
             })
@@ -2304,6 +2526,23 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...existingOutfits.filter(outfit => outfit !== supersededBroken),
           correctionRecovery?.value || proposedOutfit
         ]
+        if (toolContext.systemAwareRoster) {
+          const roster = toolContext.systemAwareRoster
+          const exactPath = roster.pathKeys.has(proposedPieceKey)
+          const allEligible = proposedPieceIds.every(id => roster.eligibleIds.has(Number(id)))
+          const usedFallback = proposedPieceIds.some(id => !roster.visualIds.has(Number(id)))
+          const fallbackWasViewed = proposedPieceIds
+            .filter(id => !roster.visualIds.has(Number(id)))
+            .every(id => seenIdsThisTurn.has(Number(id)))
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.systemAwareRosterProposalSource = exactPath
+            ? 'supplied_path'
+            : allEligible && usedFallback && fallbackWasViewed
+              ? 'targeted_view_alternative'
+              : allEligible
+                ? 'recombined_supplied_pieces'
+                : 'outside_roster'
+        }
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
           status: "success",
@@ -3684,6 +3923,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
         const requestedCount = Math.max(1, Math.min(5, Number(limit) || declaredCount || 5))
+        if (!piece_id && requestedCount < 2) {
+          return {
+            status: "validation_error",
+            message: "generate_outfits is only for a fresh 2–5 outfit batch. For one outfit, call declare_intent({ want:'cards', outfit_count:1, layer_requirement:'required' or 'unspecified' }), search_wardrobe visually, then propose_outfit once. No nested composer call was made."
+          }
+        }
         const boundedMultiLook = (toolContext.declaredIntent?.turnMode === 'new_request' ||
             (!toolContext.declaredIntent?.turnMode && toolContext.turnMode === 'new_request')) &&
           !piece_id && requestedCount >= 2 &&

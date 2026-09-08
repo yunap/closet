@@ -63,6 +63,7 @@ function normalizeExposureMode(slot = {}) {
 // PROVENANCE, not a point estimate. Sourcing degrades explicitly (spec §4.2), and the tier is
 // recorded so a consumer can see how much to trust the number:
 //
+//   stated_user_exposure_range      the user stated the range this outfit will encounter
 //   explicit_hourly                 an exposure window is known and sampled from real hourly data
 //   waking_window_estimate          live daily high/low, waking window estimated
 //   seasonal_waking_window_estimate model-estimated high/low, waking window estimated
@@ -112,14 +113,45 @@ function resolveConditions(resolvedWeather = null) {
   // §5.7 is explicit that an indoor destination excuses the base, never the trip.
   const highF = Number.isFinite(t?.highF) ? t.highF : (Number.isFinite(t?.transitHighF) ? t.transitHighF : null)
   const lowF = Number.isFinite(t?.lowF) ? t.lowF : (Number.isFinite(t?.transitLowF) ? t.transitLowF : null)
-  const rawWind = resolvedWeather?.wind?.value ?? resolvedWeather?.wind ?? 'unknown'
+  const rawWind = resolvedWeather?.wind?.value
+    ?? resolvedWeather?.resolvedWeatherContext?.wind?.value
+    ?? resolvedWeather?.wind
+    ?? 'unknown'
   const wind = typeof rawWind === 'string' ? rawWind : 'unknown'
-  const source = t?.source || resolvedWeather?.overallSource || 'unknown'
+  // Production styling contexts expose the resolved temperature source as `weatherSource` on the
+  // flat profile while retaining the field-level source inside resolvedWeatherContext. Unit callers
+  // often pass the temperature object directly. Accept all three canonical projections; otherwise
+  // a real stated-user range is downgraded to `unknown` exactly at the exposure boundary.
+  const source = t?.source
+    || resolvedWeather?.weatherSource
+    || resolvedWeather?.resolvedWeatherContext?.temperature?.source
+    || resolvedWeather?.overallSource
+    || 'unknown'
 
   if (highF === null && lowF === null) {
     return {
       dailyHighF: null, dailyLowF: null, wakingLowF: null, wakingHighF: null,
       wind, source, conditionsSource: 'unknown', coarse: true, known: false,
+    }
+  }
+
+  // A structured stated-user range is the range the user told us this outfit will encounter. Do
+  // not reinterpret its low as a pre-dawn daily trough and move it upward: the live acceptance
+  // prompt in thread_1788767789621 explicitly said 60°F on departure and 48°F on return, yet the
+  // generic daily-envelope estimator silently changed the encountered low to 52.2°F. Live and
+  // model-estimated daily high/low still need the waking-window estimate below; stated-user facts
+  // do not. Duration remains honestly unknown until a typed duration field exists.
+  if (source === 'stated_user') {
+    return {
+      dailyHighF: highF,
+      dailyLowF: lowF,
+      wakingLowF: lowF,
+      wakingHighF: highF,
+      wind,
+      source,
+      conditionsSource: 'stated_user_exposure_range',
+      coarse: false,
+      known: true,
     }
   }
 
@@ -140,9 +172,10 @@ function resolveConditions(resolvedWeather = null) {
     wind,
     source,
     conditionsSource,
-    // TRUE for both estimate tiers: the window is inferred, not observed. Only `explicit_hourly`
-    // clears it, and that tier needs the forecast query to request `hourly=temperature_2m` (it asks
-    // for `daily=` only today) AND a clock fact to key it — neither exists yet. See spec §10.3.
+    // TRUE for both estimate tiers: the window is inferred, not observed. A stated-user exposure
+    // range above is also non-coarse; `explicit_hourly` needs the forecast query to request
+    // `hourly=temperature_2m` (it asks for `daily=` only today) AND a clock fact to key it — neither
+    // exists yet. See spec §10.3.
     coarse: true,
     known: true,
   }

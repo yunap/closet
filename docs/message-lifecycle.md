@@ -1,6 +1,24 @@
 # The message lifecycle
 
-**Status:** active — **Last verified:** 2026-08-20
+**Status:** active — **Last verified:** 2026-09-07
+
+> **Amendment 2026-09-07 — execution freshness is state, not tone.** Capture
+> `thread_1788814890775` showed a brand-new one-outfit request bypass the execution router because
+> its ordinary sentence “This is ordinary sightseeing” matched the client’s correction-language
+> regex. The full-stylist prompt then simultaneously called the turn a correction, restored
+> `60°`/no activity/home location, and received the actual Vienna 60→48°F breezy walking request.
+> Fresh-task classification now returns `new_request` before interpreting correction language, and
+> `/ask` independently derives bounded-router freshness from the absence of real execution-context
+> evidence. Conversational mode controls tone inside an established thread; it no longer owns
+> whether a context-free request can reach a bounded execution profile.
+
+> **Amendment 2026-09-07 — transport history is not prior history.** The follow-up capture
+> `thread_1788817405702` reached the router, but the router received the current Vienna request both
+> as `RECENT EXCHANGE` and as `Request`. The full-payload builder likewise counted that transport
+> copy as thread context before removing it from the final message array, so “This is ordinary
+> sightseeing” again became `correction`. `priorStylistConversationHistory` now removes only the
+> trailing user entry exactly equal to the current question, before freshness, routing, mode, image,
+> or history-budget decisions. A genuinely earlier identical question remains history.
 
 **One user message, from keystroke to answer.** Written 2026-08-20 by tracing the code, not by
 summarizing the other docs. Every source anchor and count below was checked against the code on the
@@ -122,10 +140,11 @@ Branches 11, 12 and 13 all reach `/ask`, but with different bodies, and that dif
   **prior messages are never copied.**
 - **The user message is persisted before the model is called**, via `saveThreadState`, so a failed
   turn still leaves the question in history.
-- **`conversationMode` is classified client-side** by `classifyChatTurn`
-  ([:551](../src/components/StylistChat.jsx#L551)) — a regex ladder returning `correction`,
-  `explanation`, `preference_reaction`, `followup`, or `new_request`. Note the last rule:
-  **any message in a thread that has memory becomes `followup`**, regardless of content.
+- **`conversationMode` is classified client-side** by `classifyChatTurn` in
+  `src/utils/chatTurn.js` — a regex ladder returning `correction`, `explanation`,
+  `preference_reaction`, `followup`, or `new_request`. With no thread memory it returns
+  `new_request` before interpreting the prose. Otherwise its last rule makes any
+  unclassified message `followup`.
 
 ---
 

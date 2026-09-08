@@ -5490,9 +5490,14 @@ test('prose citations of unverified piece ids force one corrective retry', () =>
 
 test('declare_intent records the turn contract and acks the capability gap for images', async () => {
   const toolContext = {}
-  const cards = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, toolContext)
+  const missingLayerContract = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, toolContext)
+  assert.equal(missingLayerContract.status, 'validation_error')
+  assert.match(missingLayerContract.message, /layer_requirement/)
+  assert.equal(toolContext.declaredIntent, undefined, 'an incomplete cards declaration must not overwrite turn state')
+
+  const cards = await executeTool('declare_intent', { want: 'cards', outfit_count: 3, layer_requirement: 'unspecified' }, toolContext)
   assert.equal(cards.status, 'success')
-  assert.deepEqual(toolContext.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: null })
+  assert.deepEqual(toolContext.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: null, layerRequirement: 'unspecified' })
   assert.match(cards.message, /3 outfits owed/)
   assert.match(cards.message, /verified this turn/)
 
@@ -5504,6 +5509,158 @@ test('declare_intent records the turn contract and acks the capability gap for i
 
   const invalid = await executeTool('declare_intent', { want: 'song' }, toolContext)
   assert.equal(invalid.status, 'validation_error')
+})
+
+test('single-outfit explicit layer contract rejects omission and role spoofing, then accepts one seen outerwear piece with the same stated exposure', async () => {
+  const lightTrench = insertPiece({
+    name: 'known light acceptance trench',
+    category: 'outerwear',
+    colors: ['cream'],
+    occasions: ['city'],
+    photo: seeded.photos.jacket,
+    reads_as: 'straight trench',
+    fabric_weight: 'medium',
+    fiber_content: ['cotton'],
+  })
+  const warmCoat = insertPiece({
+    name: 'known warm acceptance coat',
+    category: 'outerwear',
+    colors: ['black'],
+    occasions: ['city'],
+    photo: seeded.photos.jacket,
+    reads_as: 'structured winter coat',
+    fabric_weight: 'heavy',
+    fiber_content: ['wool'],
+  })
+  const rangeTop = insertPiece({
+    name: 'moderate long sleeve range top',
+    category: 'top',
+    colors: ['navy'],
+    occasions: ['city'],
+    photo: seeded.photos.top,
+    reads_as: 'long sleeve knit top',
+    fabric_weight: 'medium',
+    fabric_category: 'knit',
+    fiber_content: ['cotton'],
+  })
+  const lightSatinTop = insertPiece({
+    name: 'light three quarter satin top',
+    category: 'top',
+    colors: ['black'],
+    occasions: ['city'],
+    photo: seeded.photos.top,
+    reads_as: 'light draped satin shirt',
+    fabric_weight: 'light',
+    fabric_category: 'satin',
+    fiber_content: ['polyester'],
+  })
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long', interior_construction = 'full_lining', insulating_layer_materials = '[]' WHERE id = ?`).run(lightTrench)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long', interior_construction = 'full_lining', insulating_layer_materials = '["down"]' WHERE id = ?`).run(warmCoat)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long' WHERE id = ?`).run(rangeTop)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'three_quarter' WHERE id = ?`).run(lightSatinTop)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'sleeveless' WHERE id = ?`).run(seeded.top)
+
+  const toolContext = { generatedOutfits: [], turnMode: 'new_request' }
+  const declaration = await executeTool('declare_intent', {
+    want: 'cards',
+    outfit_count: 1,
+    layer_requirement: 'required',
+  }, toolContext)
+  assert.equal(declaration.status, 'success')
+  assert.equal(toolContext.declaredIntent.layerRequirement, 'required')
+  assert.match(declaration.message, /explicitly required/)
+
+  await executeTool('search_wardrobe', {
+    category: ['top', 'bottom', 'shoes', 'outerwear'],
+    occasion: 'city',
+    user_weather: { high_f: 60, low_f: 48 },
+    visual: true,
+  }, toolContext)
+  assert.equal(toolContext.weatherProfile.weatherSource, 'stated_user')
+  assert.equal(toolContext.weatherProfile.highF, 60)
+  assert.equal(toolContext.weatherProfile.lowF, 48)
+
+  // This test owns the proposal contract, not image encoding. Mark these two inserted fixtures as
+  // retrieved/seen directly so the independent sight gate does not obscure the thermal assertion.
+  toolContext.retrievedPieceIds.add(rangeTop)
+  toolContext.retrievedPieceIds.add(lightSatinTop)
+  toolContext.visuallySeenPieceIds.add(rangeTop)
+  toolContext.visuallySeenPieceIds.add(lightSatinTop)
+
+  const basePieces = [
+    { id: seeded.top, role: 'primary_top' },
+    { id: seeded.bottom, role: 'primary_bottom' },
+    { id: seeded.shoe, role: 'shoes' },
+  ]
+  const omitted = await executeTool('propose_outfit', {
+    label: 'Santa Fe afternoon',
+    pieces: basePieces,
+    why_it_works: 'A simple city base for the stated wearing window.',
+  }, toolContext)
+  assert.equal(omitted.status, 'validation_error')
+  assert.match(omitted.message, /explicitly required a removable layer/)
+  assert.equal(toolContext.generatedOutfits.length, 0, 'contract omission is rejected before rendering a broken card')
+
+  const spoofed = await executeTool('propose_outfit', {
+    label: 'Role spoof',
+    pieces: [
+      ...basePieces,
+      { id: seeded.top, role: 'layer_top' },
+    ],
+  }, toolContext)
+  assert.equal(spoofed.status, 'validation_error')
+  assert.match(spoofed.message, /contains no outerwear piece/, 'a model-authored layer role cannot replace structured category truth')
+
+  const tooLight = await executeTool('propose_outfit', {
+    label: 'Too-light Santa Fe layer',
+    pieces: [
+      ...basePieces,
+      { id: lightTrench, role: 'outerwear' },
+    ],
+    why_it_works: 'The trench is removable after sunset.',
+  }, toolContext)
+  assert.equal(tooLight.status, 'validation_error')
+  assert.match(tooLight.message, /less warmth than the conditions call for/)
+  assert.match(tooLight.message, /Replace the removable outerwear with a warmer visually verified outerwear candidate/)
+  assert.doesNotMatch(tooLight.message, /keep the pieces you chose/, 'thermal correction must not tell the model to preserve the inadequate layer')
+
+  const underWarmRemainder = await executeTool('propose_outfit', {
+    label: 'Warm coat over light satin',
+    pieces: [
+      { id: lightSatinTop, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+      { id: warmCoat, role: 'outerwear' },
+    ],
+    why_it_works: 'The coat handles the cold return and comes off at 60 degrees.',
+  }, toolContext)
+  assert.equal(underWarmRemainder.status, 'validation_error')
+  assert.match(underWarmRemainder.message, /after the removable outer layer comes off/)
+  assert.match(underWarmRemainder.message, /upper-body pieces beneath the outer layer/)
+
+  const accepted = await executeTool('propose_outfit', {
+    label: 'Santa Fe afternoon',
+    pieces: [
+      { id: rangeTop, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+      { id: warmCoat, role: 'outerwear' },
+    ],
+    why_it_works: 'The insulated coat is removable through the warmer part of the afternoon.',
+  }, toolContext)
+  assert.equal(accepted.status, 'success')
+  const acceptedCard = toolContext.generatedOutfits.find(outfit => !outfit.broken)
+  assert.deepEqual(acceptedCard.pieceIds, [rangeTop, seeded.bottom, seeded.shoe, warmCoat])
+  assert.equal(acceptedCard.resolvedWeatherContext.overall_source, 'stated_user')
+  assert.equal(acceptedCard.resolvedWeatherContext.temperature.high_f, 60)
+  assert.equal(acceptedCard.resolvedWeatherContext.temperature.low_f, 48)
+})
+
+test('propose_outfit schema does not turn a gallery label into climate-controlled exposure', () => {
+  const schema = stylistToolsForTurn({}).find(tool => tool.name === 'propose_outfit')?.input_schema
+  const seasonDescription = String(schema?.properties?.season?.description || '')
+  assert.match(seasonDescription, /indoor occasion label.*does not erase explicitly stated sustained outdoor time/i)
+  assert.doesNotMatch(seasonDescription, /For an indoor occasion \(office, restaurant, meeting, gallery\), pass season:'indoor'/)
 })
 
 test('composing tools are blocked until cards intent is declared', async () => {
@@ -5530,7 +5687,7 @@ test('composing tools are blocked until cards intent is declared', async () => {
   assert.equal(blockedGenerate.status, 'validation_error')
   assert.match(blockedGenerate.message, /declare_intent/)
 
-  await executeTool('declare_intent', { want: 'cards' }, toolContext)
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified' }, toolContext)
   const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
   assert.equal(accepted.status, 'success')
 })
@@ -5998,7 +6155,8 @@ test('structure rejection teaches completion instead of a bare retry', async () 
   const toolContext = {
     generatedOutfits: [],
     declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
-    retrievedPieceIds: new Set([seeded.top, seeded.jacket])
+    retrievedPieceIds: new Set([seeded.top, seeded.jacket]),
+    visuallySeenPieceIds: new Set([seeded.jacket])
   }
   const rejected = await executeTool('propose_outfit', {
     label: 'Pair only',
@@ -6047,7 +6205,7 @@ test('precompose-seeded turns keep their source flag and inform the declare ack'
     declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
     retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe])
   }
-  const ack = await executeTool('declare_intent', { want: 'cards' }, toolContext)
+  const ack = await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified' }, toolContext)
   assert.match(ack.message, /ALREADY composed for this turn/, 'declare ack warns about pre-seeded cards')
 
   const proposed = await executeTool('propose_outfit', {

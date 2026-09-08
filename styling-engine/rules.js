@@ -69,7 +69,7 @@ import {
   sleeveCoverage,
   thermalMaterialVerdict
 } from './attributes.js'
-import { interiorConstruction } from './fiberTaxonomy.js'
+import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
 
 export function isStyleSelectedQuestion(question = '') {
   const q = String(question).toLowerCase()
@@ -192,10 +192,18 @@ export function thermalFactsForPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (group === 'shoes' || group === 'accessory') return null
   const verdict = thermalMaterialVerdict(piece)
+  const insulatingLayer = insulatingLayerMaterials(piece)
   const interior = interiorConstruction(piece)
   return {
     warmth: garmentWarmthLevel(piece) || null,
-    insulation: verdict === 'insulating' ? 'insulated' : verdict === 'non_insulating' ? 'none' : 'not recorded',
+    // Keep engineered fill/loft separate from an insulating FACE material. The shared material
+    // verdict intentionally treats both as positive evidence, but projecting either one as the
+    // undifferentiated word "insulated" told the stylist model that a wool cardigan had a built
+    // insulating layer. That is a materially stronger construction claim than the data supports.
+    insulatingLayer: Array.isArray(insulatingLayer)
+      ? (insulatingLayer.length ? insulatingLayer.join(',') : 'none')
+      : 'not recorded',
+    insulatingFaceMaterial: verdict === 'insulating' && !(Array.isArray(insulatingLayer) && insulatingLayer.length),
     interior: interior && interior !== 'unknown' ? interior : null,
     season: piece.season || null,
     removable: group === 'outerwear' ? true : null,
@@ -216,7 +224,8 @@ export function thermalFactsForPieceLine(piece = {}) {
   const bits = []
   if (facts) {
     bits.push(`warmth:${facts.warmth || 'not established'}`)
-    bits.push(`insulation:${facts.insulation}`)
+    bits.push(`insulating layer:${facts.insulatingLayer}`)
+    if (facts.insulatingFaceMaterial) bits.push('insulating face material:yes')
     if (facts.interior) bits.push(`interior:${facts.interior}`)
     if (facts.removable) bits.push('removable:yes')
   }

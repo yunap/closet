@@ -1,11 +1,11 @@
 // Slice 4 of docs/thermal-comfort-band-spec.md §9.2 — the six-point gate.
-// No production consumers (§8 step 1).
+// Production adequacy consumes this shared configuration contract.
 import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
-import { outfitThermalContribution, outfitCoversRange } from '../styling-engine/outfitThermalContribution.js'
-import { requiredThermalBand, compareThermalFit } from '../styling-engine/thermalDemand.js'
+import { outfitThermalContribution, outfitCoversRange, outfitRangeCoverage } from '../styling-engine/outfitThermalContribution.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from '../styling-engine/thermalDemand.js'
 import { resolveExposureContext } from '../styling-engine/exposure.js'
 import { WARMTH_LEVELS } from '../styling-engine/garmentWarmth.js'
 
@@ -33,6 +33,27 @@ test('gate 1 — row 2: a mild base plus a removable layer beats a permanently w
   const heavy = cover([P.heavyTop, P.puffer])
   assert.notEqual(heavy.coldEnd.fit, 'undershoot')
   assert.ok(String(heavy.warmEnd.fit).includes('overshoot'), 'it is stuck at the warm end, not banned')
+})
+
+test('range coverage rejects an under-warm remainder instead of checking only overshoot', () => {
+  const exact = requiredThermalEndpointBands(resolveExposureContext(
+    { activity: 'walking', environment: 'outdoor' },
+    { temperature: { highF: 60, lowF: 48, source: 'stated_user' } },
+  ))
+  const satin = { id: 10, category: 'top', fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'], sleeve_length: 'three_quarter' }
+  const heavyPants = { id: 11, category: 'bottom', fabric_weight: 'heavy', fiber_content: ['polyester'], length_hits_at: 'full_length' }
+  const coat = { ...P.puffer, id: 12 }
+  const cardigan = { ...P.cardigan, id: 13 }
+
+  const tooLightAfterCoat = outfitRangeCoverage([satin, heavyPants, coat], exact.cold, exact.warm, compareThermalFit)
+  assert.equal(tooLightAfterCoat.adaptable, false)
+  assert.equal(tooLightAfterCoat.candidates[0].warmEnd.fit, 'undershoot',
+    'heavy trousers cannot make a light upper body adequate after the coat comes off')
+
+  const cardiganRemains = outfitRangeCoverage([satin, heavyPants, cardigan, coat], exact.cold, exact.warm, compareThermalFit)
+  assert.equal(cardiganRemains.adaptable, true,
+    'removing the coat may leave another adequate layer in the worn configuration')
+  assert.ok(cardiganRemains.candidates.some(candidate => candidate.removedPieceId === coat.id && candidate.adaptable))
 })
 
 test('gate 2 — base and removable warmth stay distinguishable', () => {

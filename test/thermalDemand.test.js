@@ -1,12 +1,12 @@
 // Slice 3 of docs/thermal-comfort-band-spec.md §9.1 — requiredThermalBand.
-// No production consumers (§8 step 1). These are §12.1's pinned cases, run end to end through
-// exposure.js → requiredThermalBand → compareThermalFit.
+// These are §12.1's pinned cases, run end to end through exposure.js → requiredThermalBand →
+// compareThermalFit. Production adequacy consumes the same contract.
 import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
 import { resolveExposureContext } from '../styling-engine/exposure.js'
-import { requiredThermalBand, compareThermalFit } from '../styling-engine/thermalDemand.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from '../styling-engine/thermalDemand.js'
 
 const W = (highF, lowF, source = 'model_estimate') => ({ temperature: { highF, lowF, source }, wind: { value: 'calm' } })
 const demandFor = (slot, weather) => requiredThermalBand(resolveExposureContext(slot, weather))
@@ -17,7 +17,7 @@ test('row 1 — 65/45 museum day: a cardigan beats a puffer', () => {
   const d = demandFor(OUTDOOR('walking'), W(65, 45))
   const puffer = compareThermalFit('very warm', d)
   const cardigan = compareThermalFit('warm', d)
-  assert.equal(puffer.fit, 'overshoot')
+  assert.equal(puffer.fit, 'adequate', 'coarse conditions keep the warmer edge inside uncertainty')
   assert.equal(cardigan.fit, 'adequate')
   assert.ok(Math.abs(cardigan.distance) < Math.abs(puffer.distance), 'the cardigan is nearer the target')
 })
@@ -32,18 +32,32 @@ test('row 3 — genuinely cold: the ordering reverses on conditions alone', () =
   assert.ok(cardigan.distance < 0, 'and the cardigan now falls short of it')
 })
 
-test('row 4 — exertion lowers required insulation at the same temperature', () => {
-  // §11.1's finding from the cold-exercise literature, and the reason a hiker and a stationary
-  // diner must not resolve to the same demand.
+test('row 4 — ordinary walking earns no warmth credit; genuine exertion does', () => {
+  // Owner correction 2026-09-07: sightseeing is not exercise and usually means longer outdoor
+  // exposure. Hiking remains genuinely exertive; walking remains useful to footwear policy only.
   const at = a => demandFor(OUTDOOR(a), W(40, 28)).level
   assert.equal(at('none'), 'very warm')
-  assert.equal(at('walking'), 'warm')
+  assert.equal(at('walking'), 'very warm')
   assert.equal(at('hiking'), 'moderate')
 
   // unknown is NOT none: absent exertion is not an assertion of stillness.
   assert.equal(demandFor({ environment: 'outdoor' }, W(40, 28)).exertionApplied, 'unknown')
   assert.equal(demandFor({ environment: 'outdoor' }, W(40, 28)).level, at('none'),
     'unknown shifts nothing, but it is recorded as unknown rather than claimed as none')
+})
+
+test('Santa Fe 60→48°F sightseeing still requires warm clothing', () => {
+  const d = demandFor(OUTDOOR('walking'), W(60, 48, 'stated_user'))
+  assert.equal(d.level, 'warm')
+  assert.deepEqual(d.range, ['warm', 'warm'])
+})
+
+test('a stated 60→48°F exposure exposes separate warm and cold endpoint demands', () => {
+  const endpoints = requiredThermalEndpointBands(
+    resolveExposureContext(OUTDOOR('walking'), W(60, 48, 'stated_user')))
+  assert.equal(endpoints.warm.level, 'moderate')
+  assert.equal(endpoints.cold.level, 'warm')
+  assert.equal(endpoints.certain, true)
 })
 
 test('row 5 — overshoot is a ranking signal, never an exclusion', () => {
@@ -67,6 +81,17 @@ test('coarse conditions are consumed as uncertainty, not measurement', () => {
   assert.equal(d.certain, false)
   assert.equal(d.basis, 'seasonal_waking_window_estimate')
   assert.notDeepEqual(d.range[0], d.range[1], 'a coarse window must span more than one level')
+})
+
+test('a stated-user range is preserved as encountered exposure, not rewritten as a daily trough', () => {
+  const exposure = resolveExposureContext(OUTDOOR('none'), W(60, 48, 'stated_user'))
+  assert.equal(exposure.conditions.wakingLowF, 48)
+  assert.equal(exposure.conditions.wakingHighF, 60)
+  assert.equal(exposure.conditions.conditionsSource, 'stated_user_exposure_range')
+  assert.equal(exposure.conditions.coarse, false)
+  const demand = requiredThermalBand(exposure)
+  assert.equal(demand.level, 'warm')
+  assert.deepEqual(demand.range, ['warm', 'warm'])
 })
 
 test('an indoor destination excuses the base, never the trip', () => {

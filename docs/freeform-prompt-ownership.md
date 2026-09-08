@@ -1,5 +1,23 @@
 # Freeform prompt and tool ownership
 
+> **Amendment 2026-09-07 — a tool result is also a prompt projection.** The isolated one-outfit
+> system exposed four tools, but `declare_intent`'s success result immediately injected a universal
+> contract naming unavailable batch, trip, swap, and detail tools. `executeTool` now projects a
+> short `single_outfit` acknowledgement from `toolContext.executionProfile`; the general success
+> result remains unchanged. Tool-local mechanical authority is still shared, while each execution
+> profile receives only the part it can act on. Rejected-card repair is stated consistently in the
+> narrow system and acknowledgement rather than pretending the validator cannot reject a first
+> submission.
+
+> **Amendment 2026-09-07 — conversational tone does not own execution reachability.** A fresh
+> Vienna one-outfit request containing “This is ordinary sightseeing” was labeled `correction` by
+> the client and therefore skipped the execution router. Its captured full-stylist payload was
+> 133,349 characters with 14 tools and mutually conflicting old/new context. `classifyChatTurn`
+> now requires thread memory before assigning any continuation mode, and `/ask` separately decides
+> fresh execution from enumerated context evidence. This extends the earlier “ownership does not
+> imply reachability” ruling: mode controls conversational behavior; actual state owns profile
+> reachability.
+
 > **Amendment 2026-08-20 — ownership does not imply reachability.** Moving a tool's argument
 > semantics into its schema is correct, but a tool description cannot make a tool reachable if the
 > model never gets a routing pointer to it. `plan_outfit_set` is the precedent: before the prompt
@@ -39,6 +57,7 @@ when a contract test proves the surviving owner still states it.
 | Wardrobe existence/index and verification boundary | manifest block in `buildStylistConversationPayload` | stable prefix | Keep intact until bounded discovery is separately ruled. |
 | Current conversational mode | `buildStylistConversationDirective` | volatile tail | One `Turn directive` only. The removed `modeDirectiveText` and four unconditional mode reminders duplicated it. |
 | Tool eligibility, arguments and mechanical result | each entry in `styling-engine/tools.js` → `STYLIST_TOOLS` | provider tool schema | Tool-local authority. The controller names ownership but does not repeat schemas. |
+| Profile-specific tool-result projection | `executeTool` using `toolContext.executionProfile` | volatile tool result | Return only the mechanical contract reachable in that profile; never introduce unavailable flows after routing has narrowed them away. |
 | Bounded multi-look exception attached to tools | `styling-engine/provider.js` → `stylistToolsForTurn` | provider tool schema | Dynamic `declare_intent`/`generate_outfits` descriptions own skip-declaration behavior. |
 | Cross-tool choice: one vs same-context batch vs multi-context plan vs existing-card revision | `freeformToolRoutingInstruction` | volatile tail | Remains in the controller because no single tool can own the relationship. |
 | Current cards, established context and resolved weather | structured `THREAD STATE` in `buildStylistConversationPayload` | volatile tail | Structured authority; older prose loses conflicts. |

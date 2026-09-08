@@ -15,10 +15,11 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, searchVisualEvidenceOrder, capSingleOutfitSearchResults, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
-const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext } = await import('../routes/ai.js')
+const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext, freeformExecutionContextEvidence } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+const { buildSingleOutfitConversationPayload, buildStylistConversationPayload, priorStylistConversationHistory } = await import('../styling-engine/core.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -98,6 +99,51 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     providerToolLoopCacheReadTokens: 0,
     weatherSource: ''
   })
+})
+
+test('fresh execution is owned by actual context evidence, not a client correction label', () => {
+  const body = {
+    conversationMode: 'correction',
+    question: 'This is ordinary sightseeing and walking, not exercise.',
+    history: [],
+  }
+  assert.deepEqual(freeformExecutionContextEvidence(body, {}, []), [])
+  assert.deepEqual(
+    freeformExecutionContextEvidence({ ...body, history: [{ role: 'user', content: 'earlier request' }] }, {}, []),
+    ['history'],
+  )
+  assert.deepEqual(
+    freeformExecutionContextEvidence(body, { current_outfit_set: [{ label: 'Current card' }] }, []),
+    ['saved_outfit_set'],
+  )
+})
+
+test('the transport copy of the current question is not prior execution context', () => {
+  const question = 'Give me one complete outfit. This is ordinary sightseeing, not exercise.'
+  const history = [{ role: 'user', content: question }]
+  assert.deepEqual(priorStylistConversationHistory(history, question), [])
+  assert.deepEqual(freeformExecutionContextEvidence({ question, history }, {}, []), [])
+
+  const realPriorHistory = [
+    { role: 'user', content: 'Earlier question' },
+    { role: 'assistant', content: 'Earlier answer' },
+    { role: 'user', content: question },
+  ]
+  assert.deepEqual(priorStylistConversationHistory(realPriorHistory, question), realPriorHistory.slice(0, 2))
+  assert.deepEqual(freeformExecutionContextEvidence({ question, history: realPriorHistory }, {}, []), ['history'])
+})
+
+test('a fresh this-is request stays new after transport history is projected', async () => {
+  const question = 'Give me one complete outfit. This is ordinary sightseeing and walking, not exercise.'
+  const payload = await buildStylistConversationPayload({
+    question,
+    conversationMode: 'new_request',
+    sessionId: `fresh-mode-${Date.now()}`,
+    history: [{ role: 'user', content: question }],
+  })
+  assert.equal(payload.threadState.turn_mode, 'new_request')
+  assert.match(payload.system, /Current turn mode: new_request/)
+  assert.equal(payload.historyDiagnostics.historyMessagesReceived, 0)
 })
 
 test('whole-wardrobe composer labels expose authoritative opacity and explicit base-layer status', () => {
@@ -287,14 +333,79 @@ test('the search image budget is ranked per category, so batching cannot starve 
     'the cap must be applied to the per-category rank, never to the flat index')
   // docs/search-wardrobe-visual-budget-spec.md — a single category still gets the full ceiling,
   // and no category is starved below the floor purely because other categories were also asked for.
-  assert.match(searchCase, /visualCategoryCount <= 1[\s\S]*?SEARCH_WARDROBE_VISUAL_CAP/,
-    'a single-category call must keep the full per-category ceiling')
+  assert.match(searchCase, /narrowVisualCap = toolContext\?\.executionProfile === 'single_outfit' \? 6 : SEARCH_WARDROBE_VISUAL_CAP/,
+    'the narrow one-card path must lower its own image ceiling without changing other consumers')
+  assert.match(searchCase, /visualCategoryCount <= 1[\s\S]*?\? narrowVisualCap/,
+    'a single-category call must keep the ceiling selected for its execution profile')
   assert.match(searchCase, /SEARCH_WARDROBE_VISUAL_FLOOR/,
     'a call-level cap must not be allowed to starve a category below the floor')
   // The tool description promises this, and the promise is what makes batching safe to encourage.
   const description = STYLIST_TOOLS.find(tool => tool.name === 'search_wardrobe').description
   assert.match(description, /image budget is per category/)
   assert.match(description, /category` accepts an array/)
+})
+
+test('weather-aware visual evidence does not spend every outerwear image on early cardigans', () => {
+  const cardigans = Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    name: `cardigan ${index + 1}`,
+    category: 'outerwear',
+    reads_as: 'knit cardigan',
+    insulating_layer_materials: null,
+    interior_construction: null,
+  }))
+  const lined = { id: 11, name: 'lined layer', category: 'outerwear', interior_construction: 'full_lining', insulating_layer_materials: [] }
+  const filled = { id: 12, name: 'filled layer', category: 'outerwear', interior_construction: 'full_lining', insulating_layer_materials: ['down'] }
+  const unlined = { id: 13, name: 'unlined layer', category: 'outerwear', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const original = [...cardigans, lined, filled, unlined]
+
+  assert.deepEqual(searchVisualEvidenceOrder(original, { weatherAware: false }).map(piece => piece.id),
+    original.map(piece => piece.id), 'without weather, image allocation remains retrieval order')
+
+  const ranked = searchVisualEvidenceOrder(original, { weatherAware: true })
+  const firstTen = ranked.slice(0, 10).map(piece => piece.id)
+  assert.ok(firstTen.includes(lined.id), 'a constructed interior must be pictured')
+  assert.ok(firstTen.includes(filled.id), 'a recorded insulating layer must be pictured')
+  assert.ok(firstTen.includes(unlined.id), 'verified unfilled construction remains visible for comparison')
+  assert.ok(firstTen.some(id => id <= 10), 'unknown-construction layers remain visible rather than being filtered out')
+  assert.deepEqual(new Set(ranked.map(piece => piece.id)), new Set(original.map(piece => piece.id)),
+    'the allocator changes sight coverage only; it removes and duplicates nothing')
+})
+
+test('weather-aware single-outfit cap preserves every observed outerwear warmth class', () => {
+  const earlyCardigans = Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    name: `medium cardigan ${index + 1}`,
+    category: 'outerwear',
+    fabric_category: 'wool',
+    fabric_weight: 'medium',
+    sleeve_length: 'long',
+    length_hits_at: 'hip',
+  }))
+  const warmCoat = {
+    id: 11,
+    name: 'late warm coat',
+    category: 'outerwear',
+    fabric_category: 'wool',
+    fabric_weight: 'heavy',
+    sleeve_length: 'long',
+    length_hits_at: 'knee',
+    interior_construction: 'full_lining',
+  }
+  const unrelatedTop = { id: 12, name: 'top', category: 'top' }
+  const original = [...earlyCardigans, warmCoat, unrelatedTop]
+
+  const noWeather = capSingleOutfitSearchResults(original, { weatherAware: false })
+  assert.equal(noWeather.filter(piece => piece.category === 'outerwear').length, 10)
+  assert.ok(!noWeather.some(piece => piece.id === warmCoat.id), 'ordinary capped retrieval stays first-in-order')
+
+  const weatherAware = capSingleOutfitSearchResults(original, { weatherAware: true })
+  assert.equal(weatherAware.filter(piece => piece.category === 'outerwear').length, 10)
+  assert.ok(weatherAware.some(piece => piece.id === warmCoat.id), 'the only observed warm class must survive the cap')
+  assert.ok(weatherAware.some(piece => piece.id === earlyCardigans[0].id), 'moderate outerwear remains represented')
+  assert.ok(weatherAware.some(piece => piece.id === unrelatedTop.id), 'other categories keep their independent cap')
+  assert.deepEqual(weatherAware.map(piece => piece.id), [...weatherAware].sort((a, b) => original.indexOf(a) - original.indexOf(b)).map(piece => piece.id),
+    'coverage selection must preserve retrieval order rather than deliver a warmth ranking')
 })
 
 test('one batched search covers several categories and reports no compromise when it finds them', async () => {
@@ -1007,6 +1118,124 @@ test('execution router omits the recent-exchange block entirely when none is sup
   }
 })
 
+test('single-outfit payload keeps exact weather and excludes the universal workbench', () => {
+  const payload = buildSingleOutfitConversationPayload({
+    question: 'Give me one outfit for a Vienna gallery evening, 60→48°F with a breeze.',
+    history: [{ role: 'assistant', content: 'Unrelated earlier trip planning.' }]
+  }, {
+    profile: 'single_outfit', occasion: 'city', activity: 'none', season: 'fall', mood: '', mission: 'mix',
+    limit: 1, location: 'Vienna, Austria', date: '2026-10-12', subject: ''
+  })
+  const userText = payload.messages[0].content
+  assert.deepEqual(payload.singleOutfitContext.user_weather, { high_f: 60, low_f: 48, wind: 'breezy' })
+  assert.match(userText, /"high_f": 60/)
+  assert.match(userText, /"low_f": 48/)
+  assert.equal(payload.messages.length, 1)
+  assert.equal(payload.historyDiagnostics.historyMessagesIncluded, 0)
+  assert.equal(payload.wardrobeManifestIncluded, false)
+  assert.ok(payload.system.length < 15000, `narrow system unexpectedly large: ${payload.system.length}`)
+  assert.match(payload.system, /Ordinary walking, sightseeing, museums, and city days are not exercise/)
+  assert.match(payload.system, /three-quarter-sleeve jersey bulky/)
+  assert.doesNotMatch(payload.system, /Planning a Coordinated Multi-Outfit Set|OCCASION & CLIMATE PROFILES|SAVED STYLIST FEEDBACK|THREAD STATE/)
+})
+
+test('single-outfit tool surface contains only the four operations its prompt can use', () => {
+  const tools = stylistToolsForTurn({
+    allowedToolNames: ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit']
+  })
+  assert.deepEqual(tools.map(tool => tool.name), ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit'])
+})
+
+test('single-outfit intent response does not inject contracts for unavailable flows', async () => {
+  const result = await executeTool('declare_intent', {
+    want: 'cards', outfit_count: 1, layer_requirement: 'required', turn_mode: 'new_request'
+  }, {
+    executionProfile: 'single_outfit',
+    generatedOutfits: [],
+    freeformDiagnostics: {}
+  })
+  assert.equal(result.status, 'success')
+  assert.match(result.message, /one outfit card/)
+  assert.match(result.message, /cold endpoint/)
+  assert.match(result.message, /warm endpoint/)
+  assert.doesNotMatch(result.message, /generate_outfits|plan_outfit_set|suggest_slot_swaps|get_garment_details/)
+})
+
+test('single-outfit wardrobe search bounds full-truth candidates per category', async () => {
+  const ids = []
+  try {
+    for (let index = 0; index < 13; index += 1) {
+      ids.push(db.prepare("INSERT INTO pieces (name, category, status) VALUES (?, 'top', 'active')").run(`narrow roster top ${index}`).lastInsertRowid)
+    }
+    const result = await executeTool('search_wardrobe', { category: 'top' }, {
+      executionProfile: 'single_outfit',
+      freeformDiagnostics: {}
+    })
+    assert.equal(result.filter(item => item.id).length, 10)
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
+test('single-outfit complete search returns atomic system paths plus the complete eligible index', async () => {
+  const ids = []
+  const insert = db.prepare(`
+    INSERT INTO pieces
+      (name, category, status, fabric_weight, fabric_category, fiber_content,
+       sleeve_length, sleeve_shape, opacity, fit_on_body, length_hits_at,
+       insulating_layer_materials, interior_construction, walk_support)
+    VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  try {
+    ids.push(Number(insert.run('system roster probe top', 'top', 'medium', 'cotton', '["cotton"]', 'long', 'fitted', 'opaque', 'skims', null, null, null, null).lastInsertRowid))
+    ids.push(Number(insert.run('system roster probe bottom', 'bottom', 'medium', 'denim', '["cotton"]', null, null, null, null, 'ankle', null, null, null).lastInsertRowid))
+    ids.push(Number(insert.run('system roster probe shoe', 'shoes', null, 'leather', '["leather"]', null, null, null, null, null, null, null, 'high').lastInsertRowid))
+    ids.push(Number(insert.run('system roster probe coat', 'outerwear', 'medium', 'wool', '["wool"]', 'long', 'fitted', 'opaque', null, 'knee', '["wool batting"]', 'full_lining', null).lastInsertRowid))
+
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      declaredIntent: { want: 'cards', outfitCount: 1, layerRequirement: 'required' },
+      request: 'One outfit with a removable layer for 60 to 48 degrees.',
+      userWeather: { high_f: 60, low_f: 48 },
+      freeformDiagnostics: {},
+    }
+    const result = await executeTool('search_wardrobe', {
+      query: 'system roster probe',
+      category: ['top', 'bottom', 'shoes', 'outerwear'],
+      activity: 'none',
+      user_weather: { high_f: 60, low_f: 48 },
+      intent: 'compose',
+      visual: false,
+    }, toolContext)
+    const roster = result.find(item => item.system_roster)?.system_roster
+    assert.ok(roster)
+    assert.deepEqual(roster.eligible_piece_index.map(piece => piece.id).sort((a, b) => a - b), [...ids].sort((a, b) => a - b))
+    assert.ok(roster.system_paths.length >= 1)
+    assert.ok(roster.system_paths.every(path => path.piece_ids.every(id => roster.visual_piece_ids.includes(id))))
+    assert.equal(roster.selection_report.outcome, 'ready')
+    assert.equal(toolContext.freeformDiagnostics.systemAwareWeatherRoster.outcome, roster.selection_report.outcome)
+    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.selected_paths.length >= 1,
+      'full selection reasons stay internal rather than enlarging the model-facing report')
+    assert.equal(roster.selection_report.selected_paths, undefined)
+
+    const selected = roster.system_paths[0].piece_ids
+    const roleById = new Map([
+      [ids[0], 'primary_top'], [ids[1], 'primary_bottom'], [ids[2], 'shoes'], [ids[3], 'outerwear'],
+    ])
+    const proposal = await executeTool('propose_outfit', {
+      pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
+      label: 'System roster probe',
+      why_it_works: 'A complete mechanically verified path ready for visual judgment.',
+      activity: 'none',
+      user_weather: { high_f: 60, low_f: 48 },
+    }, toolContext)
+    assert.equal(proposal.status, 'success')
+    assert.equal(toolContext.freeformDiagnostics.systemAwareRosterProposalSource, 'supplied_path')
+  } finally {
+    for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
+  }
+})
+
 test('offline execution-routing corpus spans every profile and conservative fallback class', async () => {
   const corpus = JSON.parse(fs.readFileSync(
     path.join(process.cwd(), 'test/fixtures/freeform_execution_routing_corpus.json'),
@@ -1018,7 +1247,7 @@ test('offline execution-routing corpus spans every profile and conservative fall
   }
   assert.deepEqual(
     [...new Set(corpus.map(entry => entry.expectedProfile))].sort(),
-    ['bounded_multi', 'existing_card_explanation', 'full_stylist', 'garment_fact', 'general_advice', 'wardrobe_inventory']
+    ['bounded_multi', 'existing_card_explanation', 'full_stylist', 'garment_fact', 'general_advice', 'single_outfit', 'wardrobe_inventory']
   )
 
   const seenIds = new Set()
@@ -1035,7 +1264,7 @@ test('offline execution-routing corpus spans every profile and conservative fall
     return {
       profile: activeCase.expectedProfile,
       occasion: 'casual', activity: 'none', season: '', mood: '', mission: 'mix',
-      limit: activeCase.expectedProfile === 'bounded_multi' ? 2 : 0,
+      limit: activeCase.expectedProfile === 'bounded_multi' ? 2 : activeCase.expectedProfile === 'single_outfit' ? 1 : 0,
       location: '', date: '', subject: ''
     }
   }
@@ -1770,7 +1999,7 @@ test('compact answer profiles are unconditional, bounded, and return before the 
   assert.match(routeSrc, /\['existing_card_explanation', 'garment_fact', 'general_advice'\]/)
   const compactStart = routeSrc.indexOf("if (['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile))")
   const boundedStart = routeSrc.indexOf("if (String(req.body.conversationMode || 'new_request') === 'new_request'", compactStart)
-  const payloadStart = routeSrc.indexOf('const payload = await buildStylistConversationPayload')
+  const payloadStart = routeSrc.indexOf('const payload = singleOutfitRoute')
   assert.ok(compactStart > 0 && compactStart < payloadStart, 'compact answer must return before full manifest payload assembly')
   assert.ok(boundedStart > compactStart && boundedStart < payloadStart, 'compact and bounded execution profiles must remain separate branches')
   const compactBlock = routeSrc.slice(compactStart, boundedStart)
@@ -1786,13 +2015,26 @@ test('the execution router bypasses the full manifest controller only after boun
   assert.match(routeSrc, /if \(toolContext\.atomicMultiLookCompleted\) \{[\s\S]{0,1200}return res\.json/)
   const routerBlock = routeSrc.slice(
     routeSrc.indexOf('if (routerEligible)'),
-    routeSrc.indexOf('const payload = await buildStylistConversationPayload')
+    routeSrc.indexOf('const payload = singleOutfitRoute')
   )
   assert.doesNotMatch(routerBlock, /buildStylistConversationPayload|askStylistWithTools/)
   assert.match(routerBlock, /saveStylistConversationState\([\s\S]*boundedConversationStateFromToolContext/)
   assert.match(routerBlock, /catch \(routerError\) \{/)
   assert.match(routerBlock, /Falling back to full stylist/)
   assert.match(routerBlock, /Refusing expensive full-stylist fallback/)
+  assert.match(routerBlock, /executionRouterProfile = String\(compactProfile \|\| ''\)/)
+  assert.match(routerBlock, /executionRouterLimit = routedLimit/)
+})
+
+test('a new-request router result remains established occasion/activity context for full stylist tools', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const routerStart = routeSrc.indexOf('const routed = await routeFreeformExecutionProfile')
+  const boundedStart = routeSrc.indexOf("routed.value?.profile === 'bounded_multi'", routerStart)
+  const contextBridge = routeSrc.slice(routerStart, boundedStart)
+  assert.match(contextBridge, /toolContext\.occasion = normalizeOccasion\(routed\.value\?\.occasion\)/)
+  assert.match(contextBridge, /toolContext\.activity = normalizeActivity\(routed\.value\?\.activity\)/)
+  assert.match(contextBridge, /toolContext\.executionRouterActivity = toolContext\.activity/)
+  assert.match(contextBridge, /toolContext\.executionRouterActivityLocked = true/)
 })
 
 test('persistFreeformGenerationRun stores aggregate provider usage for cost audits', () => {
@@ -2022,6 +2264,20 @@ test('bounded router state preserves the generated set and established context f
   })
   assert.equal(state.established.location, 'San Francisco, CA')
   assert.equal(state.established.weather, 'a forecast high of 70°F and low of 55°F')
+})
+
+test('conversation state persists accepted cards only, never rejected retry diagnostics', () => {
+  const state = boundedConversationStateFromToolContext({
+    generatedOutfits: [{
+      label: 'Rejected first try', broken: true, retryPending: true,
+      pieceIds: [1, 2, 3], pieces: [{ id: 1, name: 'bad top' }],
+    }, {
+      label: 'Accepted correction',
+      pieceIds: [4, 5, 6], pieces: [{ id: 4, name: 'good top' }],
+    }]
+  })
+  assert.deepEqual(state.current_outfit_set.map(outfit => outfit.label), ['Accepted correction'])
+  assert.equal(state.current_outfit_set[0].index, 1)
 })
 
 // Spec §7: current_outfit_set persists a per-outfit weather disclosure and its
@@ -2361,11 +2617,11 @@ test('bounded generate call declares its own cards contract only inside the narr
   // Default-on since 2026-08-19. The narrowness now comes entirely from the turn shape, not a flag.
   const bounded = { turnMode: 'new_request' }
   assert.equal(declareBoundedMultiLookIntent(bounded, { limit: 3 }), true)
-  assert.deepEqual(bounded.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request' })
+  assert.deepEqual(bounded.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request', layerRequirement: 'unspecified' })
 
   const ordinaryWhatToWear = { turnMode: 'new_request' }
   assert.equal(declareBoundedMultiLookIntent(ordinaryWhatToWear), true)
-  assert.deepEqual(ordinaryWhatToWear.declaredIntent, { want: 'cards', outfitCount: 2, turnMode: 'new_request' })
+  assert.deepEqual(ordinaryWhatToWear.declaredIntent, { want: 'cards', outfitCount: 2, turnMode: 'new_request', layerRequirement: 'unspecified' })
 
   // The four shapes that must still fall through to the verified serial path.
   for (const [context, call] of [
@@ -2377,6 +2633,36 @@ test('bounded generate call declares its own cards contract only inside the narr
     assert.equal(declareBoundedMultiLookIntent(context, call), false)
     assert.notDeepEqual(context.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request' })
   }
+})
+
+test('generate_outfits rejects a whole-wardrobe one-look call before the nested composer', async () => {
+  const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.input_schema
+  assert.equal(schema?.properties?.limit?.minimum, 2)
+  assert.equal(schema?.properties?.limit?.maximum, 5)
+  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.description || '', /For exactly one outfit/)
+
+  const toolContext = {
+    turnMode: 'new_request',
+    declaredIntent: {
+      want: 'cards',
+      outfitCount: 1,
+      turnMode: 'new_request',
+      layerRequirement: 'unspecified',
+    },
+    generatedOutfits: [],
+    freeformDiagnostics: {},
+  }
+  const result = await executeTool('generate_outfits', {
+    occasion: 'city',
+    season: 'current season',
+    limit: 1,
+  }, toolContext)
+
+  assert.equal(result.status, 'validation_error')
+  assert.match(result.message, /only for a fresh 2–5 outfit batch/)
+  assert.match(result.message, /No nested composer call was made/)
+  assert.equal(toolContext.freeformDiagnostics?.providerIterations || 0, 0)
+  assert.equal(toolContext.generatedOutfits.length, 0)
 })
 
 test('adaptive visual evidence rides the bounded multi-look path only', () => {
@@ -2450,11 +2736,11 @@ test('recordNestedFreeformUsage does not touch tool_sequence when there is no us
 test('bounded batch contract uses the server-resolved new-request mode when declaration omits it', async () => {
   {
     const toolContext = { turnMode: 'new_request' }
-    const result = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, toolContext)
+    const result = await executeTool('declare_intent', { want: 'cards', outfit_count: 3, layer_requirement: 'unspecified' }, toolContext)
     assert.match(result.message, /call generate_outfits exactly once with limit:3/)
     assert.equal(toolContext.declaredIntent.turnMode, null)
 
-    const followup = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, { turnMode: 'followup' })
+    const followup = await executeTool('declare_intent', { want: 'cards', outfit_count: 3, layer_requirement: 'unspecified' }, { turnMode: 'followup' })
     assert.doesNotMatch(followup.message, /call generate_outfits exactly once/)
   }
 })
@@ -2817,6 +3103,44 @@ test('resolveToolStylingContext: a bare structured user_weather with no named pl
   })
   assert.equal(context.weatherProfile.weatherSource, 'stated_user')
   assert.equal(context.weatherProfile.isCold, true)
+})
+
+test('resolveToolStylingContext: execution-router activity cannot be overwritten by a model tool argument', async () => {
+  const toolContext = {
+    occasion: 'city',
+    activity: 'none',
+    executionRouterActivity: 'none',
+    executionRouterActivityLocked: true,
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { occasion: 'city', activity: 'walking' },
+    toolContext,
+    inferred: { requestText: 'an outdoor afternoon outing' },
+    policy: { mode: 'freeform_action' },
+  })
+  assert.equal(context.activity, 'none')
+  assert.equal(toolContext.activity, 'none')
+})
+
+test('resolveToolStylingContext: router-authoritative none cannot be re-inferred as walking from model prose', async () => {
+  const toolContext = {
+    occasion: 'city',
+    activity: 'none',
+    executionRouterActivity: 'none',
+    executionRouterActivityLocked: true,
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: {
+      occasion: 'city',
+      requestText: 'Afternoon gallery walk transitioning to evening dinner.',
+    },
+    toolContext,
+    inferred: { requestText: 'Afternoon gallery walk transitioning to evening dinner.' },
+    policy: { mode: 'freeform_action' },
+  })
+  assert.equal(context.activity, 'none')
+  assert.equal(context.provenanceByField.activity.resolvedFromRequest, undefined)
+  assert.equal(toolContext.activity, 'none')
 })
 
 // Spec §6.5: "search stores its resolved context in toolContext; proposal

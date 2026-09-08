@@ -20,6 +20,7 @@ import {
   MISSION_VALUES,
   normalizeActivity,
   extractWeatherContext,
+  extractStructuredUserWeather,
   normalizeMission,
   normalizeOccasion,
   normalizeStylingIntent,
@@ -132,6 +133,20 @@ test('extractWeatherContext captures lightweight forecast phrases', () => {
   assert.equal(extractWeatherContext('The forecast is mid 80s to 90 degrees'), '90 degrees')
   assert.equal(extractWeatherContext('Expect rain and wind'), 'rainy weather')
   assert.equal(extractWeatherContext('Portland in a few days'), '')
+})
+
+test('extractStructuredUserWeather preserves a literal falling Fahrenheit range and stated wind', () => {
+  assert.deepEqual(extractStructuredUserWeather('It will fall from 60→48°F with a breeze'), {
+    high_f: 60,
+    low_f: 48,
+    wind: 'breezy'
+  })
+  assert.deepEqual(extractStructuredUserWeather('Expect 48 to 60 degrees Fahrenheit and rain'), {
+    high_f: 60,
+    low_f: 48,
+    precipitation: 'rain'
+  })
+  assert.equal(extractStructuredUserWeather('It should be in the low 50s'), null)
 })
 
 test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {

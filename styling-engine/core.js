@@ -92,7 +92,7 @@ import { resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext } from './stylingContext.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
-import { extractWeatherContext } from './stylingIntent.js'
+import { extractWeatherContext, extractStructuredUserWeather } from './stylingIntent.js'
 
 import {
   parsePiece,
@@ -4020,6 +4020,25 @@ export function buildStylistConversationDirective(mode) {
   }
 }
 
+// StylistChat persists/appends the current user message before it sends `/ask`, so `history`
+// normally ends with the same question that is also supplied in `body.question`. Anything making
+// a decision about *prior* conversation must use this projection, not the transport-shaped array:
+// otherwise the current request becomes its own recent exchange and falsely creates thread context.
+export function priorStylistConversationHistory(history = [], question = '') {
+  // Keep the existing request-shape contract: a supplied history value must be an array.
+  // Calling `.map` directly is intentional—the /ask error boundary already exposes malformed
+  // transport input instead of quietly treating it as an empty conversation.
+  const prior = (history || [])
+    .map(entry => ({ ...entry }))
+    .filter(entry => entry?.role === 'user' || entry?.role === 'assistant')
+  const askedNow = String(question || '').trim()
+  const last = prior[prior.length - 1]
+  if (askedNow && last?.role === 'user' && String(last.content || '').trim() === askedNow) {
+    prior.pop()
+  }
+  return prior
+}
+
 // docs/freeform-prompt-cache-levers.md lever 1. This block is BELOW the prompt cache breakpoint, so
 // it may vary per turn at no cost to reuse. That is exactly why per-turn mode behaviour lives here
 // and not in a tool description: tool schemas sit above the breakpoint, where one varying byte
@@ -4182,6 +4201,54 @@ export function formatHistoricalOutfitSetsForPrompt(resolution) {
   ].join('\n\n')
 }
 
+// A fresh request for one complete look does not need the universal stylist workbench. Keep this
+// payload factual and bounded: the style constitution, one structured request, and four tools at
+// execution time. In particular, do not load the whole wardrobe manifest, global feedback,
+// historical cards, trip state, or conversation history here.
+export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
+  const question = String(body.question || '').trim()
+  const userWeather = body.user_weather || extractStructuredUserWeather([
+    question,
+    typeof body.weather === 'string' ? body.weather : ''
+  ].filter(Boolean).join('\n'))
+  const context = {
+    request: question,
+    occasion: routed.occasion || body.occasion || 'casual',
+    activity: routed.activity || body.activity || 'none',
+    location: routed.location || body.location || '',
+    date: routed.date || '',
+    season: routed.season || body.season || '',
+    mood: routed.mood || body.mood || '',
+    mission: routed.mission || body.mission || 'mix',
+    user_weather: userWeather || null,
+  }
+  return {
+    system: prompts.SINGLE_OUTFIT_STYLIST_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: [
+        'FRESH SINGLE-OUTFIT REQUEST (STRUCTURED AUTHORITY):',
+        JSON.stringify(context, null, 2),
+        '',
+        userWeather
+          ? 'The numeric user_weather range above is a literal fact from the current request. Preserve both endpoints unchanged on every composition tool call.'
+          : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
+      ].join('\n')
+    }],
+    maxTokens: 1200,
+    automaticallySavedCorrection: null,
+    threadState: { turn_mode: 'new_request', current_outfit_set: [] },
+    historyDiagnostics: {
+      historyMessagesReceived: Array.isArray(body.history) ? body.history.length : 0,
+      historyMessagesIncluded: 0,
+      historyCharsRemoved: (Array.isArray(body.history) ? body.history : []).reduce((sum, message) => sum + String(message?.content || '').length, 0),
+    },
+    wardrobeManifestIncluded: false,
+    restrictToInformationalTools: false,
+    singleOutfitContext: context,
+  }
+}
+
 export async function buildStylistConversationPayload(body) {
   const {
     question,
@@ -4206,6 +4273,10 @@ export async function buildStylistConversationPayload(body) {
     mission,
     activity
   } = body
+
+  // This is semantic conversation history. The transport history includes the current user
+  // message; remove it before any state restoration, mode classification, or prompt projection.
+  const priorHistory = priorStylistConversationHistory(history, question)
 
   let activeOutfit = outfit
   let activePieceIds = pieceIds
@@ -4315,7 +4386,7 @@ export async function buildStylistConversationPayload(body) {
     const contentImages = []
 
     const isVisualQuery = /\b(see|saw|photo|photos|image|images|picture|pictures|color|colors|shoes|boots|pants|jeans|skirt|top|shirt|jacket|look|fitted|tucked|hem|waist|silhouette|view|inspect)\b/i.test(question)
-    const isFirstTurn = !history || history.length === 0
+    const isFirstTurn = priorHistory.length === 0
     const shouldAttachImages = isVisualQuery || isFirstTurn || requestedConversationMode === 'new_request'
 
     if (shouldAttachImages) {
@@ -4385,7 +4456,7 @@ export async function buildStylistConversationPayload(body) {
     establishedStylingContextText ||
     generatedOutfitContextText ||
     activeOutfit ||
-    (Array.isArray(history) && history.length)
+    priorHistory.length
   )
 
   const conversationMode = resolveStylistConversationMode(question, {
@@ -4765,21 +4836,6 @@ export async function buildStylistConversationPayload(body) {
     userContent = promptText
   }
 
-  // The client's `history` already ends with the message being asked (StylistChat appends it to
-  // chatHistory before sending), and `question` is then sent separately and appended again as the
-  // final user turn — so the current question reached the model TWICE on every freeform request.
-  // Not the largest cost, but pure duplication, and repeating the latest wording verbatim also
-  // overweights it against the rest of the turn's context.
-  //
-  // Dropped defensively on the server rather than by changing the client contract: only when the
-  // trailing entry is a user message whose text matches `question` exactly. Anything else — a
-  // genuine repeat of an earlier question, a trailing assistant turn — is left alone.
-  const priorHistory = (history || []).map(h => ({ role: h.role, content: h.content }))
-  const askedNow = String(question || '').trim()
-  const last = priorHistory[priorHistory.length - 1]
-  if (askedNow && last?.role === 'user' && typeof last.content === 'string' && last.content.trim() === askedNow) {
-    priorHistory.pop()
-  }
   const boundedHistory = boundFreeformConversationHistory(priorHistory)
 
   return {

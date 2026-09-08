@@ -1,5 +1,118 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **System-aware one-outfit roster, implemented offline 2026-09-08:** the temporary
+> ten-per-category/one-per-warmth repair did not provide meaningful choice among complete systems.
+> A complete one-outfit search now returns every hard-eligible identity in a compact fact index and
+> supplies rich/image evidence as the atomic union of up to four whole mechanically feasible paths.
+> `candidateSet.js` owns the bounded construction-frontier join and reuses the shared structural,
+> layer, environmental, and thermal owners; `tools.js` only orchestrates and serializes it. Required
+> layer paths expose cold layer-on and actual warm layer-off states; hot requests use the same
+> algorithm without forcing outerwear. Final `propose_outfit` still validates any selected path or
+> recombination. Trips, bounded multi-look generation, swaps, and selected-piece flows are no-ops.
+> Deterministic cold/hot/unknown/no-weather/atomic-budget fixtures and a provider-free copied-DB
+> diagnostic are in place; cold and hot live acceptance remain.
+
+> **Capped-retrieval and intent-projection correction, 2026-09-07:** live run
+> `thread_1788822538467` reached the isolated `single_outfit` profile, preserved the stated
+> 60→48°F range, and correctly rejected three under-warm cardigan outfits. It still returned zero
+> cards because the ten-per-category truth-roster cap kept the earliest outerwear rows and hid every
+> `warm`/`very warm` candidate. The model found a suitable coat only through a late free-text search
+> and exhausted its final iteration viewing it. `capSingleOutfitSearchResults` now treats the cap as
+> evidence coverage under numeric weather: it retains the first outerwear example from every
+> observed structured `garmentWarmthLevel`, fills remaining slots in retrieval order, and restores
+> original order. It does not compare against demand, rank thermal fit, read names or deprecated
+> `outerwear_role`, or affect other profiles. The same capture showed the narrow system prompt being
+> followed immediately by `declare_intent`'s universal success message, which discussed unavailable
+> trip, batch, swap, and detail tools. The single-outfit profile now receives a short response naming
+> only its actual search/view/propose sequence and two-endpoint obligation; rejected cards may be
+> repaired and resubmitted but never presented.
+
+> **Warm-end removable-state correction, 2026-09-07:** `thread_1788817405702` selected a genuinely
+> warm wool coat, but removing it at 60°F left a light three-quarter-sleeve satin top. Cold-end-only
+> validation had let the coat hide that failure, and the prior range helper also treated only
+> overshoot—not undershoot—as a warm-end adaptability failure. `requiredThermalEndpointBands`,
+> `outfitRangeCoverage`, and `evaluateOutfitEnvironmentalAdequacy` now evaluate two real worn states:
+> full outfit at the cold endpoint and everything remaining after one actual outerwear removal at
+> the warm endpoint. Remaining layers count; heavy trousers cannot stand in for upper-body warmth.
+> The hard gate stays limited to an explicit required-layer request with a certain stated range.
+> The shared `propose_outfit` schema was corrected in the same slice: “gallery” no longer
+> automatically means `season:'indoor'` when the user states sustained outdoor time. That legacy
+> occasion shortcut could otherwise bypass the shared range validator after the narrow prompt had
+> correctly preserved the exposure.
+
+> **Current-question projection correction, 2026-09-07:** capture
+> `thread_1788817405702` proved the current user message was removed too late. The router saw the
+> same request as both its recent exchange and current request; the full builder counted it as
+> thread context and reclassified “This is ordinary sightseeing” as a correction before removing
+> the duplicate from the final message list, so the turn was assigned `full_stylist`, not the
+> isolated `single_outfit` profile. It nevertheless ran the shared
+> `declare_intent → search_wardrobe → propose_outfit` sequence and produced the wool-coat/light-satin
+> card cited above; that card is evidence for the shared proposal-validator gap, not evidence that
+> narrow routing succeeded. `priorStylistConversationHistory` now owns the
+> transport-to-semantic projection and is consumed before routing, freshness, mode resolution, and
+> history bounding.
+
+> **Fresh-execution ownership correction, 2026-09-07:** the first live check of the isolated
+> single-outfit profile (`thread_1788814890775`) never reached the execution router. The client
+> labeled “This is ordinary sightseeing” as a correction despite the task having no prior history;
+> `/ask` then treated that tone label as router eligibility authority. The captured fallback was the
+> 133,349-character universal system with 14 tools, conflicting home/Vienna and 60°/60→48°F
+> context, five provider iterations, 322,901 input tokens, and 40 images. Fresh client tasks now
+> classify before prose interpretation, and server execution freshness is independently owned by
+> `freeformExecutionContextEvidence`. The exact Vienna request is a permanent regression fixture.
+
+> **Single-outfit execution isolation, 2026-09-07:** provider captures showed that the nominally
+> simple one-card route still ran inside the universal full-stylist workbench: roughly 18,000 words,
+> 14 tools, a 272-piece manifest, broad global memories, then a second 181-piece search roster and
+> 40 images. The execution router now has a real `single_outfit` profile for a fresh one-context,
+> one-card request with no garment subject or existing-card revision. `buildSingleOutfitConversationPayload`
+> supplies only the ratified Style Constitution, a structured request, and the one-card contract;
+> the tool surface is exactly `declare_intent`, `search_wardrobe`, `view_pieces`, and
+> `propose_outfit`. It deliberately excludes history, thread/trip state, global feedback, occasion
+> profile JSON, and the full wardrobe manifest. A literal Fahrenheit range is extracted
+> conservatively into `user_weather` and remains action authority even if the model omits it from a
+> later tool call. Search returns full garment truth because no manifest is present, capped after
+> validity ordering at ten candidates and six images per category for this profile only. Ordinary
+> walking is stated as exposure, not exercise warmth; layering judgments must use actual sleeve
+> geometry and fabric evidence. Trips, multi-context requests, anchor styling, critiques, photos,
+> revisions, and ambiguous requests retain `full_stylist`.
+
+> **Single-outfit weather-layer vertical slice, 2026-09-06:** one/best/pick-one requests now have one
+> freeform route: `declare_intent` → visual `search_wardrobe` → `propose_outfit`.
+> `generate_outfits` is a 2–5-card whole-wardrobe batch tool and rejects `limit:1` locally before its
+> nested composer. A cards declaration requires `layer_requirement:'required'|'unspecified'`; omission
+> is a validation error. When required, `propose_outfit` consumes the turn-local declaration and the
+> shared `outerwearPieces` structured-category predicate, requires the photographed outerwear to have
+> been seen, and keeps it in ordinary card `piece_ids`. Presence is always enforced; the later
+> 2026-09-07 correction below also blocks known undershoot for a certain stated exposure while the
+> model still chooses among adequate candidates from images and thermal facts. Tool schema, handler, prompt projection,
+> and offline acceptance are specified in
+> [single-outfit-weather-layer-vertical-slice-spec.md](single-outfit-weather-layer-vertical-slice-spec.md).
+
+> **Live acceptance correction, 2026-09-07:** provider capture of the first two UI runs showed that
+> presence enforcement passed while actual wearability failed. The correction makes the dedicated
+> `outerwear` role participate in the existing sleeve-construction validator; separates engineered
+> insulating layers from insulating face material in model-facing facts; spreads weather-aware
+> outerwear image slots across structured construction evidence without changing result order; and
+> carries the execution router's structured new-request occasion/activity into the full-stylist tool
+> loop. No trip machinery, new thermal score, garment-name exception, or extra model call was added.
+
+> **Second live acceptance correction, 2026-09-07:** the next two runs saw construction-diverse
+> outerwear but still accepted a known-light trench for a stated 60→48°F breezy exposure. The serial
+> path now preserves `stated_user` ranges literally, locks execution-router activity against later
+> model invention, and hard-rejects known thermal undershoot only when the current cards declaration
+> explicitly requires a layer and the stated exposure is certain. Overall `fabric_weight` no longer
+> masquerades as sleeve bulk; directional sleeve geometry owns that conflict. Rejected attempts stay
+> observable in-turn but do not persist as accepted follow-up cards.
+
+> **Third live acceptance correction, 2026-09-07:** `thread_1788770518010` proved that the activity
+> lock stopped structured tool arguments but not activity re-inference from model-authored
+> `occasion_context` (“gallery walk”). A locked router activity now disables that secondary prose
+> inference as well. Owner ruling also removes ordinary walking's thermal discount: sightseeing
+> remains a footwear/exposure fact, not a dependable source of body heat. The stated 60→48°F case
+> stays `warm` for both `none` and `walking`; hiking retains a genuinely exertive discount for the
+> base only, while removable-layer demand remains sized for stops and other low-output periods.
+
 > **Architecture ownership completion, 2026-08-25:** freeform search, proposal, slot swaps, and
 > bounded generation now resolve named request/artifact/thread/inference evidence through
 > `resolveToolStylingContext` → `resolveStylingContext`; the former tool-local stated/live weather

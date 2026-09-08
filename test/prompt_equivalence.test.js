@@ -49,6 +49,15 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
         )
       : snapshot[key]
+    // 2026-09-06: single-card composition gains one structured intent fact for an explicit
+    // removable-layer request. The accepted delta keeps the original fixture frozen while making
+    // this additive routing/contract instruction visible at the byte-level prompt rail.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        '  * Proposing Outfits (default):',
+        "  * Card Intent & Explicit Layers: Before composing cards outside the narrow implicit 2–5-look batch, call 'declare_intent' with `want:'cards'` and always set `layer_requirement`: use `required` only when the user's CURRENT message explicitly asks the outfit to include a removable layer, otherwise use `unspecified`. Unspecified never means forbidden; choose a layer when the weather and visual outfit call for one. When it is required, search outerwear visually and include the chosen owned layer in the same 'propose_outfit' card's ordinary piece IDs — not as prose, a packing annotation, or an off-card relation. If no eligible owned outerwear exists, report the wardrobe gap.\n  * Proposing Outfits (default):"
+      )
+    }
     // 2026-09-01: the shoes `fabric_category` enum had no `knit` value, so a knitted/flyknit upper
     // was tagged inconsistently as `mesh` or `woven` depending on the photo — in one real wardrobe
     // the word "knit" appears in four shoe names split across both. That made the wet/cold footwear

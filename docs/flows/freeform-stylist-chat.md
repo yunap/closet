@@ -31,6 +31,38 @@ decisions.
 > the versioned `result` envelope with `freeform_propose_outfit` provenance. Tool-loop retries,
 > retrieval/sight gates, and the existing visible card fields are unchanged.
 
+> **[amended 2026-09-07] Fresh one-card composition no longer enters the universal prompt.** The
+> execution router's `single_outfit` result assembles a dedicated prompt with one structured request,
+> no prior history, no manifest, and no saved-feedback or trip-state blocks. Its tool loop exposes
+> only declaration, batched search, focused viewing, and one-card proposal. Exact stated numeric
+> weather is carried as `user_weather`; the server keeps it authoritative across search and proposal.
+
+> **[superseded 2026-09-08] The narrow declaration stays narrow; the temporary category cap does
+> not own complete-outfit discovery anymore.** The 2026-09-07 ten-per-category/per-warmth repair
+> prevented one immediate coat omission but still supplied too few whole-system choices. It remains
+> only for incomplete/narrow searches. `declare_intent` returns a profile-specific success message naming
+> only the four-tool flow; it no longer injects instructions for unavailable trip, batch, swap, or
+> garment-detail tools. A rejected proposal may be repaired and resubmitted inside the existing
+> loop, but only one accepted card may be presented.
+
+> **[implemented 2026-09-08] Complete one-outfit searches use a system-aware roster.** After shared
+> hard piece gates, search returns a complete compact eligible index plus rich/image evidence for the
+> atomic union of up to four validated dress-or-separates paths. Each path includes shoes, required
+> bases, and real outerwear when declared; a variable range records layer-on and actual layer-off
+> states. The finite construction frontier uses structured physical facts only, while
+> `evaluateWearableOutfit` remains final authority and the model owns every aesthetic choice. Hot
+> weather uses the same algorithm but does not reserve a warmer boundary when demand is not variable.
+> No resolved thermal demand preserves stable structural order. The model may make one targeted
+> `view_pieces` call from the complete index; absence from photographs is never a wardrobe gap.
+
+> **[corrected 2026-09-07] Freshness no longer comes from correction-language classification.**
+> The first live check of that profile never reached the router: “This is ordinary sightseeing”
+> classified a new task as a correction. The client now treats every task without thread memory as
+> `new_request`; the server additionally enumerates actual execution-context evidence and considers
+> an empty set fresh regardless of the client’s tone label. Established-card, piece, generated-set,
+> history, and recently-discussed-piece evidence still keep continuation turns out of fresh bounded
+> profiles.
+
 ## Pipeline overview (PM altitude)
 
 ```mermaid
@@ -44,6 +76,8 @@ flowchart TD
     R -->|"wardrobe_inventory"| SQL["SQL category census<br/>no second model call"]
     R -->|"card / garment / advice"| CMP{{"LLM · compact answer<br/>no tools"}}
     R -->|"bounded_multi"| BM{{"LLM · one batched composer<br/>2–5 looks"}}
+    R -->|"single_outfit"| SP["Assemble narrow prompt<br/>structured request · no manifest/history"]
+    SP --> SM{{"LLM · narrow tool loop<br/>declare · search · view · propose"}}
     R -->|"full_stylist · or any failure"| PAY["Assemble full prompt<br/>manifest + thread state + feedback"]
     PAY --> M{{"LLM · tool loop ×10<br/>search · view · propose · plan"}}
     M --> G{"Output guards<br/>pass?"}
@@ -52,13 +86,14 @@ flowchart TD
     SQL --> OUT
     CMP --> OUT
     BM --> OUT
+    SM --> G
     ACK --> OUT
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class IN,C,ACK,SQL,PAY,OUT app;
-    class R,CMP,BM,M model;
+    class IN,C,ACK,SQL,SP,PAY,OUT app;
+    class R,CMP,BM,SM,M model;
     class LOC,EL,G check;
 ```
 
@@ -80,19 +115,24 @@ and they can disagree.**
 
 | | Where | Reads | Consumed by |
 | --- | --- | --- | --- |
-| Client | `classifyChatTurn`, [`StylistChat.jsx:551`](../../src/components/StylistChat.jsx#L551) | the text + `hasThreadMemory` | sent in the body as `conversationMode` |
+| Client | `classifyChatTurn` in `src/utils/chatTurn.js` | the text + `hasThreadMemory` | sent in the body as `conversationMode` |
 | Server | `resolveStylistConversationMode`, [`core.js:3794`](../../styling-engine/core.js#L3794) | the text + `hasThreadContext` / `hasGeneratedContext`, with the client value as `requestedMode` | the prompt's turn directive |
 
-The server's version is richer — it distinguishes correction from
-preference_reaction on real thread context, and only calls a turn `followup` when
-the text actually refers to something. **But Layer 1's eligibility test reads
-`req.body.conversationMode`, the raw client value** ([`routes/ai.js:4003`](../../routes/ai.js#L4003)),
-while the prompt reads the resolved one. So routing is decided by the coarse
-classifier and behaviour by the fine one, and a turn can be routed as a follow-up
-while being prompted as a new request.
+The server's version is richer — it distinguishes correction from preference reaction on real
+thread context, and only calls a turn `followup` when the text actually refers to something.
+Layer 1 no longer uses either tone classifier as its freshness owner: it calls
+`freeformExecutionContextEvidence` and permits fresh bounded routing only when that structural
+evidence set is empty.
 
-The coarse classifier's last rule is the consequential one: **any message in a
-thread that has memory becomes `followup`**, whatever it says.
+The client transport appends the current user message to `history` before posting `/ask`.
+`priorStylistConversationHistory` projects that transport array into semantic prior history by
+removing only a trailing user entry exactly equal to `question`. The execution-evidence check,
+router recent-exchange block, server conversation-mode resolver, and final bounded history all use
+that same projection; the current request cannot become evidence that it is a continuation.
+
+The coarse classifier's last rule remains consequential inside an established thread: **any
+otherwise-unclassified message in a thread that has memory becomes `followup`**, whatever it says.
+Without thread memory it returns `new_request` before applying correction-language patterns.
 
 | Mode | Reached when | Cross-turn? |
 | --- | --- | --- |
@@ -293,13 +333,13 @@ and live turns died with zero cards. The model chooses what to do:
 | Action | What it means |
 | --- | --- |
 | *(no tool)* | conversational advice / evaluation prose |
-| `declare_intent` | declare `cards` / `image`; required *by its consumers*, not by every turn |
+| `declare_intent` | declare `cards` / `image`; cards also declare explicit removable-layer obligation; required *by its consumers*, not by every turn |
 | `search_wardrobe` (± `visual`) | look up real owned pieces; `category` takes an array, so one call covers every slot |
 | `view_pieces` | cheap verification: thumbnails + truth lines for exact IDs |
 | `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
 | `wardrobe_coverage` | coverage/gap census |
 | `propose_outfit` | render a verified outfit card ("show me") |
-| `generate_outfits` | compose fresh cards from scratch |
+| `generate_outfits` | compose a fresh 2–5-card same-context batch from scratch; never the one-card path |
 | `suggest_slot_swaps` | one-slot alternatives against an existing card |
 | `plan_outfit_set` → `submit_plan_outfits` | multi-slot plans (trip, work-week, capsule, event set) via the model-mode workbench |
 | `render_preview` | render an image from an existing card only after the turn declares `want:"image"` |
@@ -339,6 +379,62 @@ this path directly; an explicit one/best/pick-one request retains targeted searc
 and an explicit count wins. Composer `reason`, `watchFor`, and `stylingInstructions` are locally
 checked against their final IDs; deliberation or discarded-ID prose is withheld without another
 paid iteration.
+
+**[2026-09-06] One-card weather-layer slice.** An explicit one/best/pick-one request cannot enter
+the bounded composer through `generate_outfits(limit:1)` anymore: `executeTool` returns locally
+before the nested provider boundary. The serial flow declares
+`layer_requirement:'required'|'unspecified'`, visually searches the needed categories, and calls
+`propose_outfit`. Missing `layer_requirement` on a cards declaration is a validation error, not a
+silent default. When it is `required`, the proposal must contain an actual structured-category
+outerwear piece in ordinary `piece_ids`; a model-authored layer role cannot spoof category truth, and
+photographed outerwear must have been seen this turn. The model owns which eligible layer works with
+the outfit; code owns presence, sight, structure, eligibility, and the existing environmental hard
+constraints. The accepted card carries the same resolved weather established by search.
+
+**[2026-09-07 warm-end correction.]** A required layer is not validated only at the coldest
+temperature. For a certain stated range, the shared environmental validator evaluates the complete
+outfit with the layer on at the cold endpoint and the clothes still worn after one actual outerwear
+piece is removed at the warm endpoint. A second layer may remain; a sufficiently substantial top may
+stand alone. Heavy bottoms cannot compensate for a known-light upper body. If every known removable
+configuration leaves the upper body below warm-end demand, `propose_outfit` rejects the card and asks
+the model to search/re-propose rather than narrating around the shortfall.
+
+The shared `propose_outfit` schema no longer equates an occasion noun with exposure: a gallery or
+restaurant is not automatically `season:'indoor'` when the user explicitly describes sustained
+outdoor time during the wearing period. Climate-controlled treatment follows the actual exposure;
+the supplied season and stated range otherwise remain authoritative.
+
+The canonical acceptance input states conditions during the actual wearing window. A daily forecast
+high/overnight low is not assumed to be an activity's exposure range; mapping timed trip slots to
+hourly forecast conditions is explicitly a later integration slice. See
+`docs/single-outfit-weather-layer-vertical-slice-spec.md`.
+
+**[2026-09-07] First live acceptance correction.** The execution router's new-request
+occasion/activity now persists into `toolContext` even when it chooses `full_stylist`, so a later
+`search_wardrobe` call may omit those optional arguments without reverting to casual/no-activity
+defaults. Explicit search arguments still win. Weather-aware search keeps its returned-row order but
+spreads outerwear image allocation across structured construction evidence instead of attaching every
+photo to the earliest cardigan/shrug rows. Proposal validation now compares an `outerwear`-role piece
+to the primary top/dress through the same sleeve-direction/construction path already used by
+`layer_top`. Thermal rows distinguish face material from a recorded insulating layer. No additional
+model call or repair pass is introduced.
+
+**[2026-09-07] Second live acceptance correction.** A user-stated wearing-window range is now
+preserved literally instead of being mistaken for a daily envelope and adjusted upward. Router
+activity is authoritative for the turn, preventing a later model tool call from inventing walking
+and changing footwear or thermal demand. On the single-outfit path, an explicitly required layer
+with certain stated exposure hard-rejects known thermal undershoot; coarse weather and incomplete
+garment evidence remain advisory. Overall fabric weight no longer stands in for sleeve volume, and
+rejected diagnostic cards are excluded from persisted follow-up state after a successful retry.
+
+**[2026-09-07] Third live acceptance correction.** `thread_1788770518010` showed that locking the
+router's structured activity was insufficient: `occasion_context:"gallery walk"` could still be
+read by the shared activity-profile inference and turn authoritative `none` back into `walking`.
+The lock now suppresses that secondary prose inference for the turn. Separately, owner ruling makes
+ordinary walking thermally neutral: sightseeing still affects footwear, but cannot lower the
+clothing warmth requirement. At a stated 60→48°F, both `none` and `walking` therefore demand a
+`warm` outfit; only genuinely exertive hiking receives a base-clothing discount. Removable layers
+receive no activity discount because they must work during stops and lower-output portions too.
 
 ## Layer 3 — Output guards
 
@@ -441,8 +537,9 @@ stateDiagram-v2
 - **Bounded full-stylist history (default since 2026-08-19):** only prior conversation prose is capped: four recent
   exchanges/eight messages, 12,000 characters total and 3,500 per message. Structured thread
   state, current verified cards, durable feedback memory and the wardrobe manifest remain on their
-  existing authoritative paths. The duplicate current question is removed before bounding; no
-  summarization call is added. Run diagnostics store only counts and characters removed.
+  existing authoritative paths. The transport copy of the current question is removed before any
+  prior-context decision and before bounding; no summarization call is added. Run diagnostics store
+  only semantic prior-message counts and characters removed.
 - **Prompt/tool ownership (2026-08-19):** `freeformToolRoutingInstruction` keeps only relationships
   spanning several tools. Each `STYLIST_TOOLS` description owns its own eligibility, arguments and
   mechanical result; `buildStylistConversationDirective` is the single volatile owner of the turn's

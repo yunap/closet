@@ -1413,7 +1413,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   additionalProperties: false,
   required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
   properties: {
-    profile: { type: 'string', enum: ['bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
+    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
     season: { type: 'string' },
@@ -1430,6 +1430,8 @@ const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request 
 
 Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
 
+Choose single_outfit only for a FRESH request for exactly one complete outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. Explicit "one", "one best", "pick one", and "give me an outfit" requests use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
+
 Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
 
 Choose garment_fact only when compact context says an active/verified garment subject exists and the user asks about that garment's construction, wear mechanics, warmth, suitability, or a comparison among supplied subjects. When compact context also says saved garment photographs are available, use garment_fact for judging the visibly shown result of a wear-mechanics configuration such as a tuck; the saved photos will be supplied to the answer model. Do not use it to build an outfit or discover other pieces.
@@ -1438,7 +1440,7 @@ Choose general_advice only for general styling education that does not claim to 
 
 Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
 
-Choose full_stylist for: one/best/pick-one; broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
+Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 

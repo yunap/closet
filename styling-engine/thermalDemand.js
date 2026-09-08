@@ -3,7 +3,8 @@
 // The demand half of `contribution >= demand`. It answers only "how much thermal capacity do these
 // conditions call for", never "which garment". Supply is garmentWarmth.js's; the comparison is §16's.
 //
-// NO PRODUCTION CONSUMERS. §8 step 1. Nothing calls this yet, by design.
+// Production owner: outfitEnvironmentalAdequacy.js. Ranking consumers use the same comparison
+// primitives without acquiring their own Fahrenheit mapping.
 //
 // EXPOSURE IS A NAMED, REQUIRED INPUT (§9.1) — not a field reached out of a weather blob. It comes
 // from exposure.js's resolveExposureContext, which owns "what will this outfit actually meet".
@@ -31,13 +32,16 @@ const SEDENTARY_DEMAND_F = [
   { atOrAbove: -Infinity, level: 'very warm' },
 ]
 
-// Exertion lowers required insulation at the same ambient temperature — the relationship §11.1 took
-// from the cold-exercise literature and the reason a hiker and a stationary diner must not resolve
-// to the same demand. Ordinal steps, never a metabolic rate (§7 of the exposure spec).
+// Genuine exertion lowers required insulation at the same ambient temperature — the relationship
+// §11.1 took from the cold-exercise literature and the reason a hiker and a stationary diner must
+// not resolve to the same demand. Ordinary walking is deliberately neutral: sightseeing is not a
+// dependable heat source, and it commonly means MORE sustained outdoor exposure rather than less.
+// Walking still owns footwear policy and remains observable on the exposure; it simply earns no
+// clothing-warmth credit. Ordinal steps, never a metabolic rate (§7 of the exposure spec).
 //
 // `unknown` deliberately shifts nothing: absent exertion is not an assertion of stillness, and
 // exposure.js keeps that distinction precisely so this layer cannot lose it.
-const EXERTION_SHIFT = { unknown: 0, none: 0, walking: -1, hiking: -2 }
+const EXERTION_SHIFT = { unknown: 0, none: 0, walking: 0, hiking: -2 }
 
 // A climate-controlled destination. Anchored rather than stated: the CBE/ASHRAE ensembles for
 // ordinary heated indoor wear (trousers + long-sleeve shirt ~0.61 clo) sit squarely in the middle
@@ -51,6 +55,36 @@ function levelAt(tempF) {
 }
 const shift = (level, by) =>
   WARMTH_LEVELS[Math.max(0, Math.min(WARMTH_LEVELS.length - 1, LEVEL_INDEX.get(level) + by))]
+
+function endpointBand(tempF, exertionShift, coarse, basis) {
+  if (!Number.isFinite(tempF)) return { level: null, range: null, certain: false, basis: 'no_conditions' }
+  const level = shift(levelAt(tempF), exertionShift)
+  const spread = coarse ? 1 : 0
+  return {
+    level,
+    range: [shift(level, -spread), shift(level, spread)],
+    certain: !coarse,
+    basis,
+  }
+}
+
+// The two actual states a variable-weather outfit must answer. Kept beside the demand mapping so
+// consumers never reconstruct the warm endpoint from a low-temperature band or from prose.
+export function requiredThermalEndpointBands(exposure = null) {
+  const c = exposure?.conditions
+  if (!c || !c.known || !Number.isFinite(c.wakingLowF)) {
+    const unavailable = { level: null, range: null, certain: false, basis: 'no_conditions' }
+    return { cold: unavailable, warm: unavailable, certain: false, basis: 'no_conditions' }
+  }
+  const exertion = EXERTION_SHIFT[exposure.exertion] ?? 0
+  const basis = c.conditionsSource
+  return {
+    cold: endpointBand(c.wakingLowF, exertion, c.coarse, basis),
+    warm: endpointBand(c.wakingHighF ?? c.wakingLowF, exertion, c.coarse, basis),
+    certain: !c.coarse,
+    basis,
+  }
+}
 
 /**
  * @param {object} exposure  an ExposureContext from exposure.js — REQUIRED, and its `unknown`
@@ -69,8 +103,8 @@ export function requiredThermalBand(exposure = null) {
   // The COLD end of the exposure window sets the requirement: an outfit must work at the coolest
   // moment it is worn through, and a removable layer is how the warm end is handled. That is
   // §5.5's removability axis doing its own job rather than the demand absorbing it.
-  const exertion = EXERTION_SHIFT[exposure.exertion] ?? 0
-  const outdoorDemand = shift(levelAt(c.wakingLowF), exertion)
+  const endpointBands = requiredThermalEndpointBands(exposure)
+  const outdoorDemand = endpointBands.cold.level
 
   // §5.7: an indoor destination excuses the BASE, never the trip — and the two are returned
   // separately so a consumer cannot blend them back together.
@@ -104,19 +138,17 @@ export function requiredThermalBand(exposure = null) {
   // across the whole day, so the warm end caps it as surely as the cold end sets it. That is what
   // keeps a `very warm` puffer overshooting a 54–65°F day while a `warm` cardigan sits inside it.
   //
-  // The discount is CAPPED, not dropped. Dropping it entirely over-corrects: a city sightseeing day
-  // is mostly spent moving, and sizing its coat for a standstill puts a fleece on a 65°F afternoon —
-  // the same error inverted, which is this arc's signature way of failing. Exertion is INTERMITTENT,
-  // and one step is what that intermittency is worth: a hiker's base gets the full -2 because they
-  // are climbing, while the jacket they take off at the top gets -1 because they are not climbing
-  // the whole time. Walking's -1 is already within the cap and so is unchanged.
+  // Exertion belongs to the BASE only. Even a hiker's removable layer is for the trailhead, stops,
+  // shade, and return rather than the heat-producing middle of the climb. Ordinary walking already
+  // has zero base discount above, so a sightseeing label cannot make either part of the outfit
+  // lighter.
   //
   // Built from the TRIP's conditions when the destination is indoors — an outer layer on a museum
   // day answers to the walk there, never to the heated gallery. That is the same thing `transit`
   // says; the layer is where it becomes usable, as one demand-shaped object with a level and a
   // range that agree. Returning transit's level beside the slot's range was measuring distance from
   // one band's centre against another band's edges.
-  const layerExertion = Math.max(-1, exertion)
+  const layerExertion = 0
   const lc = (exposure.transit?.applies && exposure.transit.conditions) || c
   const layerLevel = shift(levelAt(lc.wakingLowF ?? c.wakingLowF), layerExertion)
   const layer = {
@@ -128,7 +160,9 @@ export function requiredThermalBand(exposure = null) {
   // Uncertainty. A coarse window is an estimate of which hours are met, so the true demand could sit
   // a level either side. An anchored (`explicit_hourly`) reading would collapse this to a point.
   const spread = c.coarse ? 1 : 0
-  const range = [shift(level, -spread), shift(level, spread)]
+  const range = indoor
+    ? [shift(level, -spread), shift(level, spread)]
+    : endpointBands.cold.range
 
   return {
     level,

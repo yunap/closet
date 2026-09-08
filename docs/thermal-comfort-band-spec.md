@@ -185,6 +185,10 @@ A replacement is not acceptable unless all of these hold:
    provenance and widen its demand accordingly: a coarse window is a range, and
    `conditionsSource: unknown` is §5.6's "unknown is never inadequacy" arriving through the
    environmental input rather than the garment one.
+9. **A user-stated encountered range is literal, not a daily envelope.** Added 2026-09-07 after the
+   single-outfit live check rewrote a stated 48°F return to 52.2°F. Exposure marks it
+   `stated_user_exposure_range`, preserves both endpoints, and treats the resulting demand as
+   certain. This is distinct from live/model daily high-low estimates, which remain coarse.
 
 ## 6. What is deliberately NOT decided
 
@@ -1247,7 +1251,7 @@ Two findings the engine could never state before, both from `compareThermalFit`:
 
 ```text
 THERMAL_OVERSHOOT    advisory   "more warmth than the conditions call for"
-THERMAL_UNDERSHOOT   advisory   "less warmth than the conditions call for"
+THERMAL_UNDERSHOOT   advisory by default   "less warmth than the conditions call for"
 ```
 
 The existing `NO_WARM_LAYER_FOR_COLD` is a **presence** question keyed on `isCold` — "is there a warm
@@ -1256,13 +1260,18 @@ between the two temperature extremes nothing could express: that is how a puffer
 were equally acceptable on a mild museum day, the failure
 [layer-weight-ceiling.md](layer-weight-ceiling.md) recorded across five runs and two providers.
 
-### 20.2 Both findings are ADVISORY, and undershoot learned that the hard way
+### 20.2 Advisory by default; one narrow explicit-layer exception
 
 Undershoot shipped as an error for exactly one test run. A synthetic *"sleeved wool coat"* tagged
 `fabric_weight: light` with no fibre content placed as `light`, undershot a 65/45 day, and
 **hard-blocked plan submission** — acceptance criterion 8 violated, and a barely-tagged wardrobe is
-precisely the shape that produces it. Both are advisory now. The presence gate keeps the hard
-authority; the band informs.
+precisely the shape that produces it. Both are advisory by default. Overshoot is always advisory.
+
+**Amended 2026-09-07 after single-outfit live acceptance:** when the current user explicitly
+requires a weather layer, the exposure is a certain user-stated encountered range, and every thermal
+contribution is known, undershoot is hard-invalid for that one proposal contract. This does not apply
+to plans, coarse forecasts, unspecified layers, or unknown garment evidence. It consumes the same
+band; it adds no score or threshold. The presence gate remains independent.
 
 That also keeps §19.1's composition invariant intact one layer down: adequacy reports, it does not
 compose.
@@ -1784,3 +1793,29 @@ no new thermal-amount consumer reads isCold / isColdSevere
 parallel contracts may not derive triggers from thermal-band levels
 no new consumer of the prose cold producer without explicit ownership
 ```
+
+### 25.5 Owner correction — ordinary walking is thermally neutral (2026-09-07)
+
+Live acceptance `thread_1788770518010` falsified the original one-step walking discount. A
+sightseeing/gallery walk is ordinary outdoor movement, not exercise, and often lengthens continuous
+exposure. It must not make a 48°F outfit require less clothing. `requiredThermalBand` therefore
+maps both `none` and `walking` to zero shift; `hiking` retains the genuine-exertion shift for the
+base outfit only. Removable-layer demand takes no activity shift, including for hiking: that layer
+answers to trailheads, stops, shade and the return rather than the heat-producing middle of the
+climb. Walking continues to drive footwear policy and remains present in `ExposureContext` for
+future duration reasoning. This is a calibration correction to the demand owner, not a collapse of
+activity into weather or a new garment rule.
+
+### 25.6 Owner correction — range coverage means two real worn configurations (2026-09-07)
+
+The warm endpoint is not merely an overshoot ceiling. It also has an adequacy floor: after one actual
+removable outerwear piece comes off, the clothing still worn must not undershoot the warm endpoint.
+`requiredThermalEndpointBands` owns both endpoint demands; `outfitRangeCoverage` owns enumerating the
+real one-layer-removal configurations; `evaluateOutfitEnvironmentalAdequacy` owns the verdict.
+
+Warm-end comparison uses upper-body contribution. Otherwise a heavy trouser becomes the outfit's
+warmest non-removable garment and incorrectly certifies a light three-quarter-sleeve top. A second
+cardigan or other layer that remains after the coat is removed still contributes, so the contract is
+not “coat off means one bare top.” The production hard finding is limited to known evidence, a
+certain stated encountered range, and an explicit removable-layer obligation. Coarse forecasts and
+unknown upper-body construction remain non-invalidating.

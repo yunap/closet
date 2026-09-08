@@ -108,3 +108,4 @@ scratch/*
 !scratch/compare_warmth_placement.mjs
 !scratch/qa_thermal_shipped_path.mjs
 !scratch/capture_thread_for_review.mjs
+!scratch/diagnose_system_aware_weather_roster.mjs

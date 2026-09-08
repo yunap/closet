@@ -105,7 +105,7 @@ Classification per the owner's three categories:
 | 19 | `NO_WARM_LAYER_FOR_COLD` | **H** | presence in genuine cold — the one defensible hard thermal gate |
 | 20 | removable-layer requirement (`needsRemovableCoolLayer`) | **J** | keys on `lowF`; its own spec says it lost authority |
 | 21 | `demandHint()` appended to #20 | **J** | |
-| 22 | `THERMAL_UNDERSHOOT` / `THERMAL_OVERSHOOT` | **J** | advisory findings |
+| 22 | `THERMAL_UNDERSHOOT` / `THERMAL_OVERSHOOT` | **J** | advisory findings by default; since 2026-09-07 known undershoot is hard only for the narrow single-card explicit-layer + certain stated-exposure contract |
 | 23 | transit-coverage requirement | **J** | parallel contract, uncalibrated (band spec §21.1) |
 
 ### Search results

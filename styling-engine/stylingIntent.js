@@ -55,6 +55,29 @@ export function extractWeatherContext(text = '') {
   return ''
 }
 
+// Fresh single-outfit requests need the user's literal numeric range to survive the routing
+// boundary as data. extractWeatherContext is intentionally lightweight display prose and returns
+// only the first number from forms such as "60→48°F"; using it as action authority therefore
+// changed the actual conditions before the styling model saw them. This extractor is deliberately
+// conservative: it recognizes only an explicit two-number Fahrenheit range and returns null for
+// anything that would require climate knowledge or interpretation.
+export function extractStructuredUserWeather(text = '') {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .replace(/[–—→]/g, '-')
+  const match = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
+  if (!match) return null
+  const first = Number(match[1])
+  const second = Number(match[2])
+  if (!Number.isFinite(first) || !Number.isFinite(second) || first < -100 || first > 150 || second < -100 || second > 150) return null
+  const weather = { high_f: Math.max(first, second), low_f: Math.min(first, second) }
+  if (/\b(rain|rainy|showers?|drizzle|wet)\b/.test(normalized)) weather.precipitation = 'rain'
+  else if (/\b(snow|snowy)\b/.test(normalized)) weather.precipitation = 'snow'
+  if (/\b(windy|strong winds?|gusty|gusts?)\b/.test(normalized)) weather.wind = 'windy'
+  else if (/\b(breezy|breeze)\b/.test(normalized)) weather.wind = 'breezy'
+  return weather
+}
+
 const MONTH_NAMES = {
   jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4,
   jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,

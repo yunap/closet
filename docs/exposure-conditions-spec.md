@@ -660,13 +660,17 @@ adding any typed daypart field, and make it a **weather-sourcing policy**, not a
 `resolveConditions` now returns provenance rather than a bare number:
 
 ```text
+stated_user_exposure_range      user-stated range the outfit will actually encounter
 explicit_hourly                  an exposure window is known and sampled from real hourly data
 waking_window_estimate           live daily high/low, waking window estimated
 seasonal_waking_window_estimate  model-estimated high/low, waking window estimated
 unknown                          nothing usable
 ```
 
-`coarse: true` for both estimate tiers — the window is inferred, not observed. On the Vienna
+`coarse: true` for both estimate tiers — the window is inferred, not observed. A structured
+`stated_user` range is preserved literally as `wakingLowF`/`wakingHighF`, is non-coarse, and is never
+passed through the daily-envelope estimator. This distinction was enforced 2026-09-07 after a live
+3–8 p.m. request stating 60°F outbound and 48°F on return was silently rewritten to 52.2°F. On the Vienna
 forecast:
 
 ```text
@@ -705,3 +709,15 @@ is inert until something asks *"how much thermal capacity does this context call
 Four weather rules shipped in one day, each correct, each patching the previous one's blind spot;
 `needsRemovableCoolLayer` was the fourth, and it produced this bug. A fifth rule is not the answer.
 The answer is that the question has an owner.
+
+### 11.1 Owner correction — walking is exposure, not thermal relief (2026-09-07)
+
+The shipped demand calibration initially treated `walking` as a one-level metabolic discount.
+Live acceptance `thread_1788770518010` showed the product consequence: model-authored “gallery
+walk” made a moderate tee plus moderate uninsulated trench acceptable at a stated 48°F. The owner
+ruled that ordinary sightseeing is not dependable exertion; if anything, it indicates more time
+outside. Walking remains a typed exposure fact and continues to govern footwear, but contributes
+zero thermal-demand shift. `hiking` remains the only current activity value that earns a base-
+clothing warmth discount. Removable-layer demand earns no activity discount, including on a hike,
+because it must cover stops and other low-output periods. Duration remains a separate unresolved
+exposure dimension rather than being invented from the word “walking.”
