@@ -53,6 +53,7 @@ try {
     intent: 'compose',
     visual: false,
   }, context)
+  if (!Array.isArray(result)) throw new Error('single-outfit search did not return a result array')
   const roster = result.find(item => item.system_roster)?.system_roster
   if (!roster) throw new Error('single-outfit search returned no system_roster block')
   const report = context.freeformDiagnostics.systemAwareWeatherRoster
@@ -60,7 +61,7 @@ try {
   const outerwear = roster.eligible_piece_index.filter(piece => piece.category === 'outerwear')
   const groupedOuterwear = new Map()
   for (const piece of outerwear) {
-    const key = `${piece.thermal || 'thermal unknown'} · insulation ${piece.insulating_layer} · interior ${piece.interior}`
+    const key = `${piece.thermal || 'thermal unknown'} · insulation ${piece.insulating_layer} · construction degree ${piece.construction_thermal_degree ?? 'unknown'}`
     groupedOuterwear.set(key, [...(groupedOuterwear.get(key) || []), piece])
   }
 
@@ -68,12 +69,19 @@ try {
   console.log(`source database (not mutated): ${sourcePath}`)
   console.log(`eligible pieces: ${report.eligible_piece_count}`)
   console.log(`logical candidate paths: ${report.candidate_path_count}`)
-  console.log(`evaluated frontier paths: ${report.evaluated_path_count}`)
+  console.log(`evaluated frontier paths: ${report.evaluated_path_count} (${report.path_enumeration_scope})`)
+  console.log(`adaptive frontier by category: ${Object.entries(report.frontier_piece_ids)
+    .map(([category, ids]) => `${category}=${ids.length}`)
+    .join(', ')}`)
   console.log(`known feasible: ${report.known_feasible_path_count}; unknown: ${report.unknown_path_count}`)
   console.log('\nEligible outerwear by thermal/construction evidence:')
   for (const [group, pieces] of groupedOuterwear) {
     console.log(`  ${group}`)
     for (const piece of pieces) console.log(`    ${piece.id} · ${piece.name}`)
+  }
+  console.log('\nOuterwear identities retained in the adaptive construction frontier:')
+  for (const id of report.frontier_piece_ids.outerwear) {
+    console.log(`  ${id} · ${byId.get(Number(id))?.name || 'unknown'}`)
   }
   console.log('\nSelected complete visual paths:')
   for (const selected of report.selected_paths) {

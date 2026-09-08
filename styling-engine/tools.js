@@ -1948,9 +1948,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const modelFacingSelectionReport = {
             eligible_piece_count: systemRoster.report.eligible_piece_count,
             eligible_by_category: systemRoster.report.eligible_by_category,
-            candidate_path_count: systemRoster.report.candidate_path_count,
-            evaluated_path_count: systemRoster.report.evaluated_path_count,
-            path_enumeration_complete: systemRoster.report.path_enumeration_complete,
             known_feasible_path_count: systemRoster.report.known_feasible_path_count,
             unknown_path_count: systemRoster.report.unknown_path_count,
             visually_presented_path_count: systemRoster.report.visually_presented_path_count,

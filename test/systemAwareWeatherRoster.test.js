@@ -121,6 +121,77 @@ test('a coat cannot make a light warm-end base feasible, while a remaining layer
     path.piece_ids.includes(cardigan.id) && path.wearing_states.warm.piece_ids.includes(cardigan.id)))
 })
 
+test('a compatible outerwear-category light layer can serve as the middle of a removable chain', () => {
+  const lightBase = top(60, {
+    fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'],
+    sleeve_length: 'short',
+  })
+  const cardigan = layer(61, {
+    fabric_weight: 'medium', fabric_category: 'knit', fiber_content: ['wool'],
+    interior_construction: 'unlined', sleeve_shape: 'fitted',
+  })
+  const coat = layer(62, {
+    fabric_category: 'wool', fiber_content: ['wool'], insulating_layer_materials: ['wool batting'],
+    interior_construction: 'full_lining', sleeve_shape: 'straight', length_hits_at: 'mid_thigh',
+  })
+  const roster = buildSystemAwareWeatherRoster({
+    pieces: [lightBase, bottom(63), shoe(64), cardigan, coat],
+    weatherProfile: weather(60, 48), activity: 'walking', layerRequired: true,
+  })
+
+  const chain = roster.systemPaths.find(path =>
+    path.piece_ids.includes(cardigan.id) && path.piece_ids.includes(coat.id))
+  assert.ok(chain, 'the system roster should expose the compatible base → cardigan → coat chain')
+  assert.equal(chain.wearing_states.warm.removed_piece_id, coat.id)
+  assert.ok(chain.wearing_states.warm.piece_ids.includes(cardigan.id),
+    'removing the outermost coat must leave the weather-suitable middle layer worn')
+  assert.ok(!roster.systemPaths.some(path =>
+    path.piece_ids.includes(cardigan.id) && path.piece_ids.includes(coat.id) &&
+      path.wearing_states.warm.removed_piece_id === cardigan.id),
+  'a known warmer coat cannot be placed beneath the lighter cardigan')
+})
+
+test('a light layer stays indexed but cannot serve as a middle layer under an incompatible sleeve', () => {
+  const lightBase = top(70, {
+    fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'],
+    sleeve_length: 'short',
+  })
+  const deepArmholeCardigan = layer(71, {
+    fabric_weight: 'medium', fabric_category: 'knit', fiber_content: ['wool'],
+    interior_construction: 'unlined', sleeve_shape: 'deep_armhole',
+  })
+  const narrowCoat = layer(72, {
+    fabric_category: 'wool', fiber_content: ['wool'], insulating_layer_materials: ['wool batting'],
+    interior_construction: 'full_lining', sleeve_shape: 'fitted', length_hits_at: 'mid_thigh',
+  })
+  const roster = buildSystemAwareWeatherRoster({
+    pieces: [lightBase, bottom(73), shoe(74), deepArmholeCardigan, narrowCoat],
+    weatherProfile: weather(60, 48), activity: 'walking', layerRequired: true,
+  })
+
+  assert.ok(roster.eligiblePieceIndex.some(piece => piece.id === deepArmholeCardigan.id),
+    'the cardigan remains a searchable identity rather than being globally excluded')
+  assert.ok(!roster.systemPaths.some(path =>
+    path.piece_ids.includes(deepArmholeCardigan.id) &&
+      path.piece_ids.includes(narrowCoat.id) &&
+      path.wearing_states.warm.removed_piece_id === narrowCoat.id),
+  'the known sleeve conflict must keep the cardigan-middle/coat-outermost chain out of the model roster')
+  assert.ok((roster.report.hard_failures_by_code.layer_construction_sleeve_conflict || 0) > 0)
+})
+
+test('adaptive frontiers stop at factual coverage instead of padding duplicate outerwear identities', () => {
+  const duplicateLayers = Array.from({ length: 30 }, (_, index) => layer(100 + index))
+  const roster = buildSystemAwareWeatherRoster({
+    pieces: [top(90), bottom(91), shoe(92), ...duplicateLayers],
+    weatherProfile: weather(60, 48), activity: 'walking', layerRequired: true,
+  })
+
+  assert.equal(roster.eligiblePieceIndex.filter(piece => piece.category === 'outerwear').length, 30,
+    'the complete hard-eligible identity index remains available')
+  assert.equal(roster.report.frontier_piece_ids.outerwear.length, 1,
+    'mechanically identical pieces do not fill an arbitrary outerwear quota')
+})
+
 test('hot selection evaluates complete systems and does not collapse equivalent warmth labels', () => {
   const pieces = [
     top(20, { fabric_weight: 'ultralight', sleeve_length: 'sleeveless' }),

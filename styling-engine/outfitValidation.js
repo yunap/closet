@@ -284,21 +284,47 @@ function layeringCandidatePairs(pieces = [], { roleAware = false } = {}) {
     }
     return pairs
   }
-  // `outerwear` is a wearable outer-layer role in its own right, not merely a category that may
-  // be assigned `layer_top`. Both roles describe the same physical relationship to the primary
-  // top/dress for direction and sleeve-construction purposes. Omitting the dedicated role here
-  // let a deep-armhole inner top pass beneath a fitted-sleeve duster even though the canonical
-  // pair verdict already knows that geometry is incompatible.
-  const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top' || piece.role === 'outerwear')
+  // `layer_top` and `outerwear` are consecutive contextual roles, not aliases. With no middle
+  // layer, outerwear sits directly over the primary top/dress. With a middle layer, validate the
+  // middle against the primary and the outermost piece against the middle; comparing both layers
+  // only to the primary misses exactly the sleeve-in-sleeve relationship that decides whether a
+  // cardigan can fit under a jacket.
+  const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top')
+  const outermostLayers = normalizedPieces.filter(piece => piece.role === 'outerwear')
   const dresses = normalizedPieces.filter(piece => piece.role === 'dress')
   const primaryTops = normalizedPieces.filter(piece => piece.role === 'primary_top')
+  const resolvedLayerTopPairs = []
   for (const layerTop of layerTops) {
     if (dresses.length) {
-      for (const dress of dresses) pairs.push({ added: layerTop, base: dress, relationship: 'layer_top_dress' })
+      for (const dress of dresses) {
+        const pair = { added: layerTop, base: dress, relationship: 'layer_top_dress' }
+        pairs.push(pair)
+        resolvedLayerTopPairs.push({ ...pair, direction: resolveLayerDirection(layerTop, dress, pair.relationship) })
+      }
       continue
     }
     for (const primaryTop of primaryTops) {
-      pairs.push({ added: layerTop, base: primaryTop, relationship: 'layer_top_primary_top' })
+      const pair = { added: layerTop, base: primaryTop, relationship: 'layer_top_primary_top' }
+      pairs.push(pair)
+      resolvedLayerTopPairs.push({ ...pair, direction: resolveLayerDirection(layerTop, primaryTop, pair.relationship) })
+    }
+  }
+  for (const outermost of outermostLayers) {
+    const middleLayers = resolvedLayerTopPairs
+      .filter(pair => pair.direction?.outer === pair.added)
+      .map(pair => pair.added)
+    if (middleLayers.length) {
+      for (const middle of middleLayers) {
+        pairs.push({ added: outermost, base: middle, relationship: 'outerwear_middle_layer' })
+      }
+      continue
+    }
+    if (dresses.length) {
+      for (const dress of dresses) pairs.push({ added: outermost, base: dress, relationship: 'outerwear_dress' })
+      continue
+    }
+    for (const primaryTop of primaryTops) {
+      pairs.push({ added: outermost, base: primaryTop, relationship: 'outerwear_primary_top' })
     }
   }
   return pairs
@@ -560,6 +586,17 @@ export function evaluateLayerPairConstructionFor(pieceA, pieceB) {
   return layerConstructionPair(pieceA, pieceB, direction)
 }
 
+// Assigned-chain entry point for a caller that already owns the physical order (for example the
+// system roster's middle → outermost grammar). It still delegates all sleeve evidence and verdict
+// semantics to layerConstructionPair; the caller supplies order, never its own compatibility rule.
+export function evaluateAssignedLayerPairConstruction(inner, outer) {
+  return layerConstructionPair(outer, inner, {
+    outer,
+    inner,
+    source: 'assigned_layer_chain',
+  })
+}
+
 // Canonical relational verdict for "can this pair's sleeves physically layer together" — the same
 // layering candidate pairs evaluateLayerDirections identifies, asked a different question. Composed
 // into evaluateWearableOutfit so propose_outfit, plan submission, and capsule composition share one
@@ -588,7 +625,7 @@ export function evaluateLayerPairConstruction(pieces = [], { roleAware = false }
 // Composers that want to explain the rule to a model cite this; they do not restate sleeve zone/
 // fabric thresholds in their own prose.
 export function layerConstructionPromptRule() {
-  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other is only a problem when there is actual bulk evidence at a shared zone — the inner garment's sleeve has excess volume (at the shoulder, arm, lower arm, or armhole/underarm) that the outer garment's sleeve is narrow and structured at that same zone, or both garments are tagged a medium/heavy fabric_weight. A voluminous sleeve worn as the OUTER layer over a fitted inner sleeve is not a conflict — it has room to spare; the same shape worn as the INNER layer under a narrow, structured outer sleeve is. Two fitted, lightweight, cuffed-sleeve garments layer fine regardless of direction. Missing sleeve_shape, an unresolved over/under direction, or missing fabric_weight on a cuffed pairing is unknown, not proof either way — inspect both garments before ruling on it.`
+  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other are a problem only when there is actual bulk evidence at a shared zone — the inner garment's sleeve has excess volume at the shoulder, arm, lower arm, or armhole/underarm that the outer garment's narrower, structured sleeve has no room to accommodate. Overall garment fabric_weight is not sleeve-volume evidence. A voluminous sleeve worn as the OUTER layer over a fitted inner sleeve is not a conflict—it has room to spare; the same shape worn as the INNER layer under a narrow, structured outer sleeve is a conflict. Two fitted cuffed sleeves layer normally. Missing sleeve_shape or an unresolved over/under direction is unknown, not proof either way — inspect both garments before ruling on it.`
 }
 
 function structureFinding(code, message, evidence = {}) {

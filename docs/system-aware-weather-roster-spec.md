@@ -2,6 +2,18 @@
 
 **Status:** Ratified 2026-09-07; implemented offline 2026-09-08. Cold and hot live acceptance remain.
 
+**Role-chain correction, 2026-09-08:** The first implementation's fixed construction-frontier
+ceilings (`12` tops, `12` bottoms, `6` shoes, `24` outerwear) turned maximums into fill targets and
+made required-layer search outerwear-led. A role frontier must stop when structured coverage is
+exhausted instead of filling an arbitrary quota. An outerwear-category garment may serve either as
+a middle layer (`layer_top`) or the outermost removable layer (`outerwear`) in a particular system.
+Required-range construction therefore admits `base → middle → outermost` chains, validates both
+adjacent sleeve relationships through the shared layer-pair owner, and removes only the outermost
+piece for the warm state. A light cardigan is neither globally excluded nor allowed to compete with
+a coat for the same job: it enters when a compatible complete chain gives it a real middle-layer job.
+Known thermal evidence also fixes the role order: a warmer garment cannot be placed underneath a
+known lighter outermost garment. Unknown ordering evidence remains eligible for visual judgment.
+
 **Scope:** the `single_outfit` execution profile's `search_wardrobe` evidence roster. This document
 does not redesign trip packing rosters, capsules, `generate_outfits`, or the final outfit validator.
 
@@ -127,31 +139,41 @@ Add a required compatible base before a dependent/sheer piece can become a compl
 with `needs_base` is evaluated as the system it actually requires; its standalone warmth must never
 represent the worn outfit.
 
-Shoes remain part of each complete path so activity, exposure, and weather-protection gates are not
-silently deferred. Accessories are optional and do not participate in feasibility; the model may add
-one from the compact index after choosing the structural system.
+Shoes remain part of each advertised complete path, and the shared piece-level activity and weather-
+protection gates run before this builder. Because no current outfit-level stage reads a shoe against
+another garment, clothing construction is evaluated once and the selected structural systems are
+projected across the adaptive shoe frontier. This must be retired if a relational shoe/outfit
+contract is added. Accessories are optional and do not participate in feasibility; the model may
+add one from the compact index after choosing the structural system.
 
-Implementation does not materialize the naive Cartesian product. `constructionFrontier` first keeps
-a bounded, deterministic coverage frontier per role using only the structured physical fields listed
-in §7; `buildSystemAwareWeatherRoster` then joins and validates complete systems from those frontiers.
-The complete hard-eligible identity set remains in `eligible_piece_index`, and the report distinguishes
-the logical candidate count from the evaluated frontier count. Small fixtures below the frontier
-ceilings are exhaustive, allowing exact optimized-versus-naive assertions without making a real
-wardrobe request evaluate millions of identity permutations.
+Implementation does not materialize the naive Cartesian product. A deterministic structured-
+coverage frontier per role retains representatives only while they add a new physical facet from
+§7; it has no fixed per-category fill target. Double-layer permutations receive the same treatment
+with role-prefixed middle/outermost facets plus the shared construction verdict and warmth-pair
+facets, so they stop when no new construction relationship is represented.
+`buildSystemAwareWeatherRoster` joins
+and validates complete systems from those
+adaptive representatives. The complete hard-eligible identity set remains in
+`eligible_piece_index`, and the report distinguishes the logical identity-permutation count from
+the actually evaluated structural-frontier count.
 
 ### 5.3 Add removable configurations
 
 When `layer_requirement:'required'`, every path must contain an eligible outerwear-category piece
-assigned the ordinary outerwear role in its piece IDs. For each core/layer combination:
+assigned the outermost `outerwear` role. A second eligible outerwear-category piece may be assigned
+`layer_top` as a middle layer. For each core/layer chain:
 
 - evaluate the full path at the cold endpoint;
-- remove exactly one actual removable outerwear piece;
+- validate base→middle and middle→outermost construction in their actual direction;
+- remove exactly the outermost removable piece;
 - evaluate everything remaining at the warm endpoint;
 - retain the configuration only when it has no known hard structural/environmental failure.
 
 This consumes `outfitRangeCoverage`; it does not create a second “coat plus base” calculation.
-Multiple layer systems remain valid—for example, a cardigan may remain after a coat is removed—if
-the shared role and construction contracts accept them.
+The middle layer remains in the warm state. A known sleeve conflict with the selected outermost
+layer invalidates that chain, while missing sleeve evidence remains unknown and available for visual
+judgment. Light layers are not globally filtered by warmth or garment kind. A known warmer-middle /
+lighter-outermost ordering is rejected as a reversed role chain; unknown thermal evidence is not.
 
 When `layer_requirement:'unspecified'`, construct both unlayered and legitimately layered paths when
 the resolved conditions support them. The system must not force outerwear merely because weather is
@@ -260,7 +282,6 @@ adds an explicit evidence block alongside the ordinary rows:
   ],
   "selection_report": {
     "eligible_piece_count": 120,
-    "candidate_path_count": 480,
     "known_feasible_path_count": 42,
     "unknown_path_count": 17,
     "visually_presented_path_count": 4,
@@ -272,6 +293,10 @@ adds an explicit evidence block alongside the ordinary rows:
 The exact JSON nesting may follow the existing array-plus-retrieval convention, but all semantic
 fields above are required. The normal user-facing answer never exposes IDs, enum labels, thermal
 distance, or selection machinery.
+
+Logical identity-permutation counts, evaluated-frontier counts, enumeration scope/completeness,
+hard-failure distributions, and selection reasons stay in internal diagnostics. They are not useful
+styling evidence and must not enlarge or distract the model-facing `selection_report`.
 
 The compact index contains every eligible piece with enough facts to decide whether requesting its
 photo could matter: identity, category, thermal fact line, insulation/derived construction thermal
@@ -313,10 +338,11 @@ the model receives only the compact selection report and factual path states nee
 ## 10 · Honest gaps
 
 The tool may report a wardrobe structural gap only when the complete hard-eligible index itself shows
-that a required role has no supply. It may report a known physical shortfall only when the evaluated
-enumeration is complete. If a bounded construction frontier finds no feasible path while unevaluated
-identity permutations remain, the outcome is an evidence shortfall and the compact index remains
-available for targeted inspection; it is never upgraded to a wardrobe gap.
+that a required role has no supply. It may report a known physical shortfall only after the adaptive
+structural frontier is completely evaluated. Omitted identity permutations are interchangeable only
+for the structured facts consumed by these gates; all identities remain in the compact index for
+visual differentiation. Unknown gate evidence still produces an evidence shortfall and a targeted-
+inspection opportunity; it is never upgraded to a wardrobe gap.
 
 Distinguish these outcomes:
 
@@ -378,9 +404,15 @@ Only the last is a wardrobe gap. A capped or unpictured answer may never masquer
     return four distinct outcomes.
 14. **Isolation:** non-`single_outfit` searches, context-free searches, trips, capsules, selected-
     piece flows, and bounded 2–5 outfit generation have no output diff.
-15. **Optimized-enumerator equivalence:** on bounded synthetic wardrobes below every construction-
-    frontier ceiling, the production path builder evaluates the full Cartesian identity set and
-    reports `path_enumeration_complete:true`.
+15. **Optimized-enumerator coverage:** every distinct gate-relevant facet survives in each role it
+    can serve, while identity-only Cartesian permutations do not multiply the evaluated frontier;
+    completing that structural frontier reports `path_enumeration_complete:true` and names its
+    scope.
+16. **Role-qualified light layers:** a cardigan that fits beneath a jacket may remain in the warm
+    wearing state; the same cardigan paired beneath a jacket with a known directional sleeve
+    conflict is not a feasible path. Neither result removes the cardigan from the eligible index.
+17. **Adaptive frontier:** mechanically duplicate pieces do not fill an arbitrary category target,
+    and required-layer selection is not keyed or deduplicated around outerwear identity.
 
 ### Real-wardrobe provider-free diagnostic
 
@@ -388,7 +420,8 @@ Add a tracked diagnostic that runs the canonical Vienna context against a copied
 prints:
 
 - all eligible outerwear grouped by thermal and construction evidence;
-- every known-feasible clothing system containing those layers;
+- every outerwear identity retained in the adaptive construction frontier;
+- logical identity-permutation and evaluated structural-frontier counts;
 - the four selected visual paths and the reason each was selected;
 - the complete indexed alternatives; and
 - image-budget consumption by category.

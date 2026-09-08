@@ -427,6 +427,19 @@ with certain stated exposure hard-rejects known thermal undershoot; coarse weath
 garment evidence remain advisory. Overall fabric weight no longer stands in for sleeve volume, and
 rejected diagnostic cards are excluded from persisted follow-up state after a successful retry.
 
+**[2026-09-08] System-roster role-chain correction.** Fresh one-outfit required-layer searches may
+present a compatible cardigan-under-jacket system: the cardigan is `layer_top`, the jacket is the
+outermost `outerwear`, and removing the jacket leaves the cardigan in the warm wearing state. The
+adaptive physical-facet frontier stops when coverage is exhausted instead of filling fixed category
+quotas. Known sleeve conflicts invalidate only the affected chain; unknown construction remains a
+visual judgment opportunity. Known warmer-middle/lighter-outermost reversals are not constructed;
+shoe identities are projected only after clothing-system validation because the current shared
+validator has no relational shoe-to-garment rule. Overall garment weight is not described to the
+model as sleeve bulk; only the shared structured sleeve-zone evidence can support that claim.
+Large logical/evaluated path counts remain in internal diagnostics and are omitted from the model-
+facing selection report; the model receives the four complete paths, compact index, factual outcome,
+and feasible/unknown counts it can actually use.
+
 **[2026-09-07] Third live acceptance correction.** `thread_1788770518010` showed that locking the
 router's structured activity was insufficient: `occasion_context:"gallery walk"` could still be
 read by the shared activity-profile inference and turn authoritative `none` back into `walking`.

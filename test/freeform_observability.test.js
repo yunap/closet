@@ -1217,6 +1217,12 @@ test('single-outfit complete search returns atomic system paths plus the complet
     assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.selected_paths.length >= 1,
       'full selection reasons stay internal rather than enlarging the model-facing report')
     assert.equal(roster.selection_report.selected_paths, undefined)
+    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.candidate_path_count >= 1)
+    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.evaluated_path_count >= 1)
+    assert.equal(roster.selection_report.candidate_path_count, undefined,
+      'identity-permutation counts stay diagnostic rather than burdening model judgment')
+    assert.equal(roster.selection_report.evaluated_path_count, undefined)
+    assert.equal(roster.selection_report.path_enumeration_complete, undefined)
 
     const selected = roster.system_paths[0].piece_ids
     const roleById = new Map([

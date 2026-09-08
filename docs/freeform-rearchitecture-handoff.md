@@ -114,6 +114,18 @@
 > discount: sightseeing remains a footwear/exposure fact, not a dependable source of body heat. The stated 60→48°F case
 > stays `warm` for both `none` and `walking`; hiking retains a genuinely exertive discount for the
 > base only, while removable-layer demand remains sized for stops and other low-output periods.
+>
+> **System-roster role-chain correction, 2026-09-08:** The one-outfit search roster no longer fills
+> fixed `12/12/6/24` category frontiers. Structured coverage stops when no new physical facet is
+> added. Required-range paths may assign a light outerwear-category garment as `layer_top` beneath
+> one outermost `outerwear` piece; shared layer direction/construction validates the actual chain,
+> and only the outermost piece is removed in the warm wearing state.
+> Double-layer identity permutations stop when middle/outermost role-facet coverage is exhausted,
+> and known warmer-middle/lighter-outermost reversals are excluded. Shoes are piece-gated first and
+> projected across selected clothing systems; there is currently no relational shoe/outfit gate.
+> The shared prompt projection also states that overall `fabric_weight` is not sleeve-volume
+> evidence, matching the executable construction owner. Logical/evaluated path counts stay in
+> internal diagnostics rather than entering the model-facing selection report.
 
 > **Architecture ownership completion, 2026-08-25:** freeform search, proposal, slot swaps, and
 > bounded generation now resolve named request/artifact/thread/inference evidence through

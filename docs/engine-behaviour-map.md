@@ -40,6 +40,22 @@ cannot form whole systems; every other flow is unchanged. The response and inter
 logical versus actually evaluated path counts, hard findings, budget skips, omitted photograph IDs,
 and the final proposal's relationship to the supplied roster.
 
+**[amended 2026-09-08 — adaptive role-chain roster correction]** Fixed per-category construction
+frontiers are not candidate quotas. Each role frontier stops when no remaining garment adds a new
+structured physical facet. Under a required variable-weather layer, the system grammar admits one
+outerwear-category middle layer assigned `layer_top` beneath one outermost `outerwear` piece; the
+shared direction/construction stages validate both adjacent relationships, and warm-state coverage
+removes only the outermost piece. Path deduplication is keyed by the primary core rather than making
+outerwear the lead whenever a coat is required.
+Double-layer joins stop when no remaining middle/outermost ordering adds a new role-prefixed,
+shared-construction-verdict, or warmth-pair physical facet, and known warmer-middle/lighter-
+outermost reversals are not constructed. Footwear is
+piece-gated before this stage and projected across only the selected clothing systems because no
+current validator reads shoe-to-garment relationships. `layerConstructionPromptRule` now matches
+the executable owner explicitly: overall `fabric_weight` is not sleeve-volume evidence. Logical and
+evaluated path counts remain internally observable but are no longer copied into the stylist
+model's compact selection report.
+
 **[amended 2026-09-07 — removable range coverage]** `requiredThermalEndpointBands` owns the warm
 and cold demands for an encountered range. `outfitRangeCoverage` evaluates actual configurations:
 the full outfit at the cold endpoint, then every configuration produced by removing one real
