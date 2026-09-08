@@ -684,10 +684,24 @@ export function buildSystemAwareWeatherRoster({
     for (const shoe of shoes) {
       const shoePiece = rolePiece(shoe, 'shoes')
       const pieces = [...clothingPieces, shoePiece]
+      const pieceIds = pieces.map(piece => Number(piece.id))
+      const thermal = first.thermal.applicable
+        ? {
+          ...first.thermal,
+          wearingStates: {
+            cold: { ...first.thermal.wearingStates.cold, piece_ids: pieceIds },
+            warm: {
+              ...first.thermal.wearingStates.warm,
+              piece_ids: pieceIds.filter(id => id !== first.thermal.wearingStates.warm.removed_piece_id),
+            },
+          },
+        }
+        : first.thermal
       const path = {
         ...first,
         pieces,
-        pieceIds: pieces.map(piece => Number(piece.id)),
+        pieceIds,
+        thermal,
         sequence,
         facets: new Set(pieces.flatMap(physicalPieceFacets)),
       }

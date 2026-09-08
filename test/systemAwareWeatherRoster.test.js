@@ -59,6 +59,35 @@ test('cold required-layer roster exposes same-label construction choices and one
   assert.ok(roster.systemPaths.every(path => path.wearing_states.warm.piece_ids.includes(1)))
 })
 
+test('wearing-state piece_ids track each path\'s own shoe, not the first-enumerated shoe', () => {
+  const winter = layer(6, {
+    insulating_layer_materials: ['down'], interior_construction: 'quilted_lining',
+    length_hits_at: 'full_length', neckline: 'mock',
+  })
+  const pieces = [
+    top(1), bottom(2),
+    shoe(3, { walk_support: 'high' }),
+    shoe(30, { walk_support: 'low', weather_protection: ['waterproof'] }),
+    winter,
+  ]
+  const roster = buildSystemAwareWeatherRoster({
+    pieces, weatherProfile: weather(60, 48), activity: 'walking', layerRequired: true,
+  })
+
+  const pathsWithShoe30 = roster.systemPaths.filter(path => path.piece_ids.includes(30))
+  assert.ok(pathsWithShoe30.length > 0, 'roster should enumerate a path using the second shoe')
+  for (const path of pathsWithShoe30) {
+    assert.ok(!path.piece_ids.includes(3), 'a path should not carry both shoes in piece_ids')
+    assert.deepEqual(
+      [...path.wearing_states.cold.piece_ids].sort(),
+      [...path.piece_ids].sort(),
+      'cold wearing-state piece_ids must match this path\'s own shoe, not shoe 3',
+    )
+    assert.ok(!path.wearing_states.cold.piece_ids.includes(3), 'shoe 3 must not leak into a shoe-30 path')
+    assert.ok(!path.wearing_states.warm.piece_ids.includes(3), 'shoe 3 must not leak into warm state either')
+  }
+})
+
 test('a coat cannot make a light warm-end base feasible, while a remaining layer can', () => {
   const lightBase = top(10, {
     fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'],
