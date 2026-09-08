@@ -3143,6 +3143,27 @@ test('resolveToolStylingContext: router-authoritative none cannot be re-inferred
   assert.equal(toolContext.activity, 'none')
 })
 
+test('resolveToolStylingContext: the router activity lock also suppresses footwear-comfort re-inference from request text', async () => {
+  const toolContext = {
+    occasion: 'city',
+    activity: 'none',
+    executionRouterActivity: 'none',
+    executionRouterActivityLocked: true,
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: {
+      occasion: 'city',
+      requestText: 'Afternoon gallery walk transitioning to evening dinner.',
+    },
+    toolContext,
+    inferred: { requestText: 'Afternoon gallery walk transitioning to evening dinner.' },
+    policy: { mode: 'freeform_action' },
+  })
+  assert.equal(context.activity, 'none')
+  assert.equal(context.comfortConstraint, null,
+    'a locked none must not resolve an all-day walking footwear constraint from "gallery walk" prose')
+})
+
 // Spec §6.5: "search stores its resolved context in toolContext; proposal
 // consumes the matching context." A second call with the SAME location/date
 // identity and no new structured weather reuses the cached result instead of
