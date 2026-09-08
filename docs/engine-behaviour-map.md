@@ -33,6 +33,8 @@ atomic union of up to four feasible paths. Required removable layers are ordinar
 range requests compare the full cold state and the actual remaining warm state. Selection prefers
 known adequate paths, then shared thermal distance and new physical construction facts, with at most
 one warmer boundary for a genuinely variable demand. No resolved demand preserves structural order.
+Construction diversity is projected from `pieceWeatherEvidence`'s derived thermal degree; the roster
+does not read or reinterpret stored `interior_construction` values as a second flow-level authority.
 The old ten-row/per-warmth cap remains only for narrow or incomplete single-outfit searches that
 cannot form whole systems; every other flow is unchanged. The response and internal diagnostics name
 logical versus actually evaluated path counts, hard findings, budget skips, omitted photograph IDs,
@@ -288,7 +290,9 @@ slots across construction groups as before.
 router's authoritative `activity:none` blocked a later structured argument but not the secondary
 request-text inference inside `createStylingContextResolver`; model-authored `occasion_context`
 containing “gallery walk” therefore recreated `walking`. A locked router activity now disables that
-secondary inference too. Second, ordinary walking itself no longer shifts thermal demand down one
+secondary inference in both consumers: `resolveActivityProfile` cannot alter thermal/activity state,
+and `resolveComfortFootwearConstraint` cannot independently recreate an all-day-walking footwear
+gate from the same prose. Second, ordinary walking itself no longer shifts thermal demand down one
 level. It remains authoritative for footwear and observable exposure context, while only genuinely
 exertive `hiking` receives a **base-clothing** thermal discount. Removable-layer demand receives no
 activity discount: even on a hike that layer answers to trailheads, stops, shade and the return, not

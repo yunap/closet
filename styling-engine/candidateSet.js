@@ -4,6 +4,7 @@ import { resolveExposureContext } from './exposure.js'
 import { requiredThermalEndpointBands, compareThermalFit } from './thermalDemand.js'
 import { outfitRangeCoverage, outfitThermalContribution } from './outfitThermalContribution.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
+import { pieceWeatherEvidence } from './thermal.js'
 
 const groupIs = group => piece => wardrobeCategoryGroup(piece) === group
 const independentTop = piece => groupIs('top')(piece) && !pieceRequiresBaseLayer(piece)
@@ -281,12 +282,15 @@ function pieceHasPhoto(piece = {}) {
 
 function physicalPieceFacets(piece = {}) {
   const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
+  const thermalEvidence = pieceWeatherEvidence(piece)
   const values = {
     warmth: garmentWarmthLevel(piece) || 'unknown',
     insulation: Array.isArray(piece.insulating_layer_materials)
       ? (piece.insulating_layer_materials.length ? 'present' : 'none')
       : 'unknown',
-    interior: piece.interior_construction || 'unknown',
+    // Interior construction is owned by the canonical thermal evidence chain. This frontier only
+    // needs to preserve thermally distinct construction, not reinterpret the stored enum itself.
+    constructionThermalDegree: thermalEvidence?.construction ?? 'unknown',
     fabric: piece.fabric_category || 'unknown',
     weight: piece.fabric_weight || 'unknown',
     removable: group === 'outerwear' ? 'yes' : 'no',
@@ -595,6 +599,7 @@ function selectSystemPaths(candidates, options = {}) {
 }
 
 function compactEligiblePiece(piece = {}) {
+  const thermalEvidence = pieceWeatherEvidence(piece)
   return {
     id: Number(piece.id),
     name: piece.name,
@@ -603,7 +608,7 @@ function compactEligiblePiece(piece = {}) {
     insulating_layer: Array.isArray(piece.insulating_layer_materials)
       ? (piece.insulating_layer_materials.length ? 'present' : 'none')
       : 'unknown',
-    interior: piece.interior_construction || 'unknown',
+    construction_thermal_degree: thermalEvidence?.construction ?? undefined,
     removable: wardrobeCategoryGroup(piece) === 'outerwear',
     sleeve_length: piece.sleeve_length || undefined,
     sleeve_shape: piece.sleeve_shape || undefined,

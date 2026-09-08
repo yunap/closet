@@ -430,8 +430,10 @@ rejected diagnostic cards are excluded from persisted follow-up state after a su
 **[2026-09-07] Third live acceptance correction.** `thread_1788770518010` showed that locking the
 router's structured activity was insufficient: `occasion_context:"gallery walk"` could still be
 read by the shared activity-profile inference and turn authoritative `none` back into `walking`.
-The lock now suppresses that secondary prose inference for the turn. Separately, owner ruling makes
-ordinary walking thermally neutral: sightseeing still affects footwear, but cannot lower the
+The lock now suppresses that secondary prose inference for both the activity profile and the
+independent footwear-comfort constraint; neither may recreate walking from model-authored prose.
+Separately, owner ruling makes ordinary walking thermally neutral: sightseeing still affects
+footwear, but cannot lower the
 clothing warmth requirement. At a stated 60→48°F, both `none` and `walking` therefore demand a
 `warm` outfit; only genuinely exertive hiking receives a base-clothing discount. Removable layers
 receive no activity discount because they must work during stops and lower-output portions too.

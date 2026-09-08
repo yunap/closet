@@ -274,8 +274,9 @@ fields above are required. The normal user-facing answer never exposes IDs, enum
 distance, or selection machinery.
 
 The compact index contains every eligible piece with enough facts to decide whether requesting its
-photo could matter: identity, category, thermal fact line, insulation/interior/removability,
-coverage, opacity/`needs_base`, weather protection, and footwear support where applicable. Primary
+photo could matter: identity, category, thermal fact line, insulation/derived construction thermal
+degree/removability, coverage, opacity/`needs_base`, weather protection, and footwear support where
+applicable. Primary
 visual rows retain the current richer truth shape.
 
 The single-outfit prompt tells the model:

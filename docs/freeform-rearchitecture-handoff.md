@@ -108,8 +108,10 @@
 > **Third live acceptance correction, 2026-09-07:** `thread_1788770518010` proved that the activity
 > lock stopped structured tool arguments but not activity re-inference from model-authored
 > `occasion_context` (“gallery walk”). A locked router activity now disables that secondary prose
-> inference as well. Owner ruling also removes ordinary walking's thermal discount: sightseeing
-> remains a footwear/exposure fact, not a dependable source of body heat. The stated 60→48°F case
+> inference for both `resolveActivityProfile` and the independently activity-aware
+> `resolveComfortFootwearConstraint`; a locked `none` therefore cannot silently become an all-day-
+> walking footwear constraint either. Owner ruling also removes ordinary walking's thermal
+> discount: sightseeing remains a footwear/exposure fact, not a dependable source of body heat. The stated 60→48°F case
 > stays `warm` for both `none` and `walking`; hiking retains a genuinely exertive discount for the
 > base only, while removable-layer demand remains sized for stops and other low-output periods.
 

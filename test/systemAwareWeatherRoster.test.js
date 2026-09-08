@@ -51,6 +51,11 @@ test('cold required-layer roster exposes same-label construction choices and one
 
   assert.equal(roster.report.outcome, 'ready')
   assert.deepEqual(roster.eligiblePieceIndex.map(piece => piece.id), pieces.map(piece => piece.id))
+  assert.equal(
+    roster.eligiblePieceIndex.find(piece => piece.id === 4)?.construction_thermal_degree,
+    0.5,
+    'the compact roster projects the canonical derived construction evidence, not the stored enum',
+  )
   const visibleLayers = roster.visualPieceIds.filter(id => [4, 5, 6].includes(id))
   assert.ok(visibleLayers.includes(4), 'uninsulated construction remains a visible choice')
   assert.ok(visibleLayers.includes(5), 'insulated same-band construction remains a visible choice')
