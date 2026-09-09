@@ -19,8 +19,10 @@
 > required.
 
 **Status:** ratified and implemented 2026-09-06; six live acceptance findings on 2026-09-07 exposed
-additional narrow defects. Findings one through five were corrected and offline-verified; the sixth
-requires the proposed system-aware roster redesign before another live check. Amended after owner review
+additional narrow defects. Findings one through five were corrected and offline-verified. Finding
+six's engine-selected roster was implemented, disproved by live acceptance, and removed on
+2026-09-09; the replacement complete sparse catalog and model-owned visual shortlist are implemented.
+Amended after owner review
 to make the canonical temperatures an explicit wearing-window exposure rather than a daily
 high/overnight-low envelope, after technical review to close declaration omission, and after the
 the first live run exposed construction-validation, thermal-projection, visual-coverage, and routed-
@@ -412,11 +414,13 @@ insulation, interior construction, protection, length, and burden across the wea
 model selected the winter coat because the bounded evidence offered no proportionate insulated
 middle option, not because its prompt misunderstood 48°F.
 
-The proposed [system-aware weather roster](system-aware-weather-roster-spec.md) replaces independent
-category/warmth sampling on this route. It retains a complete compact eligible index and constructs
-the bounded visual working set as the atomic union of several mechanically feasible whole-outfit
-paths, using the same shared hot/cold and structural owners as final proposal validation. This is not
-implemented; do not treat the current fifth correction as live-accepted.
+The first attempted correction, documented in the
+[system-aware weather roster](system-aware-weather-roster-spec.md), replaced category/warmth sampling
+with four engine-selected mechanically feasible paths. Live acceptance then showed those paths were
+still an aesthetic bottleneck. The implemented 2026-09-09 recovery removes engine path selection:
+search returns every hard-eligible garment in a sparse catalog, the model nominates what to view and
+compose, and the shared validator judges the final proposal. The corrected architecture is
+offline-verified but still needs a live outfit-quality acceptance run.
 
 ## 8 · Ratified real-wardrobe fixture bracket
 

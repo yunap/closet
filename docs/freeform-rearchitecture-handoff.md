@@ -1,6 +1,20 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
-> **System-aware one-outfit roster, implemented offline 2026-09-08:** the temporary
+> **Model-owned single-outfit catalog, implemented 2026-09-09:** the system-aware path selector
+> below reproduced the architectural failure this slice was meant to isolate: code reduced thousands
+> of mechanically possible systems to four photographed choices before the stylist could exercise
+> aesthetic judgment. It has been removed from the one-outfit runtime. A complete batched search now
+> returns an identity-ordered sparse `stylist_catalog` of every hard-eligible garment, attaches zero
+> search images, and exposes an exact exclusion summary. Model-authored descriptive filters cannot
+> narrow that catalog. The model chooses up to twelve IDs to inspect
+> with `view_pieces`, may make one targeted second view of up to four IDs if the photographs reveal a concrete issue,
+> and then submits one card to the unchanged shared validator. Catalog identities are not treated as
+> retrieved or seen. On the copied 208-piece fixture, the catalog is 44,301 characters, 10,408 fewer
+> than the old compact index while adding styling-decision facts. `search_wardrobe`, `view_pieces`,
+> `declare_intent`, and the narrow system prompt state this ownership consistently. No trip, capsule,
+> batch, swap, or full-stylist behavior changed.
+
+> **System-aware one-outfit roster, superseded and removed 2026-09-09:** the temporary
 > ten-per-category/one-per-warmth repair did not provide meaningful choice among complete systems.
 > A complete one-outfit search now returns every hard-eligible identity in a compact fact index and
 > supplies rich/image evidence as the atomic union of up to four whole mechanically feasible paths.

@@ -1,8 +1,19 @@
 # System-aware weather roster for one-outfit discovery
 
-**Status:** Ratified 2026-09-07; first implementation completed offline 2026-09-08. A live
-acceptance run exposed two owner-corrected design errors—deterministic shortlist ownership and a
-wide-but-stylistically-poor compact index. The corrective slice below is ratified, not implemented.
+**Status:** Historical diagnosis and recovery record. Ratified 2026-09-07; first implementation
+completed offline 2026-09-08; its deterministic path-selection architecture was removed from the
+`single_outfit` runtime on 2026-09-09. The corrective model-owned catalog slice is implemented.
+
+**Recovery implementation, 2026-09-09:** `buildSystemAwareWeatherRoster` and its one-outfit call
+site were removed. Search now returns the complete hard-eligible wardrobe as a sparse,
+identity-ordered `stylist_catalog`, with zero code-selected systems and zero automatically attached
+photographs. The model nominates up to twelve IDs for visual inspection, may use one additional
+targeted view of up to four IDs after a concrete photographic finding, and owns composition; shared deterministic
+validation still accepts or rejects the final proposal. The response reports hard exclusions by
+their actual gate reasons. The copied live fixture measured 208 eligible garments, 44,301 catalog
+characters (down 10,408 from the old compact index), and no selected paths. Sections describing the
+path frontier below remain as incident history, not current architecture. The provider-free,
+source-database-safe measurement is `scratch/diagnose_single_outfit_catalog.mjs`.
 
 **Selection-ownership and catalog correction, 2026-09-08:** Live run
 `thread_1788898396668` showed that the first implementation reduced a large feasible-system space
@@ -49,9 +60,11 @@ does not redesign trip packing rosters, capsules, `generate_outfits`, or the fin
 
 ## 1 · Decision
 
-The weather-aware one-outfit roster must be constructed from **complete mechanically feasible outfit
-paths**, not by independently sampling garment categories or preserving one garment from each warmth
-label.
+The original decision was that the weather-aware one-outfit roster must be constructed from
+**complete mechanically feasible outfit paths**, not by independently sampling garment categories or
+preserving one garment from each warmth label. The 2026-09-09 recovery supersedes that decision:
+code no longer chooses a one-outfit roster at all; it supplies complete eligible facts and validates
+the model's final choice.
 
 For this flow, a path is one complete candidate system:
 
@@ -175,14 +188,14 @@ projected across the adaptive shoe frontier. This must be retired if a relationa
 contract is added. Accessories are optional and do not participate in feasibility; the model may
 add one from the compact index after choosing the structural system.
 
-Implementation does not materialize the naive Cartesian product. A deterministic structured-
+The removed 2026-09-08 implementation did not materialize the naive Cartesian product. A deterministic structured-
 coverage frontier per role retains representatives only while they add a new physical facet from
 §7; it has no fixed per-category fill target. Double-layer permutations receive the same treatment
 with role-prefixed middle/outermost facets plus the shared construction verdict and warmth-pair
 facets, so they stop when no new construction relationship is represented.
-`buildSystemAwareWeatherRoster` joins
+`buildSystemAwareWeatherRoster` joined
 and validates complete systems from those
-adaptive representatives. The complete hard-eligible identity set remains in
+adaptive representatives. The complete hard-eligible identity set remained in
 `eligible_piece_index`, and the report distinguishes the logical identity-permutation count from
 the actually evaluated structural-frontier count.
 

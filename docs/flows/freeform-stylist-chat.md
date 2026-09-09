@@ -37,6 +37,17 @@ decisions.
 > only declaration, batched search, focused viewing, and one-card proposal. Exact stated numeric
 > weather is carried as `user_weather`; the server keeps it authoritative across search and proposal.
 
+> **[implemented 2026-09-09] The narrow flow gives the stylist a catalog, not an engine-curated
+> roster.** One batched search returns every hard-eligible garment in a sparse, identity-ordered
+> `stylist_catalog`, an exact hard-exclusion summary, and no photographs or constructed outfit paths.
+> Descriptive search filters cannot silently narrow it; categories and shared hard context gates remain.
+> The model reads that complete catalog, nominates up to twelve IDs for `view_pieces`, optionally
+> makes one targeted second view of up to four IDs if those photographs expose a concrete problem, and proposes one
+> outfit. Catalog presence does not satisfy retrieval or sight verification; photographed garments
+> in the final card must actually have been viewed. The existing shared proposal validator remains
+> the hard-constraint owner. This recovery changes only `single_outfit` and leaves trip, capsule,
+> batch, swap, and full-stylist flows untouched.
+
 > **[superseded 2026-09-08] The narrow declaration stays narrow; the temporary category cap does
 > not own complete-outfit discovery anymore.** The 2026-09-07 ten-per-category/per-warmth repair
 > prevented one immediate coat omission but still supplied too few whole-system choices. It remains
@@ -45,7 +56,7 @@ decisions.
 > garment-detail tools. A rejected proposal may be repaired and resubmitted inside the existing
 > loop, but only one accepted card may be presented.
 
-> **[implemented 2026-09-08] Complete one-outfit searches use a system-aware roster.** After shared
+> **[superseded 2026-09-09] Complete one-outfit searches used a system-aware roster.** After shared
 > hard piece gates, search returns a complete compact eligible index plus rich/image evidence for the
 > atomic union of up to four validated dress-or-separates paths. Each path includes shoes, required
 > bases, and real outerwear when declared; a variable range records layer-on and actual layer-off

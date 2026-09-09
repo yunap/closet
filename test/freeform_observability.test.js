@@ -15,7 +15,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, searchVisualEvidenceOrder, capSingleOutfitSearchResults, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, searchVisualEvidenceOrder, buildSingleOutfitStylistCatalog, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext, freeformExecutionContextEvidence } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
@@ -372,40 +372,33 @@ test('weather-aware visual evidence does not spend every outerwear image on earl
     'the allocator changes sight coverage only; it removes and duplicates nothing')
 })
 
-test('weather-aware single-outfit cap preserves every observed outerwear warmth class', () => {
-  const earlyCardigans = Array.from({ length: 10 }, (_, index) => ({
-    id: index + 1,
-    name: `medium cardigan ${index + 1}`,
-    category: 'outerwear',
-    fabric_category: 'wool',
-    fabric_weight: 'medium',
-    sleeve_length: 'long',
-    length_hits_at: 'hip',
-  }))
-  const warmCoat = {
-    id: 11,
-    name: 'late warm coat',
-    category: 'outerwear',
-    fabric_category: 'wool',
-    fabric_weight: 'heavy',
-    sleeve_length: 'long',
-    length_hits_at: 'knee',
-    interior_construction: 'full_lining',
-  }
-  const unrelatedTop = { id: 12, name: 'top', category: 'top' }
-  const original = [...earlyCardigans, warmCoat, unrelatedTop]
-
-  const noWeather = capSingleOutfitSearchResults(original, { weatherAware: false })
-  assert.equal(noWeather.filter(piece => piece.category === 'outerwear').length, 10)
-  assert.ok(!noWeather.some(piece => piece.id === warmCoat.id), 'ordinary capped retrieval stays first-in-order')
-
-  const weatherAware = capSingleOutfitSearchResults(original, { weatherAware: true })
-  assert.equal(weatherAware.filter(piece => piece.category === 'outerwear').length, 10)
-  assert.ok(weatherAware.some(piece => piece.id === warmCoat.id), 'the only observed warm class must survive the cap')
-  assert.ok(weatherAware.some(piece => piece.id === earlyCardigans[0].id), 'moderate outerwear remains represented')
-  assert.ok(weatherAware.some(piece => piece.id === unrelatedTop.id), 'other categories keep their independent cap')
-  assert.deepEqual(weatherAware.map(piece => piece.id), [...weatherAware].sort((a, b) => original.indexOf(a) - original.indexOf(b)).map(piece => piece.id),
-    'coverage selection must preserve retrieval order rather than deliver a warmth ranking')
+test('single-outfit stylist catalog is complete, sparse, decision-useful, and identity-ordered', () => {
+  const catalog = buildSingleOutfitStylistCatalog([
+    {
+      id: 11, name: 'late warm coat', category: 'outerwear', colors: ['black'],
+      reads_as: 'tailored wool coat', fabric_category: 'wool', fabric_weight: 'heavy',
+      fit_on_body: 'skims', stretch: 'minimal', sleeve_length: 'long', sleeve_shape: 'fitted',
+      length_hits_at: 'knee', formality: 'elevated', interior_construction: 'full_lining',
+      insulating_layer_materials: ['wool batting'], season: 'cool', opacity: 'opaque', needs_base: 'no',
+    },
+    {
+      id: 2, name: 'gallery top', category: 'top', colors: ['plum'], pattern_complexity: 'solid',
+      fabric_category: 'jersey', fabric_weight: 'light', fit_on_body: 'skims', stretch: 'stretchy',
+      sleeve_length: 'three_quarter', sleeve_shape: 'fitted', opacity: 'opaque', season: 'year-round', needs_base: 'no',
+    },
+  ])
+  assert.equal(catalog.eligible_piece_count, 2)
+  assert.deepEqual(catalog.eligible_by_category, { top: 1, outerwear: 1 })
+  assert.match(catalog.catalog, /#2 gallery top/)
+  assert.match(catalog.catalog, /fit:skims/)
+  assert.match(catalog.catalog, /stretch:stretchy/)
+  assert.match(catalog.catalog, /#11 late warm coat/)
+  assert.match(catalog.catalog, /reads as|tailored wool coat/)
+  assert.match(catalog.catalog, /insulation:wool batting/)
+  assert.match(catalog.catalog, /interior:full_lining/)
+  assert.doesNotMatch(catalog.catalog, /pattern solid|opacity opaque|season year-round|needs-base no/)
+  assert.ok(catalog.catalog.indexOf('#2 gallery top') < catalog.catalog.indexOf('#11 late warm coat'))
+  assert.doesNotMatch(catalog.catalog, /system_paths|thermal_disposition|adequate|overshoot/)
 })
 
 test('one batched search covers several categories and reports no compromise when it finds them', async () => {
@@ -1161,23 +1154,31 @@ test('single-outfit intent response does not inject contracts for unavailable fl
   assert.doesNotMatch(result.message, /generate_outfits|plan_outfit_set|suggest_slot_swaps|get_garment_details/)
 })
 
-test('single-outfit wardrobe search bounds full-truth candidates per category', async () => {
+test('single-outfit wardrobe search preserves every eligible identity instead of applying a category cap', async () => {
   const ids = []
   try {
     for (let index = 0; index < 13; index += 1) {
       ids.push(db.prepare("INSERT INTO pieces (name, category, status) VALUES (?, 'top', 'active')").run(`narrow roster top ${index}`).lastInsertRowid)
     }
-    const result = await executeTool('search_wardrobe', { category: 'top' }, {
+    const result = await executeTool('search_wardrobe', {
+      category: 'top',
+      query: 'narrow roster top 0',
+      color: 'chartreuse',
+      silhouette: 'fitted',
+    }, {
       executionProfile: 'single_outfit',
       freeformDiagnostics: {}
     })
-    assert.equal(result.filter(item => item.id).length, 10)
+    const catalog = result.find(item => item.stylist_catalog)?.stylist_catalog
+    assert.equal(catalog.eligible_piece_count, 13)
+    for (const id of ids) assert.match(catalog.catalog, new RegExp(`#${id} `))
+    assert.match(catalog.instruction, /identity order, not a ranking/)
   } finally {
     for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
   }
 })
 
-test('single-outfit complete search returns atomic system paths plus the complete eligible index', async () => {
+test('single-outfit complete search returns a complete stylist-owned catalog and requires explicit viewing', async () => {
   const ids = []
   const insert = db.prepare(`
     INSERT INTO pieces
@@ -1207,36 +1208,45 @@ test('single-outfit complete search returns atomic system paths plus the complet
       intent: 'compose',
       visual: false,
     }, toolContext)
-    const roster = result.find(item => item.system_roster)?.system_roster
-    assert.ok(roster)
-    assert.deepEqual(roster.eligible_piece_index.map(piece => piece.id).sort((a, b) => a - b), [...ids].sort((a, b) => a - b))
-    assert.ok(roster.system_paths.length >= 1)
-    assert.ok(roster.system_paths.every(path => path.piece_ids.every(id => roster.visual_piece_ids.includes(id))))
-    assert.equal(roster.selection_report.outcome, 'ready')
-    assert.equal(toolContext.freeformDiagnostics.systemAwareWeatherRoster.outcome, roster.selection_report.outcome)
-    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.selected_paths.length >= 1,
-      'full selection reasons stay internal rather than enlarging the model-facing report')
-    assert.equal(roster.selection_report.selected_paths, undefined)
-    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.candidate_path_count >= 1)
-    assert.ok(toolContext.freeformDiagnostics.systemAwareWeatherRoster.evaluated_path_count >= 1)
-    assert.equal(roster.selection_report.candidate_path_count, undefined,
-      'identity-permutation counts stay diagnostic rather than burdening model judgment')
-    assert.equal(roster.selection_report.evaluated_path_count, undefined)
-    assert.equal(roster.selection_report.path_enumeration_complete, undefined)
+    const catalog = result.find(item => item.stylist_catalog)?.stylist_catalog
+    assert.ok(catalog)
+    assert.equal(catalog.eligible_piece_count, ids.length)
+    for (const id of ids) assert.match(catalog.catalog, new RegExp(`#${id} `))
+    assert.equal(result.filter(item => item.image).length, 0, 'code does not choose the photographed shortlist')
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitCatalogPieceCount, ids.length)
+    assert.ok(toolContext.freeformDiagnostics.singleOutfitCatalogCharacters > 0)
+    assert.equal(result.some(item => item.system_roster), false)
+    assert.doesNotMatch(JSON.stringify(result), /system_paths|eligible_piece_index|thermal_disposition/)
 
-    const selected = roster.system_paths[0].piece_ids
+    const selected = ids
     const roleById = new Map([
       [ids[0], 'primary_top'], [ids[1], 'primary_bottom'], [ids[2], 'shoes'], [ids[3], 'outerwear'],
     ])
+    const unviewedProposal = await executeTool('propose_outfit', {
+      pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
+      label: 'Catalog probe',
+      why_it_works: 'A model-chosen complete outfit.',
+      activity: 'none',
+      user_weather: { high_f: 60, low_f: 48 },
+    }, toolContext)
+    assert.equal(unviewedProposal.status, 'validation_error')
+    assert.match(unviewedProposal.message, /view_pieces/)
+
+    const viewed = await executeTool('view_pieces', { ids }, toolContext)
+    assert.equal(viewed.filter(item => item.name).length, ids.length)
+    const targetedSecondView = await executeTool('view_pieces', { ids: [...ids, ...ids] }, toolContext)
+    assert.equal(targetedSecondView.length, 4, 'the optional targeted second view is capped at four IDs')
+    const overBudgetView = await executeTool('view_pieces', { ids }, toolContext)
+    assert.equal(overBudgetView.status, 'validation_error')
+    assert.match(overBudgetView.message, /visual budget is complete/)
     const proposal = await executeTool('propose_outfit', {
       pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
-      label: 'System roster probe',
-      why_it_works: 'A complete mechanically verified path ready for visual judgment.',
+      label: 'Catalog probe',
+      why_it_works: 'A model-chosen complete outfit.',
       activity: 'none',
       user_weather: { high_f: 60, low_f: 48 },
     }, toolContext)
     assert.equal(proposal.status, 'success')
-    assert.equal(toolContext.freeformDiagnostics.systemAwareRosterProposalSource, 'supplied_path')
   } finally {
     for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
   }

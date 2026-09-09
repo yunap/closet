@@ -16,6 +16,23 @@ composer (measured 0 reads against 30-49k written tokens on every sampled call) 
 `OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
 
+**[amended 2026-09-09 — model-owned single-outfit catalog supersedes system selection]** The
+2026-09-08 system-aware roster below was a failed ownership experiment and has been removed from the
+`single_outfit` flow. `search_wardrobe` now returns every hard-eligible garment in an identity-ordered,
+sparse `stylist_catalog`; it attaches no photographs and constructs, evaluates, or selects no outfit
+paths. Model-authored descriptive filters cannot narrow that complete catalog; categories and shared
+hard context gates still apply. The model nominates up to twelve catalog IDs for `view_pieces`, with one optional targeted
+second view of up to four IDs when the first photographs expose a real problem, then composes one proposal.
+`propose_outfit` retains shared structural, environmental, removable-state, sight, and ID validation.
+Catalog identities do not count as retrieved or seen: a photo-bearing proposal must have been viewed.
+The search response also reports every hard-excluded identity count grouped by the actual gate reason,
+so a visual subset can no longer be mistaken for wardrobe absence. On the copied 208-survivor live
+fixture, `buildSingleOutfitStylistCatalog` measured 44,301 catalog characters versus the prior
+54,709-character compact index, with zero search images and zero engine-selected paths; reproduce
+the copied-database measurement with `scratch/diagnose_single_outfit_catalog.mjs`. This change
+is scoped to `single_outfit`; trip, capsule, batch, swap, and ordinary full-stylist retrieval are
+unchanged.
+
 **[amended 2026-09-07 — single-outfit retrieval cap]** A fresh `single_outfit` execution profile
 does not receive the whole-wardrobe manifest, so `search_wardrobe` returns full stable garment truth
 but caps the post-validity, post-context-order roster at ten pieces per category. Its photograph
@@ -24,7 +41,7 @@ consumer retains the existing complete row behavior and 16-per-category / 40-tot
 The narrow route's exact stated `user_weather` is retained in tool context as a structured fallback,
 so omission by a model tool call cannot revert the action to a lossy prose range or live weather.
 
-**[amended 2026-09-08 — system-aware one-outfit roster supersedes category caps]** When a
+**[superseded 2026-09-09 — system-aware one-outfit roster]** When a
 `single_outfit` compose search requests enough categories for a complete outfit,
 `buildSystemAwareWeatherRoster` receives the complete post-gate pool. It preserves every survivor in
 a compact identity/fact index, builds a bounded structured-construction frontier, validates complete
@@ -40,7 +57,7 @@ cannot form whole systems; every other flow is unchanged. The response and inter
 logical versus actually evaluated path counts, hard findings, budget skips, omitted photograph IDs,
 and the final proposal's relationship to the supplied roster.
 
-**[amended 2026-09-08 — adaptive role-chain roster correction]** Fixed per-category construction
+**[superseded 2026-09-09 — adaptive role-chain roster correction]** Fixed per-category construction
 frontiers are not candidate quotas. Each role frontier stops when no remaining garment adds a new
 structured physical facet. Under a required variable-weather layer, the system grammar admits one
 outerwear-category middle layer assigned `layer_top` beneath one outermost `outerwear` piece; the
@@ -288,7 +305,7 @@ Finally, a new-request execution router's structured occasion/activity remains e
 the later full-stylist tool loop. Explicit occasion can still refine the request; router activity is
 locked so a later model tool call cannot invent exertion and change thermal or footwear policy.
 
-**[single-outfit capped-roster correction, 2026-09-07]** The row cap itself was a second evidence
+**[historical; superseded 2026-09-09 — single-outfit capped-roster correction, 2026-09-07]** The row cap itself was a second evidence
 loss surface. In `thread_1788822538467`, numeric weather was resolved correctly, but the
 single-outfit ten-row outerwear cap ran before visual allocation and retained ten early
 shrugs/cardigans. Every known `warm` or `very warm` layer was absent from the model's roster; the
@@ -300,6 +317,10 @@ condition-relative verdict: it reads no demand, request prose, garment name, or 
 `outerwear_role`; changes no eligibility; and is a no-op outside numeric-weather
 `single_outfit` searches. `searchVisualEvidenceOrder` then distributes that retained roster's image
 slots across construction groups as before.
+
+The model-owned catalog amendment at the top removes this cap and automatic image allocation from
+the current `single_outfit` path; the paragraph remains the incident history that motivated the
+subsequent, also-superseded system roster.
 
 **[owner correction, 2026-09-07] Walking is not a clothing-warmth credit.** Live acceptance
 `thread_1788770518010` exposed two independent leaks behind one accepted light trench. First, the

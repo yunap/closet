@@ -233,11 +233,12 @@ that means, concretely:
   `insulating layer` from `insulating face material`; weather-aware outerwear photographs cover
   constructed, filled, unfilled, and unknown evidence rather than the first same-shaped rows. The
   returned roster remains in its existing order and receives no weather-fit label.
-- **Implemented 2026-09-08 for complete one-outfit searches:** `buildSystemAwareWeatherRoster`
-  preserves the full hard-eligible compact index, validates complete paths through shared owners,
-  and chooses an atomic photo union by thermal disposition, distance, factual construction coverage,
-  and stable order. The model chooses what looks good; a targeted `view_pieces` alternative remains
-  available, so the visual subset cannot be narrated as the whole wardrobe.
+- **Superseded 2026-09-09 for complete one-outfit searches:** `buildSystemAwareWeatherRoster`
+  was removed after live acceptance proved its four-path photo union functioned as the model's
+  aesthetic choice set. `search_wardrobe` now emits the complete hard-eligible wardrobe as a sparse,
+  identity-ordered `stylist_catalog` and no images or paths. The model nominates up to twelve IDs for
+  `view_pieces` (plus one targeted second view of up to four IDs after a concrete visual finding), while
+  `propose_outfit` retains shared hard validation. Hard exclusions are counted by exact gate reason.
 - **Implemented in `6ee24d8`:** `suggest_slot_swaps` drops `weatherFit.score` while retaining
   newness/query/color/occasion and `ruleFit` behavior; its debug result now exposes thermal facts.
 - **Implemented in `6ee24d8`:** the tool description's thermal "honour them" instruction is removed
