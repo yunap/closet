@@ -1,6 +1,30 @@
 # System-aware weather roster for one-outfit discovery
 
-**Status:** Ratified 2026-09-07; implemented offline 2026-09-08. Cold and hot live acceptance remain.
+**Status:** Ratified 2026-09-07; first implementation completed offline 2026-09-08. A live
+acceptance run exposed two owner-corrected design errors—deterministic shortlist ownership and a
+wide-but-stylistically-poor compact index. The corrective slice below is ratified, not implemented.
+
+**Selection-ownership and catalog correction, 2026-09-08:** Live run
+`thread_1788898396668` showed that the first implementation reduced a large feasible-system space
+to four photographed paths before the model could make an aesthetic choice. Calling those paths
+"mechanically feasible starting points" did not change their practical
+authority: they were almost the only garments the model could see, while one additional
+`view_pieces` call was too narrow to restore wardrobe-scale choice. This violates the established
+ownership boundary. Code may enforce eligibility, construction, weather physics, image budgets,
+and final proposal validity; it may not preselect the four outfits from which the stylist is
+expected to choose. The model must choose the visual shortlist from a complete, decision-useful
+catalog of eligible garments, and code must validate the resulting system.
+
+The same run measured the 208-row `eligible_piece_index` at 54,709 serialized characters. It was
+not rich wardrobe description: repeated keys and low-information defaults dominated it
+(`insulating_layer` was `unknown` on 197 pieces, `weather_protection` was empty on 198,
+`needs_base` was false on 203, and 165 of 170 emitted construction degrees were zero). A
+default-aware sparse encoding preserves the current mechanical information at roughly 36,674
+characters, but compression alone is not the goal. The catalog must spend its budget on facts that
+let the model make a styling shortlist—structured colour/pattern, silhouette/fit, formality,
+visual read, and the relevant physical facts—without asking it to infer those properties from a
+garment name. Exact field projection and tool interaction are part of the corrective implementation
+and must be measured against this captured 208-piece fixture.
 
 **Role-chain correction, 2026-09-08:** The first implementation's fixed construction-frontier
 ceilings (`12` tops, `12` bottoms, `6` shoes, `24` outerwear) turned maximums into fill targets and
@@ -41,13 +65,17 @@ pieces can form a structurally complete system with no known hard physical failu
 context. The model still judges colour, pattern, proportion, silhouette, register, emotional
 coherence, and whether the pieces look good together.
 
-The tool returns two linked evidence tiers:
+The first implementation returned two linked evidence tiers:
 
 1. a complete compact index of every hard-eligible piece in the requested categories; and
-2. a bounded visual working set formed as the union of several complete feasible paths.
+2. a bounded visual working set formed as the union of several complete feasible paths selected by
+   deterministic construction/thermal coverage.
 
-An image ceiling may reduce the number of paths. It must never truncate individual pieces from an
-otherwise advertised path, and it must never erase a hard-eligible piece from the compact index.
+That second tier is superseded as a styling-choice mechanism. The corrected flow keeps complete
+hard eligibility and feasibility facts, then lets the model nominate the garments or systems worth
+photographing from the complete catalog. An image ceiling may bound that model-nominated visual
+inspection, and final validation may reject a nominated combination for a known physical failure,
+but a code-selected coverage sample must not masquerade as the user's wardrobe choice set.
 
 ## 2 · Why the current roster is not a styling choice
 
@@ -85,9 +113,10 @@ These terms refine, rather than replace, [CONTEXT.md](CONTEXT.md):
   and environmental contracts. Unknown evidence remains unknown and is not a failure.
 - **Thermal disposition:** the shared comparison result at each relevant wearing state—adequate,
   undershoot, overshoot, or unknown. This is evidence-selection metadata, not a style score.
-- **Visual working set:** the deduplicated union of pieces belonging to the selected feasible paths.
-- **Fallback index:** the compact rows for eligible pieces not in the visual working set. These pieces
-  remain available for a targeted `view_pieces` call and can never be described as a wardrobe gap.
+- **Model-nominated visual working set:** the bounded set of eligible pieces the model asks to inspect
+  after reading the complete catalog.
+- **Catalog-only eligible piece:** an eligible identity not yet photographed in this turn. It remains
+  available for model nomination and can never be described as a wardrobe gap.
 
 This document uses “roster” only for the task-specific working set. The full wardrobe is not a
 roster, and an arbitrary capped prefix is not a curated roster.
@@ -204,9 +233,9 @@ no garment-name rule.
 
 - The complete layered system is compared with the cold endpoint.
 - The actual remaining system is compared with the warm endpoint.
-- Prefer paths adequate at both endpoints for the primary visual set.
-- Preserve a limited overshooting path as a visible upper boundary when one exists; a winter coat is
-  useful evidence, but not the only alternative.
+- Surface whether paths are adequate at both endpoints as factual feasibility evidence.
+- Preserve overshooting identities in the complete catalog; a winter coat can be useful boundary
+  evidence, but code does not force it into the model's visual shortlist.
 - A known undershooting path cannot occupy a primary slot under the explicit required-layer contract.
 
 ### Hot exposure
@@ -226,37 +255,50 @@ no garment-name rule.
 The system-aware weather ordering is a provable no-op. Construct structural paths using existing
 eligibility, preserve stable retrieval order, and add no inferred temperature or season verdict.
 
-## 7 · Selecting paths for the visual working set
+## 7 · Model-owned visual shortlist
 
-The target is **four complete feasible paths** for a one-outfit request, or every feasible path when
-fewer than four exist. Four is a visual evidence target, not a promise of four aesthetically good
-outfits.
+The complete eligible catalog is the model's discovery surface. Deterministic path construction may
+calculate feasibility, expose factual incompatibilities, and support gap diagnosis, but it does not
+choose the four systems the stylist sees. In particular, construction-diversity coverage is useful
+diagnostic evidence, not an aesthetic proxy and not a shortlist owner.
 
-Selection is lexicographic and observable:
+The corrected interaction must preserve these invariants:
 
-1. known-feasible before evidence-unknown;
-2. thermal adequacy at every required wearing state before advisory overshoot;
-3. smallest advisory thermal distance before larger distance;
-4. maximize new factual construction coverage across the already-selected paths;
-5. stable original retrieval order as the final tie-breaker.
+1. the model can distinguish every eligible identity using useful structured styling and physical
+   facts before choosing what to inspect;
+2. the model nominates a bounded visual shortlist rather than receiving a finished code-selected
+   outfit shortlist;
+3. the image budget is stated to the model and enforced atomically by code;
+4. nominated pieces remain subject to the same shared eligibility and construction owners;
+5. the composed outfit always passes through ordinary `propose_outfit` validation;
+6. rejection returns a specific repair fact and does not silently substitute a code-preferred
+   outfit; and
+7. an unpictured eligible identity remains a real wardrobe option, never a wardrobe gap.
 
-The construction-coverage signature may use only structured physical fields already owned by the
-garment model: warmth level, insulating-layer presence, interior construction, fabric category and
-weight, removability, weather protection, sleeve coverage/shape, hem coverage, opacity,
-`needs_base`, shoe coverage, and walk support. It must not use colour, print, style lane, garment
-name, style notes, `do_not_pair_rules`, or a learned aesthetic score.
+The tool-contract revision may use a model-nominated piece set or model-nominated system set. That
+choice must be settled with a captured prompt-size and interaction-count comparison before coding;
+it must not reintroduce deterministic aesthetic ranking under a new name. The old four-path selector
+may remain temporarily as internal diagnostic coverage, but its output cannot be framed as the
+stylist's practical choice set.
 
-Selection operates on atomic paths. Before adding a path, calculate the photographs its previously
-unseen pieces would consume. If adding it would exceed the existing call-level or per-category image
-ceilings, skip that whole path and consider the next one. Never add half the path and still advertise
-it as visually available.
+### 7.1 · Sparse, decision-useful eligible catalog
 
-Shared pieces are deduplicated, so four paths may fit comfortably when they reuse a shoe or base. The
-selector may prefer a path that adds fewer redundant photographs only after feasibility and thermal
-disposition; image thrift cannot outrank physical correctness.
+The catalog declares default semantics once and emits per-piece exceptions rather than repeating
+`unknown`, `false`, empty arrays, derived removability, and other low-information values. Sparse
+encoding must be losslessly reconstructable for every mechanical fact the current index carries;
+missing evidence must remain distinguishable from a known zero wherever that distinction matters.
 
-If no complete path fits the configured visual budget, return a specific configuration error rather
-than a partial system. That is a policy/configuration failure, not a wardrobe gap.
+The recovered budget is spent on existing structured facts that help the model decide which pieces
+deserve photographs. The projection must cover, where applicable: identity and category;
+colour/pattern facts; silhouette, fit, length and sleeve construction; formality and `reads_as`;
+thermal, insulation, opacity/base requirements, protection, and footwear support. Free text must be
+bounded and sourced from its canonical field. Garment names are identity labels, not a fallback
+classifier for missing style facts.
+
+The tracked diagnostic reports total serialized characters, characters by field, default-value
+frequency, missing-value frequency, and category contribution for the fixed 208-piece fixture. A
+smaller payload is not accepted if it removes model decision information; a richer payload is not
+accepted merely because it adds prose.
 
 ## 8 · Tool response contract
 
@@ -265,54 +307,40 @@ adds an explicit evidence block alongside the ordinary rows:
 
 ```json
 {
-  "system_paths": [
-    {
-      "path_id": "stable-turn-local-id",
-      "piece_ids": [12, 34, 56, 78],
-      "wearing_states": {
-        "cold": { "piece_ids": [12, 34, 56, 78], "thermal": "adequate" },
-        "warm": { "removed_piece_id": 78, "piece_ids": [12, 34, 56], "thermal": "adequate" }
-      },
-      "evidence_state": "known | unknown"
-    }
-  ],
-  "visual_piece_ids": [12, 34, 56, 78],
-  "eligible_piece_index": [
-    { "id": 12, "name": "...", "category": "top", "thermal": "...", "needs_base": false }
-  ],
-  "selection_report": {
+  "eligible_piece_catalog": {
+    "defaults": { "needs_base": false, "weather_protection": [] },
+    "pieces": [
+      { "id": 12, "name": "...", "category": "top", "thermal": "...", "formality": "..." }
+    ]
+  },
+  "feasibility_report": {
     "eligible_piece_count": 120,
     "known_feasible_path_count": 42,
-    "unknown_path_count": 17,
-    "visually_presented_path_count": 4,
-    "omitted_feasible_path_count": 38
+    "unknown_path_count": 17
   }
 }
 ```
 
-The exact JSON nesting may follow the existing array-plus-retrieval convention, but all semantic
-fields above are required. The normal user-facing answer never exposes IDs, enum labels, thermal
-distance, or selection machinery.
+The example fixes semantics, not the final wire shape. The corrective implementation must specify
+the model-nominated visual-inspection request and response after measuring the competing interaction
+contracts. The normal user-facing answer never exposes IDs, enum labels, thermal distance, or
+selection machinery.
 
 Logical identity-permutation counts, evaluated-frontier counts, enumeration scope/completeness,
 hard-failure distributions, and selection reasons stay in internal diagnostics. They are not useful
-styling evidence and must not enlarge or distract the model-facing `selection_report`.
+styling evidence and must not enlarge or distract the model-facing `feasibility_report`.
 
-The compact index contains every eligible piece with enough facts to decide whether requesting its
-photo could matter: identity, category, thermal fact line, insulation/derived construction thermal
-degree/removability, coverage, opacity/`needs_base`, weather protection, and footwear support where
-applicable. Primary
-visual rows retain the current richer truth shape.
+The sparse catalog contains every eligible piece with the mechanical and styling facts defined in
+§7.1. Visually inspected rows retain the current richer truth shape.
 
 The single-outfit prompt tells the model:
 
-- the paths establish physical feasibility only, not aesthetic approval;
-- inspect the photographs and choose among them visually;
-- it may call `view_pieces` once for compact-index alternatives whose evidence could improve the
-  outfit;
+- the complete catalog, not a code-selected path sample, is the wardrobe choice surface;
+- nominate the most promising bounded visual shortlist using catalog facts, then judge the returned
+  photographs;
 - if it recombines pieces across paths, `propose_outfit` will validate the new system normally;
-- a wardrobe-gap claim must come from the exhaustive path result, never from the visual subset or a
-  capped prefix.
+- a wardrobe-gap claim must come from complete hard eligibility/feasibility, never from the visual
+  subset or a capped prefix.
 
 No unavailable tool or trip/packing instruction enters this response.
 
@@ -324,9 +352,9 @@ Add a debug payload for every system-aware roster:
 - eligible counts by category;
 - candidate, known-feasible, unknown, and hard-failed path counts;
 - hard-failure counts by canonical finding code;
-- selected path IDs and piece IDs;
-- thermal dispositions for selected paths;
-- construction signatures newly covered by each selected path;
+- legacy diagnostic path IDs and piece IDs while the first-pass selector remains;
+- thermal dispositions for those diagnostic paths;
+- construction signatures covered by those diagnostic paths;
 - paths skipped because an atomic path would exceed the visual budget;
 - compact-index IDs omitted from photographs;
 - whether a final proposal used a supplied path, recombined supplied pieces, or introduced a
@@ -373,8 +401,8 @@ Only the last is a wardrobe gap. A capped or unpictured answer may never masquer
 
 ### Deterministic fixtures
 
-1. **Complete recall:** every hard-eligible piece appears either in the visual working set or compact
-   fallback index; unpictured pieces remain indexed.
+1. **Complete recall:** every hard-eligible piece appears in the complete catalog; unpictured pieces
+   remain available for model nomination.
 2. **Atomic paths:** every advertised `system_path` is structurally complete, and every one of its
    photographed pieces is present. No image cap produces a partial advertised path.
 3. **Cold-range choice:** a 60→48°F required-layer fixture with an uninsulated warm jacket, an
@@ -382,11 +410,12 @@ Only the last is a wardrobe gap. A capped or unpictured answer may never masquer
    choices; one warmth label cannot collapse them to one representative.
 4. **Both worn states:** a warm coat over a light base is not known-feasible when removing the coat
    leaves a known warm-end undershoot; a compatible remaining layered system is feasible.
-5. **Overshoot is not erasure:** an otherwise valid winter-coat path remains in the compact index and
-   may appear as a boundary path, but it cannot crowd every adequate path out of the primary visual
-   set.
-6. **Hot-system choice:** a hot-weather fixture exposes multiple complete adequate systems instead
-   of one representative per warmth label; early heavy database rows cannot consume their slots.
+5. **Overshoot is not erasure:** an otherwise valid winter-coat identity remains in the complete
+   catalog as boundary evidence, but code cannot force it into or let it crowd the model-nominated
+   visual shortlist.
+6. **Hot-system choice:** a hot-weather fixture preserves multiple complete adequate systems for
+   validation and every eligible identity for model nomination; early heavy database rows cannot
+   become a hidden shortlist.
 7. **Required-base accounting:** a very-light sheer top requiring an opaque base is classified from
    the combined worn system. It cannot outrank a standalone hot-weather path using only its own
    garment warmth.
@@ -413,6 +442,20 @@ Only the last is a wardrobe gap. A capped or unpictured answer may never masquer
     conflict is not a feasible path. Neither result removes the cardigan from the eligible index.
 17. **Adaptive frontier:** mechanically duplicate pieces do not fill an arbitrary category target,
     and required-layer selection is not keyed or deduplicated around outerwear identity.
+18. **Model-owned shortlist:** when more than four mechanically feasible systems exist, no
+    deterministic four-system sample is presented as the model's practical outfit choice set. The
+    captured tool trace shows the model nominating bounded visual inspection from the complete
+    eligible catalog.
+19. **Sparse mechanical equivalence:** reconstructing declared defaults and per-piece exceptions
+    yields exactly the same mechanical facts as the current 208-row index, including the distinction
+    between missing construction evidence and a known zero degree.
+20. **Styling decision coverage:** two eligible garments that differ in available structured
+    colour/pattern, silhouette/fit, formality, or visual-read facts remain distinguishable before
+    photographs are requested; the catalog does not require name inference to recover those facts.
+21. **Measured payload:** the provider-free diagnostic records the 54,709-character current
+    baseline, the candidate replacement's total and per-field contribution, and the number of
+    eligible identities represented. Payload reduction may not be obtained by dropping identities
+    or required decision facts.
 
 ### Real-wardrobe provider-free diagnostic
 
@@ -422,9 +465,11 @@ prints:
 - all eligible outerwear grouped by thermal and construction evidence;
 - every outerwear identity retained in the adaptive construction frontier;
 - logical identity-permutation and evaluated structural-frontier counts;
-- the four selected visual paths and the reason each was selected;
+- the legacy four-path diagnostic sample and its reasons while that diagnostic remains;
 - the complete indexed alternatives; and
-- image-budget consumption by category.
+- image-budget consumption by category;
+- compact-catalog characters by field and category, including default and missing frequencies; and
+- the model-nominated visual shortlist in captured/offline tool-contract fixtures.
 
 The diagnostic must not call a model or mutate the live database. Its assertions must not name a
 production garment ID. The report may show real fixture names for owner inspection.
@@ -435,31 +480,36 @@ After offline tests and a provider-cost preview, repeat one cold-range and one h
 For each capture verify:
 
 - one batched discovery call;
-- at least three materially viable visual systems when the wardrobe supplies them;
-- no arbitrary category prefix or one-per-warmth collapse;
-- the final outfit was chosen from visually available pieces or one explicit targeted view;
+- the model, not deterministic coverage code, nominated the bounded visual shortlist from the
+  complete eligible catalog;
+- no arbitrary category prefix, one-per-warmth collapse, or four-system aesthetic bottleneck;
+- the final outfit was chosen from model-requested visual evidence;
 - no hidden trip, packing, or unavailable-tool instructions;
 - one accepted proposal without a blind rediscovery search; and
 - the final styling result is reviewed separately from mechanical feasibility.
 
-## 13 · Implementation sequence
+## 13 · Corrective implementation sequence
 
-1. Freeze the current failing cold fixture and add the symmetric hot fixture.
-2. Extract a side-effect-free path-feasibility projection from the shared validation owners.
-3. Implement exhaustive fixture enumeration and the production bounded construction-frontier join.
-4. Add atomic path selection and construction-diversity diagnostics.
-5. Replace `capSingleOutfitSearchResults` and the independent outerwear image spread on only the
-   `single_outfit` route.
-6. Add the complete compact index and the system-path response block.
-7. Update the isolated prompt projection and prompt-equivalence fixture.
-8. Amend `engine-behaviour-map.md`, `freeform-rearchitecture-handoff.md`,
+The first offline implementation remains in history. The owner correction proceeds with:
+
+1. Freeze the 208-piece, 54,709-character capture as the payload-measurement fixture and add the
+    per-field/default-frequency diagnostic.
+2. Specify and compare model-nominated piece-set versus system-set visual inspection, including
+    interaction count, prompt size, image atomicity, and repair behavior.
+3. Replace the wide repeated-row index with the losslessly reconstructable sparse catalog and add
+    structured styling decision facts.
+4. Remove the four deterministic paths from model-facing shortlist authority; retain construction
+    frontier/path feasibility only as validation and internal diagnostics where useful.
+5. Update the isolated prompt/tool projection and permanent ownership regressions.
+6. Amend `engine-behaviour-map.md`, `freeform-rearchitecture-handoff.md`,
    `search-propose-signal-inventory.md`, and `flows/freeform-stylist-chat.md` in the same implementation
    commit.
-9. Run the ranking A/B harness if any shared gate, score, or contextual ordering changes; explain
+7. Run the ranking A/B harness if any shared gate, score, or contextual ordering changes; explain
    every diff.
-10. Run the full offline suite, the tracked provider-free diagnostic, then the two cost-previewed live
+8. Run the full offline suite, the tracked provider-free diagnostic, then the two cost-previewed live
     checks.
 
-The work is complete when the model receives multiple physically credible whole-system choices for
-both hot and cold conditions, without code choosing which one looks best and without a finite image
-budget pretending an unseen wardrobe option does not exist.
+The work is complete when the model can choose what to inspect from every eligible wardrobe identity
+using useful structured facts, receives enough visual evidence to style the final system, and passes
+that choice through shared physical validation—without code choosing four outfits on its behalf and
+without a finite image budget pretending an unseen wardrobe option does not exist.
