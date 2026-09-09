@@ -146,7 +146,14 @@ test('extractStructuredUserWeather preserves a literal falling Fahrenheit range 
     low_f: 48,
     precipitation: 'rain'
   })
+  assert.deepEqual(extractStructuredUserWeather('It will be about 60°F when I leave and 48°F after sunset. It will be dry with a light breeze.'), {
+    high_f: 60,
+    low_f: 48,
+    precipitation: 'none',
+    wind: 'breezy'
+  })
   assert.equal(extractStructuredUserWeather('It should be in the low 50s'), null)
+  assert.equal(extractStructuredUserWeather('It was 60°F yesterday and should be mild tonight'), null)
 })
 
 test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {

@@ -65,14 +65,22 @@ export function extractStructuredUserWeather(text = '') {
   const normalized = String(text || '')
     .toLowerCase()
     .replace(/[–—→]/g, '-')
-  const match = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
-  if (!match) return null
-  const first = Number(match[1])
-  const second = Number(match[2])
+  const rangeMatch = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
+  // A wearing-window request often states the endpoints as two timed observations rather than
+  // typographically as a range: "60°F when I leave and 48°F after sunset". Both values must carry
+  // an explicit Fahrenheit unit so this remains factual extraction, not climate interpretation.
+  const explicitFahrenheitValues = [...normalized.matchAll(/(-?\d{1,3})\s*(?:(?:°\s*)?f(?:ahrenheit)?|degrees?\s+fahrenheit)\b/g)]
+    .map(match => Number(match[1]))
+  const endpoints = rangeMatch
+    ? [Number(rangeMatch[1]), Number(rangeMatch[2])]
+    : (explicitFahrenheitValues.length === 2 ? explicitFahrenheitValues : null)
+  if (!endpoints) return null
+  const [first, second] = endpoints
   if (!Number.isFinite(first) || !Number.isFinite(second) || first < -100 || first > 150 || second < -100 || second > 150) return null
   const weather = { high_f: Math.max(first, second), low_f: Math.min(first, second) }
   if (/\b(rain|rainy|showers?|drizzle|wet)\b/.test(normalized)) weather.precipitation = 'rain'
   else if (/\b(snow|snowy)\b/.test(normalized)) weather.precipitation = 'snow'
+  else if (/\b(dry|no (?:rain|snow|precipitation))\b/.test(normalized)) weather.precipitation = 'none'
   if (/\b(windy|strong winds?|gusty|gusts?)\b/.test(normalized)) weather.wind = 'windy'
   else if (/\b(breezy|breeze)\b/.test(normalized)) weather.wind = 'breezy'
   return weather

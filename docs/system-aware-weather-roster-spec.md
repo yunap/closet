@@ -7,13 +7,23 @@ completed offline 2026-09-08; its deterministic path-selection architecture was 
 **Recovery implementation, 2026-09-09:** `buildSystemAwareWeatherRoster` and its one-outfit call
 site were removed. Search now returns the complete hard-eligible wardrobe as a sparse,
 identity-ordered `stylist_catalog`, with zero code-selected systems and zero automatically attached
-photographs. The model nominates up to twelve IDs for visual inspection, may use one additional
-targeted view of up to four IDs after a concrete photographic finding, and owns composition; shared deterministic
+photographs. The model authors 2–3 complete candidate directions whose union contains at most twelve
+IDs for visual inspection, may use one additional targeted view of up to four IDs after a concrete
+photographic finding, and owns composition; shared deterministic
 validation still accepts or rejects the final proposal. The response reports hard exclusions by
 their actual gate reasons. The copied live fixture measured 208 eligible garments, 44,301 catalog
 characters (down 10,408 from the old compact index), and no selected paths. Sections describing the
 path frontier below remain as incident history, not current architecture. The provider-free,
 source-database-safe measurement is `scratch/diagnose_single_outfit_catalog.mjs`.
+
+**Model-comparison follow-up, 2026-09-09:** complete catalog access removed code-owned aesthetic
+selection, but `thread_1788939301104` showed the model anchoring on its first plausible complete set
+and viewing no alternative. The recovery therefore adds an observable model-owned deliberation
+step rather than restoring a roster: the model submits 2–3 complete candidate directions in its
+first `view_pieces` call. Code verifies their identity, structure, distinct heroes/piece sets, layer
+presence, and aggregate image budget only. It never generates or ranks a candidate direction, and
+the final model may recombine all viewed pieces. The viewed truth line now repeats the sparse catalog
+projection so the model does not lose the facts it used to nominate a garment.
 
 **Selection-ownership and catalog correction, 2026-09-08:** Live run
 `thread_1788898396668` showed that the first implementation reduced a large feasible-system space

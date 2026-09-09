@@ -1132,6 +1132,23 @@ test('single-outfit payload keeps exact weather and excludes the universal workb
   assert.doesNotMatch(payload.system, /Planning a Coordinated Multi-Outfit Set|OCCASION & CLIMATE PROFILES|SAVED STYLIST FEEDBACK|THREAD STATE/)
 })
 
+test('single-outfit payload extracts two timed Fahrenheit observations as the wearing-window range', () => {
+  const payload = buildSingleOutfitConversationPayload({
+    question: 'Style one outfit for Santa Fe. It will be about 60°F when I leave and 48°F after sunset. It will be dry with a light breeze.'
+  }, {
+    profile: 'single_outfit', occasion: 'city', activity: 'none', season: 'fall', mood: '', mission: 'mix',
+    limit: 1, location: 'Santa Fe', date: '2026-10-25', subject: ''
+  })
+  assert.deepEqual(payload.singleOutfitContext.user_weather, {
+    high_f: 60,
+    low_f: 48,
+    precipitation: 'none',
+    wind: 'breezy',
+  })
+  assert.match(payload.messages[0].content, /literal fact from the current request/)
+  assert.doesNotMatch(payload.messages[0].content, /No numeric weather range was stated/)
+})
+
 test('single-outfit tool surface contains only the four operations its prompt can use', () => {
   const tools = stylistToolsForTurn({
     allowedToolNames: ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit']
@@ -1192,6 +1209,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     ids.push(Number(insert.run('system roster probe bottom', 'bottom', 'medium', 'denim', '["cotton"]', null, null, null, null, 'ankle', null, null, null).lastInsertRowid))
     ids.push(Number(insert.run('system roster probe shoe', 'shoes', null, 'leather', '["leather"]', null, null, null, null, null, null, null, 'high').lastInsertRowid))
     ids.push(Number(insert.run('system roster probe coat', 'outerwear', 'medium', 'wool', '["wool"]', 'long', 'fitted', 'opaque', null, 'knee', '["wool batting"]', 'full_lining', null).lastInsertRowid))
+    ids.push(Number(insert.run('system roster probe alternate top', 'top', 'heavy', 'knit', '["wool"]', 'long', 'straight', 'opaque', 'hangs_straight', null, null, null, null).lastInsertRowid))
 
     const toolContext = {
       executionProfile: 'single_outfit',
@@ -1218,7 +1236,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(result.some(item => item.system_roster), false)
     assert.doesNotMatch(JSON.stringify(result), /system_paths|eligible_piece_index|thermal_disposition/)
 
-    const selected = ids
+    const selected = ids.slice(0, 4)
     const roleById = new Map([
       [ids[0], 'primary_top'], [ids[1], 'primary_bottom'], [ids[2], 'shoes'], [ids[3], 'outerwear'],
     ])
@@ -1232,8 +1250,46 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(unviewedProposal.status, 'validation_error')
     assert.match(unviewedProposal.message, /view_pieces/)
 
-    const viewed = await executeTool('view_pieces', { ids }, toolContext)
+    const blindSingleDirection = await executeTool('view_pieces', {
+      candidate_directions: [{
+        label: 'Only one idea', idea: 'One unchallenged formula', hero_id: ids[0],
+        pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
+      }]
+    }, toolContext)
+    assert.equal(blindSingleDirection.status, 'validation_error')
+    assert.match(blindSingleDirection.message, /2 or 3 model-authored outfit possibilities/)
+
+    const candidateDirections = [
+      {
+        label: 'Cotton line', idea: 'A skimming cotton top leads a clean separates silhouette.', hero_id: ids[0],
+        pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
+      },
+      {
+        label: 'Textured knit', idea: 'A heavier textured top changes the upper-body presence.', hero_id: ids[4],
+        pieces: [
+          { id: ids[4], role: 'primary_top' },
+          { id: ids[1], role: 'primary_bottom' },
+          { id: ids[2], role: 'shoes' },
+          { id: ids[3], role: 'outerwear' },
+        ],
+      },
+    ]
+    const missingLayerDirections = candidateDirections.map(direction => ({
+      ...direction,
+      pieces: direction.pieces.filter(piece => piece.role !== 'outerwear'),
+    }))
+    const missingLayerView = await executeTool('view_pieces', {
+      candidate_directions: missingLayerDirections,
+    }, toolContext)
+    assert.equal(missingLayerView.status, 'validation_error')
+    assert.match(missingLayerView.message, /needs an outerwear-role piece/)
+
+    const viewed = await executeTool('view_pieces', { candidate_directions: candidateDirections }, toolContext)
     assert.equal(viewed.filter(item => item.name).length, ids.length)
+    assert.match(viewed.find(item => item.id === ids[0]).truth, /fit:skims/)
+    assert.match(viewed.find(item => item.id === ids[0]).truth, /warm:moderate/)
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidateDirectionCount, 2)
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount, ids.length)
     const targetedSecondView = await executeTool('view_pieces', { ids: [...ids, ...ids] }, toolContext)
     assert.equal(targetedSecondView.length, 4, 'the optional targeted second view is capped at four IDs')
     const overBudgetView = await executeTool('view_pieces', { ids }, toolContext)

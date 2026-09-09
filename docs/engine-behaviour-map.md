@@ -16,12 +16,34 @@ composer (measured 0 reads against 30-49k written tokens on every sampled call) 
 `OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
 
+**[amended 2026-09-09 — model-owned comparison is now observable]** Live acceptance
+`thread_1788939301104` proved that complete catalog access alone did not create meaningful choice:
+the stylist viewed exactly one top, bottom, shoe, and coat, then repaired only the rejected coat.
+The first `single_outfit` `view_pieces` call now carries 2–3 model-authored complete candidate
+directions. Each names its own hero, visual thesis, and role-assigned IDs. Code checks only catalog
+membership, shared role structure, distinct heroes/piece sets, the explicit outerwear obligation,
+and the twelve-identity visual ceiling; it constructs no direction and makes no aesthetic comparison.
+The model may choose or recombine any viewed pieces. The optional second call remains a four-ID
+targeted repair. The same run showed that the large catalog contained `fit:clings_stretchy` and
+`warm:moderate` for the chosen top while `view_pieces`' later truth line dropped both. On this profile,
+viewed candidates now repeat `singleOutfitStylistCatalogLine`, preserving the exact selection facts
+beside the photograph; other flows retain `buildWardrobeManifestLine` unchanged.
+
+**[amended 2026-09-09 — timed stated-temperature syntax]** The canonical request stated its
+wearing-window endpoints separately—“60°F when I leave” and “48°F after sunset”—rather than with
+`to`, a dash, or an arrow. `extractStructuredUserWeather` recognized only the latter syntax, so the
+structured payload contradicted the visible request with `user_weather:null` and “No numeric weather
+range was stated.” It now accepts exactly two explicitly Fahrenheit-qualified observations as the
+two endpoints, still returning `null` for one isolated temperature or language requiring climate
+interpretation. Literal dry and breeze language is projected as precipitation/wind fact.
+
 **[amended 2026-09-09 — model-owned single-outfit catalog supersedes system selection]** The
 2026-09-08 system-aware roster below was a failed ownership experiment and has been removed from the
 `single_outfit` flow. `search_wardrobe` now returns every hard-eligible garment in an identity-ordered,
 sparse `stylist_catalog`; it attaches no photographs and constructs, evaluates, or selects no outfit
 paths. Model-authored descriptive filters cannot narrow that complete catalog; categories and shared
-hard context gates still apply. The model nominates up to twelve catalog IDs for `view_pieces`, with one optional targeted
+hard context gates still apply. The model authors 2–3 complete candidate directions spanning up to
+twelve catalog IDs for its first `view_pieces` comparison, with one optional targeted
 second view of up to four IDs when the first photographs expose a real problem, then composes one proposal.
 `propose_outfit` retains shared structural, environmental, removable-state, sight, and ID validation.
 Catalog identities do not count as retrieved or seen: a photo-bearing proposal must have been viewed.

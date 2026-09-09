@@ -18,10 +18,24 @@
 > freshness, routing, mode, and history-budget consumers. Another isolated-profile run remained
 > required.
 
+> **Model-owned comparison correction, 2026-09-09:** `thread_1788939301104` proved that a complete
+> catalog is necessary but not sufficient for meaningful model choice: the stylist nominated only
+> one complete four-piece idea, then used its repair view solely to replace rejected outerwear. The
+> first visual call now expresses 2–3 complete candidate directions selected by the model itself,
+> each with a distinct hero, visual thesis, and explicit piece roles. The tool mechanically checks
+> catalog membership, shared role completeness, distinct identity sets/heroes, the layer obligation,
+> and the existing twelve-image ceiling; it does not create, rank, or aesthetically approve the
+> alternatives. The model compares and may recombine the returned photographs. Candidate truth at
+> that point reuses the catalog projection, so fit and thermal facts do not disappear between catalog
+> selection and visual judgment. The same run's structured payload said no numeric range existed
+> beside literal timed 60°F and 48°F statements; the conservative extractor now treats exactly two
+> explicitly Fahrenheit-qualified timed observations as endpoints and preserves stated dry/breeze
+> facts.
+
 **Status:** ratified and implemented 2026-09-06; six live acceptance findings on 2026-09-07 exposed
 additional narrow defects. Findings one through five were corrected and offline-verified. Finding
 six's engine-selected roster was implemented, disproved by live acceptance, and removed on
-2026-09-09; the replacement complete sparse catalog and model-owned visual shortlist are implemented.
+2026-09-09; the replacement complete sparse catalog and model-owned direction comparison are implemented.
 Amended after owner review
 to make the canonical temperatures an explicit wearing-window exposure rather than a daily
 high/overnight-low envelope, after technical review to close declaration omission, and after the

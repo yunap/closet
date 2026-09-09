@@ -1,12 +1,27 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Model-owned direction comparison and fact continuity, implemented 2026-09-09:** live run
+> `thread_1788939301104` received the complete 213-piece eligible catalog but used its first visual
+> call on exactly one top, bottom, shoe, and coat. Complete access had removed engine preselection,
+> but had not prevented first-plausible-formula anchoring. The first `single_outfit` `view_pieces`
+> schema now accepts `candidate_directions`: 2–3 complete possibilities the model authors from the
+> catalog, each with a distinct hero, short visual thesis, and role-assigned pieces, bounded to twelve
+> unique IDs. The handler verifies catalog membership, shared role structure, distinct hero/piece
+> sets, and any declared outerwear obligation; it makes no style judgment and the model may recombine
+> viewed candidates. A second four-ID targeted repair remains available. For this profile,
+> `view_pieces` now projects `singleOutfitStylistCatalogLine` beside each photo rather than dropping
+> selection-critical fit and thermal facts through the older manifest line. The same run exposed a
+> separate authority contradiction: two timed values (“60°F when I leave” / “48°F after sunset”)
+> were not parsed as a range. `extractStructuredUserWeather` now accepts exactly two explicit
+> Fahrenheit observations and retains stated dry/breeze conditions; ambiguous prose remains null.
+
 > **Model-owned single-outfit catalog, implemented 2026-09-09:** the system-aware path selector
 > below reproduced the architectural failure this slice was meant to isolate: code reduced thousands
 > of mechanically possible systems to four photographed choices before the stylist could exercise
 > aesthetic judgment. It has been removed from the one-outfit runtime. A complete batched search now
 > returns an identity-ordered sparse `stylist_catalog` of every hard-eligible garment, attaches zero
 > search images, and exposes an exact exclusion summary. Model-authored descriptive filters cannot
-> narrow that catalog. The model chooses up to twelve IDs to inspect
+> narrow that catalog. The model authors 2–3 complete candidate directions spanning up to twelve IDs to inspect
 > with `view_pieces`, may make one targeted second view of up to four IDs if the photographs reveal a concrete issue,
 > and then submits one card to the unchanged shared validator. Catalog identities are not treated as
 > retrieved or seen. On the copied 208-piece fixture, the catalog is 44,301 characters, 10,408 fewer

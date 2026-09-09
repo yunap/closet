@@ -41,12 +41,26 @@ decisions.
 > roster.** One batched search returns every hard-eligible garment in a sparse, identity-ordered
 > `stylist_catalog`, an exact hard-exclusion summary, and no photographs or constructed outfit paths.
 > Descriptive search filters cannot silently narrow it; categories and shared hard context gates remain.
-> The model reads that complete catalog, nominates up to twelve IDs for `view_pieces`, optionally
+> The model reads that complete catalog, authors 2–3 complete candidate directions spanning up to
+> twelve IDs for its first `view_pieces` comparison, optionally
 > makes one targeted second view of up to four IDs if those photographs expose a concrete problem, and proposes one
 > outfit. Catalog presence does not satisfy retrieval or sight verification; photographed garments
 > in the final card must actually have been viewed. The existing shared proposal validator remains
 > the hard-constraint owner. This recovery changes only `single_outfit` and leaves trip, capsule,
 > batch, swap, and full-stylist flows untouched.
+
+> **[implemented 2026-09-09] Complete access now has an observable model-owned comparison step.**
+> `thread_1788939301104` received all 213 eligible garments but the model viewed only one complete
+> idea, anchoring immediately on a generic basic-top/jeans formula. The first `view_pieces` call now
+> supplies 2–3 candidate directions authored by the model from the complete catalog: each has a
+> distinct hero, a short visual thesis, and role-assigned complete-system IDs, with at most twelve
+> unique IDs across them. The tool checks identities, shared role structure, distinctness, the
+> declared layer obligation, and budget only; it neither creates nor ranks the directions. The model
+> compares the returned photographs and may recombine them before proposing one card. The selected
+> photograph response repeats the same sparse catalog truth line, keeping fit, warmth, sleeves,
+> waist, and outerwear construction available at the decision point. Separately, the structured
+> request extractor now recognizes the canonical request's two timed Fahrenheit observations, so
+> it no longer emits `user_weather:null` beside literal 60°F and 48°F statements.
 
 > **[superseded 2026-09-08] The narrow declaration stays narrow; the temporary category cap does
 > not own complete-outfit discovery anymore.** The 2026-09-07 ten-per-category/per-warmth repair

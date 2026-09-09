@@ -14,7 +14,7 @@ import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
 import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
-import { evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
+import { evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
 import { ENVIRONMENTAL_ADEQUACY_CODES, outerwearPieces } from './outfitEnvironmentalAdequacy.js'
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
@@ -413,7 +413,7 @@ export function buildSingleOutfitStylistCatalog(pieces = []) {
     eligible_piece_count: unique.length,
     eligible_by_category: eligibleByCategory,
     sparse_conventions: 'Omitted pattern means solid; omitted opacity means opaque; omitted season means year-round; omitted needs-base means no. Occasion tags are omitted because every row already survived this request\'s occasion gate; formality remains explicit. Every other omitted fact is not recorded and must not be inferred.',
-    instruction: 'Choose the candidate IDs whose photographs you need to judge. Call view_pieces with up to 12 IDs across complete outfit possibilities; if those photographs expose a real problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.',
+    instruction: 'Develop 2–3 materially different outfit directions from this complete catalog, then make the first view_pieces call with candidate_directions describing those model-chosen systems (distinct hero, short styling idea, and role-assigned piece IDs; up to 12 unique IDs total). The tool checks only that the alternatives are real, distinct, and structurally complete—it does not rank or choose them. Compare the photographs and compose the strongest result yourself; you may recombine viewed pieces. If the photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.',
     catalog,
     serialized_character_count: catalog.length,
   }
@@ -1074,7 +1074,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, choose the IDs whose photographs you need, then call view_pieces with up to 12 IDs across complete outfit possibilities; one additional targeted view of up to 4 IDs is allowed if the first photographs expose a real problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour/read, pattern, silhouette, fit, fabric, construction, formality and footwear; occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
+    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, develop 2–3 materially different model-authored outfit directions, then call view_pieces once with those candidate_directions (up to 12 unique IDs total); one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour/read, pattern, silhouette, fit, fabric, construction, formality and footwear; occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1099,14 +1099,40 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "view_pieces",
-    description: "Look at specific wardrobe pieces by ID: returns each piece's photo thumbnail plus a compact truth line. This is the cheap, preferred way to satisfy the verification contract — it verifies (and visually verifies) the exact IDs you intend to recommend, including layer/base pieces. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
+    description: "Look at specific wardrobe pieces: returns each photo thumbnail plus a compact truth line. In the single-outfit profile, the FIRST call must use candidate_directions to expose 2–3 materially different complete outfit ideas chosen by you from the full catalog; give each a distinct hero, a short styling idea, and role-assigned pieces. This is deliberation, not an engine roster: the tool checks identity, distinctness, and structural completeness only, never taste or rank, and you may recombine any viewed pieces after comparing the photographs. Up to 12 unique IDs may be viewed across those directions. A SECOND targeted call may use ids with up to 4 replacements only when the first photographs exposed a concrete problem. Outside that profile, use ids normally. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
     input_schema: {
       type: "object",
       properties: {
-        ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to view (max 12 per call)." },
+        ids: { type: "array", items: { type: "integer" }, description: "Ordinary piece IDs to view. In the single-outfit profile, use this only for the optional second targeted call (max 4); the first call derives its IDs from candidate_directions." },
+        candidate_directions: {
+          type: "array",
+          minItems: 2,
+          maxItems: 3,
+          description: "Single-outfit FIRST view only: 2–3 model-authored complete outfit possibilities from the full catalog. They may share support pieces, but each needs a different hero and a different piece set. Up to 12 unique IDs total.",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Short name for this possible styling direction." },
+              idea: { type: "string", description: "One short visual thesis explaining how this direction differs—not a weather verdict." },
+              hero_id: { type: "integer", description: "The leading garment for this direction; must appear in pieces and differ across directions." },
+              pieces: {
+                type: "array",
+                description: "A structurally complete candidate system using catalog IDs and intended outfit roles.",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "integer" },
+                    role: { type: "string", enum: OUTFIT_ROLES }
+                  },
+                  required: ["id", "role"]
+                }
+              }
+            },
+            required: ["label", "idea", "hero_id", "pieces"]
+          }
+        },
         size: { type: "string", enum: ["thumb", "large"], description: "thumb (default): quick fit/color/texture read. large: construction detail — weave, lining, sheerness — for layer/base decisions." }
-      },
-      required: ["ids"]
+      }
     }
   },
   {
@@ -1564,7 +1590,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (toolContext?.executionProfile === 'single_outfit') {
             return {
               status: "success",
-              message: `Intent recorded: one outfit card; removable layer ${layerRequirement === 'required' ? 'required' : 'not explicitly required'}. Make one batched search covering every category the outfit may need. Read the complete sparse stylist_catalog, choose the candidates whose photographs you need to compare, then call view_pieces with up to 12 IDs across complete outfit possibilities. The catalog is not ranked and code has not chosen outfits for you. ${layerRequirement === 'required' ? 'Include one real, visually verified outerwear piece and judge the cold endpoint with it on and the warm endpoint after one outerwear piece comes off. ' : ''}If the first photographs expose a real problem, one additional targeted view of up to 4 IDs is allowed. Submit exactly one complete card through propose_outfit; if validation rejects it, follow that repair instruction and resubmit rather than presenting the rejected card. Report a wardrobe gap only from the complete catalog and hard-exclusion report, never from the pieces you happened to view.`
+              message: `Intent recorded: one outfit card; removable layer ${layerRequirement === 'required' ? 'required' : 'not explicitly required'}. Make one batched search covering every category the outfit may need. Read the complete sparse stylist_catalog, develop 2–3 materially different model-authored styling directions, then make the first view_pieces call with those candidate_directions (distinct heroes, short visual theses, role-assigned complete systems; up to 12 unique IDs total). The catalog is not ranked and code has not chosen outfits for you. ${layerRequirement === 'required' ? 'Each candidate direction must include one real outerwear piece; judge the cold endpoint with it on and the warm endpoint after one outerwear piece comes off. ' : ''}Compare the photographs and choose or recombine the strongest result yourself. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. Submit exactly one complete card through propose_outfit; if validation rejects it, follow that repair instruction and resubmit rather than presenting the rejected card. Report a wardrobe gap only from the complete catalog and hard-exclusion report, never from the pieces you happened to view.`
             }
           }
           const boundedBatchContract = (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
@@ -2611,17 +2637,131 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         const viewLimit = singleOutfitViewCall && priorSingleOutfitViewCalls === 1 ? 4 : 12
-        const ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, viewLimit)
-        if (!ids.length) {
-          return { status: "validation_error", message: "view_pieces needs ids: [<wardrobe piece ids>]." }
-        }
-        const maxPx = args?.size === 'large' ? 896 : 448
         const allowedSource = toolContext?.allowedPieceIds || toolContext?.singleOutfitCatalogEligibleIds || null
         const allowedSet = allowedSource
           ? (allowedSource instanceof Set
             ? allowedSource
             : new Set(Array.isArray(allowedSource) ? allowedSource.map(Number) : []))
           : null
+        let ids = []
+        if (singleOutfitViewCall && priorSingleOutfitViewCalls === 0) {
+          const rawDirections = Array.isArray(args?.candidate_directions) ? args.candidate_directions : []
+          const directionIssues = []
+          const heroIds = new Set()
+          const pieceSetSignatures = new Set()
+          const unionIds = []
+          const unionSeen = new Set()
+          const normalizedDirections = []
+
+          if (!allowedSet) {
+            directionIssues.push('make the complete single-outfit search before choosing visual candidates')
+          }
+          if (rawDirections.length < 2 || rawDirections.length > 3) {
+            directionIssues.push('candidate_directions must contain 2 or 3 model-authored outfit possibilities')
+          }
+
+          for (const [index, direction] of rawDirections.slice(0, 3).entries()) {
+            const number = index + 1
+            const label = String(direction?.label || '').trim()
+            const idea = String(direction?.idea || '').trim()
+            const heroId = Number(direction?.hero_id)
+            const rawPieces = Array.isArray(direction?.pieces) ? direction.pieces : []
+            const directionIds = []
+            const directionSeen = new Set()
+            const resolvedDirection = []
+
+            if (!label) directionIssues.push(`direction ${number} needs a short label`)
+            if (!idea) directionIssues.push(`direction ${number} needs a distinct visual idea`)
+            if (!Number.isFinite(heroId)) directionIssues.push(`direction ${number} needs a numeric hero_id`)
+
+            for (const entry of rawPieces) {
+              const id = Number(entry?.id)
+              const role = String(entry?.role || '').trim()
+              if (!Number.isFinite(id)) {
+                directionIssues.push(`direction ${number} contains a non-numeric piece ID`)
+                continue
+              }
+              if (directionSeen.has(id)) {
+                directionIssues.push(`direction ${number} repeats piece ${id}`)
+                continue
+              }
+              directionSeen.add(id)
+              directionIds.push(id)
+              if (allowedSet && !allowedSet.has(id)) {
+                directionIssues.push(`direction ${number} uses piece ${id}, which is not in the eligible catalog`)
+                continue
+              }
+              const row = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id)
+              if (!row) {
+                directionIssues.push(`direction ${number} uses piece ${id}, which is not an active wardrobe item`)
+                continue
+              }
+              resolvedDirection.push({ ...parsePiece(row), role })
+            }
+
+            if (!directionSeen.has(heroId)) {
+              directionIssues.push(`direction ${number}'s hero_id must be one of its own pieces`)
+            } else if (heroIds.has(heroId)) {
+              directionIssues.push(`direction ${number} must use a different hero from the other directions`)
+            } else {
+              heroIds.add(heroId)
+            }
+
+            const signature = [...directionSeen].sort((a, b) => a - b).join(',')
+            if (signature && pieceSetSignatures.has(signature)) {
+              directionIssues.push(`direction ${number} repeats another direction's complete piece set`)
+            } else if (signature) {
+              pieceSetSignatures.add(signature)
+            }
+
+            if (resolvedDirection.length === rawPieces.length && rawPieces.length) {
+              const structure = evaluateOutfitRoles(resolvedDirection)
+              if (!structure.valid) {
+                directionIssues.push(`direction ${number} is not a complete wearable system: ${structure.primaryFinding?.message || 'invalid role structure'}`)
+              }
+              if (toolContext?.declaredIntent?.layerRequirement === 'required' &&
+                  !resolvedDirection.some(piece => piece.role === 'outerwear' && wardrobeCategoryGroup(piece) === 'outerwear')) {
+                directionIssues.push(`direction ${number} needs an outerwear-role piece because this request requires a removable layer`)
+              }
+            } else if (!rawPieces.length) {
+              directionIssues.push(`direction ${number} needs role-assigned pieces`)
+            }
+
+            for (const id of directionIds) {
+              if (unionSeen.has(id)) continue
+              unionSeen.add(id)
+              unionIds.push(id)
+            }
+            normalizedDirections.push({ label, idea, hero_id: heroId, pieces: rawPieces })
+          }
+
+          if (unionIds.length > viewLimit) {
+            directionIssues.push(`candidate directions use ${unionIds.length} unique pieces; the first visual budget is ${viewLimit}`)
+          }
+          if (directionIssues.length) {
+            return {
+              status: 'validation_error',
+              message: `Before viewing candidates, fix the model-authored direction set: ${directionIssues.map((issue, index) => `(${index + 1}) ${issue}`).join('; ')}. Choose 2–3 genuinely different complete systems from the catalog; code will verify their structure but will not choose or rank them.`,
+              issues: directionIssues,
+            }
+          }
+          ids = unionIds
+          toolContext.singleOutfitCandidateDirections = normalizedDirections
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.singleOutfitCandidateDirectionCount = normalizedDirections.length
+          toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount = ids.length
+        } else {
+          ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, viewLimit)
+        }
+        if (!ids.length) {
+          return {
+            status: "validation_error",
+            message: singleOutfitViewCall && priorSingleOutfitViewCalls === 0
+              ? 'The first single-outfit view_pieces call needs candidate_directions with 2–3 complete model-authored outfit possibilities.'
+              : "view_pieces needs ids: [<wardrobe piece ids>]."
+          }
+        }
+        const maxPx = args?.size === 'large' ? 896 : 448
         const viewed = []
         for (const id of ids) {
           if (allowedSet && !allowedSet.has(id)) {
@@ -2650,7 +2790,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           viewed.push({
             id: parsed.id,
             name: parsed.name,
-            truth: buildWardrobeManifestLine(parsed),
+            // The compact single-outfit catalog is the candidate-selection truth surface. Repeat
+            // that same decision-useful projection beside the selected photograph so fit, warmth,
+            // sleeve, waist and weather-construction facts do not disappear at the moment of
+            // comparison. Other flows retain their established manifest truth line.
+            truth: singleOutfitViewCall
+              ? singleOutfitStylistCatalogLine(parsed)
+              : buildWardrobeManifestLine(parsed),
             evidence_note: 'Photos support visible drape, bulk, texture and behavior—not exact fiber composition. A shown configuration proves feasibility only; judge its visible result separately and do not rank an unseen alternative.',
             ...(image ? { image } : { note: 'no photo on file — tags are the only truth for this piece' })
           })
