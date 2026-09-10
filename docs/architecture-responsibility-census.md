@@ -27,6 +27,21 @@ This is an ownership index. Detailed current behavior remains in
 Domain language follows [CONTEXT.md](CONTEXT.md); exact code symbols, database fields, routes, and
 historical UI labels retain their source spelling when cited.
 
+> **Amendment 2026-09-07 — execution-profile freshness owner.** Live capture
+> `thread_1788814890775` proved that the client’s conversational-mode regex had accidentally become
+> the owner of bounded-profile reachability: a fresh brief containing “This is” skipped routing and
+> received the universal prompt. The client classifier now requires real thread memory for any
+> continuation mode. Independently, `freeformExecutionContextEvidence` enumerates the state that
+> makes an execution non-fresh; an empty evidence set, not a prose label, owns fresh-router
+> eligibility. This preserves the per-field conversation-state ruling while separating tone from
+> execution disposition.
+
+> **Amendment 2026-09-07 — prior-history projection owner.** `thread_1788817405702` exposed a
+> second ownership leak: the client transport includes the current message at the end of `history`,
+> and consumers deciding freshness or conversational mode treated that copy as a prior turn.
+> `priorStylistConversationHistory` now owns removal of the exact trailing current-question copy;
+> execution evidence, router context, mode classification, and history bounding consume its result.
+
 **Method:** Production routes were traced from client calls through route registration, nested
 composer calls, validation, repair, fallback, response assembly, and state persistence. Exports
 found by search but not reached by an active entry point are not counted as consumers. Function

@@ -1,12 +1,30 @@
 # Model-facing signal inventory — search/propose/generate/no-tool surfaces
 
-**Status:** inventory complete, **no implementation**. Owner-requested 2026-09-03 after external review
+**Status:** inventory complete; search/swap facts-not-judgments conversion implemented in `6ee24d8`.
+Owner-requested 2026-09-03 after external review
 of PR #315 traced the actual bad edit (thread_1788430055577's "Trail Walk & Rain Shell") to a turn that
 never touched `plan_outfit_set` at all — `search_wardrobe → propose_outfit` produced it, with correct
 68/48°F weather already present. This is the companion inventory to
 [model-facing-signal-inventory.md](model-facing-signal-inventory.md), which covered only the plan path.
 That document's finding — 19 of 25 signals were derived judgments, and the facts behind them were
 absent from the payload — turns out to describe two thirds of the app's tool surface, not all of it.
+**Amended 2026-09-06:** the document now distinguishes the original findings from the subsequently
+implemented search/swap conversion, and Surface 4's previously explicit trace gap is closed. The
+correction is recorded in place below and informs the narrower
+[single-outfit weather-layer slice](single-outfit-weather-layer-vertical-slice-spec.md).
+**Amended 2026-09-07 after live acceptance:** the fact channel no longer describes insulating face
+material as generic constructed insulation, and weather-aware outerwear image allocation covers
+distinct structured construction-evidence groups without reordering returned rows or adding a
+thermal verdict.
+**Amended again 2026-09-07:** a narrow proposal-validity exception now consumes the existing thermal
+band: known undershoot is hard only for an explicitly required layer under a certain user-stated
+encountered range. This is not a search rank or model-facing verdict. Router activity is also locked
+as request authority so the model cannot lower demand by inventing exertion in a later tool call.
+**Amended 2026-09-08:** complete `single_outfit` searches no longer use independent category/warmth
+sampling. They return a complete compact eligible index and rich/image evidence for several atomic
+whole-system paths selected from a structured construction frontier. The path metadata contains
+shared mechanical/thermal dispositions, never an aesthetic verdict; all other search consumers retain
+their existing result shape.
 
 ## Why this exists, precisely
 
@@ -89,6 +107,15 @@ Confirmed by reading `case 'search_wardrobe'` line by line, not inferred:
 Same shape as the plan path's pre-rework instruction block (removed in `02ffa84`) — the tool
 description itself teaches obedience to a verdict, on the surface that still emits one.
 
+### Implemented after this inventory (`6ee24d8`)
+
+The findings above describe the captured 2026-09-03 behavior. The current `search_wardrobe` branch
+has since removed `weatherFit`/`weatherFitScore`, the thermal-score sort, and the tool instruction to
+obey that verdict. It now emits `thermalFactsForPieceLine` in both trimmed and full result shapes and
+keeps retrieval order until the separate occasion/activity `ruleFit` ordering. That remaining tier is
+not a thermal verdict; its hard `prohibited` behavior and soft tier ordering are unchanged and remain
+owned by occasion/activity policy.
+
 ## Surface 2 — `suggest_slot_swaps`
 
 Not in the original scope, found while tracing `search_wardrobe`'s scoring pattern. Live in
@@ -105,6 +132,11 @@ penalty alone is up to 24). Confirms the reviewer's "hidden hidden shaping" conc
 `search_wardrobe`-specific — it is the same two functions (`weatherFitForPiece`, `profileRuleFit`)
 reused as a scoring primitive across at least two tool implementations, likely more (see Surface 3).
 
+**Implemented after this inventory (`6ee24d8`):** the current swap score no longer contains
+`weatherFit.score`, and the returned debug record carries `thermalFactsForPieceLine` instead of a
+`weatherFit` label. Newness, query/color match, occasion fit, and the separately owned `ruleFit` term
+remain.
+
 ## Surface 3 — `propose_outfit`
 
 The tool's own input schema carries **no per-piece judgment fields at all** — it accepts `{id, role,
@@ -120,12 +152,29 @@ surfaces**, since `propose_outfit` and `submit_plan_outfits` both route through 
 
 ## Surface 4 — `generate_outfits`
 
-Delegates to `generateOutfitsForPieceInternal`/`generateWholeWardrobeOutfitsVisualInternal` in
-`routes/ai.js` rather than implementing its own candidate logic inline. Not traced line-by-line here —
-stated honestly rather than assumed complete: given Surfaces 1–2 both reuse `weatherFitForPiece`/
-`profileRuleFit` as shared primitives, and `automaticUsePool.js` (the eligibility gate all these flows
-share) is a common dependency, the same scoring pattern is **likely but not confirmed** present.
-Flagged as the one gap in this pass, to trace before implementation rather than assume.
+**Amended 2026-09-06 — traced, correcting the earlier unconfirmed entry.** `executeTool` delegates to
+`generateOutfitsForPieceInternal` or `generateWholeWardrobeOutfitsVisualInternal` in `routes/ai.js`.
+The whole-wardrobe branch is not the same candidate contract as `search_wardrobe`:
+
+- `declareBoundedMultiLookIntent` treats a fresh request as bounded only when its count is at least
+  two. Although the tool description permits an explicit one/best request to call
+  `generate_outfits(limit: 1)`, that call is therefore outside the bounded profile.
+- The nested whole-wardrobe call receives the turn's `resolvedWeatherProfile` only in the bounded
+  profile. Its call site does not forward `user_weather`, `location`, or `date`. A one-look call can
+  consequently discard the just-resolved explicit weather and let the nested composer resolve a
+  different context. `freeform_observability.test.js` currently asserts this distinction.
+- `generateWholeWardrobeOutfitsVisualInternal` applies deterministic candidate gates and shaping,
+  then gives the composer candidate images labeled by `composerPieceLineSuffix`. That suffix includes
+  fabric category, opacity, fit, and wear-mechanics facts, but not `thermalFactsForPieceLine`'s warmth,
+  insulation, interior construction, season, or removability channel.
+- The final returned proposals do pass through `locallyGateWholeWardrobeOutfits` with the resolved
+  weather, so this is not “no validation.” The problem is that candidate shaping and model judgment
+  do not share the serial path's newer facts-not-judgments contract, and the one-look alternate route
+  can start with the wrong weather identity.
+
+The first corrective slice therefore does not redesign the batch composer. It makes one fresh outfit
+unambiguously `search_wardrobe → propose_outfit` and reserves `generate_outfits` for a 2–5 look batch.
+The batch composer's model-facing thermal fact channel remains a separate follow-up.
 
 ## Surface 5 — no-tool full-stylist responses
 
@@ -164,10 +213,10 @@ the others toward, not something to change.
 | surface | fact channel | judgment channel | hidden shaping |
 |---|---|---|---|
 | plan_outfit_set (reworked) | `warmth:`/`insulation:`/`season:`/`removable:` per piece | none (removed 02ffa84) | `spreadThermalRange` — range, not rank |
-| search_wardrobe | fabric/opacity/sleeve/etc. (untrimmed only); **no warmth/insulation ever** | `weatherFit`, `ruleFit` | 2 independent sorts by derived score |
-| suggest_slot_swaps | via candidate piece rows | `weatherFit.score`, `ruleFit.tier` | additive scoring term, largest single weight |
+| search_wardrobe | source-specific thermal fact line in both shapes; broader garment facts in untrimmed shape | `ruleFit` for occasion/activity, not thermal fit | occasion/activity tier ordering; no thermal sort; weather-aware outerwear image slots spread across structured construction evidence |
+| suggest_slot_swaps | thermal fact line in returned debug record | `ruleFit.tier`; no thermal verdict (`6ee24d8`) | newness/query/color/occasion plus `ruleFit`; no thermal score |
 | propose_outfit | none (pure id+role input) | none in schema; consumes shared Contract A/B/C on rejection | shared with plan path |
-| generate_outfits | delegated, not traced | delegated, not traced | **unconfirmed — trace before implementing** |
+| generate_outfits | deterministic roster facts, but composer labels omit warmth/insulation/interior/season/removability | weather-shaped candidate pool plus final shared validation | traced: alternate `limit:1` route can lose canonical weather; batch composer uses its own shaping |
 | no-tool full-stylist | wardrobe manifest (F) | 6 lines of standing thermal policy in the system prompt | none (no tool = no scoring) but the strongest per-turn authority, since it applies with no per-turn facts to check it against |
 | wardrobe manifest | 100% F | none | none |
 
@@ -177,19 +226,31 @@ Same as the plan-path rework: **deterministic code supplies garment truth, envir
 constraints, and genuine hard feasibility constraints; the model owns styling judgment.** Applied here
 that means, concretely:
 
-- `search_wardrobe`'s result rows carry the same fact channel `plan_outfit_set` now does (warmth,
-  insulation, interior construction, season, removability), not `weatherFit`/`ruleFit` labels.
-- The two hidden sorts are replaced with the same range-preserving principle as
-  `spreadThermalRange` — order should not itself be a delivered verdict.
-- `suggest_slot_swaps`'s scoring drops the `weatherFit.score`/`ruleFit.tier` terms; ranking by
-  mechanical diversity/newness/query-match stays, since those are not styling judgments.
-- The tool description's "honour them" instruction is removed with the field it refers to.
+- **Implemented in `6ee24d8`:** `search_wardrobe`'s result rows carry the shared thermal fact channel
+  (warmth, insulation, interior construction, season, removability), not a `weatherFit` label, and no
+  longer sort by a thermal score. Separately owned occasion/activity `ruleFit` remains.
+- **Implemented 2026-09-07 after live acceptance:** the shared line distinguishes a recorded
+  `insulating layer` from `insulating face material`; weather-aware outerwear photographs cover
+  constructed, filled, unfilled, and unknown evidence rather than the first same-shaped rows. The
+  returned roster remains in its existing order and receives no weather-fit label.
+- **Superseded 2026-09-09 for complete one-outfit searches:** `buildSystemAwareWeatherRoster`
+  was removed after live acceptance proved its four-path photo union functioned as the model's
+  aesthetic choice set. `search_wardrobe` now emits the complete hard-eligible wardrobe as a sparse,
+  identity-ordered `stylist_catalog` and no images or paths. The model nominates up to twelve IDs for
+  `view_pieces` (plus one targeted second view of up to four IDs after a concrete visual finding), while
+  `propose_outfit` retains shared hard validation. Hard exclusions are counted by exact gate reason.
+- **Implemented in `6ee24d8`:** `suggest_slot_swaps` drops `weatherFit.score` while retaining
+  newness/query/color/occasion and `ruleFit` behavior; its debug result now exposes thermal facts.
+- **Implemented in `6ee24d8`:** the tool description's thermal "honour them" instruction is removed
+  with the field it referred to.
 - `stylistSystemTemplate` lines #11–13 are removed or rewritten to state facts and let the model reason
   ("this slot is indoor; heated buildings do not require outdoor warmth" rather than "do not serve
   sleeveless pieces").
 - `propose_outfit`'s validator inherits whatever the plan-path adequacy rework eventually lands on
   (nothing new here — same functions).
-- `generate_outfits` gets traced before any of the above ships, not assumed clean by similarity.
+- `generate_outfits` is reserved for 2–5 fresh same-context looks; a one-outfit request uses the
+  serial search/propose contract. Adding the batch composer's missing thermal fact channel remains a
+  separate implementation decision.
 
 ## Open, deliberately not folded in
 
@@ -200,7 +261,7 @@ that means, concretely:
   instruction not to mix it in unless the inventory showed a shared owner. It does not: provenance
   labeling lives in `weather.js`'s precedence resolver, unrelated to the judgment-vs-fact question this
   document addresses.
-- `generate_outfits`' actual scoring path, not traced to the implementation (Surface 4).
-- Whether `plan_outfit_set`'s own `piece_catalog` line (warmth/insulation/etc.) should simply be
-  reused verbatim by `search_wardrobe` rather than building a second, parallel fact-line format — an
-  implementation question, not part of this inventory.
+- The batch composer's model-facing thermal fact channel and weather-shaped candidate pool. Surface 4
+  is now traced, but redesigning that path is deliberately separate from the single-outfit slice.
+- Whether the batch composer should reuse the same `thermalFactsForPieceLine` now shared by the plan,
+  search, and swap paths rather than maintain its separate `composerPieceLineSuffix` format.

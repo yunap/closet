@@ -81,6 +81,20 @@ test('conditionsSource records the sourcing tier, and coarse survives it', () =>
   assert.equal(live.conditionsSource, 'waking_window_estimate')
   assert.equal(live.coarse, true)
 
+  const statedFlatProfile = resolveExposureContext(MUSEUM, {
+    highF: 60,
+    lowF: 48,
+    weatherSource: 'stated_user',
+    resolvedWeatherContext: {
+      temperature: { highF: 60, lowF: 48, source: 'stated_user' },
+      wind: { value: 'breezy', source: 'stated_user' },
+    },
+  }).conditions
+  assert.equal(statedFlatProfile.conditionsSource, 'stated_user_exposure_range')
+  assert.equal(statedFlatProfile.wakingLowF, 48, 'production flat profiles must retain the user-stated low')
+  assert.equal(statedFlatProfile.wind, 'breezy')
+  assert.equal(statedFlatProfile.coarse, false)
+
   const none = resolveExposureContext(MUSEUM, null).conditions
   assert.equal(none.conditionsSource, 'unknown')
   assert.equal(none.known, false)

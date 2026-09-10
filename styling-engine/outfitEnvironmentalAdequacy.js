@@ -27,8 +27,8 @@ import { evaluateOuterwearCapability } from './outerwearCapability.js'
 // found a filter keyed on a reason STRING that silently stopped matching when the band renamed it,
 // so prose is never an API here.
 import { resolveExposureContext } from './exposure.js'
-import { requiredThermalBand, compareThermalFit } from './thermalDemand.js'
-import { outfitThermalContribution } from './outfitThermalContribution.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from './thermalDemand.js'
+import { outfitThermalContribution, outfitRangeCoverage } from './outfitThermalContribution.js'
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
@@ -36,6 +36,7 @@ export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
   THERMAL_UNDERSHOOT: 'outfit_thermal_capacity_below_conditions',
+  WARM_END_THERMAL_UNDERSHOOT: 'outfit_remaining_layers_below_warm_endpoint',
   THERMAL_OVERSHOOT: 'outfit_thermal_capacity_above_conditions',
   NO_TRANSIT_LAYER_FOR_COLD: 'outfit_no_sleeve_bearing_layer_for_cold_transit',
   NO_OUTDOOR_LAYER_FOR_SEVERE_COLD: 'outfit_no_outdoor_capable_layer_for_severe_cold',
@@ -59,7 +60,11 @@ const SUPPLY_REMEDY = 'if no owned piece can satisfy this, say so as a wardrobe 
 // insulation here at all", not "how many degrees". Contract A owns the grading.
 const SEVERE_COLD_SYSTEM_COLD_FLOOR = 12
 
-function outerwearPieces(pieces) {
+// Shared structured predicate for a wearable removable layer. Exported for the freeform
+// single-outfit request contract: an explicit owner request for a layer must be checked against
+// the same category truth as weather adequacy, never against the model-authored role or garment
+// name. This deliberately does not revive the deprecated outerwear_role ontology.
+export function outerwearPieces(pieces) {
   return pieces.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
 }
 
@@ -420,7 +425,10 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // those triggers alone.
   if (!indoorDestination) {
     const exposure = resolveExposureContext(
-      { environment: resolvedContext.environment || 'outdoor' }, weather)
+      {
+        environment: resolvedContext.environment || 'outdoor',
+        activity: resolvedContext.activity,
+      }, weather)
     const demand = requiredThermalBand(exposure)
     const contribution = outfitThermalContribution(list)
     if (demand.level && contribution.withLayer) {
@@ -449,19 +457,19 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       if (unknownPresent && !overshooting) {
         // undershoot with unknown evidence: record it, claim nothing
       } else if (fit.fit === 'undershoot') {
-        // ADVISORY, not an error — and this was a hard finding for exactly one test run before the
-        // fixtures showed why it must not be. A synthetic "sleeved wool coat" tagged
-        // `fabric_weight: light` with no fibre content placed as `light`, undershot a 65/45 day, and
-        // hard-blocked submission. That is acceptance criterion 8 violated: missing metadata may
-        // never become hard invalidity, and a barely-tagged wardrobe is exactly the shape that
-        // produces it.
+        // Thermal amount is advisory by default. A synthetic "sleeved wool coat" tagged
+        // `fabric_weight: light` with no fibre content once hard-blocked a 65/45 day; incomplete
+        // metadata may never become hard invalidity, and a barely-tagged wardrobe is exactly the
+        // shape that produces it. The PRESENCE gate above keeps its independent authority.
         //
-        // The PRESENCE gate keeps its authority — NO_WARM_LAYER_FOR_COLD above is still an error.
-        // What the band adds here is the AMOUNT, graded, which informs rather than blocks. That also
-        // keeps §19.1's composition invariant intact at the adequacy layer.
+        // A single-outfit request that explicitly
+        // requires a weather layer is narrower: when the user supplied a certain encountered range
+        // and every thermal contribution is known, letting a below-demand layer through would make
+        // the mechanical requirement meaningless. Only that caller opts into hard enforcement.
+        const enforceCertainRequiredLayer = resolvedContext.requireThermalAdequacy === true && demand.certain
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT,
           corroborate('this outfit carries less warmth than the conditions call for'),
-          { evidence, severity: 'advisory' }))
+          { evidence, severity: enforceCertainRequiredLayer ? 'error' : 'advisory' }))
       } else if (overshooting) {
         // ADVISORY, never hard. §5.5: overshoot ranks, it never excludes — a wardrobe whose only
         // layer is a heavy coat still gets dressed. This is the puffer-on-a-65F-museum-day finding
@@ -471,6 +479,34 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
             ? 'this outfit carries considerably more warmth than the conditions call for'
             : 'this outfit carries more warmth than the conditions call for',
           { evidence, severity: 'advisory' }))
+      }
+
+      // A required removable layer creates TWO worn states. Cold-end adequacy above checks the
+      // complete outfit with the layer on. The warm endpoint must check the clothes that actually
+      // remain after one real outerwear piece comes off—not the warmest garment in the whole card,
+      // and not an imaginary bare base. This is intentionally hard only for the same narrow,
+      // certain stated-range contract as cold undershoot; unknown garment evidence stays silent.
+      if (resolvedContext.requireThermalAdequacy === true && demand.certain && layers.length) {
+        const endpoints = requiredThermalEndpointBands(exposure)
+        const coverage = outfitRangeCoverage(list, endpoints.cold, endpoints.warm, compareThermalFit)
+        evidence.thermalRange = {
+          coldDemand: endpoints.cold.level,
+          warmDemand: endpoints.warm.level,
+          removableConfigurations: coverage.candidates.map(candidate => ({
+            removedPieceId: Number(candidate.removedPieceId) || null,
+            remainingContribution: candidate.remaining.upperWithLayer,
+            coldFit: candidate.coldEnd.fit,
+            warmFit: candidate.warmEnd.fit,
+            unknownPresent: candidate.unknownPresent,
+            warmUnknownPresent: candidate.warmUnknownPresent,
+          })),
+        }
+        const knownConfigurations = coverage.candidates.filter(candidate => !candidate.warmUnknownPresent)
+        if (knownConfigurations.length && knownConfigurations.every(candidate => candidate.warmEnd.fit === 'undershoot')) {
+          findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT,
+            'after the removable outer layer comes off, the clothes that remain carry less warmth than the warm end of the stated outdoor range calls for',
+            { evidence, severity: 'error', remedy: true }))
+        }
       }
     }
   }

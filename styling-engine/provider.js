@@ -13,6 +13,7 @@ import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructur
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
+import { ACTIVITY_VALUES, extractExplicitActivity, normalizeActivity } from './stylingIntent.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -320,6 +321,10 @@ export function stripPieceIdCitations(answerText = '', { knownPieceIds = null } 
     text = text.replace(/[ \t]*\((\d+)\)/g, (match, digits) => // ratchet-allow: model-output integrity boundary, not garment classification
       knownPieceIds.has(Number(digits)) ? '' : match)
   }
+  text = text
+    // Strip machine card markup that might have leaked into prose (<card>...</card> or bare <card> tags).
+    .replace(/<card>[\s\S]*?<\/card>/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/<\/?card>/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
   return text
     // The mandated form, and its bracketed and plural variants: "(ID 196)", "[IDs 196, 204]".
     .replace(/[ \t]*[([]\s*IDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
@@ -1413,7 +1418,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   additionalProperties: false,
   required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
   properties: {
-    profile: { type: 'string', enum: ['bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
+    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
     season: { type: 'string' },
@@ -1430,6 +1435,8 @@ const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request 
 
 Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
 
+Choose single_outfit only for a FRESH request for exactly one complete outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. Explicit "one", "one best", "pick one", and "give me an outfit" requests use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
+
 Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
 
 Choose garment_fact only when compact context says an active/verified garment subject exists and the user asks about that garment's construction, wear mechanics, warmth, suitability, or a comparison among supplied subjects. When compact context also says saved garment photographs are available, use garment_fact for judging the visibly shown result of a wear-mechanics configuration such as a tuck; the saved photos will be supplied to the answer model. Do not use it to build an outfit or discover other pieces.
@@ -1438,7 +1445,7 @@ Choose general_advice only for general styling education that does not claim to 
 
 Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
 
-Choose full_stylist for: one/best/pick-one; broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
+Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
@@ -1446,8 +1453,8 @@ Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, f
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', providerOverride = null } = {}) {
-  return askStylistStructuredWithUsage({
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', explicitActivity = '', providerOverride = null } = {}) {
+  const routed = await askStylistStructuredWithUsage({
     system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
     messages: [{
       role: 'user',
@@ -1468,6 +1475,22 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     maxTokens: 900,
     providerOverride
   })
+  // thread_1788985997110: the router labeled a five-hour Santa Fe "outing" as walking even
+  // though its own contract says place/outdoor duration do not establish activity. Activity
+  // activates hard footwear exclusions, so post-validate it from the structured UI value when
+  // supplied, otherwise explicit user language, instead of letting a probabilistic classification
+  // silently remove garments. Profile/occasion remain model-owned; this narrow factual axis is
+  // deterministic and conservative.
+  const structuredActivity = String(explicitActivity || '').toLowerCase().trim()
+  return {
+    ...routed,
+    value: {
+      ...routed.value,
+      activity: ACTIVITY_VALUES.includes(structuredActivity)
+        ? normalizeActivity(structuredActivity)
+        : extractExplicitActivity(question),
+    },
+  }
 }
 
 
@@ -2061,6 +2084,25 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       }
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
+      }
+      if (toolContext.executionProfile === 'single_outfit' && toolContext.singleOutfitProposalCompleted) {
+        const outfit = Array.isArray(toolContext.generatedOutfits)
+          ? toolContext.generatedOutfits.find(o => !o?.broken)
+          : null
+        const hasAdvisoryNotes = (outfit?.result?.annotations?.length || 0) > 0
+        // If the proposal generated advisory notes (e.g. thermal undershoot or sleeve bunching)
+        // and we haven't yet given the model a follow-up turn to see those notes, allow one iteration
+        // so the model receives the tool_result with systemNotes and can either swap pieces or speak with candor.
+        if (!hasAdvisoryNotes || toolContext.singleOutfitAdvisoryTurnDelivered) {
+          const chatText = (turn.text && turn.text.trim())
+            ? joinAnswer(turn.text)
+            : (outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
+          return { answer: chatText, savedCorrections }
+        }
+        if (turn.text && narration.length && narration[narration.length - 1] === turn.text) {
+          narration.pop()
+        }
+        toolContext.singleOutfitAdvisoryTurnDelivered = true
       }
       continue
     } else {

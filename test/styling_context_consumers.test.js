@@ -229,7 +229,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume the composed wearable verdict', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
   assert.match(validationSource, /includeLayerDirections/)

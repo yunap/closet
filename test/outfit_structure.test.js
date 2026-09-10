@@ -67,11 +67,12 @@ test('evaluateLayerPairConstruction distinguishes known conflict, known compatib
   const noConflict = evaluateLayerPairConstruction([voluminousOuterLayer, fittedInner], { roleAware: true })
   assert.equal(noConflict.verdict, 'compatible', 'a voluminous OUTER sleeve over a fitted inner one is not a conflict')
 
-  // Known conflict: both cuffed and both bulky fabric, neither shape voluminous.
+  // Live correction, thread_1788767789621: overall fabric weight is not sleeve bulk. Even two
+  // substantial garments are compatible when their recorded sleeve geometry has no interference.
   const heavyLayer = { id: 5, name: 'heavy cardigan', category: 'top', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'heavy' }
   const heavyBase = { id: 6, name: 'heavy sweater', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium' }
-  const fabricConflict = evaluateLayerPairConstruction([heavyLayer, heavyBase], { roleAware: true })
-  assert.equal(fabricConflict.verdict, 'incompatible')
+  const fabricOnly = evaluateLayerPairConstruction([heavyLayer, heavyBase], { roleAware: true })
+  assert.equal(fabricOnly.verdict, 'compatible')
 
   // Known compatible: two fitted, lightweight, cuffed-sleeve garments — must NOT be rejected just
   // for both being long-sleeve (the crudeness explicitly ruled out during the #263 correction).
@@ -130,6 +131,22 @@ test('directional construction: inner volume against a narrow outer is a concern
   const restrictiveOuter = { id: 25, name: 'set-in fitted jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'light' }
   const deepArmholeConflict = evaluateLayerPairConstruction([restrictiveOuter, deepArmholeInner], { roleAware: true })
   assert.equal(deepArmholeConflict.verdict, 'incompatible', 'deep-armhole inner geometry under a restrictive outer is a concern')
+
+  // Live acceptance regression, thread_1788762324317: the same geometry previously escaped the
+  // validator when the duster used the dedicated outerwear role rather than layer_top.
+  const fittedDuster = { ...restrictiveOuter, id: 125, name: 'fitted-sleeve duster', role: 'outerwear', sleeve_shape: 'fitted' }
+  const outerwearRoleConflict = evaluateLayerPairConstruction([fittedDuster, deepArmholeInner], { roleAware: true })
+  assert.equal(outerwearRoleConflict.verdict, 'incompatible', 'outerwear role must be checked against the primary top, not skipped')
+  assert.ok(outerwearRoleConflict.findings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
+
+  const shortSleeveInner = { ...deepArmholeInner, id: 124, name: 'short-sleeve top', sleeve_length: 'short' }
+  const shortSleeveUnderDuster = evaluateLayerPairConstruction([fittedDuster, shortSleeveInner], { roleAware: true })
+  assert.equal(shortSleeveUnderDuster.verdict, 'compatible', 'no sleeve-in-sleeve overlap remains valid under outerwear')
+
+  const jerseyTop = { id: 126, name: '3/4-sleeve jersey top', category: 'top', role: 'primary_top', sleeve_length: '3/4', sleeve_shape: 'straight', fabric_weight: 'medium' }
+  const mediumTrench = { id: 127, name: 'medium-weight trench', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium' }
+  const jerseyUnderTrench = evaluateLayerPairConstruction([mediumTrench, jerseyTop], { roleAware: true })
+  assert.equal(jerseyUnderTrench.verdict, 'compatible', 'medium fabric weight on both garments is not evidence of sleeve bulk')
 
   const flaredInner = { id: 26, name: 'flared-sleeve top', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'flared', fabric_weight: 'light' }
   const narrowOuterSleeve = { id: 27, name: 'narrow-sleeve outer top', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }

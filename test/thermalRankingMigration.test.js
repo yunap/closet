@@ -33,12 +33,11 @@ test('Vienna 65/47 — a cardigan ranks ahead of the puffer', () => {
   const w = W(65, 47)
   assert.ok(score(G.cardigan, w) > score(G.puffer, w), 'cardigan must out-rank the puffer')
 
-  // With the slot's exposure known, cardigan and lightJacket both land in the demand's own target
-  // bucket (both "adequate", zero bucket-index distance) -- the SAME-BUCKET case: lightJacket's raw
-  // score sits closer to the target level's own center than cardigan's, so the light jacket still
-  // leads even though compareThermalFit alone cannot tell the two apart.
+  // With the slot's exposure known, ordinary walking no longer lowers the target from warm to
+  // moderate. The warmer cardigan must therefore lead the plain light jacket as well as the puffer;
+  // calling the activity a walk cannot make the lighter layer preferable.
   const museum = resolveExposureContext({ activity: 'walking', environment: 'outdoor' }, w)
-  assert.ok(score(G.lightJacket, w, museum) > score(G.cardigan, w, museum))
+  assert.ok(score(G.cardigan, w, museum) > score(G.lightJacket, w, museum))
   assert.ok(score(G.cardigan, w, museum) > score(G.puffer, w, museum))
 })
 

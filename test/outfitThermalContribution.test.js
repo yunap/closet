@@ -1,11 +1,11 @@
 // Slice 4 of docs/thermal-comfort-band-spec.md §9.2 — the six-point gate.
-// No production consumers (§8 step 1).
+// Production adequacy consumes this shared configuration contract.
 import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
-import { outfitThermalContribution, outfitCoversRange } from '../styling-engine/outfitThermalContribution.js'
-import { requiredThermalBand, compareThermalFit } from '../styling-engine/thermalDemand.js'
+import { outfitThermalContribution, outfitCoversRange, outfitRangeCoverage } from '../styling-engine/outfitThermalContribution.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from '../styling-engine/thermalDemand.js'
 import { resolveExposureContext } from '../styling-engine/exposure.js'
 import { WARMTH_LEVELS } from '../styling-engine/garmentWarmth.js'
 
@@ -35,6 +35,27 @@ test('gate 1 — row 2: a mild base plus a removable layer beats a permanently w
   assert.ok(String(heavy.warmEnd.fit).includes('overshoot'), 'it is stuck at the warm end, not banned')
 })
 
+test('range coverage rejects an under-warm remainder instead of checking only overshoot', () => {
+  const exact = requiredThermalEndpointBands(resolveExposureContext(
+    { activity: 'walking', environment: 'outdoor' },
+    { temperature: { highF: 60, lowF: 48, source: 'stated_user' } },
+  ))
+  const satin = { id: 10, category: 'top', fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'], sleeve_length: 'three_quarter' }
+  const heavyPants = { id: 11, category: 'bottom', fabric_weight: 'heavy', fiber_content: ['polyester'], length_hits_at: 'full_length' }
+  const coat = { ...P.puffer, id: 12 }
+  const cardigan = { ...P.cardigan, id: 13 }
+
+  const tooLightAfterCoat = outfitRangeCoverage([satin, heavyPants, coat], exact.cold, exact.warm, compareThermalFit)
+  assert.equal(tooLightAfterCoat.adaptable, false)
+  assert.equal(tooLightAfterCoat.candidates[0].warmEnd.fit, 'undershoot',
+    'heavy trousers cannot make a light upper body adequate after the coat comes off')
+
+  const cardiganRemains = outfitRangeCoverage([satin, heavyPants, cardigan, coat], exact.cold, exact.warm, compareThermalFit)
+  assert.equal(cardiganRemains.adaptable, true,
+    'removing the coat may leave another adequate layer in the worn configuration')
+  assert.ok(cardiganRemains.candidates.some(candidate => candidate.removedPieceId === coat.id && candidate.adaptable))
+})
+
 test('gate 2 — base and removable warmth stay distinguishable', () => {
   const c = outfitThermalContribution([P.mildTop, P.cardigan])
   assert.equal(c.base, 'light')
@@ -61,6 +82,49 @@ test('gate 3 — ordinal levels are never numerically summed', () => {
 
   // The step turns on the WEAKER component: a light base under a cardigan must not reach the top.
   assert.notEqual(outfitThermalContribution([P.mildTop, P.cardigan]).withLayer, 'very warm')
+})
+
+test('an explicitly ordered three-layer moderate stack earns one bounded ensemble step', () => {
+  const exact = requiredThermalEndpointBands(resolveExposureContext(
+    { activity: 'none', environment: 'outdoor' },
+    { temperature: { highF: 60, lowF: 48, source: 'stated_user' } },
+  ))
+  const primary = {
+    id: 20, role: 'primary_top', category: 'top', fabric_weight: 'medium',
+    fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'long',
+  }
+  const middle = {
+    id: 21, role: 'layer_top', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'knit', fiber_content: ['wool'], sleeve_length: 'long',
+  }
+  const outer = {
+    id: 22, role: 'outerwear', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'cotton', fiber_content: ['cotton'], insulating_layer_materials: [],
+    sleeve_length: 'long', length_hits_at: 'mid_thigh',
+  }
+
+  assert.equal(outfitThermalContribution([primary, middle]).withLayer, 'moderate',
+    'two moderate garments retain the existing no-step behavior')
+  assert.equal(outfitThermalContribution([primary, middle, outer]).withLayer, 'warm')
+  assert.equal(outfitThermalContribution([primary, middle, outer]).upperWithLayer, 'warm')
+
+  const coverage = outfitRangeCoverage([primary, middle, outer], exact.cold, exact.warm, compareThermalFit)
+  const outerRemoved = coverage.candidates.find(candidate => candidate.removedPieceId === outer.id)
+  assert.equal(outerRemoved.coldEnd.fit, 'adequate')
+  assert.equal(outerRemoved.warmEnd.fit, 'adequate',
+    'after the outermost layer comes off, the moderate top + cardigan remain suitable at 60F')
+  assert.equal(outerRemoved.adaptable, true)
+
+  const unordered = [primary, middle, outer].map(({ role, ...piece }) => piece)
+  assert.equal(outfitThermalContribution(unordered).withLayer, 'moderate',
+    'a flat garment array does not silently acquire ordered-stack credit')
+
+  const unknownMiddle = { ...middle, fabric_weight: null, fabric_category: null, fiber_content: [] }
+  assert.equal(outfitThermalContribution([primary, unknownMiddle, outer]).withLayer, 'moderate',
+    'unknown middle-layer evidence never earns the ensemble step')
+  const lightMiddle = { ...middle, fabric_weight: 'light', fabric_category: 'cotton', fiber_content: ['cotton'] }
+  assert.equal(outfitThermalContribution([primary, lightMiddle, outer]).withLayer, 'moderate',
+    'a merely present light middle layer never earns the substantial-stack step')
 })
 
 test('gate 4 — unknown contribution is preserved, never coerced to zero', () => {

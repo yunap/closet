@@ -2761,7 +2761,9 @@ export function slotExposureConditions(exposure = null) {
   if (exposure.exertion && exposure.exertion !== 'unknown') bits.push(exposure.exertion)
   if (exposure.exposureMode === 'indoor_destination') bits.push('indoor destination, outdoor transit')
   else if (exposure.exposureMode === 'sustained_outdoor') bits.push('sustained outdoor')
-  bits.push(c.coarse ? 'estimated window' : 'hourly')
+  bits.push(c.conditionsSource === 'stated_user_exposure_range'
+    ? 'user-stated range'
+    : (c.coarse ? 'estimated window' : 'hourly'))
   return bits.join(' · ')
 }
 

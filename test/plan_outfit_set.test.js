@@ -70,14 +70,14 @@ test('capsule planning preserves the original palette through a lifestyle clarif
   )
 })
 
-// Spec 26 Part 4: propose_outfit's season field must teach the indoor
-// escape hatch (mirrors the plan-slot weather:'indoor' mechanism, which
-// weatherProfileFromContext already honors on this path — rules.js).
-test('propose_outfit tool schema teaches season:"indoor" for climate-controlled occasions', () => {
+// Spec 26 Part 4, corrected 2026-09-07: the indoor escape hatch follows the actual wearing period,
+// not an occasion noun. A gallery can still include hours of stated outdoor exposure between venues.
+test('propose_outfit tool schema makes season:"indoor" conditional on actual climate-controlled exposure', () => {
   const tool = STYLIST_TOOLS.find(entry => entry.name === 'propose_outfit')
   const seasonDescription = tool?.input_schema?.properties?.season?.description || ''
   assert.match(seasonDescription, /season:'indoor'/)
-  assert.match(seasonDescription, /office, restaurant, meeting, gallery/)
+  assert.match(seasonDescription, /only when the relevant wearing period is actually climate-controlled/)
+  assert.match(seasonDescription, /gallery or restaurant does not erase explicitly stated sustained outdoor time/)
 })
 
 // A fetchImpl (injected the same way weather.test.js does) that returns a hot
@@ -177,7 +177,7 @@ test('provider-free replay exercises the complete capsule tool contract without 
   const replay = await replayStylistToolScript({
     toolContext,
     steps: [
-      { tool: 'declare_intent', args: { want: 'cards' } },
+      { tool: 'declare_intent', args: { want: 'cards', layer_requirement: 'unspecified' } },
       {
         tool: 'plan_outfit_set',
         args: {
@@ -2168,7 +2168,7 @@ test('the representative Vienna VA week reaches one plan call and submits sights
   const replay = await replayStylistToolScript({
     toolContext,
     steps: [
-      { tool: 'declare_intent', args: { want: 'cards' } },
+      { tool: 'declare_intent', args: { want: 'cards', layer_requirement: 'unspecified' } },
       {
         tool: 'plan_outfit_set',
         args: {

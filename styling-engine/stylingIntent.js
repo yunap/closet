@@ -28,6 +28,35 @@ export function normalizeActivity(value) {
   return 'none'
 }
 
+// Activity becomes hard footwear and exposure context downstream, so a small routing model's
+// unsupported guess cannot own it. This extractor recognizes only activity the user actually
+// stated; an outing, a named city, or several hours outdoors is not walking evidence. Hiking wins
+// over walking when both are present. Negated mentions remain none rather than activating a gate.
+export function extractExplicitActivity(text = '') {
+  const normalized = String(text || '').toLowerCase()
+  const hasAffirmedPhrase = phrase => {
+    const escaped = phrase.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const regex = new RegExp(`\\b${escaped}\\b`, 'ig')
+    let match
+    while ((match = regex.exec(normalized)) !== null) {
+      const prefix = normalized.slice(Math.max(0, match.index - 64), match.index)
+      const localClause = prefix.split(/[.!?;,]|\bbut\b|\bhowever\b/i).pop() || ''
+      const suffix = normalized.slice(match.index + match[0].length, match.index + match[0].length + 64)
+      const negated = /\b(?:no|not|without)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /\b(?:do|does|did|will|would|should|is|are|was|were|have|has)\s+not\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /\b(?:don't|doesn't|didn't|won't|wouldn't|shouldn't|isn't|aren't|wasn't|weren't|haven't|hasn't)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /^\s+(?:is|are|was|were|will be|would be|should be)?\s*not\b/i.test(suffix)
+      if (!negated) return true // ratchet-allow: user activity intent parsing, not garment matching
+    }
+    return false
+  }
+  const hikingPhrases = ['hike', 'hiking', 'trail', 'nature walk', 'trail walk', 'trailhead', 'woods walk']
+  if (hikingPhrases.some(hasAffirmedPhrase)) return 'hiking' // ratchet-allow: controlled activity vocabulary
+  const walkingPhrases = ['walk', 'walking', 'stroll', 'strolling', 'on my feet', 'lots of walking', 'walking around', 'exploring on foot']
+  if (walkingPhrases.some(hasAffirmedPhrase)) return 'walking' // ratchet-allow: controlled activity vocabulary
+  return 'none'
+}
+
 export function normalizeMission(value) {
   const v = String(value || '').toLowerCase().trim()
   return MISSION_VALUES.includes(v) ? v : 'mix' // ratchet-allow: controlled intent vocabulary normalization, not garment matching
@@ -53,6 +82,45 @@ export function extractWeatherContext(text = '') {
     return 'cool mild weather'
   }
   return ''
+}
+
+// Fresh single-outfit requests need the user's literal numeric range to survive the routing
+// boundary as data. extractWeatherContext is intentionally lightweight display prose and returns
+// only the first number from forms such as "60→48°F"; using it as action authority therefore
+// changed the actual conditions before the styling model saw them. This extractor is deliberately
+// conservative: it recognizes only an explicit two-number Fahrenheit range and returns null for
+// anything that would require climate knowledge or interpretation.
+export function extractStructuredUserWeather(text = '') {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .replace(/[–—→]/g, '-')
+  const rangeMatch = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
+  // A wearing-window request often states the endpoints as two timed observations rather than
+  // typographically as a range: "60°F when I leave and 48°F after sunset". Both values must carry
+  // an explicit Fahrenheit unit so this remains factual extraction, not climate interpretation.
+  const explicitFahrenheitValues = [...normalized.matchAll(/(-?\d{1,3})\s*(?:(?:°\s*)?f(?:ahrenheit)?|degrees?\s+fahrenheit)\b/g)]
+    .map(match => Number(match[1]))
+  let endpoints = null
+  if (rangeMatch) {
+    endpoints = [Number(rangeMatch[1]), Number(rangeMatch[2])]
+  } else if (explicitFahrenheitValues.length === 2) {
+    endpoints = explicitFahrenheitValues
+  } else if (explicitFahrenheitValues.length === 1) {
+    const isPastReference = /\b(yesterday|last\s+(?:week|month|year|night|weekend))\b/.test(normalized)
+    if (!isPastReference) {
+      endpoints = [explicitFahrenheitValues[0], explicitFahrenheitValues[0]]
+    }
+  }
+  if (!endpoints) return null
+  const [first, second] = endpoints
+  if (!Number.isFinite(first) || !Number.isFinite(second) || first < -100 || first > 150 || second < -100 || second > 150) return null
+  const weather = { high_f: Math.max(first, second), low_f: Math.min(first, second) }
+  if (/\b(rain|rainy|showers?|drizzle|wet)\b/.test(normalized)) weather.precipitation = 'rain'
+  else if (/\b(snow|snowy)\b/.test(normalized)) weather.precipitation = 'snow'
+  else if (/\b(dry|no (?:rain|snow|precipitation))\b/.test(normalized)) weather.precipitation = 'none'
+  if (/\b(windy|strong winds?|gusty|gusts?)\b/.test(normalized)) weather.wind = 'windy'
+  else if (/\b(breezy|breeze)\b/.test(normalized)) weather.wind = 'breezy'
+  return weather
 }
 
 const MONTH_NAMES = {

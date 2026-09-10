@@ -18,7 +18,7 @@
     "class": "composition",
     "request": "Give me one best outfit for dinner.",
     "context": "no current outfit set; no verified garment subject",
-    "expectedProfile": "full_stylist"
+    "expectedProfile": "single_outfit"
   },
   {
     "id": "explain-current-card",

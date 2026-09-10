@@ -39,14 +39,59 @@ test('a genuinely cold day flags neither garment as excessive', () => {
   assert.ok(!has([...BASE, CARDIGAN], W(30, 20), ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT))
 })
 
-test('undershoot is advisory too — missing metadata never becomes hard invalidity', () => {
+test('undershoot stays advisory by default — missing metadata never becomes hard invalidity', () => {
   // Acceptance criterion 8, and this was learned the hard way: as an error, a synthetic
   // "sleeved wool coat" tagged fabric_weight:light with no fibre content placed as `light`,
   // undershot a 65/45 day and hard-blocked plan submission. The PRESENCE gate
   // (NO_WARM_LAYER_FOR_COLD) keeps its authority; the band adds the graded AMOUNT.
-  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitEnvironmentalAdequacy.js'), 'utf8')
-  const block = src.slice(src.indexOf('THERMAL_UNDERSHOOT,'))
-  assert.ok(block.slice(0, 400).includes("severity: 'advisory'"), 'undershoot must not be an error')
+  const trench = { id: 8, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'full_lining', sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([...BASE, trench], {
+    weatherProfile: W(60, 48),
+    environment: 'outdoor',
+    activity: 'none',
+  })
+  const undershoot = result.findings.find(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)
+  assert.equal(undershoot?.severity, 'advisory')
+})
+
+test('a certain stated exposure plus an explicitly required layer hard-blocks known thermal undershoot', () => {
+  const trench = { id: 8, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'full_lining', sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([...BASE, trench], {
+    weatherProfile: W(60, 48),
+    environment: 'outdoor',
+    activity: 'none',
+    requireThermalAdequacy: true,
+  })
+  const undershoot = result.findings.find(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)
+  assert.equal(undershoot?.severity, 'error')
+})
+
+test('a warm coat cannot hide an under-warm upper body at the warm endpoint', () => {
+  const satinTop = { id: 10, category: 'top', fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'], sleeve_length: 'three_quarter' }
+  const heavyPants = { id: 11, category: 'bottom', fabric_weight: 'heavy', fiber_content: ['polyester'], length_hits_at: 'full_length' }
+  const result = evaluateOutfitEnvironmentalAdequacy([satinTop, heavyPants, BASE[2], PUFFER], {
+    weatherProfile: W(60, 48),
+    environment: 'outdoor',
+    activity: 'walking',
+    requireThermalAdequacy: true,
+  })
+  const finding = result.findings.find(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT)
+  assert.equal(finding?.severity, 'error')
+  assert.equal(finding?.evidence?.thermalRange?.warmDemand, 'moderate')
+  assert.equal(finding?.evidence?.thermalRange?.removableConfigurations?.[0]?.remainingContribution, 'light')
+})
+
+test('removing the coat may leave another 60°F-adequate layer underneath', () => {
+  const satinTop = { id: 10, category: 'top', fabric_weight: 'light', fabric_category: 'satin', fiber_content: ['polyester'], sleeve_length: 'three_quarter' }
+  const result = evaluateOutfitEnvironmentalAdequacy([...BASE.slice(1), satinTop, CARDIGAN, PUFFER], {
+    weatherProfile: W(60, 48),
+    environment: 'outdoor',
+    activity: 'walking',
+    requireThermalAdequacy: true,
+  })
+  assert.ok(!result.findings.some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT))
+  assert.ok(result.evidence.thermalRange.removableConfigurations.some(configuration =>
+    configuration.removedPieceId === PUFFER.id && configuration.warmFit === 'adequate'))
 })
 
 test('the unknown asymmetry: it silences undershoot, not overshoot', () => {

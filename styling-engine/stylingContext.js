@@ -561,11 +561,18 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
     const requestText = requestChoice.value
     const mood = moodChoice.value
     const occasionProfile = resolveOccasionProfile(occasion, mood)
+    // A caller with structured activity authority may forbid this secondary prose inference.
+    // This matters even when the authoritative value is `none`: otherwise model-authored text
+    // such as "gallery walk" can silently turn none back into walking after field resolution.
+    // Every text-based activity re-inference in this resolution — thermal/base activity profile
+    // and footwear comfort alike — must share this same guarded text, or the lock only closes
+    // one of the two doors.
+    const activityInferenceRequestText = policy.inferActivityFromRequest === false ? '' : requestText
     const activityProfile = resolveActivityProfile({
       activity: activityChoice.value,
       occasion,
       mood,
-      request: requestText,
+      request: activityInferenceRequestText,
     })
     const activity = activityChoice.value || 'none'
     const resolvedActivity = activityProfile?.id || activity
@@ -574,7 +581,9 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       : activityProfile
         ? 'inferred'
         : 'none'
-    const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: requestText, activity })
+    const comfortConstraint = resolveComfortFootwearConstraint({
+      occasion, mood, request: activityInferenceRequestText, activity,
+    })
     const weather = await resolveWeather({
       evidence,
       season: seasonChoice.value,

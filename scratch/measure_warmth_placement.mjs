@@ -6,7 +6,7 @@
 //   WARDROBE_DB_PATH=<copy> node scratch/measure_warmth_placement.mjs
 import { thermalMaterialVerdict, interiorConstruction, wardrobeCategoryGroup, fabricWeight } from '../styling-engine/attributes.js'
 const { db, parsePiece } = await import('../db.js')
-const { proposedWarmthLevel, warmthCalibrationEvidenceState, WARMTH_LEVELS } = await import('../styling-engine/warmthCalibration.js')
+const { garmentWarmthLevel, warmthPlacementState, WARMTH_LEVELS } = await import('../styling-engine/garmentWarmth.js')
 const { pieceWeatherScores } = await import('../styling-engine/thermal.js')
 
 const pieces = db.prepare("SELECT * FROM pieces WHERE status='active'").all().map(parsePiece)
@@ -19,9 +19,9 @@ console.log(`active pieces ${pieces.length} · clothing (thermal scope) ${clothi
 const placed = new Map(WARMTH_LEVELS.map(l => [l, 0]))
 const unplaced = { insufficient_evidence: 0, thermally_ambiguous: 0 }
 for (const p of clothing) {
-  const lvl = proposedWarmthLevel(p)
+  const lvl = garmentWarmthLevel(p)
   if (lvl) placed.set(lvl, placed.get(lvl) + 1)
-  else unplaced[warmthCalibrationEvidenceState(p)] = (unplaced[warmthCalibrationEvidenceState(p)] || 0) + 1
+  else unplaced[warmthPlacementState(p)] = (unplaced[warmthPlacementState(p)] || 0) + 1
 }
 const totalPlaced = [...placed.values()].reduce((a, b) => a + b, 0)
 console.log('## 1. Can the existing facts place a garment?')
@@ -41,7 +41,7 @@ console.log('## 3. Outerwear placement (the pinned ordering cases live here)')
 const outer = clothing.filter(p => wardrobeCategoryGroup(p) === 'outerwear')
 for (const p of outer.sort((a, b) => (pieceWeatherScores(b).cold) - (pieceWeatherScores(a).cold))) {
   console.log(`  ${String(p.id).padEnd(8)}${String(p.name).slice(0, 34).padEnd(36)}` +
-    `${String(proposedWarmthLevel(p) || 'UNPLACED').padEnd(13)}` +
+    `${String(garmentWarmthLevel(p) || 'UNPLACED').padEnd(13)}` +
     `${String(fabricWeight(p) || '-').padEnd(8)}${thermalMaterialVerdict(p).padEnd(15)}` +
     `${interiorConstruction(p).padEnd(17)}cold=${String(pieceWeatherScores(p).cold).padStart(5)}`)
 }
@@ -61,11 +61,11 @@ for (const [g, v] of Object.entries(groups)) {
 }
 
 // ── 5. Do the two existing representations AGREE on ordering? ────────────────────────────────
-// proposedWarmthLevel (substance + insulating bonus) and pieceWeatherScores().cold are both built
+// garmentWarmthLevel and pieceWeatherScores().cold are both built
 // from the same stored facts. If they disagree on which of two garments is warmer, the facts do not
 // yet place garments reliably — which is precisely §12's question.
 console.log('\n## 5. Ordering agreement between the two representations')
-const scored = clothing.map(p => ({ p, lvl: proposedWarmthLevel(p), cold: pieceWeatherScores(p).cold }))
+const scored = clothing.map(p => ({ p, lvl: garmentWarmthLevel(p), cold: pieceWeatherScores(p).cold }))
   .filter(x => x.lvl !== null)
 const idx = l => WARMTH_LEVELS.indexOf(l)
 let agree = 0, invert = 0, tie = 0
@@ -111,21 +111,21 @@ const placedUnknown = []
 for (const p of clothing) {
   const v = thermalMaterialVerdict(p)
   byVerdict[v]++
-  if (v === 'unknown' && proposedWarmthLevel(p)) placedUnknown.push(p)
+  if (v === 'unknown' && garmentWarmthLevel(p)) placedUnknown.push(p)
 }
 console.log(`  material verdicts: insulating ${byVerdict.insulating}  non_insulating ${byVerdict.non_insulating}  unknown ${byVerdict.unknown}`)
 console.log(`  garments with UNKNOWN material evidence that still receive a warmth level: ${placedUnknown.length}`)
 console.log(`  → these are placed from fabric_weight alone; row 6 says unknown must not become a level.`)
 for (const p of placedUnknown.slice(0, 5)) {
-  console.log(`      ${String(p.id).padEnd(8)}${String(p.name).slice(0, 32).padEnd(34)}${proposedWarmthLevel(p)}`)
+  console.log(`      ${String(p.id).padEnd(8)}${String(p.name).slice(0, 32).padEnd(34)}${garmentWarmthLevel(p)}`)
 }
 
 // ── 8. The specific defect behind the inversions ─────────────────────────────────────────────
 console.log('\n## 8. Bare + insulating fibre — the systematic reversal')
-const bare = clothing.filter(p => proposedWarmthLevel(p) === 'warm' && pieceWeatherScores(p).cold <= 2)
+const bare = clothing.filter(p => garmentWarmthLevel(p) === 'warm' && pieceWeatherScores(p).cold <= 2)
 console.log(`  garments placed "warm" yet scoring cold <= 2: ${bare.length}`)
 for (const p of bare.slice(0, 6)) {
   console.log(`      ${String(p.name).slice(0, 34).padEnd(36)}sleeve=${String(p.sleeve_length || '-').padEnd(11)}cold=${String(pieceWeatherScores(p).cold).padStart(4)}`)
 }
-console.log('  → proposedWarmthLevel is substance + insulating bonus ONLY. It never reads coverage,')
-console.log('    so a sleeveless wool shell is "warm" while the evidence layer scores it near zero.')
+console.log('  → investigate any rows here as disagreements between the production ordinal placement')
+console.log('    and the legacy cold score; garmentWarmthLevel includes structured coverage evidence.')

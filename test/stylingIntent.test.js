@@ -19,7 +19,9 @@ import {
   ACTIVITY_VALUES,
   MISSION_VALUES,
   normalizeActivity,
+  extractExplicitActivity,
   extractWeatherContext,
+  extractStructuredUserWeather,
   normalizeMission,
   normalizeOccasion,
   normalizeStylingIntent,
@@ -132,6 +134,40 @@ test('extractWeatherContext captures lightweight forecast phrases', () => {
   assert.equal(extractWeatherContext('The forecast is mid 80s to 90 degrees'), '90 degrees')
   assert.equal(extractWeatherContext('Expect rain and wind'), 'rainy weather')
   assert.equal(extractWeatherContext('Portland in a few days'), '')
+})
+
+test('extractStructuredUserWeather preserves a literal falling Fahrenheit range and stated wind', () => {
+  assert.deepEqual(extractStructuredUserWeather('It will fall from 60→48°F with a breeze'), {
+    high_f: 60,
+    low_f: 48,
+    wind: 'breezy'
+  })
+  assert.deepEqual(extractStructuredUserWeather('Expect 48 to 60 degrees Fahrenheit and rain'), {
+    high_f: 60,
+    low_f: 48,
+    precipitation: 'rain'
+  })
+  assert.deepEqual(extractStructuredUserWeather('It will be about 60°F when I leave and 48°F after sunset. It will be dry with a light breeze.'), {
+    high_f: 60,
+    low_f: 48,
+    precipitation: 'none',
+    wind: 'breezy'
+  })
+  assert.deepEqual(extractStructuredUserWeather("It's 46°F, overcast, and breezy"), {
+    high_f: 46,
+    low_f: 46,
+    wind: 'breezy'
+  })
+  assert.equal(extractStructuredUserWeather('It should be in the low 50s'), null)
+  assert.equal(extractStructuredUserWeather('It was 60°F yesterday and should be mild tonight'), null)
+})
+
+test('extractExplicitActivity requires affirmative request evidence for hard activity gates', () => {
+  assert.equal(extractExplicitActivity('An afternoon and early-evening outing in Santa Fe; outside from 3–8 p.m.'), 'none')
+  assert.equal(extractExplicitActivity('I will be walking around Santa Fe all afternoon.'), 'walking')
+  assert.equal(extractExplicitActivity('A nature walk on a trail, but not a strenuous hike.'), 'hiking')
+  assert.equal(extractExplicitActivity('Dinner downtown, with no special walking requirement.'), 'none')
+  assert.equal(extractExplicitActivity('Walking is not part of the plan; this is a seated event.'), 'none')
 })
 
 test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {

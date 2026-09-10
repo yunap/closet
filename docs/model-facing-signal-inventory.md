@@ -3,6 +3,13 @@
 **Status:** inventory complete, **no implementation**. Owner-requested 2026-09-03 after the Vienna
 runs oscillated between opposite failures. **Live spending is paused** until this is decided.
 
+**[Capture durability correction, 2026-09-09.]** Provider-input capture filenames now begin with a
+unique process-session ID followed by the monotonic call index. The same session ID and numeric index
+are also stored inside each JSON record. Restarting the dev server resets the in-memory counter but
+can no longer overwrite an earlier process's `0001…` files or leave a misleading mixture of surviving
+old files and replaced new files in one capture directory. This changes diagnostic persistence only;
+the normalized and wire provider requests are untouched.
+
 ## Why this exists
 
 Four commits on `fix/plan-roster-thermal-evidence` moved the Vienna packing plan from "down puffer on
@@ -105,7 +112,7 @@ Classification per the owner's three categories:
 | 19 | `NO_WARM_LAYER_FOR_COLD` | **H** | presence in genuine cold — the one defensible hard thermal gate |
 | 20 | removable-layer requirement (`needsRemovableCoolLayer`) | **J** | keys on `lowF`; its own spec says it lost authority |
 | 21 | `demandHint()` appended to #20 | **J** | |
-| 22 | `THERMAL_UNDERSHOOT` / `THERMAL_OVERSHOOT` | **J** | advisory findings |
+| 22 | `THERMAL_UNDERSHOOT` / `THERMAL_OVERSHOOT` | **J** | advisory findings by default; since 2026-09-07 known undershoot is hard only for the narrow single-card explicit-layer + certain stated-exposure contract |
 | 23 | transit-coverage requirement | **J** | parallel contract, uncalibrated (band spec §21.1) |
 
 ### Search results

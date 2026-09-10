@@ -10,6 +10,7 @@ import OptionCard from './OptionCard.jsx'
 import StylistSelect from './StylistSelect.jsx'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { getCachedChatThread, loadChatThread } from '../utils/chatThreadCache.js'
+import { classifyChatTurn } from '../utils/chatTurn.js'
 import {
   OVERALL_VERDICT_LABELS,
   STYLE_DIRECTION_REASONS,
@@ -547,24 +548,6 @@ const currentChatDateContext = () => {
     }).format(now),
     timezone,
   }
-}
-
-const classifyChatTurn = (text, { hasThreadMemory = false } = {}) => {
-  const q = String(text || '').trim().toLowerCase()
-  if (!q) return 'new_request'
-  if (/\b(i disagree|you are wrong|that's wrong|that is wrong|not true|actually|you missed|you ignored|you said|but you|today is|it is|it isn't|it is not|these are|this is)\b/.test(q)) {
-    return 'correction'
-  }
-  if (/^(why|how did|how do you know|what made|which|do you see|can you see|did you see|where|what date|which season|what season)\b/.test(q)) {
-    return 'explanation'
-  }
-  if (/\b(i like|i don't like|i do not like|not me|too safe|too soft|too generic|more like|less like)\b/.test(q)) {
-    return 'preference_reaction'
-  }
-  if (/\b(last|previous|above|earlier|that one|first one|second one|third one|those outfits|these outfits|this outfit|that outfit)\b/.test(q) || hasThreadMemory) {
-    return 'followup'
-  }
-  return 'new_request'
 }
 
 const compactThreadContext = (memory = null, activeContext = null) => {
@@ -3317,6 +3300,15 @@ export default function StylistChat({
                   <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
                   <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
+                {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                  <div className="stylist-outfit-system-flags">
+                    {outfit.systemFlags.map((flag, flagIndex) => (
+                      <div key={`${flag.type || 'note'}-${flagIndex}`} className="stylist-outfit-flag-chip">
+                        <strong>{flag.type || 'Note'}:</strong> {flag.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {!isBrokenCard && outfit.engineNote && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, fontStyle: 'italic' }}>
                     {outfit.engineNote}

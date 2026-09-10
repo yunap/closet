@@ -54,11 +54,11 @@ test('gate 3 — the pinned orderings are supportable', () => {
   // by absolute warmth. Which one wins on a given day is the demand mapping's job, not this one's.
   assert.ok(at(garmentWarmthLevel(G.puffer)) > at(garmentWarmthLevel(G.cardigan)),
     'a down puffer is absolutely warmer than a knit cardigan')
-  // The named LEVEL no longer distinguishes these two (both `moderate` since the fiber-credit fix
-  // — deliberately: docs/source-sensitive-insulating-credit-spec.md's own census found the bucket
-  // system too coarse to name this real but modest difference, and ratified letting the raw SCORE
-  // carry it instead of re-inflating the bucket). The raw score still orders them correctly.
-  assert.equal(garmentWarmthLevel(G.cardigan), garmentWarmthLevel(G.unlinedJacket), 'same named bucket, by design')
+  // An uninsulated cotton jacket places at 'light' (capped shell), while an insulating wool cardigan places at 'moderate'.
+  assert.equal(garmentWarmthLevel(G.cardigan), 'moderate')
+  assert.equal(garmentWarmthLevel(G.unlinedJacket), 'light')
+  assert.ok(at(garmentWarmthLevel(G.cardigan)) > at(garmentWarmthLevel(G.unlinedJacket)),
+    'an insulating cardigan sits above an unlined cotton jacket in named level')
   assert.ok(garmentWarmthScore(G.cardigan) > garmentWarmthScore(G.unlinedJacket),
     'an insulating cardigan still scores above an unlined cotton jacket in raw terms')
 
@@ -121,8 +121,8 @@ test('outerwear with a known face but unrecorded interior stays UNKNOWN', () => 
   assert.equal(garmentWarmthLevel(shellCoat), null)
 
   // But an outerwear piece whose interior question IS answered places normally — `[]` makes the
-  // verdict non_insulating, a named fill makes it insulating, so neither reaches that branch.
-  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: [] }), 'moderate')
+  // verdict non_insulating, so an uninsulated shell coat places at 'light', while a named fill makes it 'very warm'.
+  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: [] }), 'light')
   assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: ['down'] }), 'very warm')
 })
 
@@ -148,3 +148,70 @@ test('ordinary clothing with a recorded face fabric places — it cannot conceal
   // Absent face evidence still blocks placement, whatever the category.
   assert.equal(garmentWarmthLevel(B('medium', '', ['unknown'])), null)
 })
+
+test('uninsulated outerwear shells stay capped at light (docs/garment-warmth-calibration.md §3.1)', () => {
+  // A classic cotton trench coat: medium weight, long sleeves, knee length, but uninsulated cotton shell
+  const trench = {
+    category: 'outerwear',
+    fabric_weight: 'medium',
+    fabric_category: 'cotton',
+    fiber_content: ['cotton', 'polyester'],
+    interior_construction: 'full_lining',
+    insulating_layer_materials: [],
+    sleeve_length: 'long',
+    length_hits_at: 'knee',
+  }
+  assert.equal(garmentWarmthLevel(trench), 'light')
+  assert.ok(garmentWarmthScore(trench) <= 0.5)
+
+  // Unlined utility jacket: cropped, medium cotton
+  const utilityJacket = {
+    category: 'outerwear',
+    fabric_weight: 'medium',
+    fabric_category: 'cotton',
+    fiber_content: ['cotton'],
+    interior_construction: 'unlined',
+    insulating_layer_materials: [],
+    sleeve_length: 'long',
+    length_hits_at: 'hip',
+  }
+  assert.equal(garmentWarmthLevel(utilityJacket), 'light')
+  assert.ok(garmentWarmthScore(utilityJacket) <= 0.5)
+
+  // Uninsulated leather jacket (e.g. piece #207 - soft unlined lambskin zip jacket)
+  const leatherJacket = {
+    category: 'outerwear',
+    fabric_weight: 'medium',
+    fabric_category: 'leather',
+    fiber_content: ['leather'],
+    interior_construction: 'unlined',
+    insulating_layer_materials: [],
+    sleeve_length: 'long',
+    length_hits_at: 'hip',
+  }
+  assert.equal(garmentWarmthLevel(leatherJacket), 'light')
+  assert.ok(garmentWarmthScore(leatherJacket) <= 0.5)
+
+  // Real cold weather outerwear with insulating fiber or fill places higher:
+  const woolFunnelCoat = {
+    category: 'outerwear',
+    fabric_weight: 'heavy',
+    fabric_category: 'wool',
+    fiber_content: ['wool'],
+    interior_construction: 'full_lining',
+    sleeve_length: 'long',
+    length_hits_at: 'low_hip',
+  }
+  assert.ok(['warm', 'very warm'].includes(garmentWarmthLevel(woolFunnelCoat)))
+
+  const shearlingJacket = {
+    category: 'outerwear',
+    fabric_weight: 'heavy',
+    fabric_category: 'suede',
+    fiber_content: ['suede'],
+    insulating_layer_materials: ['shearling'],
+    sleeve_length: 'long',
+  }
+  assert.equal(garmentWarmthLevel(shearlingJacket), 'very warm')
+})
+

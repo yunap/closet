@@ -284,16 +284,47 @@ function layeringCandidatePairs(pieces = [], { roleAware = false } = {}) {
     }
     return pairs
   }
+  // `layer_top` and `outerwear` are consecutive contextual roles, not aliases. With no middle
+  // layer, outerwear sits directly over the primary top/dress. With a middle layer, validate the
+  // middle against the primary and the outermost piece against the middle; comparing both layers
+  // only to the primary misses exactly the sleeve-in-sleeve relationship that decides whether a
+  // cardigan can fit under a jacket.
   const layerTops = normalizedPieces.filter(piece => piece.role === 'layer_top')
+  const outermostLayers = normalizedPieces.filter(piece => piece.role === 'outerwear')
   const dresses = normalizedPieces.filter(piece => piece.role === 'dress')
   const primaryTops = normalizedPieces.filter(piece => piece.role === 'primary_top')
+  const resolvedLayerTopPairs = []
   for (const layerTop of layerTops) {
     if (dresses.length) {
-      for (const dress of dresses) pairs.push({ added: layerTop, base: dress, relationship: 'layer_top_dress' })
+      for (const dress of dresses) {
+        const pair = { added: layerTop, base: dress, relationship: 'layer_top_dress' }
+        pairs.push(pair)
+        resolvedLayerTopPairs.push({ ...pair, direction: resolveLayerDirection(layerTop, dress, pair.relationship) })
+      }
       continue
     }
     for (const primaryTop of primaryTops) {
-      pairs.push({ added: layerTop, base: primaryTop, relationship: 'layer_top_primary_top' })
+      const pair = { added: layerTop, base: primaryTop, relationship: 'layer_top_primary_top' }
+      pairs.push(pair)
+      resolvedLayerTopPairs.push({ ...pair, direction: resolveLayerDirection(layerTop, primaryTop, pair.relationship) })
+    }
+  }
+  for (const outermost of outermostLayers) {
+    const middleLayers = resolvedLayerTopPairs
+      .filter(pair => pair.direction?.outer === pair.added)
+      .map(pair => pair.added)
+    if (middleLayers.length) {
+      for (const middle of middleLayers) {
+        pairs.push({ added: outermost, base: middle, relationship: 'outerwear_middle_layer' })
+      }
+      continue
+    }
+    if (dresses.length) {
+      for (const dress of dresses) pairs.push({ added: outermost, base: dress, relationship: 'outerwear_dress' })
+      continue
+    }
+    for (const primaryTop of primaryTops) {
+      pairs.push({ added: outermost, base: primaryTop, relationship: 'outerwear_primary_top' })
     }
   }
   return pairs
@@ -433,10 +464,11 @@ const SLEEVE_INTERFERENCE_ZONE_LABELS = { shoulder: 'shoulder', arm: 'arm', lowe
 // the same voluminous sleeve worn as the INNER layer under a narrow, structured outer sleeve is the
 // actual physical conflict (see docs/garment-field-reference.md's sleeve-taxonomy writeup for the
 // worked examples this fixes). `direction` — { outer, inner, source } from resolveLayerDirection, or
-// null — decides which garment's zone must fit inside the other's. Fabric-weight bulk is a separate,
-// direction-agnostic dimension (per spec: chiffon and heavy wool with the same geometry are not the
-// same physical bulk, but doubling two already-bulky fabrics is a problem regardless of which one is
-// inner/outer). thread_1787728618995: a lace-sleeve blouse and a turtleneck, both long-sleeve, were
+// null — decides which garment's zone must fit inside the other's. Overall garment fabric_weight is
+// deliberately NOT sleeve-volume evidence: thread_1788767789621 showed an ordinary 3/4-sleeve
+// jersey top and a trench, both tagged `medium`, being hard-rejected as "bulky" even though the tag
+// says nothing about sleeve thickness or the outer sleeve's capacity. thread_1787728618995: a
+// lace-sleeve blouse and a turtleneck, both long-sleeve, were
 // confidently called compatible from text alone with neither sleeve_shape nor fabric_weight checked —
 // this is the shared owner that question needed and never had, previously answered ad hoc inside
 // compactFreeformAnswerSystem('garment_fact').
@@ -470,9 +502,6 @@ function layerConstructionPair(added, base, direction = null) {
     return { verdict: 'compatible', addedPiece: added, basePiece: base, findings: [], evidence, sightRequired: 'none' }
   }
 
-  const bothBulkyFabric = addedEvidence.isBulkyFabric === true && baseEvidence.isBulkyFabric === true
-  const bulkyReason = 'both garments have substantial fabric weight, so doubling the sleeve creates cuff crowding and fabric bunching at the arm'
-
   const outerPiece = direction?.outer === added ? added : (direction?.outer === base ? base : null)
   const innerPiece = outerPiece === added ? base : (outerPiece === base ? added : null)
 
@@ -482,10 +511,8 @@ function layerConstructionPair(added, base, direction = null) {
     const outerZones = pieceSleeveInterference(outerPiece)
     const innerZones = pieceSleeveInterference(innerPiece)
     const conflictZone = SLEEVE_INTERFERENCE_ZONES.find(zone => innerZones[zone] === 'elevated' && outerZones[zone] === 'none')
-    if (conflictZone || bothBulkyFabric) {
-      const reason = conflictZone
-        ? `${innerLabel}'s sleeve carries excess volume at the ${SLEEVE_INTERFERENCE_ZONE_LABELS[conflictZone]} that ${outerLabel}'s narrower, structured sleeve has no room to accommodate`
-        : bulkyReason
+    if (conflictZone) {
+      const reason = `${innerLabel}'s sleeve carries excess volume at the ${SLEEVE_INTERFERENCE_ZONE_LABELS[conflictZone]} that ${outerLabel}'s narrower, structured sleeve has no room to accommodate`
       return {
         verdict: 'incompatible',
         addedPiece: added,
@@ -516,19 +543,8 @@ function layerConstructionPair(added, base, direction = null) {
   }
 
   // Direction unresolved: which sleeve is inner vs outer decides the verdict (see function doc), so
-  // without it the only safe calls are "both known to carry no excess volume anywhere" (compatible
-  // regardless of direction) or "both already bulky fabric" (a direction-agnostic conflict) —
-  // anything else is unknown, not a guessed incompatibility.
-  if (bothBulkyFabric) {
-    return {
-      verdict: 'incompatible',
-      addedPiece: added,
-      basePiece: base,
-      findings: [layerConstructionFinding('layer_construction_sleeve_conflict', `${addedLabel} + ${baseLabel} is a checkable sleeve construction conflict: ${bulkyReason}`, 'error', evidence)],
-      evidence,
-      sightRequired: 'none',
-    }
-  }
+  // without it the only safe geometry call is "both known to carry no excess volume anywhere"
+  // (compatible regardless of direction). Anything else is unknown, not a guessed incompatibility.
   const addedZones = pieceSleeveInterference(added)
   const baseZones = pieceSleeveInterference(base)
   const bothFullyKnownSlim = SLEEVE_INTERFERENCE_ZONES.every(zone => addedZones[zone] === 'none' && baseZones[zone] === 'none')
@@ -570,6 +586,17 @@ export function evaluateLayerPairConstructionFor(pieceA, pieceB) {
   return layerConstructionPair(pieceA, pieceB, direction)
 }
 
+// Assigned-chain entry point for a caller that already owns the physical order (for example the
+// system roster's middle → outermost grammar). It still delegates all sleeve evidence and verdict
+// semantics to layerConstructionPair; the caller supplies order, never its own compatibility rule.
+export function evaluateAssignedLayerPairConstruction(inner, outer) {
+  return layerConstructionPair(outer, inner, {
+    outer,
+    inner,
+    source: 'assigned_layer_chain',
+  })
+}
+
 // Canonical relational verdict for "can this pair's sleeves physically layer together" — the same
 // layering candidate pairs evaluateLayerDirections identifies, asked a different question. Composed
 // into evaluateWearableOutfit so propose_outfit, plan submission, and capsule composition share one
@@ -598,7 +625,7 @@ export function evaluateLayerPairConstruction(pieces = [], { roleAware = false }
 // Composers that want to explain the rule to a model cite this; they do not restate sleeve zone/
 // fabric thresholds in their own prose.
 export function layerConstructionPromptRule() {
-  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other is only a problem when there is actual bulk evidence at a shared zone — the inner garment's sleeve has excess volume (at the shoulder, arm, lower arm, or armhole/underarm) that the outer garment's sleeve is narrow and structured at that same zone, or both garments are tagged a medium/heavy fabric_weight. A voluminous sleeve worn as the OUTER layer over a fitted inner sleeve is not a conflict — it has room to spare; the same shape worn as the INNER layer under a narrow, structured outer sleeve is. Two fitted, lightweight, cuffed-sleeve garments layer fine regardless of direction. Missing sleeve_shape, an unresolved over/under direction, or missing fabric_weight on a cuffed pairing is unknown, not proof either way — inspect both garments before ruling on it.`
+  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other are a problem only when there is actual bulk evidence at a shared zone — the inner garment's sleeve has excess volume at the shoulder, arm, lower arm, or armhole/underarm that the outer garment's narrower, structured sleeve has no room to accommodate. Overall garment fabric_weight is not sleeve-volume evidence. A voluminous sleeve worn as the OUTER layer over a fitted inner sleeve is not a conflict—it has room to spare; the same shape worn as the INNER layer under a narrow, structured outer sleeve is a conflict. Two fitted cuffed sleeves layer normally. Missing sleeve_shape or an unresolved over/under direction is unknown, not proof either way — inspect both garments before ruling on it.`
 }
 
 function structureFinding(code, message, evidence = {}) {
@@ -831,7 +858,7 @@ export function evaluateWearableOutfit(pieces = [], {
     // is — those exist only when a real dependency or an explicit overlay/underlayer signal was
     // already found. Forcing a photo re-verification on every sleeve-metadata gap would block
     // ordinary composition for a data-completeness issue, not a suspected conflict. A KNOWN
-    // conflict (voluminous shape / doubled bulky fabric) is still a hard error via hardFindings
+    // conflict (directional sleeve geometry) is still a hard error via hardFindings
     // below; an unknown one stays a visible advisory finding only.
   ]
   const unresolvedSightPairs = unresolvedPairs.filter(pair =>

@@ -17,18 +17,24 @@ const W = (h, l) => ({ ...resolveWeatherContext({ userWeather: validateUserWeath
 const EXP = (w, activity = 'walking', environment = 'outdoor') => resolveExposureContext({ activity, environment }, w)
 const PUFFER = { id: 1, category: 'outerwear', fabric_weight: 'heavy', insulating_layer_materials: ['down'], sleeve_length: 'long' }
 const TRENCH = { id: 2, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'full_lining', sleeve_length: 'long' }
+const WARM_LAYER = { id: 7, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['nylon'], insulating_layer_materials: ['down'], interior_construction: 'full_lining', sleeve_length: 'long' }
 
-test('the puffer is marked discouraged on a 65/48 city day', () => {
-  // The exact conditions of the live failure.
+test('the puffer is warmer than preferred but remains workable on a 65/48 city day', () => {
+  // The exact conditions of the live failure. Overshoot ranks; it does not remove the only coat.
   const w = W(65, 48)
   const a = thermalFitPieceAdvisory(PUFFER, w, EXP(w))
-  assert.equal(a.tier, 'discouraged')
+  assert.equal(a.tier, 'workable')
   assert.match(a.reason, /warmer than these conditions/)
 })
 
-test('a proportionate layer is marked preferred in the same slot', () => {
+test('a genuinely warm layer ranks closest in the same slot', () => {
   const w = W(65, 48)
-  assert.equal(thermalFitPieceAdvisory(TRENCH, w, EXP(w)).tier, 'preferred')
+  const warm = thermalFitPieceAdvisory(WARM_LAYER, w, EXP(w))
+  assert.equal(warm.tier, 'workable')
+  assert.equal(thermalFitPieceAdvisory(TRENCH, w, EXP(w)).tier, 'workable',
+    'a moderate uninsulated trench must not become the warm target merely because the slot says walking')
+  assert.ok(warm.score > thermalFitPieceAdvisory(TRENCH, w, EXP(w)).score)
+  assert.ok(warm.score > thermalFitPieceAdvisory(PUFFER, w, EXP(w)).score)
 })
 
 test('the ordering reverses when it is genuinely cold', () => {
@@ -38,21 +44,21 @@ test('the ordering reverses when it is genuinely cold', () => {
 
 test('the slot states how much warmth the conditions call for', () => {
   // The removable-layer requirement only ever said a layer was needed, never how much.
-  assert.match(slotThermalDemandLabel(EXP(W(65, 48))), /moderate/)
+  assert.match(slotThermalDemandLabel(EXP(W(65, 48))), /warm/)
   assert.equal(slotThermalDemandLabel(null), '', 'silent when the band has no opinion')
 })
 
-test('exertion reaches the plan path — a hike and a stroll do not resolve alike', () => {
+test('only genuine exertion changes base demand on the plan path', () => {
   // Compared at the SAME environment. An earlier version of this test compared hiking/outdoor with
   // none/indoor, which both land on `light` by different routes — a coincidence, not a signal.
   const w = W(65, 48)
   const sedentary = slotThermalDemandLabel(EXP(w, 'none'))
   const walking = slotThermalDemandLabel(EXP(w, 'walking'))
   const hiking = slotThermalDemandLabel(EXP(w, 'hiking'))
-  assert.notEqual(sedentary, walking)
+  assert.equal(sedentary, walking, 'ordinary walking earns no clothing-warmth credit')
   assert.notEqual(walking, hiking)
   assert.match(sedentary, /warm/)
-  assert.match(walking, /moderate/)
+  assert.match(walking, /warm/)
   assert.match(hiking, /light/)
 
   // And an indoor destination is its own question, not an exertion one.
@@ -122,12 +128,14 @@ test('thermal tiers grade by distance in both directions', () => {
   // One step over: a real preference, not a warning.
   const denim = thermalFitPieceAdvisory(DENIM, hike, hikeExp)
   assert.equal(denim.tier, 'workable', 'denim one step over a light demand must not be discouraged')
-  // Three steps over: the failure this whole arc exists for.
-  const puffer = thermalFitPieceAdvisory(PUFFER, hike, hikeExp)
-  assert.equal(puffer.tier, 'discouraged')
+  // Three steps over on the exerting base: far enough to warn.
+  const heavyBase = thermalFitPieceAdvisory({
+    category: 'top', fabric_weight: 'heavy', insulating_layer_materials: ['down'], sleeve_length: 'long'
+  }, hike, hikeExp)
+  assert.equal(heavyBase.tier, 'discouraged')
   // The two must not be indistinguishable — that was the defect.
-  assert.notEqual(denim.tier, puffer.tier)
-  assert.ok(puffer.score < denim.score, 'further out must score worse')
+  assert.notEqual(denim.tier, heavyBase.tier)
+  assert.ok(heavyBase.score < denim.score, 'further out must score worse')
   // Well matched stays preferred.
   assert.equal(thermalFitPieceAdvisory(TEE, hike, hikeExp).tier, 'preferred')
 })
@@ -153,12 +161,14 @@ test('a hike does not get a lighter layer than a walk in the same weather', () =
 test('an October nature walk prefers a real jacket over a technical hoodie', () => {
   const w = W(65, 48)
   const hikeExp = EXP(w, 'hiking')
-  assert.equal(thermalFitPieceAdvisory(TRENCH, w, hikeExp).tier, 'preferred')
+  assert.equal(thermalFitPieceAdvisory(WARM_LAYER, w, hikeExp).tier, 'workable')
+  assert.equal(thermalFitPieceAdvisory(TRENCH, w, hikeExp).tier, 'workable')
   assert.equal(thermalFitPieceAdvisory(HOODIE, w, hikeExp).tier, 'workable',
     'the lightest layer in the wardrobe must not lead an October hike')
-  assert.ok(thermalFitPieceAdvisory(TRENCH, w, hikeExp).score > thermalFitPieceAdvisory(HOODIE, w, hikeExp).score)
+  assert.ok(thermalFitPieceAdvisory(WARM_LAYER, w, hikeExp).score > thermalFitPieceAdvisory(HOODIE, w, hikeExp).score)
   // And the fix must not walk the puffer back in.
-  assert.equal(thermalFitPieceAdvisory(PUFFER, w, hikeExp).tier, 'discouraged')
+  assert.notEqual(thermalFitPieceAdvisory(PUFFER, w, hikeExp).tier, 'preferred')
+  assert.ok(thermalFitPieceAdvisory(WARM_LAYER, w, hikeExp).score > thermalFitPieceAdvisory(PUFFER, w, hikeExp).score)
 })
 
 test('an indoor destination sizes the coat for the trip, not the gallery', () => {
@@ -167,11 +177,12 @@ test('an indoor destination sizes the coat for the trip, not the gallery', () =>
   const demand = requiredThermalBand(museum)
   // The base is excused by the heated room; the layer is not.
   assert.equal(demand.level, 'light')
-  assert.equal(demand.layer.level, 'moderate')
+  assert.equal(demand.layer.level, 'warm')
   // Level and range must come from the same band — returning transit's level beside the slot's
   // range measured distance from one band's centre against another band's edges.
   assert.ok(demand.layer.range.includes(demand.layer.level))
-  assert.equal(thermalFitPieceAdvisory(TRENCH, w, museum).tier, 'preferred')
+  assert.equal(thermalFitPieceAdvisory(WARM_LAYER, w, museum).tier, 'workable')
+  assert.equal(thermalFitPieceAdvisory(TRENCH, w, museum).tier, 'workable')
   assert.equal(thermalFitPieceAdvisory(FLEECE, w, museum).tier, 'workable')
 })
 
@@ -214,8 +225,8 @@ test('an indoor slot still knows the weather it travels through', () => {
   assert.equal(exposure.conditions.known, true, 'the trip has known weather even when the destination is heated')
   const demand = requiredThermalBand(exposure)
   assert.equal(demand.level, 'light', 'the heated base stays light')
-  assert.equal(demand.layer.level, 'moderate', 'the coat answers to the walk there')
-  assert.equal(thermalFitPieceAdvisory(PUFFER, indoorProfile, exposure).tier, 'discouraged',
+  assert.equal(demand.layer.level, 'warm', 'the coat answers to the walk there')
+  assert.equal(thermalFitPieceAdvisory(PUFFER, indoorProfile, exposure).tier, 'workable',
     'a museum day must have something to say about a down puffer')
 })
 
@@ -242,7 +253,7 @@ test('the catalog line carries the facts needed to judge the sun hoodie', async 
   // this function is shared with search_wardrobe (docs/search-propose-signal-inventory.md), so a
   // source-text check against outfitSetPlanner.js would no longer even find its definition.
   const line = thermalFactsForPieceLine(SUN_HOODIE)
-  for (const fact of ['warmth:', 'insulation:', 'season:', 'removable:']) {
+  for (const fact of ['warmth:', 'insulating layer:', 'season:', 'removable:']) {
     assert.ok(line.includes(fact), `the fact channel must state ${fact}`)
   }
   assert.ok(typeof buildPlanSlotWorkbench === 'function')
@@ -262,7 +273,7 @@ const WARM_SEASON_SHOE = {
 test('a shoe\'s season reaches the compose-time catalog line even though thermal construction facts stay omitted', () => {
   const line = thermalFactsForPieceLine(WARM_SEASON_SHOE)
   assert.match(line, /season:warm/, 'season must not be collateral damage of the shoes/accessory thermal exclusion')
-  for (const fact of ['warmth:', 'insulation:', 'interior:', 'removable:']) {
+  for (const fact of ['warmth:', 'insulating layer:', 'insulating face material:', 'interior:', 'removable:']) {
     assert.ok(!line.includes(fact), `body-thermal construction fact "${fact}" must stay excluded for shoes -- fabric_weight on a shoe is not a body-warmth claim`)
   }
 })
@@ -275,6 +286,37 @@ test('unrecorded insulation is not reported as verified-none', async () => {
   assert.equal(thermalMaterialVerdict(SUN_HOODIE), 'unknown')
   assert.equal(thermalMaterialVerdict({ ...SUN_HOODIE, insulating_layer_materials: [] }), 'non_insulating')
   assert.equal(thermalMaterialVerdict({ ...SUN_HOODIE, insulating_layer_materials: ['down'] }), 'insulating')
+})
+
+test('thermal fact projection distinguishes an insulating face fabric from a constructed insulating layer', () => {
+  const woolCardigan = {
+    id: 88, name: 'wool cardigan', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'long',
+    insulating_layer_materials: null,
+  }
+  const downCoat = {
+    id: 89, name: 'down coat', category: 'outerwear', fabric_weight: 'heavy',
+    fabric_category: 'nylon', fiber_content: ['nylon'], sleeve_length: 'long',
+    insulating_layer_materials: ['down'],
+  }
+  const verifiedUnfilledJacket = {
+    id: 90, name: 'unfilled jacket', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'long',
+    insulating_layer_materials: [],
+  }
+
+  const cardiganLine = thermalFactsForPieceLine(woolCardigan)
+  assert.match(cardiganLine, /insulating layer:not recorded/)
+  assert.match(cardiganLine, /insulating face material:yes/)
+  assert.doesNotMatch(cardiganLine, /insulation:insulated/)
+
+  const coatLine = thermalFactsForPieceLine(downCoat)
+  assert.match(coatLine, /insulating layer:down/)
+  assert.doesNotMatch(coatLine, /insulating face material:yes/)
+
+  const jacketLine = thermalFactsForPieceLine(verifiedUnfilledJacket)
+  assert.match(jacketLine, /insulating layer:none/)
+  assert.doesNotMatch(jacketLine, /insulating face material:yes/)
 })
 
 test('no thermal or season verdict crosses into the model contract', () => {
@@ -296,9 +338,9 @@ test('no thermal or season verdict crosses into the model contract', () => {
 test('conditions are stated as a range, and absent when unknown', async () => {
   const { slotExposureConditions } = await import('../styling-engine/outfitSetPlanner.js')
   const text = slotExposureConditions(EXP(W(65, 48), 'hiking'))
-  assert.match(text, /54-65°F likely exposure/)
+  assert.match(text, /48-65°F likely exposure/)
   assert.match(text, /hiking/)
-  assert.match(text, /estimated window/)
+  assert.match(text, /user-stated range/)
   // No conditions is an empty field, never an invented range.
   assert.equal(slotExposureConditions(EXP({}, 'hiking')), '')
 })

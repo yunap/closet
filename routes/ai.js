@@ -70,7 +70,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -186,6 +186,8 @@ import {
   getStylistConversationState,
   saveStylistConversationState,
   buildStylistConversationPayload,
+  buildSingleOutfitConversationPayload,
+  priorStylistConversationHistory,
   normalizeCalibrationRow,
   withTimeout,
   structuredResponseMaxTokens,
@@ -802,7 +804,12 @@ export function clearRecentlyDiscussedPieceIds(sessionId) {
 }
 
 export function boundedConversationStateFromToolContext(toolContext = {}) {
-  const outfits = Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : []
+  // Rejected diagnostic cards remain visible in the turn that produced them, but they are not an
+  // accepted outfit set and must never become follow-up authority. A two-step retry used to leave
+  // the first broken attempt stranded beside the accepted card in current_outfit_set.
+  const outfits = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken)
+    : []
   const currentOutfitSet = outfits.slice(0, 8).map((outfit, index) => ({
     index: index + 1,
     label: outfit?.label || outfit?.title || `Outfit ${index + 1}`,
@@ -1093,6 +1100,24 @@ export function compactProfileHasContext(profile, context = {}) {
 export function compactRouterTurnHasContext(conversationMode = 'new_request', context = {}) {
   if (String(conversationMode || 'new_request') === 'new_request') return true
   return Boolean(context.outfits?.length) || Boolean(context.pieceIds?.length)
+}
+
+// Evidence that a request belongs to an established execution context. Conversation-mode words
+// are deliberately absent: "this is", "actually", or another tone marker cannot create prior
+// state. Callers decide freshness from whether this evidence list is empty.
+export function freeformExecutionContextEvidence(body = {}, state = {}, recentlyDiscussedPieceIds = []) {
+  const priorHistory = priorStylistConversationHistory(body.history, body.question)
+  return [
+    body.activeContext ? 'active_context' : '',
+    body.outfit ? 'outfit' : '',
+    Array.isArray(body.pieceIds) && body.pieceIds.length ? 'piece_ids' : '',
+    Array.isArray(body.generatedOutfits) && body.generatedOutfits.length ? 'generated_outfits' : '',
+    String(body.generatedContext || '').trim() ? 'generated_context' : '',
+    String(body.threadContext || '').trim() ? 'thread_context' : '',
+    priorHistory.length ? 'history' : '',
+    Array.isArray(state.current_outfit_set) && state.current_outfit_set.length ? 'saved_outfit_set' : '',
+    Array.isArray(recentlyDiscussedPieceIds) && recentlyDiscussedPieceIds.length ? 'recently_discussed_pieces' : '',
+  ].filter(Boolean)
 }
 
 export function formatWardrobeInventoryAnswer(counts = {}) {
@@ -5391,6 +5416,7 @@ router.post('/ask', async (req, res) => {
       toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
+    const priorConversationHistory = priorStylistConversationHistory(req.body.history, currentQuestion)
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
     // full_stylist answer actually discussed (cited in prose AND verified that turn) — not raw
     // search candidates. Read-only here: informs the router's contextSummary (§5.4) and, if the
@@ -5419,7 +5445,14 @@ router.post('/ask', async (req, res) => {
     const compactSavedPhotoCount = activePieceIdentities.filter(piece =>
       compactPieceIdSet.has(Number(piece.id)) && (piece.photo || piece.worn_photo)
     ).length
-    const boundedRouterEligible = String(req.body.conversationMode || 'new_request') === 'new_request'
+    // Execution freshness is structural state, not conversational tone. A live fresh-task request
+    // containing the ordinary sentence "This is ordinary sightseeing" was labeled `correction`
+    // by the client and skipped the router entirely, despite having no prior context. Keep the
+    // tone label for full-stylist conversation behavior, but do not let prose classification own
+    // whether a context-free request may reach a bounded execution profile.
+    const executionContextEvidence = freeformExecutionContextEvidence(req.body, compactState, recentlyDiscussedPieceIds)
+    const freshExecutionRequest = executionContextEvidence.length === 0
+    const boundedRouterEligible = freshExecutionRequest
       && !req.body.activeContext
       && !(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)
     // Without this, enabling compact answers bought a router call on every text turn — including
@@ -5434,6 +5467,7 @@ router.post('/ask', async (req, res) => {
       && !req.body.outfit
       && !req.body.image
       && !req.body.imageData
+    let singleOutfitRoute = null
     if (routerEligible) {
       try {
         updateAiTelemetryContext({
@@ -5465,12 +5499,26 @@ router.post('/ask', async (req, res) => {
           // makes sense as an answer to the assistant's own prior question — e.g. naming a garment
           // while answering "which outfit's layer?" — read like a standalone garment_fact question).
           // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
-          recentExchange: compactRecentHistory(req.body.history, 2),
+          recentExchange: compactRecentHistory(priorConversationHistory, 2),
+          explicitActivity: req.body.activity || '',
           providerOverride: toolContext.providerOverride
         })
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
         recordFreeformToolIteration(toolContext, ['execution_router'])
+        // The router has already resolved the request's structured occasion/activity. Preserve
+        // that result as established turn state even when the selected profile is full_stylist;
+        // otherwise a later search_wardrobe call that omits those optional arguments silently
+        // falls back to route defaults (`casual` / no activity) and retrieves the wrong visual
+        // roster. Occasion remains overridable by an explicit tool argument. Activity is locked to
+        // the router's request-level interpretation so a later model tool call cannot invent walking
+        // and turn it into a footwear gate.
+        if (freshExecutionRequest) {
+          toolContext.occasion = normalizeOccasion(routed.value?.occasion)
+          toolContext.activity = normalizeActivity(routed.value?.activity)
+          toolContext.executionRouterActivity = toolContext.activity
+          toolContext.executionRouterActivityLocked = true
+        }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
           exactSubjectCount: exactNamedPieceIds.length,
@@ -5478,6 +5526,16 @@ router.post('/ask', async (req, res) => {
         })
           ? 'garment_fact'
           : routed.value?.profile
+        // Keep the router's raw disposition visible in the response debug even when later context
+        // checks conservatively fall through to full_stylist. Previously executionProfile showed
+        // only the path ultimately taken, so profile-vs-limit-vs-context rejection was impossible
+        // to distinguish after a live run.
+        toolContext.freeformDiagnostics ||= {}
+        toolContext.freeformDiagnostics.executionRouterProfile = String(compactProfile || '')
+        toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
+        if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
+          singleOutfitRoute = routed.value
+        }
         if (compactProfile === 'wardrobe_inventory') {
           const categoryRows = db.prepare("SELECT category, COUNT(*) AS count FROM pieces WHERE status = 'active' GROUP BY category").all()
           const categoryCounts = Object.fromEntries(categoryRows.map(row => [String(row.category || 'other'), Number(row.count) || 0]))
@@ -5650,12 +5708,14 @@ router.post('/ask', async (req, res) => {
         console.warn('[Freeform Execution Router] Falling back to full stylist:', routerError.message)
       }
     }
-    const payload = await buildStylistConversationPayload({
-      ...req.body,
-      occasion: req.body.occasion,
-      season: req.body.season,
-      activity: req.body.activity
-    })
+    const payload = singleOutfitRoute
+      ? buildSingleOutfitConversationPayload(req.body, singleOutfitRoute)
+      : await buildStylistConversationPayload({
+          ...req.body,
+          occasion: req.body.occasion,
+          season: req.body.season,
+          activity: req.body.activity
+        })
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
     toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
@@ -5688,6 +5748,18 @@ router.post('/ask', async (req, res) => {
       ]
         .map(Number).filter(Boolean)
     )]
+    if (singleOutfitRoute) {
+      toolContext.executionProfile = 'single_outfit'
+      toolContext.freeformDiagnostics.executionProfile = 'single_outfit'
+      declareSingleOutfitIntent(toolContext)
+      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'propose_outfit']
+      toolContext.userWeather = payload.singleOutfitContext?.user_weather || null
+      toolContext.location = payload.singleOutfitContext?.location || toolContext.location
+      toolContext.currentDate = payload.singleOutfitContext?.date || toolContext.currentDate
+      toolContext.season = payload.singleOutfitContext?.season || toolContext.season
+      toolContext.mood = payload.singleOutfitContext?.mood || toolContext.mood
+      toolContext.mission = payload.singleOutfitContext?.mission || toolContext.mission
+    }
     // thread_1788556165595: a plain "what did you use" question about an existing plan reached
     // plan_outfit_set again and produced a second, different capsule. buildStylistConversationPayload
     // already told the model the answer sits in current_outfit_set — this removes the tool that let
