@@ -1819,3 +1819,27 @@ cardigan or other layer that remains after the coat is removed still contributes
 not “coat off means one bare top.” The production hard finding is limited to known evidence, a
 certain stated encountered range, and an explicit removable-layer obligation. Coarse forecasts and
 unknown upper-body construction remain non-invalidating.
+
+### 25.7 Owner correction — an ordered substantial middle layer contributes (2026-09-09)
+
+The earlier combination rule distinguished base from removable warmth but reduced every removable
+piece to the warmest single member. That is correct for an unordered list and for an ordinary
+two-piece combination; it is false for a deliberately worn three-layer upper-body system. A
+`moderate` primary top + `moderate` cardigan + `moderate` light jacket stayed `moderate`, so a real
+middle layer could not repair a 48°F undershoot even though removing the jacket left the appropriate
+top-plus-cardigan state at 60°F.
+
+`outfitThermalContribution` now recognizes only the explicit ordered roles
+`primary_top`/`dress` → `layer_top` → `outerwear`. When every member is at least `moderate`, the
+complete upper system earns one bounded ordinal step above its strongest member. It is never a sum,
+never more than one step for the chain, and never inferred from three garments without those roles.
+The established two-piece calculation is unchanged. `evaluateLayerPairConstruction` and
+`evaluateWearableOutfit` remain the independent owners of physical compatibility and the final hard
+verdict, so thermal contribution cannot certify sleeve or fit feasibility.
+
+The permanent controls in `test/outfitThermalContribution.test.js` pin the three-piece result, the
+unchanged two-piece result, the unchanged roleless result, and both 60→48°F worn states. The
+`propose_outfit` contract test pins acceptance through the real shared validator. The provider-free
+copied-wardrobe diagnostic is `scratch/diagnose_single_outfit_layering.mjs`; the older tracked
+`scratch/measure_warmth_placement.mjs` now reads production `garmentWarmthLevel` rather than the
+retired `proposedWarmthLevel`, so the verifier and runtime share the documented warmth owner.

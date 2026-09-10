@@ -49,6 +49,17 @@ decisions.
 > the hard-constraint owner. This recovery changes only `single_outfit` and leaves trip, capsule,
 > batch, swap, and full-stylist flows untouched.
 
+> **[implemented 2026-09-09] A middle layer is a real thermal option, not invisible inventory.**
+> For a required falling range, the model may assign a cardigan, vest, or similar middle garment
+> `layer_top` beneath the outermost jacket/coat assigned `outerwear`. When the base, middle, and
+> outermost garments are each known to be at least `moderate`, `outfitThermalContribution` grants
+> that explicit ordered system one bounded ordinal step; after the outermost piece is removed, the
+> base-plus-middle state is still evaluated at the warm endpoint. The shared construction stage
+> checks base↔middle and middle↔outerwear independently. The first-view and final-proposal rejection
+> messages now name both legal repairs—a compatible substantial middle or warmer outerwear—instead
+> of directing every cold undershoot toward a winter coat. This changes no trip, capsule, batch,
+> swap, selected-piece, two-layer, or roleless behavior.
+
 > **[implemented 2026-09-09] Complete access now has an observable model-owned comparison step.**
 > `thread_1788939301104` received all 213 eligible garments but the model viewed only one complete
 > idea, anchoring immediately on a generic basic-top/jeans formula. The first `view_pieces` call now

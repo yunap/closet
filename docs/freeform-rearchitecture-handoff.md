@@ -1,5 +1,18 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Ordered middle-layer repair, implemented 2026-09-09:** the single-outfit flow could represent
+> `layer_top`, but the thermal owner collapsed all removable upper-body pieces to the warmest one.
+> A substantial top + substantial cardigan + light jacket therefore failed exactly like the jacket
+> alone and the retry message prescribed warmer outerwear, pushing the stylist toward a winter coat.
+> `outfitThermalContribution` now recognizes only an explicit `primary_top`/`dress` → `layer_top`
+> → `outerwear` role chain whose three members are all at least `moderate`, and grants one bounded
+> ordinal ensemble step. Two-piece and unordered controls remain unchanged, while the shared
+> construction validator still decides whether both adjacent pairs can actually be worn. The
+> narrow prompt, first-view direction schema, and thermal retry now teach the
+> same role mapping and allow either a compatible middle layer or warmer outerwear as repair. This
+> closes a weather-validation defect; it does not claim to solve the separate product question of
+> why the stylist rarely invents intricate layering when warmth does not require it.
+
 > **Explicit-activity and pre-photo hard-validity correction, implemented 2026-09-09:** live run
 > `thread_1788985997110` proved two remaining authority gaps. First, its request said “outing” and
 > “outside from 3–8 p.m.” but never walking; the small router still returned `activity:walking`,

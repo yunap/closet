@@ -84,6 +84,49 @@ test('gate 3 — ordinal levels are never numerically summed', () => {
   assert.notEqual(outfitThermalContribution([P.mildTop, P.cardigan]).withLayer, 'very warm')
 })
 
+test('an explicitly ordered three-layer moderate stack earns one bounded ensemble step', () => {
+  const exact = requiredThermalEndpointBands(resolveExposureContext(
+    { activity: 'none', environment: 'outdoor' },
+    { temperature: { highF: 60, lowF: 48, source: 'stated_user' } },
+  ))
+  const primary = {
+    id: 20, role: 'primary_top', category: 'top', fabric_weight: 'medium',
+    fabric_category: 'cotton', fiber_content: ['cotton'], sleeve_length: 'long',
+  }
+  const middle = {
+    id: 21, role: 'layer_top', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'knit', fiber_content: ['wool'], sleeve_length: 'long',
+  }
+  const outer = {
+    id: 22, role: 'outerwear', category: 'outerwear', fabric_weight: 'medium',
+    fabric_category: 'cotton', fiber_content: ['cotton'], insulating_layer_materials: [],
+    sleeve_length: 'long', length_hits_at: 'mid_thigh',
+  }
+
+  assert.equal(outfitThermalContribution([primary, middle]).withLayer, 'moderate',
+    'two moderate garments retain the existing no-step behavior')
+  assert.equal(outfitThermalContribution([primary, middle, outer]).withLayer, 'warm')
+  assert.equal(outfitThermalContribution([primary, middle, outer]).upperWithLayer, 'warm')
+
+  const coverage = outfitRangeCoverage([primary, middle, outer], exact.cold, exact.warm, compareThermalFit)
+  const outerRemoved = coverage.candidates.find(candidate => candidate.removedPieceId === outer.id)
+  assert.equal(outerRemoved.coldEnd.fit, 'adequate')
+  assert.equal(outerRemoved.warmEnd.fit, 'adequate',
+    'after the outermost layer comes off, the moderate top + cardigan remain suitable at 60F')
+  assert.equal(outerRemoved.adaptable, true)
+
+  const unordered = [primary, middle, outer].map(({ role, ...piece }) => piece)
+  assert.equal(outfitThermalContribution(unordered).withLayer, 'moderate',
+    'a flat garment array does not silently acquire ordered-stack credit')
+
+  const unknownMiddle = { ...middle, fabric_weight: null, fabric_category: null, fiber_content: [] }
+  assert.equal(outfitThermalContribution([primary, unknownMiddle, outer]).withLayer, 'moderate',
+    'unknown middle-layer evidence never earns the ensemble step')
+  const lightMiddle = { ...middle, fabric_weight: 'light', fabric_category: 'cotton', fiber_content: ['cotton'] }
+  assert.equal(outfitThermalContribution([primary, lightMiddle, outer]).withLayer, 'moderate',
+    'a merely present light middle layer never earns the substantial-stack step')
+})
+
 test('gate 4 — unknown contribution is preserved, never coerced to zero', () => {
   // "known cardigan + unknown top" is not "known cardigan + very-light top".
   const c = outfitThermalContribution([P.unplaceableTop, P.cardigan])

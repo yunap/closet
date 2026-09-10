@@ -31,6 +31,35 @@ import { WARMTH_LEVELS, garmentWarmthLevel, warmthIsRemovable } from './garmentW
 const IDX = new Map(WARMTH_LEVELS.map((l, i) => [l, i]))
 const warmer = (a, b) => (a == null ? b : b == null ? a : (IDX.get(a) >= IDX.get(b) ? a : b))
 const stepUp = l => WARMTH_LEVELS[Math.min(WARMTH_LEVELS.length - 1, IDX.get(l) + 1)]
+const SUBSTANTIAL_STACK_FLOOR = 'moderate'
+
+// A model-authored role chain is stronger evidence than three same-category garments sitting in a
+// flat array: it says which garment is the base, which is deliberately worn over it, and which is
+// outermost. Credit that real three-layer upper-body system with ONE bounded ordinal step when all
+// three garments are at least moderate. This is not level arithmetic and it does not revive the
+// old two-piece bug (ordinary moderate top + cardigan => warm): without all three ordered roles,
+// this returns null and the established two-piece calculation below is byte-for-byte unchanged.
+// Construction compatibility is independently owned by outfitValidation.js; a sleeve-conflicting
+// stack can receive a thermal description here and still be rejected as physically unwearable.
+function orderedSubstantialUpperStackContribution(pieces = []) {
+  const bases = pieces.filter(piece => ['primary_top', 'dress'].includes(String(piece?.role || '')))
+  const middles = pieces.filter(piece => String(piece?.role || '') === 'layer_top')
+  const outers = pieces.filter(piece => String(piece?.role || '') === 'outerwear')
+  const floor = IDX.get(SUBSTANTIAL_STACK_FLOOR)
+  let strongest = null
+
+  for (const base of bases) {
+    for (const middle of middles) {
+      for (const outer of outers) {
+        const levels = [base, middle, outer].map(garmentWarmthLevel)
+        if (levels.some(level => level == null || IDX.get(level) < floor)) continue
+        const strongestPiece = levels.reduce(warmer, null)
+        strongest = warmer(strongest, stepUp(strongestPiece))
+      }
+    }
+  }
+  return strongest
+}
 
 /**
  * @returns {object} the STRUCTURE, never a scalar total:
@@ -87,16 +116,22 @@ export function outfitThermalContribution(pieces = []) {
   // (trousers+long-sleeve 0.61 + jacket 0.36 -> 0.96). A `moderate` base is the thin-trousers end of
   // that range, not the substantial end.
   const bothReal = weaker != null && IDX.get(weaker) >= IDX.get('warm')
-  const withLayer = removable == null ? base
+  let withLayer = removable == null ? base
     : base == null ? removable
     : bothReal ? stepUp(warmer(base, removable)) : warmer(base, removable)
 
   const upperWeaker = upperBase == null || upperRemovable == null ? null
     : (IDX.get(upperBase) <= IDX.get(upperRemovable) ? upperBase : upperRemovable)
   const upperBothReal = upperWeaker != null && IDX.get(upperWeaker) >= IDX.get('warm')
-  const upperWithLayer = upperRemovable == null ? upperBase
+  let upperWithLayer = upperRemovable == null ? upperBase
     : upperBase == null ? upperRemovable
     : upperBothReal ? stepUp(warmer(upperBase, upperRemovable)) : warmer(upperBase, upperRemovable)
+
+  const orderedStack = orderedSubstantialUpperStackContribution(list)
+  if (orderedStack) {
+    upperWithLayer = warmer(upperWithLayer, orderedStack)
+    withLayer = warmer(withLayer, orderedStack)
+  }
 
   return {
     base,

@@ -5511,7 +5511,7 @@ test('declare_intent records the turn contract and acks the capability gap for i
   assert.equal(invalid.status, 'validation_error')
 })
 
-test('single-outfit explicit layer contract rejects omission and role spoofing, then accepts one seen outerwear piece with the same stated exposure', async () => {
+test('single-outfit explicit layer contract rejects omission and role spoofing, then accepts an ordered moderate three-layer system for the same stated exposure', async () => {
   const lightTrench = insertPiece({
     name: 'known light acceptance trench',
     category: 'outerwear',
@@ -5543,6 +5543,17 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
     fabric_category: 'knit',
     fiber_content: ['cotton'],
   })
+  const middleCardigan = insertPiece({
+    name: 'moderate cashmere acceptance cardigan',
+    category: 'outerwear',
+    colors: ['grey'],
+    occasions: ['city'],
+    photo: seeded.photos.jacket,
+    reads_as: 'fine open cardigan',
+    fabric_weight: 'medium',
+    fabric_category: 'cashmere',
+    fiber_content: ['cashmere'],
+  })
   const lightSatinTop = insertPiece({
     name: 'light three quarter satin top',
     category: 'top',
@@ -5554,9 +5565,10 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
     fabric_category: 'satin',
     fiber_content: ['polyester'],
   })
-  db.prepare(`UPDATE pieces SET sleeve_length = 'long', interior_construction = 'full_lining', insulating_layer_materials = '[]' WHERE id = ?`).run(lightTrench)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', interior_construction = 'full_lining', insulating_layer_materials = '[]' WHERE id = ?`).run(lightTrench)
   db.prepare(`UPDATE pieces SET sleeve_length = 'long', interior_construction = 'full_lining', insulating_layer_materials = '["down"]' WHERE id = ?`).run(warmCoat)
-  db.prepare(`UPDATE pieces SET sleeve_length = 'long' WHERE id = ?`).run(rangeTop)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'fitted', fit_on_body = 'skims' WHERE id = ?`).run(rangeTop)
+  db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', fit_on_body = 'skims', insulating_layer_materials = NULL WHERE id = ?`).run(middleCardigan)
   db.prepare(`UPDATE pieces SET sleeve_length = 'three_quarter' WHERE id = ?`).run(lightSatinTop)
   db.prepare(`UPDATE pieces SET sleeve_length = 'sleeveless' WHERE id = ?`).run(seeded.top)
 
@@ -5584,8 +5596,10 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
   // retrieved/seen directly so the independent sight gate does not obscure the thermal assertion.
   toolContext.retrievedPieceIds.add(rangeTop)
   toolContext.retrievedPieceIds.add(lightSatinTop)
+  toolContext.retrievedPieceIds.add(middleCardigan)
   toolContext.visuallySeenPieceIds.add(rangeTop)
   toolContext.visuallySeenPieceIds.add(lightSatinTop)
+  toolContext.visuallySeenPieceIds.add(middleCardigan)
 
   const basePieces = [
     { id: seeded.top, role: 'primary_top' },
@@ -5621,7 +5635,8 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
   }, toolContext)
   assert.equal(tooLight.status, 'validation_error')
   assert.match(tooLight.message, /less warmth than the conditions call for/)
-  assert.match(tooLight.message, /Replace the removable outerwear with a warmer visually verified outerwear candidate/)
+  assert.match(tooLight.message, /either a compatible, substantial middle garment assigned layer_top beneath the outerwear or a warmer visually verified outerwear candidate/)
+  assert.match(tooLight.message, /Do not assume a winter coat is the only repair/)
   assert.doesNotMatch(tooLight.message, /keep the pieces you chose/, 'thermal correction must not tell the model to preserve the inadequate layer')
 
   const underWarmRemainder = await executeTool('propose_outfit', {
@@ -5639,18 +5654,20 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
   assert.match(underWarmRemainder.message, /upper-body pieces beneath the outer layer/)
 
   const accepted = await executeTool('propose_outfit', {
-    label: 'Santa Fe afternoon',
+    label: 'Layered Santa Fe afternoon',
     pieces: [
       { id: rangeTop, role: 'primary_top' },
+      { id: middleCardigan, role: 'layer_top' },
       { id: seeded.bottom, role: 'primary_bottom' },
       { id: seeded.shoe, role: 'shoes' },
-      { id: warmCoat, role: 'outerwear' },
+      { id: lightTrench, role: 'outerwear' },
     ],
-    why_it_works: 'The insulated coat is removable through the warmer part of the afternoon.',
+    why_it_works: 'The top, cardigan, and lined trench form an ordered removable system.',
+    styling_instructions: 'Wear the cardigan over the top and the trench over the cardigan; remove the trench at the warm endpoint.',
   }, toolContext)
   assert.equal(accepted.status, 'success')
   const acceptedCard = toolContext.generatedOutfits.find(outfit => !outfit.broken)
-  assert.deepEqual(acceptedCard.pieceIds, [rangeTop, seeded.bottom, seeded.shoe, warmCoat])
+  assert.deepEqual(acceptedCard.pieceIds, [rangeTop, middleCardigan, seeded.bottom, seeded.shoe, lightTrench])
   assert.equal(acceptedCard.resolvedWeatherContext.overall_source, 'stated_user')
   assert.equal(acceptedCard.resolvedWeatherContext.temperature.high_f, 60)
   assert.equal(acceptedCard.resolvedWeatherContext.temperature.low_f, 48)

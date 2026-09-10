@@ -1156,6 +1156,8 @@ test('single-outfit payload keeps exact weather and excludes the universal workb
   assert.ok(payload.system.length < 15000, `narrow system unexpectedly large: ${payload.system.length}`)
   assert.match(payload.system, /Ordinary walking, sightseeing, museums, and city days are not exercise/)
   assert.match(payload.system, /three-quarter-sleeve jersey bulky/)
+  assert.match(payload.system, /primary_top \(or dress\) → layer_top .* → outerwear/)
+  assert.match(payload.system, /Do not force this formula when a simpler outfit is stronger/)
   assert.doesNotMatch(payload.system, /Planning a Coordinated Multi-Outfit Set|OCCASION & CLIMATE PROFILES|SAVED STYLIST FEEDBACK|THREAD STATE/)
 })
 
@@ -1325,6 +1327,8 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(thermallyInvalidView.status, 'validation_error')
     assert.match(thermallyInvalidView.message, /fails known hard wearability facts before photo review/)
     assert.match(thermallyInvalidView.message, /less warmth than the conditions call for/)
+    assert.match(thermallyInvalidView.message, /compatible substantial layer_top beneath the outerwear or a warmer outerwear piece/)
+    assert.match(thermallyInvalidView.message, /do not assume a winter coat is the only repair/)
     assert.equal(toolContext.freeformDiagnostics.singleOutfitViewCalls || 0, 0, 'rejected directions spend no photo budget')
 
     const viewed = await executeTool('view_pieces', { candidate_directions: candidateDirections }, toolContext)

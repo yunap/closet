@@ -16,6 +16,21 @@ composer (measured 0 reads against 30-49k written tokens on every sampled call) 
 `OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
 
+**[amended 2026-09-09 — ordered middle-layer thermal contribution]** The environmental validator
+previously reduced every removable upper-body garment to the single warmest garment. An explicit
+`primary_top`/`dress` → `layer_top` → outermost `outerwear` chain therefore received the same
+thermal contribution as its light jacket alone, even when all three garments were known
+substantial and `evaluateLayerPairConstruction` found both adjacent relationships wearable.
+`outfitThermalContribution` now gives that exact ordered three-layer system one bounded ordinal
+step above its strongest member when every member is at least `moderate`. It does not numerically
+sum levels. Two-piece systems, flat arrays without roles, unknown evidence, and simpler outfits are
+unchanged; `evaluateWearableOutfit` still independently owns physical construction and final
+environmental validity. On the copied live wardrobe, the provider-free
+`scratch/diagnose_single_outfit_layering.mjs` used a diagnostic-only name split for obvious middle
+versus outermost layers and found 508 compatible systems whose middle layer changes
+the exact 60→48°F cold result from undershoot to adequate while leaving an adequate top-plus-middle
+system at 60°F after the outermost layer is removed. The model still authors the outfit.
+
 **[amended 2026-09-09 — explicit activity and pre-photo candidate validity]** Live acceptance
 `thread_1788985997110` routed a five-hour Santa Fe “outing” as `activity:walking` even though the
 request contained no walking language and the router prompt explicitly forbade that inference. The

@@ -1117,7 +1117,7 @@ export const STYLIST_TOOLS = [
           type: "array",
           minItems: 2,
           maxItems: 3,
-          description: "Single-outfit FIRST view only: 2–3 model-authored complete outfit possibilities from the full catalog. They may share support pieces, but each needs a different hero and a different piece set. Up to 12 unique IDs total.",
+          description: "Single-outfit FIRST view only: 2–3 model-authored complete outfit possibilities from the full catalog. They may share support pieces, but each needs a different hero and a different piece set. A deliberate middle garment uses layer_top and the outermost jacket/coat uses outerwear. Up to 12 unique IDs total.",
           items: {
             type: "object",
             properties: {
@@ -2392,7 +2392,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const warmEndThermalUndershoot = hardFindings.some(
             finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT)
           const retryInstruction = coldThermalUndershoot
-            ? "Replace the removable outerwear with a warmer visually verified outerwear candidate, then call propose_outfit again with the complete corrected card. Do not keep or add pieces merely to preserve the rejected card."
+            ? "Repair the upper-body system with either a compatible, substantial middle garment assigned layer_top beneath the outerwear or a warmer visually verified outerwear candidate, then call propose_outfit again with the complete corrected card. Do not assume a winter coat is the only repair, and do not add a layer merely to preserve a weak styling idea."
             : warmEndThermalUndershoot
               ? "Replace or supplement the upper-body pieces beneath the outer layer so everything still worn after that layer comes off is suitable for the warm endpoint, then call propose_outfit again with the complete corrected card. A heavy bottom cannot supply missing upper-body warmth."
             : `${roleOutfitStructurePromptRule()} COMPLETE the outfit instead of resending it: keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`
@@ -2751,6 +2751,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
                 const knownHardFindings = candidateValidation.hardFindings
                 if (knownHardFindings.length) {
                   directionIssues.push(`direction ${number} fails known hard wearability facts before photo review: ${knownHardFindings.map(finding => finding.message).join('; ')}`)
+                  if (knownHardFindings.some(finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)) {
+                    directionIssues.push(`direction ${number} may repair cold-end undershoot with either a compatible substantial layer_top beneath the outerwear or a warmer outerwear piece; do not assume a winter coat is the only repair`)
+                  }
                 }
               }
             } else if (!rawPieces.length) {
