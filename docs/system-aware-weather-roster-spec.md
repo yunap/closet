@@ -11,8 +11,8 @@ photographs. The model authors 2–3 complete candidate directions whose union c
 IDs for visual inspection, may use one additional targeted view of up to four IDs after a concrete
 photographic finding, and owns composition; shared deterministic
 validation still accepts or rejects the final proposal. The response reports hard exclusions by
-their actual gate reasons. The copied live fixture measured 208 eligible garments, 44,301 catalog
-characters (down 10,408 from the old compact index), and no selected paths. Sections describing the
+their actual gate reasons. The copied live fixture now measures 208 eligible garments, 42,646 catalog
+characters (down 12,063 from the old compact index), and no selected paths. Sections describing the
 path frontier below remain as incident history, not current architecture. The provider-free,
 source-database-safe measurement is `scratch/diagnose_single_outfit_catalog.mjs`.
 
@@ -21,9 +21,21 @@ selection, but `thread_1788939301104` showed the model anchoring on its first pl
 and viewing no alternative. The recovery therefore adds an observable model-owned deliberation
 step rather than restoring a roster: the model submits 2–3 complete candidate directions in its
 first `view_pieces` call. Code verifies their identity, structure, distinct heroes/piece sets, layer
-presence, and aggregate image budget only. It never generates or ranks a candidate direction, and
+presence, known hard wearability facts, and aggregate image budget. It never generates or ranks a
+candidate direction, and
 the final model may recombine all viewed pieces. The viewed truth line now repeats the sparse catalog
 projection so the model does not lose the facts it used to nominate a garment.
+
+**Pre-photo validity follow-up, 2026-09-09:** `thread_1788985997110` showed the model spending its
+first visual call on two directions whose `warm:moderate` outerwear already failed the certain
+60→48°F breezy range, then trying a third moderate jacket. Candidate direction authorship remains
+entirely model-owned, but `view_pieces` now reuses the final shared hard-fact validator before loading
+images. A known-invalid direction is returned for model repair, spends no visual budget, and is never
+replaced or ranked by code. Separately, the route's hard activity enum now requires affirmative
+structured UI state or affirmative request evidence so a model-invented `walking` value cannot
+silently narrow footwear. The copied
+208-piece catalog measures 42,646 characters after representing known everyday formality once in
+the sparse conventions and emitting missing formality explicitly.
 
 **Selection-ownership and catalog correction, 2026-09-08:** Live run
 `thread_1788898396668` showed that the first implementation reduced a large feasible-system space

@@ -19,6 +19,7 @@ import {
   ACTIVITY_VALUES,
   MISSION_VALUES,
   normalizeActivity,
+  extractExplicitActivity,
   extractWeatherContext,
   extractStructuredUserWeather,
   normalizeMission,
@@ -154,6 +155,14 @@ test('extractStructuredUserWeather preserves a literal falling Fahrenheit range 
   })
   assert.equal(extractStructuredUserWeather('It should be in the low 50s'), null)
   assert.equal(extractStructuredUserWeather('It was 60°F yesterday and should be mild tonight'), null)
+})
+
+test('extractExplicitActivity requires affirmative request evidence for hard activity gates', () => {
+  assert.equal(extractExplicitActivity('An afternoon and early-evening outing in Santa Fe; outside from 3–8 p.m.'), 'none')
+  assert.equal(extractExplicitActivity('I will be walking around Santa Fe all afternoon.'), 'walking')
+  assert.equal(extractExplicitActivity('A nature walk on a trail, but not a strenuous hike.'), 'hiking')
+  assert.equal(extractExplicitActivity('Dinner downtown, with no special walking requirement.'), 'none')
+  assert.equal(extractExplicitActivity('Walking is not part of the plan; this is a seated event.'), 'none')
 })
 
 test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {

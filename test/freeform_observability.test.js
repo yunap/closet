@@ -386,16 +386,23 @@ test('single-outfit stylist catalog is complete, sparse, decision-useful, and id
       fabric_category: 'jersey', fabric_weight: 'light', fit_on_body: 'skims', stretch: 'stretchy',
       sleeve_length: 'three_quarter', sleeve_shape: 'fitted', opacity: 'opaque', season: 'year-round', needs_base: 'no',
     },
+    {
+      id: 5, name: 'everyday pendant', category: 'accessory', colors: ['silver'],
+      formality: 'everyday', accessory_subtype: 'jewelry', jewelry_type: 'necklace',
+    },
   ])
-  assert.equal(catalog.eligible_piece_count, 2)
-  assert.deepEqual(catalog.eligible_by_category, { top: 1, outerwear: 1 })
+  assert.equal(catalog.eligible_piece_count, 3)
+  assert.deepEqual(catalog.eligible_by_category, { top: 1, outerwear: 1, accessory: 1 })
   assert.match(catalog.catalog, /#2 gallery top/)
+  assert.match(catalog.catalog, /#2 gallery top[^\n]*formal:unknown/)
   assert.match(catalog.catalog, /fit:skims/)
   assert.match(catalog.catalog, /stretch:stretchy/)
   assert.match(catalog.catalog, /#11 late warm coat/)
   assert.match(catalog.catalog, /reads as|tailored wool coat/)
   assert.match(catalog.catalog, /insulation:wool batting/)
   assert.match(catalog.catalog, /interior:full_lining/)
+  assert.doesNotMatch(catalog.catalog, /#5 everyday pendant[^\n]*formal:everyday/)
+  assert.match(catalog.sparse_conventions, /omitted formality means everyday.*formal:unknown/)
   assert.doesNotMatch(catalog.catalog, /pattern solid|opacity opaque|season year-round|needs-base no/)
   assert.ok(catalog.catalog.indexOf('#2 gallery top') < catalog.catalog.indexOf('#11 late warm coat'))
   assert.doesNotMatch(catalog.catalog, /system_paths|thermal_disposition|adequate|overshoot/)
@@ -1043,6 +1050,26 @@ test('small execution router owns intent without receiving wardrobe context', as
   }
 })
 
+test('execution router cannot invent walking when the request supplies no activity evidence', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({
+    profile: 'single_outfit', occasion: 'city', activity: 'walking', season: 'fall', mood: 'chic',
+    mission: 'mix', limit: 1, location: 'Santa Fe', date: '2026-10-25', subject: ''
+  })
+  try {
+    const routed = await routeFreeformExecutionProfile({
+      question: 'Style one outfit for an afternoon and early-evening outing in Santa Fe. I will be outside from 3–8 p.m.'
+    })
+    assert.equal(routed.value.activity, 'none')
+    const explicitlyWalking = await routeFreeformExecutionProfile({
+      question: 'Style one outfit for an afternoon outing in Santa Fe.',
+      explicitActivity: 'walking',
+    })
+    assert.equal(explicitlyWalking.value.activity, 'walking', 'structured UI activity remains authoritative')
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
 test('execution router can select compact text profiles from presence-only context', async () => {
   let captured = null
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
@@ -1210,24 +1237,26 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     ids.push(Number(insert.run('system roster probe shoe', 'shoes', null, 'leather', '["leather"]', null, null, null, null, null, null, null, 'high').lastInsertRowid))
     ids.push(Number(insert.run('system roster probe coat', 'outerwear', 'medium', 'wool', '["wool"]', 'long', 'fitted', 'opaque', null, 'knee', '["wool batting"]', 'full_lining', null).lastInsertRowid))
     ids.push(Number(insert.run('system roster probe alternate top', 'top', 'heavy', 'knit', '["wool"]', 'long', 'straight', 'opaque', 'hangs_straight', null, null, null, null).lastInsertRowid))
+    ids.push(Number(insert.run('system roster probe light jacket', 'outerwear', 'light', 'synthetic', '["polyester"]', 'long', 'straight', 'opaque', 'hangs_straight', 'hip', null, 'unlined', null).lastInsertRowid))
 
     const toolContext = {
       executionProfile: 'single_outfit',
       declaredIntent: { want: 'cards', outfitCount: 1, layerRequirement: 'required' },
       request: 'One outfit with a removable layer for 60 to 48 degrees.',
-      userWeather: { high_f: 60, low_f: 48 },
+      userWeather: { high_f: 60, low_f: 48, wind: 'breezy' },
       freeformDiagnostics: {},
     }
     const result = await executeTool('search_wardrobe', {
       query: 'system roster probe',
       category: ['top', 'bottom', 'shoes', 'outerwear'],
       activity: 'none',
-      user_weather: { high_f: 60, low_f: 48 },
+      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
       intent: 'compose',
       visual: false,
     }, toolContext)
     const catalog = result.find(item => item.stylist_catalog)?.stylist_catalog
     assert.ok(catalog)
+    assert.ok(toolContext.weatherProfile, 'search establishes the canonical weather profile for candidate validation')
     assert.equal(catalog.eligible_piece_count, ids.length)
     for (const id of ids) assert.match(catalog.catalog, new RegExp(`#${id} `))
     assert.equal(result.filter(item => item.image).length, 0, 'code does not choose the photographed shortlist')
@@ -1245,7 +1274,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
       label: 'Catalog probe',
       why_it_works: 'A model-chosen complete outfit.',
       activity: 'none',
-      user_weather: { high_f: 60, low_f: 48 },
+      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
     }, toolContext)
     assert.equal(unviewedProposal.status, 'validation_error')
     assert.match(unviewedProposal.message, /view_pieces/)
@@ -1284,12 +1313,26 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(missingLayerView.status, 'validation_error')
     assert.match(missingLayerView.message, /needs an outerwear-role piece/)
 
+    const thermallyInvalidDirections = candidateDirections.map(direction => ({
+      ...direction,
+      pieces: direction.pieces.map(piece => piece.role === 'outerwear'
+        ? { id: ids[5], role: 'outerwear' }
+        : piece),
+    }))
+    const thermallyInvalidView = await executeTool('view_pieces', {
+      candidate_directions: thermallyInvalidDirections,
+    }, toolContext)
+    assert.equal(thermallyInvalidView.status, 'validation_error')
+    assert.match(thermallyInvalidView.message, /fails known hard wearability facts before photo review/)
+    assert.match(thermallyInvalidView.message, /less warmth than the conditions call for/)
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitViewCalls || 0, 0, 'rejected directions spend no photo budget')
+
     const viewed = await executeTool('view_pieces', { candidate_directions: candidateDirections }, toolContext)
-    assert.equal(viewed.filter(item => item.name).length, ids.length)
+    assert.equal(viewed.filter(item => item.name).length, 5)
     assert.match(viewed.find(item => item.id === ids[0]).truth, /fit:skims/)
     assert.match(viewed.find(item => item.id === ids[0]).truth, /warm:moderate/)
     assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidateDirectionCount, 2)
-    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount, ids.length)
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount, 5)
     const targetedSecondView = await executeTool('view_pieces', { ids: [...ids, ...ids] }, toolContext)
     assert.equal(targetedSecondView.length, 4, 'the optional targeted second view is capped at four IDs')
     const overBudgetView = await executeTool('view_pieces', { ids }, toolContext)
@@ -1300,7 +1343,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
       label: 'Catalog probe',
       why_it_works: 'A model-chosen complete outfit.',
       activity: 'none',
-      user_weather: { high_f: 60, low_f: 48 },
+      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
     }, toolContext)
     assert.equal(proposal.status, 'success')
   } finally {

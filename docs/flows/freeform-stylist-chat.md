@@ -55,12 +55,24 @@ decisions.
 > supplies 2–3 candidate directions authored by the model from the complete catalog: each has a
 > distinct hero, a short visual thesis, and role-assigned complete-system IDs, with at most twelve
 > unique IDs across them. The tool checks identities, shared role structure, distinctness, the
-> declared layer obligation, and budget only; it neither creates nor ranks the directions. The model
+> declared layer obligation, known hard wearability facts, and budget; it neither creates nor ranks
+> the directions. The model
 > compares the returned photographs and may recombine them before proposing one card. The selected
 > photograph response repeats the same sparse catalog truth line, keeping fit, warmth, sleeves,
 > waist, and outerwear construction available at the decision point. Separately, the structured
 > request extractor now recognizes the canonical request's two timed Fahrenheit observations, so
 > it no longer emits `user_weather:null` beside literal 60°F and 48°F statements.
+
+> **[corrected 2026-09-09] Activity requires literal evidence and hard-invalid directions spend
+> no photographs.** `thread_1788985997110` contained an outdoor outing but no walk, stroll, hike,
+> trail, or on-foot statement; the router nevertheless returned `walking`, excluding footwear.
+> The route result now takes an explicit structured UI activity when supplied and otherwise derives
+> the hard enum conservatively from affirmative request text, with unsupported model activity
+> normalized to `none`. After search, each model-authored first-view
+> direction is checked by the shared hard wearability validator before photos load. A rejection tells
+> the model which known fact failed and does not increment the two-call visual budget. This moves no
+> aesthetic choice into code. The same fixture's catalog is now 42,646 characters after omitting the
+> dominant known `formal:everyday` value and spelling missing formality as `formal:unknown`.
 
 > **[superseded 2026-09-08] The narrow declaration stays narrow; the temporary category cap does
 > not own complete-outfit discovery anymore.** The 2026-09-07 ten-per-category/per-warmth repair

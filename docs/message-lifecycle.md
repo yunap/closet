@@ -1,6 +1,16 @@
 # The message lifecycle
 
-**Status:** active — **Last verified:** 2026-09-07
+**Status:** active — **Last verified:** 2026-09-09
+
+> **Amendment 2026-09-09 — a router classification is not activity evidence.** Live capture
+> `thread_1788985997110` showed the execution router returning `activity:walking` for an outdoor
+> Santa Fe outing that contained no walking statement. Because activity activates hard footwear
+> gates, `routeFreeformExecutionProfile` now replaces the model's activity value with an explicit
+> structured UI activity when supplied, otherwise the conservative `extractExplicitActivity`
+> projection of the current request. Affirmative
+> walk/stroll/on-foot or hike/trail language establishes activity; place, sightseeing, outing,
+> duration, and negated mentions do not. This factual correction applies before any fresh route
+> establishes tool context; profile and occasion classification remain model-owned.
 
 > **Amendment 2026-09-07 — execution freshness is state, not tone.** Capture
 > `thread_1788814890775` showed a brand-new one-outfit request bypass the execution router because

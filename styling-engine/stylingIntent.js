@@ -28,6 +28,35 @@ export function normalizeActivity(value) {
   return 'none'
 }
 
+// Activity becomes hard footwear and exposure context downstream, so a small routing model's
+// unsupported guess cannot own it. This extractor recognizes only activity the user actually
+// stated; an outing, a named city, or several hours outdoors is not walking evidence. Hiking wins
+// over walking when both are present. Negated mentions remain none rather than activating a gate.
+export function extractExplicitActivity(text = '') {
+  const normalized = String(text || '').toLowerCase()
+  const hasAffirmedPhrase = phrase => {
+    const escaped = phrase.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const regex = new RegExp(`\\b${escaped}\\b`, 'ig')
+    let match
+    while ((match = regex.exec(normalized)) !== null) {
+      const prefix = normalized.slice(Math.max(0, match.index - 64), match.index)
+      const localClause = prefix.split(/[.!?;,]|\bbut\b|\bhowever\b/i).pop() || ''
+      const suffix = normalized.slice(match.index + match[0].length, match.index + match[0].length + 64)
+      const negated = /\b(?:no|not|without)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /\b(?:do|does|did|will|would|should|is|are|was|were|have|has)\s+not\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /\b(?:don't|doesn't|didn't|won't|wouldn't|shouldn't|isn't|aren't|wasn't|weren't|haven't|hasn't)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+        || /^\s+(?:is|are|was|were|will be|would be|should be)?\s*not\b/i.test(suffix)
+      if (!negated) return true // ratchet-allow: user activity intent parsing, not garment matching
+    }
+    return false
+  }
+  const hikingPhrases = ['hike', 'hiking', 'trail', 'nature walk', 'trail walk', 'trailhead', 'woods walk']
+  if (hikingPhrases.some(hasAffirmedPhrase)) return 'hiking' // ratchet-allow: controlled activity vocabulary
+  const walkingPhrases = ['walk', 'walking', 'stroll', 'strolling', 'on my feet', 'lots of walking', 'walking around', 'exploring on foot']
+  if (walkingPhrases.some(hasAffirmedPhrase)) return 'walking' // ratchet-allow: controlled activity vocabulary
+  return 'none'
+}
+
 export function normalizeMission(value) {
   const v = String(value || '').toLowerCase().trim()
   return MISSION_VALUES.includes(v) ? v : 'mix' // ratchet-allow: controlled intent vocabulary normalization, not garment matching

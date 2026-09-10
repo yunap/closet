@@ -1,5 +1,19 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Explicit-activity and pre-photo hard-validity correction, implemented 2026-09-09:** live run
+> `thread_1788985997110` proved two remaining authority gaps. First, its request said “outing” and
+> “outside from 3–8 p.m.” but never walking; the small router still returned `activity:walking`,
+> activating hard footwear exclusions. An explicit structured UI activity wins when supplied;
+> otherwise `extractExplicitActivity` owns this factual projection: affirmative walk/stroll/on-foot
+> and hike/trail phrases establish activity, while place, duration,
+> sightseeing, outing, and negated mentions do not. Second, the model used both first-view directions
+> on `warm:moderate` outerwear for a certain 60→48°F breezy range, then tried a third moderate jacket.
+> `view_pieces` now applies the same shared hard outfit validator to each model-authored direction
+> before loading photographs. Failed directions return facts and consume no visual call; code never
+> generates, ranks, or substitutes a direction. The copied 208-piece catalog now measures 42,646
+> characters after moving known `formal:everyday` to the sparse convention and emitting missing
+> values explicitly as `formal:unknown`.
+
 > **Model-owned direction comparison and fact continuity, implemented 2026-09-09:** live run
 > `thread_1788939301104` received the complete 213-piece eligible catalog but used its first visual
 > call on exactly one top, bottom, shoe, and coat. Complete access had removed engine preselection,
@@ -7,7 +21,8 @@
 > schema now accepts `candidate_directions`: 2–3 complete possibilities the model authors from the
 > catalog, each with a distinct hero, short visual thesis, and role-assigned pieces, bounded to twelve
 > unique IDs. The handler verifies catalog membership, shared role structure, distinct hero/piece
-> sets, and any declared outerwear obligation; it makes no style judgment and the model may recombine
+> sets, any declared outerwear obligation, and known hard wearability facts before photos load; it
+> makes no style judgment and the model may recombine
 > viewed candidates. A second four-ID targeted repair remains available. For this profile,
 > `view_pieces` now projects `singleOutfitStylistCatalogLine` beside each photo rather than dropping
 > selection-critical fit and thermal facts through the older manifest line. The same run exposed a
@@ -24,7 +39,7 @@
 > narrow that catalog. The model authors 2–3 complete candidate directions spanning up to twelve IDs to inspect
 > with `view_pieces`, may make one targeted second view of up to four IDs if the photographs reveal a concrete issue,
 > and then submits one card to the unchanged shared validator. Catalog identities are not treated as
-> retrieved or seen. On the copied 208-piece fixture, the catalog is 44,301 characters, 10,408 fewer
+> retrieved or seen. On the copied 208-piece fixture, the catalog is 42,646 characters, 12,063 fewer
 > than the old compact index while adding styling-decision facts. `search_wardrobe`, `view_pieces`,
 > `declare_intent`, and the narrow system prompt state this ownership consistently. No trip, capsule,
 > batch, swap, or full-stylist behavior changed.

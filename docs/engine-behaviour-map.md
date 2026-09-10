@@ -16,13 +16,30 @@ composer (measured 0 reads against 30-49k written tokens on every sampled call) 
 `OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
 
+**[amended 2026-09-09 — explicit activity and pre-photo candidate validity]** Live acceptance
+`thread_1788985997110` routed a five-hour Santa Fe “outing” as `activity:walking` even though the
+request contained no walking language and the router prompt explicitly forbade that inference. The
+result wrongly activated hard footwear exclusions. `routeFreeformExecutionProfile` now projects
+activity from an explicit structured UI value when supplied, otherwise `extractExplicitActivity`:
+only affirmative walk/stroll/on-foot or hike/trail language can establish the structured activity;
+location, outing, sightseeing, and outdoor duration alone
+remain `none`, and negated mentions remain inactive. The same run spent its initial photo budget on
+two `warm:moderate` outerwear directions for a certain 60→48°F breezy range, then repeated the error
+with another moderate jacket. The first `view_pieces` call now runs each model-authored direction
+through the same shared `evaluateWearableOutfit` hard-fact stages before loading images. Invalid
+directions return factual findings and spend no photo budget; code still supplies no alternative,
+rank, or aesthetic verdict. A sparse default for dominant `formal:everyday`, with missing values
+explicitly emitted as `formal:unknown`, reduces the copied 208-piece catalog from 44,301 to 42,646
+characters without dropping information.
+
 **[amended 2026-09-09 — model-owned comparison is now observable]** Live acceptance
 `thread_1788939301104` proved that complete catalog access alone did not create meaningful choice:
 the stylist viewed exactly one top, bottom, shoe, and coat, then repaired only the rejected coat.
 The first `single_outfit` `view_pieces` call now carries 2–3 model-authored complete candidate
-directions. Each names its own hero, visual thesis, and role-assigned IDs. Code checks only catalog
+directions. Each names its own hero, visual thesis, and role-assigned IDs. Code checks catalog
 membership, shared role structure, distinct heroes/piece sets, the explicit outerwear obligation,
-and the twelve-identity visual ceiling; it constructs no direction and makes no aesthetic comparison.
+known hard wearability facts, and the twelve-identity visual ceiling; it constructs no direction
+and makes no aesthetic comparison.
 The model may choose or recombine any viewed pieces. The optional second call remains a four-ID
 targeted repair. The same run showed that the large catalog contained `fit:clings_stretchy` and
 `warm:moderate` for the chosen top while `view_pieces`' later truth line dropped both. On this profile,
@@ -49,7 +66,7 @@ second view of up to four IDs when the first photographs expose a real problem, 
 Catalog identities do not count as retrieved or seen: a photo-bearing proposal must have been viewed.
 The search response also reports every hard-excluded identity count grouped by the actual gate reason,
 so a visual subset can no longer be mistaken for wardrobe absence. On the copied 208-survivor live
-fixture, `buildSingleOutfitStylistCatalog` measured 44,301 catalog characters versus the prior
+fixture, `buildSingleOutfitStylistCatalog` now measures 42,646 catalog characters versus the prior
 54,709-character compact index, with zero search images and zero engine-selected paths; reproduce
 the copied-database measurement with `scratch/diagnose_single_outfit_catalog.mjs`. This change
 is scoped to `single_outfit`; trip, capsule, batch, swap, and ordinary full-stylist retrieval are

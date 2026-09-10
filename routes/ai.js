@@ -5500,6 +5500,7 @@ router.post('/ask', async (req, res) => {
           // while answering "which outfit's layer?" — read like a standalone garment_fact question).
           // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
           recentExchange: compactRecentHistory(priorConversationHistory, 2),
+          explicitActivity: req.body.activity || '',
           providerOverride: toolContext.providerOverride
         })
         recordToolLoopUsage(toolContext, routed.usage)

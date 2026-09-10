@@ -13,6 +13,7 @@ import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructur
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
+import { ACTIVITY_VALUES, extractExplicitActivity, normalizeActivity } from './stylingIntent.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -1448,8 +1449,8 @@ Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, f
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', providerOverride = null } = {}) {
-  return askStylistStructuredWithUsage({
+export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', explicitActivity = '', providerOverride = null } = {}) {
+  const routed = await askStylistStructuredWithUsage({
     system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
     messages: [{
       role: 'user',
@@ -1470,6 +1471,22 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     maxTokens: 900,
     providerOverride
   })
+  // thread_1788985997110: the router labeled a five-hour Santa Fe "outing" as walking even
+  // though its own contract says place/outdoor duration do not establish activity. Activity
+  // activates hard footwear exclusions, so post-validate it from the structured UI value when
+  // supplied, otherwise explicit user language, instead of letting a probabilistic classification
+  // silently remove garments. Profile/occasion remain model-owned; this narrow factual axis is
+  // deterministic and conservative.
+  const structuredActivity = String(explicitActivity || '').toLowerCase().trim()
+  return {
+    ...routed,
+    value: {
+      ...routed.value,
+      activity: ACTIVITY_VALUES.includes(structuredActivity)
+        ? normalizeActivity(structuredActivity)
+        : extractExplicitActivity(question),
+    },
+  }
 }
 
 

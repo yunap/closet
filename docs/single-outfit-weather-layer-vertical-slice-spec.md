@@ -1,5 +1,28 @@
 # Single-outfit weather layer — vertical slice
 
+**Status:** ratified and implemented 2026-09-06; seven live acceptance findings through 2026-09-09 exposed
+additional narrow defects. Findings one through five were corrected and offline-verified. Finding
+six's engine-selected roster was implemented, disproved by live acceptance, and removed on
+2026-09-09; the replacement complete sparse catalog and model-owned direction comparison are implemented.
+Amended after owner review
+to make the canonical temperatures an explicit wearing-window exposure rather than a daily
+high/overnight-low envelope, after technical review to close declaration omission, and after the
+the first live run exposed construction-validation, thermal-projection, visual-coverage, and routed-
+context gaps, the second exposed stated-range, activity-authority, known-undershoot, sleeve-bulk,
+and rejected-state gaps, and the third exposed request-text activity re-inference plus an incorrect
+thermal credit for ordinary walking.
+
+> **Seventh live acceptance correction, 2026-09-09:** `thread_1788985997110` preserved the stated
+> weather and correctly rejected two under-warm proposals, but the router invented `walking` from an
+> outdoor “outing” and the model spent photographs on two candidate directions already contradicted
+> by their catalog warmth facts. Hard activity now comes from an explicit structured UI value when
+> supplied, otherwise affirmative request evidence through `extractExplicitActivity`; unsupported
+> router output becomes `none`. The model still authors every
+> candidate direction, but the first visual call reuses `evaluateWearableOutfit` to reject known
+> hard-invalid systems before any photo is loaded. Rejected directions spend no visual budget and
+> code supplies no replacement or aesthetic rank. The catalog's dominant known everyday formality
+> value is now a documented sparse default; missing formality remains explicit.
+
 > **Live-routing correction, 2026-09-07:** `thread_1788814890775` did not evaluate this slice: the
 > client misclassified the fresh brief’s sentence “This is ordinary sightseeing” as a correction,
 > and the server skipped the execution router entirely. Freshness is now derived from actual context
@@ -31,18 +54,6 @@
 > beside literal timed 60°F and 48°F statements; the conservative extractor now treats exactly two
 > explicitly Fahrenheit-qualified timed observations as endpoints and preserves stated dry/breeze
 > facts.
-
-**Status:** ratified and implemented 2026-09-06; six live acceptance findings on 2026-09-07 exposed
-additional narrow defects. Findings one through five were corrected and offline-verified. Finding
-six's engine-selected roster was implemented, disproved by live acceptance, and removed on
-2026-09-09; the replacement complete sparse catalog and model-owned direction comparison are implemented.
-Amended after owner review
-to make the canonical temperatures an explicit wearing-window exposure rather than a daily
-high/overnight-low envelope, after technical review to close declaration omission, and after the
-the first live run exposed construction-validation, thermal-projection, visual-coverage, and routed-
-context gaps, the second exposed stated-range, activity-authority, known-undershoot, sleeve-bulk,
-and rejected-state gaps, and the third exposed request-text activity re-inference plus an incorrect
-thermal credit for ordinary walking.
 
 ## 1 · The product question
 
