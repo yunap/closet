@@ -44,6 +44,10 @@ test('enabled: writes a normalized capture with matching digests and redacted im
   const files = fs.readdirSync(dir)
   assert.equal(files.length, 1)
   const record = JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8'))
+  assert.match(files[0], /^\d{8}T\d{6}\d{3}Z-p\d+-[a-f0-9]{8}-\d{4}-anthropic-normalized\.json$/)
+  assert.ok(files[0].startsWith(`${record.captureSessionId}-`))
+  assert.equal(Number.isInteger(record.captureIndex), true)
+  assert.ok(record.captureIndex > 0)
   assert.equal(record.stage, 'normalized')
   assert.equal(record.provider, 'anthropic')
   assert.equal(record.iterationIndex, 2)
@@ -81,5 +85,22 @@ test('different normalized content produces different digests', async () => {
   const recordA = JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8'))
   const recordB = JSON.parse(fs.readFileSync(path.join(dir, files[1]), 'utf8'))
   assert.notEqual(recordA.normalizedInputSha256, recordB.normalizedInputSha256)
+  delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
+})
+
+test('a capture never overwrites a legacy counter-only filename after a process restart', async () => {
+  const dir = path.join(tmpRoot, 'restart-safe')
+  fs.mkdirSync(dir, { recursive: true })
+  const legacyName = '0001-anthropic-normalized.json'
+  const legacyPath = path.join(dir, legacyName)
+  fs.writeFileSync(legacyPath, '{"sentinel":"older run"}')
+  process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR = dir
+  const { captureNormalizedProviderInput } = await import('../lib/providerInputCapture.js')
+  captureNormalizedProviderInput({ provider: 'anthropic', model: 'x', system: 'new run', messages: [], tools: [] })
+
+  assert.equal(fs.readFileSync(legacyPath, 'utf8'), '{"sentinel":"older run"}')
+  const newFiles = fs.readdirSync(dir).filter(file => file !== legacyName)
+  assert.equal(newFiles.length, 1)
+  assert.match(newFiles[0], /-anthropic-normalized\.json$/)
   delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
 })

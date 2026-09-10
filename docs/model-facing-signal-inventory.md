@@ -3,6 +3,13 @@
 **Status:** inventory complete, **no implementation**. Owner-requested 2026-09-03 after the Vienna
 runs oscillated between opposite failures. **Live spending is paused** until this is decided.
 
+**[Capture durability correction, 2026-09-09.]** Provider-input capture filenames now begin with a
+unique process-session ID followed by the monotonic call index. The same session ID and numeric index
+are also stored inside each JSON record. Restarting the dev server resets the in-memory counter but
+can no longer overwrite an earlier process's `0001…` files or leave a misleading mixture of surviving
+old files and replaced new files in one capture directory. This changes diagnostic persistence only;
+the normalized and wire provider requests are untouched.
+
 ## Why this exists
 
 Four commits on `fix/plan-roster-thermal-evidence` moved the Vienna packing plan from "down puffer on
