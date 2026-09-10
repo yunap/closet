@@ -321,6 +321,10 @@ export function stripPieceIdCitations(answerText = '', { knownPieceIds = null } 
     text = text.replace(/[ \t]*\((\d+)\)/g, (match, digits) => // ratchet-allow: model-output integrity boundary, not garment classification
       knownPieceIds.has(Number(digits)) ? '' : match)
   }
+  text = text
+    // Strip machine card markup that might have leaked into prose (<card>...</card> or bare <card> tags).
+    .replace(/<card>[\s\S]*?<\/card>/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/<\/?card>/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
   return text
     // The mandated form, and its bracketed and plural variants: "(ID 196)", "[IDs 196, 204]".
     .replace(/[ \t]*[([]\s*IDs?\s*:?\s*\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
@@ -2080,6 +2084,25 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       }
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
+      }
+      if (toolContext.executionProfile === 'single_outfit' && toolContext.singleOutfitProposalCompleted) {
+        const outfit = Array.isArray(toolContext.generatedOutfits)
+          ? toolContext.generatedOutfits.find(o => !o?.broken)
+          : null
+        const hasAdvisoryNotes = (outfit?.result?.annotations?.length || 0) > 0
+        // If the proposal generated advisory notes (e.g. thermal undershoot or sleeve bunching)
+        // and we haven't yet given the model a follow-up turn to see those notes, allow one iteration
+        // so the model receives the tool_result with systemNotes and can either swap pieces or speak with candor.
+        if (!hasAdvisoryNotes || toolContext.singleOutfitAdvisoryTurnDelivered) {
+          const chatText = (turn.text && turn.text.trim())
+            ? joinAnswer(turn.text)
+            : (outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
+          return { answer: chatText, savedCorrections }
+        }
+        if (turn.text && narration.length && narration[narration.length - 1] === turn.text) {
+          narration.pop()
+        }
+        toolContext.singleOutfitAdvisoryTurnDelivered = true
       }
       continue
     } else {

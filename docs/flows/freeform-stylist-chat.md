@@ -34,9 +34,18 @@ decisions.
 > **[amended 2026-09-07] Fresh one-card composition no longer enters the universal prompt.** The
 > execution router's `single_outfit` result assembles a dedicated prompt with one structured request,
 > no prior history, no manifest, and no saved-feedback or trip-state blocks. Its tool loop exposes
-> only declaration, batched search, focused viewing, and one-card proposal. Exact stated numeric
+> only batched search, focused viewing, and one-card proposal (bypassing redundant intent declaration). Exact stated numeric
 > weather is carried as `user_weather`; the server keeps it authoritative across search and proposal.
 
+> **[implemented 2026-09-09] Advisory system flags are surfaced on the outfit card face with universal candor guidance.**
+> To prevent advisory wearability findings (e.g. thermal undershoot or sleeve bunching) from remaining invisible inside the collapsed 'Why this outfit' disclosure, `StylistChat.jsx` renders `outfit.systemFlags` directly beneath the card title as styled advisory chips (`.stylist-outfit-flag-chip`). In addition, `SINGLE_OUTFIT_STYLIST_SYSTEM` incorporates a universal voice rule: candor over rationalization. The model must not invent warmth, wind protection, or comfort capabilities to defend an outfit; when prioritizing venue style over cold outdoor endpoints, it must state the physical trade-off plainly rather than rationalizing an unlined or light layer as warm.
+>
+> **[implemented 2026-09-09] Visual workbench and advisory wearability validation supersede candidate-direction constraint solver in `single_outfit`.**
+> The earlier pattern of forcing the model to calculate warmth, prove layer systems in text, and pass pre-photo gates before viewing photos turned the model into a constrained text solver rather than a visual stylist.
+> 1. **Visual workbench (`view_pieces`):** The model selects 8–12 pieces across roles (2–3 potential visual leaders, supporting tops/bottoms, plausible shoes and layers) via `view_pieces({ ids: [...] })`. Pre-photo thermal and sleeve compatibility blocks are eliminated. If the initial photos reveal an issue, an optional second targeted view of up to 4 IDs is available.
+> 2. **Advisory validation (`propose_outfit`):** Proposal validation blocks ONLY for non-existent/unverified IDs, structural incompleteness (missing bottom/dress, missing shoes, slot collisions, role category mismatch), and explicit user prohibitions (e.g. "no shorts"). All inferred metadata issues (weather adequacy / thermal undershoot, sleeve bunching, footwear activity, register fit) become visible advisory system flags (`disposition: 'annotated'`, `systemFlags`) on the accepted card rather than hard rejection gates.
+> 3. **Immediate turn completion:** Upon successful acceptance of the single proposal card, the tool loop terminates immediately, returning the answer without requiring an extra conversational turn.
+>
 > **[implemented 2026-09-09] The narrow flow gives the stylist a catalog, not an engine-curated
 > roster.** One batched search returns every hard-eligible garment in a sparse, identity-ordered
 > `stylist_catalog`, an exact hard-exclusion summary, and no photographs or constructed outfit paths.

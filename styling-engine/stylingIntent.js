@@ -100,9 +100,17 @@ export function extractStructuredUserWeather(text = '') {
   // an explicit Fahrenheit unit so this remains factual extraction, not climate interpretation.
   const explicitFahrenheitValues = [...normalized.matchAll(/(-?\d{1,3})\s*(?:(?:°\s*)?f(?:ahrenheit)?|degrees?\s+fahrenheit)\b/g)]
     .map(match => Number(match[1]))
-  const endpoints = rangeMatch
-    ? [Number(rangeMatch[1]), Number(rangeMatch[2])]
-    : (explicitFahrenheitValues.length === 2 ? explicitFahrenheitValues : null)
+  let endpoints = null
+  if (rangeMatch) {
+    endpoints = [Number(rangeMatch[1]), Number(rangeMatch[2])]
+  } else if (explicitFahrenheitValues.length === 2) {
+    endpoints = explicitFahrenheitValues
+  } else if (explicitFahrenheitValues.length === 1) {
+    const isPastReference = /\b(yesterday|last\s+(?:week|month|year|night|weekend))\b/.test(normalized)
+    if (!isPastReference) {
+      endpoints = [explicitFahrenheitValues[0], explicitFahrenheitValues[0]]
+    }
+  }
   if (!endpoints) return null
   const [first, second] = endpoints
   if (!Number.isFinite(first) || !Number.isFinite(second) || first < -100 || first > 150 || second < -100 || second > 150) return null

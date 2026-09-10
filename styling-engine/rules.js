@@ -4656,6 +4656,8 @@ export function exposesComposerDeliberation(text = '') {
 // content looks like JSON is machinery, full stop, regardless of the language tag on the fence.
 export function exposesRawStructuredPayload(text = '') {
   const value = String(text || '')
+  if (/<\/?card>/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
+  if (/^\s*\{[\s\S]*"(?:pieces|label|why_it_works)"[\s\S]*\}\s*$/i.test(value)) return true // ratchet-allow: model-output integrity boundary, not garment classification
   const fenceMatch = value.match(/```[\w-]*\n([\s\S]*?)```/)
   if (fenceMatch && /^\s*[{[]/.test(fenceMatch[1])) return true
   return false

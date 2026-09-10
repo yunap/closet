@@ -47,6 +47,28 @@ rank, or aesthetic verdict. A sparse default for dominant `formal:everyday`, wit
 explicitly emitted as `formal:unknown`, reduces the copied 208-piece catalog from 44,301 to 42,646
 characters without dropping information.
 
+**[amended 2026-09-09 — visual workbench, upfront thermal guidance, and advisory feedback loop in single_outfit]**
+The mandatory `candidate_directions` pre-photo validation in `single_outfit`'s first `view_pieces` call is superseded by a visual workbench approach. The model pulls 8–12 piece IDs across roles directly onto a visual workbench (`view_pieces({ ids: [...] })`), with an optional second view of up to 4 replacement IDs. Pre-photo wearability gates (thermal undershoot, sleeve geometry) on candidate directions are removed. `search_wardrobe` computes the target upper-body thermal band from resolved conditions and includes `thermal_guidance` directly on the sparse catalog. In `propose_outfit`, hard validation blocks solely for unverified/non-existent IDs, structural incompleteness (missing bottom/dress, missing shoes, slot collisions), and explicit user exclusions (e.g. "no shorts"). Inferred metadata concerns (thermal adequacy, sleeve bunching, footwear activity, occasion/register fit) attach as advisory system notes and system flags (`disposition: 'annotated'`) on the accepted card. When a proposal is accepted cleanly without advisory notes, the tool loop terminates immediately; when advisory notes attach, the tool loop allows one follow-up iteration so the model sees the system notes, enabling it to either swap pieces or address the physical trade-off candidly in its final prose rather than delivering premature text generated before seeing the validator's notes. Other flows (`full_stylist`, trip, capsule, batch) retain existing behavior.
+
+**[amended 2026-09-09 — visible advisory card face chips and voice candor]** To ensure advisory wearability findings (e.g. thermal undershoot or sleeve bunching) are clearly disclosed to the user rather than hidden inside the collapsed 'Why this outfit' accordion, `StylistChat.jsx` renders `outfit.systemFlags` directly beneath the card title as styled advisory chips (`.stylist-outfit-flag-chip`). Furthermore, `SINGLE_OUTFIT_STYLIST_SYSTEM` includes universal candor guidance: the model must not invent warmth, wind protection, or comfort capabilities to justify an outfit, but must candidly disclose physical trade-offs when prioritizing venue style over outdoor weather extremes.
+
+**[amended 2026-09-10 — single-outfit declare_intent bypass, catalog token separation, and prompt streamline]**
+To eliminate attention sinks and cognitive overload on smaller models (Gemini Flash-Lite), `single_outfit`'s tool surface is reduced from four tools to three (`search_wardrobe`, `view_pieces`, `propose_outfit`). The router already establishes `outfitCount: 1` and `want: 'cards'`; `declareSingleOutfitIntent` seeds `toolContext.declaredIntent` directly in `routes/ai.js`, removing the redundant `declare_intent` model roundtrip. In `singleOutfitStylistCatalogLine`, fabric category (`fab:cotton`) and textile weight (`weight:medium`) are separated into distinct tokens rather than combined with a slash, and warmth is explicitly tagged as `warmth:${level}` to avoid model conflation of fabric weight with thermal warmth. `SINGLE_OUTFIT_STYLIST_SYSTEM` is streamlined into a direct four-step workflow with positive dressing physics (insulating coat or 3-layer system for sub-50°F cold outdoor exposure) and explicit instructions not to re-list pieces in markdown bullet points or tables since the interactive UI card already displays them. In `propose_outfit`, thermal undershoot advisory notes provide actionable advice (`Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`).
+
+**[amended 2026-09-10 — weather salience levers and advisory findings pass-through in single_outfit]**
+Investigation of thread `thread_1789016992434` (46°F outdoor walk) showed the model defaulted to lightweight jackets (`warmth:light`) because insulating coats and middle layers were not salient during initial workbench candidate gathering, and `propose_outfit` dropped advisory wearability findings because line 2388 previously read only `wearableValidation.hardFindings` (which contains only `severity === 'error'`). Five complementary levers resolve this without rigid engine rejection:
+1. Warmth Salience: In `singleOutfitStylistCatalogLine`, `warmth:${warmth}` is promoted to the very first token in the facts segment immediately following the category/group, giving immediate scanning priority over fabric texture or sleeve cut.
+2. Workbench Seeding: In `buildSingleOutfitStylistCatalog` and `SINGLE_OUTFIT_STYLIST_SYSTEM`, when conditions call for substantial warmth (`warm` or `very warm`), the instruction explicitly directs the model to pull 2–3 insulating outer coats and 2–3 middle layer knits onto its visual workbench alongside tops and bottoms so it has the visual candidates needed to construct an adequate system.
+3. Middle-Layer Tagging: In `singleOutfitStylistCatalogLine`, outerwear cardigans and vests are distinctly tagged as `outerwear (layer_top)` (e.g. `#88 striped knit cardigan | outerwear (layer_top) | warmth:moderate;...`), visually distinguishing them from outermost protective shells and signaling their layering role.
+4. Exposure Duration Realism: In `SINGLE_OUTFIT_STYLIST_SYSTEM`, prompt guidance explicitly grounds convective cooling: 2–3 hours walking outdoors in 46°F wind is prolonged cold exposure; a single uninsulated shell (`warmth:light`) is suited for 55°F–65°F, not extended sub-50°F cold.
+5. Advisory Findings Pass-Through: In `propose_outfit` (tools.js), `wearableValidation.advisoryFindings` is merged into `nonBlockingFindings` for `single_outfit`. Inferred thermal adequacy undershoots (when `requireThermalAdequacy: false`) now cleanly reach `singleOutfitAdvisoryNotes`, attach visible chips to the card, and give the model a follow-up turn to either swap pieces or address the physical trade-off candidly.
+
+**[amended 2026-09-10 — suppression of raw <card> machine markup from conversational prose]**
+In live acceptance thread `thread_1788877846`, the model emitted an inline `<card>{"label": "...", "pieces": [...]}</card>` XML block inside its conversational prose reply. Because `exposesRawStructuredPayload` (rules.js) previously only checked fenced code blocks (```` ```...``` ````), unfenced or `<card>`-tagged JSON payloads survived `applyAcceptedCardAuthority` (provider.js). Three coordinated layers suppress this leakage:
+1. Prompt Instruction: `singleOutfitStylistTemplate` Step 4 explicitly directs the model not to output `<card>` tags, raw JSON, or machine markup in its text, as the UI card is rendered solely by `propose_outfit`.
+2. Authority Filter: `exposesRawStructuredPayload` detects `<card>` / `</card>` tags and unfenced outfit JSON containing keys like `pieces`, `label`, or `why_it_works`, allowing `applyAcceptedCardAuthority` to withhold leaked machine paragraphs.
+3. Response Boundary Scrubbing: `stripPieceIdCitations` scrubs any remaining `<card>...</card>` blocks and dangling `<card>` tags at the final delivery boundary in `routes/ai.js`.
+
 **[amended 2026-09-09 — model-owned comparison is now observable]** Live acceptance
 `thread_1788939301104` proved that complete catalog access alone did not create meaningful choice:
 the stylist viewed exactly one top, bottom, shoe, and coat, then repaired only the rejected coat.
@@ -61,12 +83,14 @@ targeted repair. The same run showed that the large catalog contained `fit:cling
 viewed candidates now repeat `singleOutfitStylistCatalogLine`, preserving the exact selection facts
 beside the photograph; other flows retain `buildWardrobeManifestLine` unchanged.
 
-**[amended 2026-09-09 — timed stated-temperature syntax]** The canonical request stated its
-wearing-window endpoints separately—“60°F when I leave” and “48°F after sunset”—rather than with
-`to`, a dash, or an arrow. `extractStructuredUserWeather` recognized only the latter syntax, so the
-structured payload contradicted the visible request with `user_weather:null` and “No numeric weather
-range was stated.” It now accepts exactly two explicitly Fahrenheit-qualified observations as the
-two endpoints, still returning `null` for one isolated temperature or language requiring climate
+**[amended 2026-09-09 — stated-temperature syntax and single-temperature preservation]** The
+canonical request previously stated either its wearing-window endpoints separately—“60°F when I leave”
+and “48°F after sunset”—or a single flat temperature like “It's 46°F, overcast, and breezy”.
+`extractStructuredUserWeather` previously required two endpoints and returned `null` for a single
+stated temperature, which led downstream prompts to inject "No numeric weather range was stated" and
+invented seasonal climate estimates (e.g. 65°F replacing 46°F). `extractStructuredUserWeather` now
+accepts both paired endpoints and single Fahrenheit observations (projected as flat `high_f: temp, low_f: temp`),
+excluding only explicit past references (e.g. "yesterday") or ambiguous text requiring climate
 interpretation. Literal dry and breeze language is projected as precipitation/wind fact.
 
 **[amended 2026-09-09 — model-owned single-outfit catalog supersedes system selection]** The
@@ -402,6 +426,18 @@ Overall `fabric_weight` no longer creates a sleeve-construction conflict: it is 
 sleeve volume. Known conflicts require the existing directional sleeve-zone evidence. Rejected
 diagnostic cards remain visible within their originating turn but are removed before
 `current_outfit_set` is persisted, so follow-ups inherit accepted cards only.
+
+**[ratified correction, 2026-09-09] Uninsulated outerwear shells stay capped at `light`.** Outerwear
+pieces with no insulating fill (`insulating_layer_materials: []` or unset) and no positive insulating fiber
+evidence (e.g. cotton, linen, rayon, polyester shell, or uninsulated leather/suede) are shells (wind/rain barriers), not thermal insulators.
+Coverage adjustments (long sleeves, knee length) and medium fabric weight previously combined in
+`garmentWarmthScore` to promote a classic cotton trench coat (`#996759`), unlined utility jacket (`#996767`),
+or soft unlined leather jacket (`#207`) to `moderate` warmth, causing both the model and the deterministic thermal
+validator to treat an uninsulated shell as adequate for sub-50°F cold walking without an insulating mid-layer.
+`garmentWarmthScore` in `styling-engine/garmentWarmth.js` now universally caps uninsulated outerwear at
+`LEVEL_RAW_BOUNDARIES[1]` (`0.5`, `light`), restoring the physical distinction in `docs/garment-warmth-calibration.md` §3.1.
+In `orderedSubstantialUpperStackContribution` (`styling-engine/outfitThermalContribution.js`), an outer shell
+rated at least `light` over a moderate base and moderate middle layer (`layer_top`, e.g. cardigan) qualifies for the bounded ensemble step to `warm`.
 
 **Consequence:** a single user turn can be several model calls — tool iterations plus guard
 retries. **Instrumented 2026-07-28:** every tool-loop iteration now accumulates input, output,

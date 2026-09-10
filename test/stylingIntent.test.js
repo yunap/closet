@@ -153,6 +153,11 @@ test('extractStructuredUserWeather preserves a literal falling Fahrenheit range 
     precipitation: 'none',
     wind: 'breezy'
   })
+  assert.deepEqual(extractStructuredUserWeather("It's 46°F, overcast, and breezy"), {
+    high_f: 46,
+    low_f: 46,
+    wind: 'breezy'
+  })
   assert.equal(extractStructuredUserWeather('It should be in the low 50s'), null)
   assert.equal(extractStructuredUserWeather('It was 60°F yesterday and should be mild tonight'), null)
 })

@@ -45,15 +45,20 @@ function orderedSubstantialUpperStackContribution(pieces = []) {
   const bases = pieces.filter(piece => ['primary_top', 'dress'].includes(String(piece?.role || '')))
   const middles = pieces.filter(piece => String(piece?.role || '') === 'layer_top')
   const outers = pieces.filter(piece => String(piece?.role || '') === 'outerwear')
-  const floor = IDX.get(SUBSTANTIAL_STACK_FLOOR)
+  const baseAndMiddleFloor = IDX.get(SUBSTANTIAL_STACK_FLOOR)
+  const outerFloor = IDX.get('light')
   let strongest = null
 
   for (const base of bases) {
     for (const middle of middles) {
       for (const outer of outers) {
-        const levels = [base, middle, outer].map(garmentWarmthLevel)
-        if (levels.some(level => level == null || IDX.get(level) < floor)) continue
-        const strongestPiece = levels.reduce(warmer, null)
+        const baseLevel = garmentWarmthLevel(base)
+        const middleLevel = garmentWarmthLevel(middle)
+        const outerLevel = garmentWarmthLevel(outer)
+        if (!baseLevel || !middleLevel || !outerLevel) continue
+        if (IDX.get(baseLevel) < baseAndMiddleFloor || IDX.get(middleLevel) < baseAndMiddleFloor) continue
+        if (IDX.get(outerLevel) < outerFloor) continue
+        const strongestPiece = [baseLevel, middleLevel, outerLevel].reduce(warmer, null)
         strongest = warmer(strongest, stepUp(strongestPiece))
       }
     }

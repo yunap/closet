@@ -3300,6 +3300,15 @@ export default function StylistChat({
                   <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
                   <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
+                {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                  <div className="stylist-outfit-system-flags">
+                    {outfit.systemFlags.map((flag, flagIndex) => (
+                      <div key={`${flag.type || 'note'}-${flagIndex}`} className="stylist-outfit-flag-chip">
+                        <strong>{flag.type || 'Note'}:</strong> {flag.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {!isBrokenCard && outfit.engineNote && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, fontStyle: 'italic' }}>
                     {outfit.engineNote}

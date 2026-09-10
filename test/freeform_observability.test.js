@@ -15,7 +15,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
-const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, searchVisualEvidenceOrder, buildSingleOutfitStylistCatalog, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, declareSingleOutfitIntent, searchVisualEvidenceOrder, buildSingleOutfitStylistCatalog, singleOutfitStylistCatalogLine, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
 const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext, freeformExecutionContextEvidence } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
@@ -679,6 +679,24 @@ test('a fenced raw-JSON payload in the closing prose is withheld like any other 
   assert.equal(applyAcceptedCardAuthority(notJson, ctx()), notJson)
 })
 
+test('card markup and raw unfenced outfit JSON payloads in closing prose are withheld or stripped', () => {
+  const ctx = () => ({
+    generatedOutfits: [{ label: 'Market & Brunch Stroll', pieceIds: [347, 191], pieces: [{ id: 347 }, { id: 191 }] }],
+    freeformDiagnostics: {},
+  })
+  const good = 'Keep the tee soft against the structured jacket for an easy morning walk.'
+  const leakedCard = `${good}\n\n<card>{"label": "Market & Brunch Stroll", "pieces": [{"id": 347, "role": "primary_top"}, {"id": 191, "role": "bottom"}]}</card>`
+  const result = applyAcceptedCardAuthority(leakedCard, ctx())
+  assert.equal(result, good, '<card> block is withheld by applyAcceptedCardAuthority')
+
+  // Failsafe at stripPieceIdCitations
+  const rawWithCard = `${good}\n\n<card>{"label": "Market & Brunch Stroll"}</card>`
+  assert.equal(stripPieceIdCitations(rawWithCard), good, 'stripPieceIdCitations strips <card> tags and inner content')
+
+  const danglingCardTag = `${good} <card> Here is the look </card>`
+  assert.equal(stripPieceIdCitations(danglingCardTag), `${good} Here is the look`)
+})
+
 test('the deliberation vocabulary does not eat legitimate styling instructions', async () => {
   // This predicate also gates the card's own styling_instructions, so a loose term deletes advice
   // rather than leaking a sentence. "instead of the" and "rejected" were drafted into it and pulled
@@ -1178,11 +1196,24 @@ test('single-outfit payload extracts two timed Fahrenheit observations as the we
   assert.doesNotMatch(payload.messages[0].content, /No numeric weather range was stated/)
 })
 
-test('single-outfit tool surface contains only the four operations its prompt can use', () => {
+test('single-outfit tool surface contains only the three operations its prompt can use', () => {
   const tools = stylistToolsForTurn({
-    allowedToolNames: ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit']
+    allowedToolNames: ['search_wardrobe', 'view_pieces', 'propose_outfit']
   })
-  assert.deepEqual(tools.map(tool => tool.name), ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit'])
+  assert.deepEqual(tools.map(tool => tool.name), ['search_wardrobe', 'view_pieces', 'propose_outfit'])
+})
+
+test('declareSingleOutfitIntent seeds declaredIntent without model turn', () => {
+  const toolContext = { freeformDiagnostics: {} }
+  const declared = declareSingleOutfitIntent(toolContext, { layerRequirement: 'required' })
+  assert.deepEqual(declared, {
+    want: 'cards',
+    outfitCount: 1,
+    turnMode: 'new_request',
+    layerRequirement: 'required',
+  })
+  assert.equal(toolContext.declaredIntent.want, 'cards')
+  assert.equal(toolContext.freeformDiagnostics.intentDeclared, 1)
 })
 
 test('single-outfit intent response does not inject contracts for unavailable flows', async () => {
@@ -1195,8 +1226,8 @@ test('single-outfit intent response does not inject contracts for unavailable fl
   })
   assert.equal(result.status, 'success')
   assert.match(result.message, /one outfit card/)
-  assert.match(result.message, /cold endpoint/)
-  assert.match(result.message, /warm endpoint/)
+  assert.match(result.message, /stylist_catalog/)
+  assert.match(result.message, /workbench/)
   assert.doesNotMatch(result.message, /generate_outfits|plan_outfit_set|suggest_slot_swaps|get_garment_details/)
 })
 
@@ -1281,67 +1312,57 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(unviewedProposal.status, 'validation_error')
     assert.match(unviewedProposal.message, /view_pieces/)
 
-    const blindSingleDirection = await executeTool('view_pieces', {
-      candidate_directions: [{
-        label: 'Only one idea', idea: 'One unchallenged formula', hero_id: ids[0],
-        pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
-      }]
-    }, toolContext)
-    assert.equal(blindSingleDirection.status, 'validation_error')
-    assert.match(blindSingleDirection.message, /2 or 3 model-authored outfit possibilities/)
+    const emptyView = await executeTool('view_pieces', { ids: [] }, toolContext)
+    assert.equal(emptyView.status, 'validation_error')
+    assert.match(emptyView.message, /view_pieces needs ids/)
 
-    const candidateDirections = [
-      {
-        label: 'Cotton line', idea: 'A skimming cotton top leads a clean separates silhouette.', hero_id: ids[0],
-        pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
-      },
-      {
-        label: 'Textured knit', idea: 'A heavier textured top changes the upper-body presence.', hero_id: ids[4],
-        pieces: [
-          { id: ids[4], role: 'primary_top' },
-          { id: ids[1], role: 'primary_bottom' },
-          { id: ids[2], role: 'shoes' },
-          { id: ids[3], role: 'outerwear' },
-        ],
-      },
-    ]
-    const missingLayerDirections = candidateDirections.map(direction => ({
-      ...direction,
-      pieces: direction.pieces.filter(piece => piece.role !== 'outerwear'),
-    }))
-    const missingLayerView = await executeTool('view_pieces', {
-      candidate_directions: missingLayerDirections,
-    }, toolContext)
-    assert.equal(missingLayerView.status, 'validation_error')
-    assert.match(missingLayerView.message, /needs an outerwear-role piece/)
-
-    const thermallyInvalidDirections = candidateDirections.map(direction => ({
-      ...direction,
-      pieces: direction.pieces.map(piece => piece.role === 'outerwear'
-        ? { id: ids[5], role: 'outerwear' }
-        : piece),
-    }))
-    const thermallyInvalidView = await executeTool('view_pieces', {
-      candidate_directions: thermallyInvalidDirections,
-    }, toolContext)
-    assert.equal(thermallyInvalidView.status, 'validation_error')
-    assert.match(thermallyInvalidView.message, /fails known hard wearability facts before photo review/)
-    assert.match(thermallyInvalidView.message, /less warmth than the conditions call for/)
-    assert.match(thermallyInvalidView.message, /compatible substantial layer_top beneath the outerwear or a warmer outerwear piece/)
-    assert.match(thermallyInvalidView.message, /do not assume a winter coat is the only repair/)
-    assert.equal(toolContext.freeformDiagnostics.singleOutfitViewCalls || 0, 0, 'rejected directions spend no photo budget')
-
-    const viewed = await executeTool('view_pieces', { candidate_directions: candidateDirections }, toolContext)
+    const viewed = await executeTool('view_pieces', { ids: [ids[0], ids[1], ids[2], ids[3], ids[5]] }, toolContext)
     assert.equal(viewed.filter(item => item.name).length, 5)
     assert.match(viewed.find(item => item.id === ids[0]).truth, /fit:skims/)
-    assert.match(viewed.find(item => item.id === ids[0]).truth, /warm:moderate/)
-    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidateDirectionCount, 2)
-    assert.equal(toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount, 5)
+    assert.match(viewed.find(item => item.id === ids[0]).truth, /warmth:moderate/)
+    assert.equal(toolContext.freeformDiagnostics.singleOutfitWorkbenchPieceCount, 5)
+
     const targetedSecondView = await executeTool('view_pieces', { ids: [...ids, ...ids] }, toolContext)
     assert.equal(targetedSecondView.length, 4, 'the optional targeted second view is capped at four IDs')
     const overBudgetView = await executeTool('view_pieces', { ids }, toolContext)
     assert.equal(overBudgetView.status, 'validation_error')
     assert.match(overBudgetView.message, /visual budget is complete/)
+
+    const missingBottomProposal = await executeTool('propose_outfit', {
+      pieces: [
+        { id: ids[0], role: 'primary_top' },
+        { id: ids[2], role: 'shoes' },
+        { id: ids[3], role: 'outerwear' }
+      ],
+      label: 'No pants',
+      why_it_works: 'Missing bottom slot test',
+      activity: 'none',
+      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
+    }, toolContext)
+    assert.equal(missingBottomProposal.status, 'validation_error')
+    assert.match(missingBottomProposal.message, /needs a primary_top plus primary_bottom|missing_primary_core/)
+
+    // Advisory validation: light jacket causes cold-end thermal undershoot at 48°F, but is accepted with system notes
+    const undershootProposal = await executeTool('propose_outfit', {
+      pieces: [
+        { id: ids[0], role: 'primary_top' },
+        { id: ids[1], role: 'primary_bottom' },
+        { id: ids[2], role: 'shoes' },
+        { id: ids[5], role: 'outerwear' }
+      ],
+      label: 'Breezy light layer',
+      why_it_works: 'A light layer look.',
+      activity: 'none',
+      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
+    }, toolContext)
+    assert.equal(undershootProposal.status, 'success')
+    assert.ok(undershootProposal.systemNotes?.length > 0)
+    assert.match(undershootProposal.message, /System notes:/)
+    assert.equal(toolContext.singleOutfitProposalCompleted, true)
+    const deliveredCard = toolContext.generatedOutfits.find(o => !o.broken)
+    assert.equal(deliveredCard?.result?.disposition, 'annotated')
+    assert.ok(deliveredCard.systemFlags?.length > 0)
+
     const proposal = await executeTool('propose_outfit', {
       pieces: selected.map(id => ({ id, role: roleById.get(Number(id)) })),
       label: 'Catalog probe',
@@ -1350,6 +1371,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
       user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
     }, toolContext)
     assert.equal(proposal.status, 'success')
+    assert.equal(toolContext.singleOutfitProposalCompleted, true)
   } finally {
     for (const id of ids) db.prepare('DELETE FROM pieces WHERE id = ?').run(id)
   }
@@ -4010,3 +4032,134 @@ test('every unresolved clause is disclosed, and a new failure cannot mask a retr
   assert.equal(counted.freeformDiagnostics.unresolvedCheckDisclosures, 2)
   assert.equal(discloseUnresolvedFreeformChecks(first, counted, new Set(['cardProseInconsistent', 'unverifiedCitation'])), first)
 })
+
+test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans/vests as outerwear (layer_top)', () => {
+  const cardigan = {
+    id: 88,
+    name: 'Striped knit cardigan',
+    category: 'outerwear',
+    reads_as: 'navy striped knit cardigan',
+    colors: ['navy', 'white'],
+    fabric_category: 'wool',
+    fabric_weight: 'medium',
+    silhouette: 'relaxed',
+    fit_on_body: 'skims',
+    formality: 'everyday',
+  }
+  const line = singleOutfitStylistCatalogLine(cardigan)
+  assert.match(line, /^#88 Striped knit cardigan \| outerwear \(layer_top\) \| warmth:moderate;/)
+
+  const heavyCoat = {
+    id: 99,
+    name: 'Wool trench coat',
+    category: 'outerwear',
+    colors: ['camel'],
+    fabric_category: 'wool',
+    fabric_weight: 'heavy',
+    silhouette: 'straight',
+    formality: 'elevated',
+  }
+  const coatLine = singleOutfitStylistCatalogLine(heavyCoat)
+  assert.match(coatLine, /^#99 Wool trench coat \| outerwear \| warmth:warm;/)
+
+  const shoe = {
+    id: 101,
+    name: 'Leather loafers',
+    category: 'shoes',
+    colors: ['black'],
+    shoe_type: 'loafer',
+  }
+  const shoeLine = singleOutfitStylistCatalogLine(shoe)
+  assert.doesNotMatch(shoeLine, /warmth:/)
+})
+
+test('buildSingleOutfitStylistCatalog provides cold workbench seeding guidance when cold', () => {
+  const catalogOutput = buildSingleOutfitStylistCatalog([
+    { id: 1, name: 'Tee', category: 'top' },
+    { id: 2, name: 'Jeans', category: 'bottom' }
+  ], {
+    stylingContext: {
+      activity: 'none',
+      weatherProfile: { highF: 46, lowF: 46, tempBand: 'cold' }
+    }
+  })
+  assert.match(catalogOutput.instruction, /pull 2–3 insulating outer coats \(warmth:warm or warmth:very warm\) AND 2–3 middle layer knits/)
+  assert.match(catalogOutput.thermal_guidance, /Outdoor conditions call for/)
+})
+
+test('propose_outfit merges advisory findings into non-blocking notes in single_outfit', async () => {
+  // Simulate an outfit that triggers an advisory note (e.g. thermal undershoot in cold weather)
+  const toolContext = {
+    executionProfile: 'single_outfit',
+    singleOutfitCatalogEligibleIds: new Set([10, 20, 30, 40]),
+    freeformDiagnostics: {},
+    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold' },
+    activity: 'walking',
+  }
+
+  // A light jacket worn in 40F cold walk -> triggers thermal undershoot advisory
+  const lightJacket = {
+    id: 10,
+    name: 'Olive Field Jacket',
+    category: 'outerwear',
+    fabric_weight: 'light',
+    fiber_content: 'cotton',
+  }
+  const tee = {
+    id: 20,
+    name: 'White Tee',
+    category: 'top',
+    fabric_weight: 'light',
+    fiber_content: 'cotton',
+  }
+  const pants = {
+    id: 30,
+    name: 'Raw Denim Jeans',
+    category: 'bottom',
+    bottom_shape: 'straight',
+  }
+  const shoes = {
+    id: 40,
+    name: 'Running Sneakers',
+    category: 'shoes',
+    walk_support: 'high',
+  }
+
+  // Pre-seed db or mock findById for executeTool
+  // Since executeTool queries db in freeform, let's verify via executeTool or propose_outfit
+  const toolCall = {
+    name: 'propose_outfit',
+    args: {
+      pieces: [
+        { id: 10, role: 'outerwear' },
+        { id: 20, role: 'primary_top' },
+        { id: 30, role: 'bottom' },
+        { id: 40, role: 'shoes' },
+      ],
+      label: 'Cold Walk Test',
+      why_it_works: 'Simple walk outfit.',
+      styling_instructions: 'Zip up jacket.'
+    }
+  }
+
+  // Insert mock records into test DB
+  for (const p of [lightJacket, tee, pants, shoes]) {
+    try {
+      db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, bottom_shape, walk_support) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.bottom_shape || null, p.walk_support || null
+      )
+    } catch {
+      // If table columns vary in test db schema, insert minimal
+      db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category) VALUES (?, ?, ?)`).run(p.id, p.name, p.category)
+    }
+  }
+
+  const result = await executeTool(toolCall, toolContext)
+  assert.equal(result.status, 'success', 'Proposal succeeds because thermal undershoot is advisory in single_outfit')
+  assert.ok(toolContext.generatedOutfits?.length > 0)
+  const proposed = toolContext.generatedOutfits[0]
+  assert.equal(proposed.disposition, 'annotated')
+  assert.ok(proposed.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
+  assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+})
+

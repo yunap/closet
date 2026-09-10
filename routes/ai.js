@@ -70,7 +70,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -5751,7 +5751,8 @@ router.post('/ask', async (req, res) => {
     if (singleOutfitRoute) {
       toolContext.executionProfile = 'single_outfit'
       toolContext.freeformDiagnostics.executionProfile = 'single_outfit'
-      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'propose_outfit']
+      declareSingleOutfitIntent(toolContext)
+      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'propose_outfit']
       toolContext.userWeather = payload.singleOutfitContext?.user_weather || null
       toolContext.location = payload.singleOutfitContext?.location || toolContext.location
       toolContext.currentDate = payload.singleOutfitContext?.date || toolContext.currentDate

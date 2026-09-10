@@ -7,11 +7,11 @@ import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { parsePiece, buildPieceText, pieceOccasionCompatible, thermalFactsForPieceLine, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
-import { requiredThermalBand } from './thermalDemand.js'
+import { requiredThermalBand, requiredThermalEndpointBands } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
-import { bottomKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
+import { bottomKind, garmentKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
 import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
 import { evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
@@ -323,6 +323,10 @@ function catalogValue(value) {
 // opinion appears here. The model chooses which IDs deserve photographs via view_pieces.
 export function singleOutfitStylistCatalogLine(piece = {}) {
   const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
+  const kind = garmentKind(piece)
+  const groupLabel = group === 'outerwear' && (kind === 'cardigan' || kind === 'vest')
+    ? 'outerwear (layer_top)'
+    : group
   const facts = []
   const add = (label, value) => {
     const present = catalogValue(value)
@@ -333,6 +337,9 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
   const warmth = garmentWarmthLevel(piece)
   const insulation = insulatingLayerMaterials(piece)
   const interior = interiorConstruction(piece)
+
+  // Promote warmth to the very front of facts for immediate visual salience in cold/warm selection
+  if (!['shoes', 'accessory'].includes(group) && warmth) add('warmth', warmth)
 
   const identityWords = new Set(String(piece.name || '').toLowerCase().match(/[a-z0-9]+/g) || [])
   const visualRead = piece.reads_as || piece.background_color || ''
@@ -345,8 +352,9 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
   if (piece.pattern_complexity && piece.pattern_complexity !== 'solid') {
     add('pat', [piece.pattern_type, piece.pattern_scale, piece.pattern_complexity].filter(catalogValue).join('/'))
   }
-  add('fab', [piece.fabric_category, (group === 'shoes' || group === 'accessory') ? piece.visual_weight : piece.fabric_weight]
-    .filter(catalogValue).join('/'))
+  add('fab', piece.fabric_category)
+  const weight = (group === 'shoes' || group === 'accessory') ? piece.visual_weight : piece.fabric_weight
+  if (weight) add('weight', weight)
   add('sil', piece.silhouette)
   if (fit) add('fit', fit)
   // Everyday is the dominant register and costs the same repeated token on most rows. Make the
@@ -385,16 +393,15 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
     add('type', [piece.accessory_subtype, piece.jewelry_type, piece.necklace_length].filter(catalogValue).join('/'))
   }
 
-  if (!['shoes', 'accessory'].includes(group) && warmth) add('warm', warmth)
   if (Array.isArray(piece.weather_protection) && piece.weather_protection.length) add('protect', list(piece.weather_protection))
   if (Array.isArray(insulation) && insulation.length) add('insulation', insulation.join('+'))
   if (group === 'outerwear' && catalogValue(interior)) add('interior', interior)
   if (piece.tag_state === 'provisional') facts.push('tags:provisional')
 
-  return `#${Number(piece.id)} ${piece.name || 'unnamed'} | ${group}${facts.length ? ` | ${facts.join(';')}` : ''}`
+  return `#${Number(piece.id)} ${piece.name || 'unnamed'} | ${groupLabel}${facts.length ? ` | ${facts.join(';')}` : ''}`
 }
 
-export function buildSingleOutfitStylistCatalog(pieces = []) {
+export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } = {}) {
   const unique = []
   const seen = new Set()
   for (const piece of Array.isArray(pieces) ? pieces : []) {
@@ -418,11 +425,38 @@ export function buildSingleOutfitStylistCatalog(pieces = []) {
     sections.push(`${group.toUpperCase()} (${sorted.length}):\n${sorted.map(singleOutfitStylistCatalogLine).join('\n')}`)
   }
   const catalog = sections.join('\n\n')
+
+  let thermalGuidance = null
+  let coldRequired = false
+  if (stylingContext?.weatherProfile) {
+    try {
+      const wp = stylingContext.weatherProfile
+      const highF = wp.highF ?? wp.high_f ?? null
+      const lowF = wp.lowF ?? wp.low_f ?? null
+      const exposure = resolveExposureContext(
+        { activity: stylingContext.activity },
+        { ...wp, highF, lowF, weatherSource: wp.weatherSource || wp.source || 'stated_user' }
+      )
+      const bands = requiredThermalEndpointBands(exposure)
+      if (bands?.cold?.level) {
+        thermalGuidance = `Outdoor conditions call for '${bands.cold.level}' total upper-body warmth with outer layer on (e.g. an insulating coat, or a substantial 3-layer system with a middle cardigan/vest). Standalone uninsulated shells (warmth:light) without an insulating mid-layer will carry an advisory note for thermal undershoot.`
+        coldRequired = bands.cold.level === 'warm' || bands.cold.level === 'very warm'
+      }
+    } catch (err) {
+      console.warn('Failed to compute thermal guidance for stylist catalog:', err.message)
+    }
+  }
+
+  const instruction = coldRequired
+    ? 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles. Because conditions call for substantial warmth, be sure to pull 2–3 insulating outer coats (warmth:warm or warmth:very warm) AND 2–3 middle layer knits (e.g. cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench alongside tops, bottoms, and shoes, so you have the visual candidates needed to construct an appropriately warm system. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. After inspecting photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
+    : 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
+
   return {
     eligible_piece_count: unique.length,
     eligible_by_category: eligibleByCategory,
-    sparse_conventions: 'Omitted pattern means solid; omitted opacity means opaque; omitted season means year-round; omitted needs-base means no; omitted formality means everyday, while missing formality is written as formal:unknown. Occasion tags are omitted because every row already survived this request\'s occasion gate. Every other omitted fact is not recorded and must not be inferred.',
-    instruction: 'Develop 2–3 materially different outfit directions from this complete catalog, then make the first view_pieces call with candidate_directions describing those model-chosen systems (distinct hero, short styling idea, and role-assigned piece IDs; up to 12 unique IDs total). Use the catalog\'s warmth, protection, fit, and construction facts first: each direction must already be a plausible system for both weather endpoints. The tool validates identity, structural completeness, distinctness, and known hard wearability facts before loading photographs; it does not rank, choose, or aesthetically judge alternatives. Compare the photographs and compose the strongest result yourself; you may recombine viewed pieces. If the photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.',
+    ...(thermalGuidance ? { thermal_guidance: thermalGuidance } : {}),
+    sparse_conventions: 'Omitted pattern means solid; omitted opacity means opaque; omitted season means year-round; omitted needs-base means no; omitted formality means everyday, while missing formality is written as formal:unknown. Occasion tags are omitted because every row already survived this request\'s occasion gate. fab is fabric type; weight is textile weight; warmth is thermal insulation level. Every other omitted fact is not recorded and must not be inferred.',
+    instruction,
     catalog,
     serialized_character_count: catalog.length,
   }
@@ -512,6 +546,17 @@ export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId
     layerRequirement: 'unspecified',
   }
   return true
+}
+
+export function declareSingleOutfitIntent(toolContext = {}, { layerRequirement = 'unspecified' } = {}) {
+  toolContext.declaredIntent = {
+    want: 'cards',
+    outfitCount: 1,
+    turnMode: 'new_request',
+    layerRequirement: ['required', 'unspecified'].includes(layerRequirement) ? layerRequirement : 'unspecified',
+  }
+  bumpFreeformDiagnostic(toolContext, 'intentDeclared')
+  return toolContext.declaredIntent
 }
 
 // Nested bounded composers make a real provider call outside askStylistWithTools. Before this
@@ -1083,7 +1128,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, develop 2–3 materially different model-authored outfit directions that already account for known hard weather and wearability facts, then call view_pieces once with those candidate_directions (up to 12 unique IDs total); one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour/read, pattern, silhouette, fit, fabric, construction, formality and footwear; occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
+    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, choose 8–12 pieces across roles to assemble a visual workbench, then call view_pieces with those IDs (up to 12 unique IDs total) to inspect their photographs; one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour/read, pattern, silhouette, fit, fabric, construction, formality and footwear; occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1108,36 +1153,31 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "view_pieces",
-    description: "Look at specific wardrobe pieces: returns each photo thumbnail plus a compact truth line. In the single-outfit profile, the FIRST call must use candidate_directions to expose 2–3 materially different complete outfit ideas chosen by you from the full catalog; give each a distinct hero, a short styling idea, and role-assigned pieces. Use catalog warmth, protection, fit, and construction facts before calling: each direction must already plausibly serve both weather endpoints. This is deliberation, not an engine roster: the tool checks identity, distinctness, structural completeness, and known hard wearability facts before loading photos, but never taste or rank; you may recombine any viewed pieces after comparing the photographs. Up to 12 unique IDs may be viewed across those directions. A SECOND targeted call may use ids with up to 4 replacements only when the first photographs exposed a concrete problem. Outside that profile, use ids normally. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
+    description: "Look at specific wardrobe pieces: returns each photo thumbnail plus a compact truth line. In the single-outfit profile, call view_pieces with ids to pull 8–12 candidate pieces onto your visual workbench (2–3 potential visual leaders, several compatible tops/bottoms, plausible shoes and layers; up to 12 unique IDs total). Inspect texture, proportion, volume, and character from the photographs before committing. An optional second targeted call may use ids with up to 4 replacements if the first photographs exposed a concrete problem. Outside that profile, use ids normally. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
     input_schema: {
       type: "object",
       properties: {
-        ids: { type: "array", items: { type: "integer" }, description: "Ordinary piece IDs to view. In the single-outfit profile, use this only for the optional second targeted call (max 4); the first call derives its IDs from candidate_directions." },
+        ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to view. In the single-outfit profile, pass 8–12 candidate pieces for your visual workbench (max 12); an optional second call may view up to 4 replacements." },
         candidate_directions: {
           type: "array",
-          minItems: 2,
-          maxItems: 3,
-          description: "Single-outfit FIRST view only: 2–3 model-authored complete outfit possibilities from the full catalog. They may share support pieces, but each needs a different hero and a different piece set. A deliberate middle garment uses layer_top and the outermost jacket/coat uses outerwear. Up to 12 unique IDs total.",
+          description: "Optional backward-compatible direction array. If provided, IDs will be extracted for the workbench.",
           items: {
             type: "object",
             properties: {
-              label: { type: "string", description: "Short name for this possible styling direction." },
-              idea: { type: "string", description: "One short visual thesis explaining how this direction differs—not a weather verdict." },
-              hero_id: { type: "integer", description: "The leading garment for this direction; must appear in pieces and differ across directions." },
+              label: { type: "string" },
+              idea: { type: "string" },
+              hero_id: { type: "integer" },
               pieces: {
                 type: "array",
-                description: "A structurally complete candidate system using catalog IDs and intended outfit roles.",
                 items: {
                   type: "object",
                   properties: {
                     id: { type: "integer" },
-                    role: { type: "string", enum: OUTFIT_ROLES }
-                  },
-                  required: ["id", "role"]
+                    role: { type: "string" }
+                  }
                 }
               }
-            },
-            required: ["label", "idea", "hero_id", "pieces"]
+            }
           }
         },
         size: { type: "string", enum: ["thumb", "large"], description: "thumb (default): quick fit/color/texture read. large: construction detail — weave, lining, sheerness — for layer/base decisions." }
@@ -1599,7 +1639,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (toolContext?.executionProfile === 'single_outfit') {
             return {
               status: "success",
-              message: `Intent recorded: one outfit card; removable layer ${layerRequirement === 'required' ? 'required' : 'not explicitly required'}. Make one batched search covering every category the outfit may need. Read the complete sparse stylist_catalog, develop 2–3 materially different model-authored styling directions, and use its warmth, protection, fit, and construction facts before making the first view_pieces call with those candidate_directions (distinct heroes, short visual theses, role-assigned complete systems; up to 12 unique IDs total). Known hard-invalid directions are rejected before photos load, but the catalog is not ranked and code has not chosen outfits for you. ${layerRequirement === 'required' ? 'Each candidate direction must include one real outerwear piece and already plausibly serve the cold endpoint with it on and the warm endpoint after it comes off. ' : ''}Compare the photographs and choose or recombine the strongest result yourself. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. Submit exactly one complete card through propose_outfit; if validation rejects it, follow that repair instruction and resubmit rather than presenting the rejected card. Report a wardrobe gap only from the complete catalog and hard-exclusion report, never from the pieces you happened to view.`
+              message: `Intent recorded: one outfit card; removable layer ${layerRequirement === 'required' ? 'required' : 'not explicitly required'}. Make one batched search covering every category the outfit may need. Read the complete sparse stylist_catalog and choose 8–12 pieces across roles (2–3 potential visual leaders, supporting tops/bottoms, plausible shoes and layers) to pull onto your visual workbench via view_pieces. Inspect the photographs, compare options, and compose the strongest result yourself. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. Submit exactly one complete card through propose_outfit. Report a wardrobe gap only from the complete catalog and hard-exclusion report, never from the pieces you happened to view.`
             }
           }
           const boundedBatchContract = (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
@@ -1894,7 +1934,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // disclaimer could not undo that practical ownership. The stylist now nominates the IDs
         // to photograph through view_pieces, and propose_outfit validates the chosen system.
         const singleOutfitCatalog = completeSingleOutfitCatalogSearch
-          ? buildSingleOutfitStylistCatalog(completeEligibleResults)
+          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext })
           : null
         if (singleOutfitCatalog) {
           toolContext.singleOutfitCatalogEligibleIds = new Set(completeEligibleResults.map(piece => Number(piece.id)))
@@ -2354,9 +2394,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
           stylingContext,
         })
 
-        // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
+        const isSingleOutfit = toolContext?.executionProfile === 'single_outfit'
+
+        // Validate role/slot structure and wearability (mechanically enforced).
         const hardFindings = wearableValidation.hardFindings
-        const issues = hardFindings.map(finding => finding.message)
+        const advisoryFindings = wearableValidation.advisoryFindings || []
+        const blockingFindings = isSingleOutfit
+          ? hardFindings.filter(finding => finding.kind === 'role_structure')
+          : hardFindings
+        const nonBlockingFindings = isSingleOutfit
+          ? [...hardFindings.filter(finding => finding.kind !== 'role_structure'), ...advisoryFindings]
+          : []
+        const issues = blockingFindings.map(finding => finding.message)
+
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
           // broken diagnostic card (same "needs review" treatment as the composer's rejected proposals)
@@ -2380,16 +2430,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
             previewOnly: true
           }, {
             disposition: 'repairable',
-            findings: hardFindings,
+            findings: blockingFindings,
             repair: { operation: 'complete', action: 'propose_outfit_retry' },
             provenance: { flow: 'freeform_propose_outfit', source: 'proposed', composedBy: 'model', stage: 'role_validation' },
           })
           const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
           toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
-          const coldThermalUndershoot = hardFindings.some(
+          const coldThermalUndershoot = blockingFindings.some(
             finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)
-          const warmEndThermalUndershoot = hardFindings.some(
+          const warmEndThermalUndershoot = blockingFindings.some(
             finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT)
           const retryInstruction = coldThermalUndershoot
             ? "Repair the upper-body system with either a compatible, substantial middle garment assigned layer_top beneath the outerwear or a warmer visually verified outerwear candidate, then call propose_outfit again with the complete corrected card. Do not assume a winter coat is the only repair, and do not add a layer merely to preserve a weak styling idea."
@@ -2398,7 +2448,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : `${roleOutfitStructurePromptRule()} COMPLETE the outfit instead of resending it: keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`
           return {
             status: "validation_error",
-            message: `The proposed outfit failed a hard wearability check. ${projectOutfitValidationFindings(hardFindings)} ${retryInstruction}`,
+            message: `The proposed outfit failed a hard wearability check. ${projectOutfitValidationFindings(blockingFindings)} ${retryInstruction}`,
             issues
           }
         }
@@ -2413,11 +2463,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }),
           policy: { anchorPieceIds: resolved.filter(piece => piece.anchor).map(piece => Number(piece.id)) }
         })
-        const hardGateIssues = resolved.flatMap(piece => {
-          // A user-requested anchor is the outfit's premise (same rule as the
-          // composers' selected-piece bypass): the user asking to wear it
-          // overrides auto-use suitability gates. Verification (retrieval +
-          // layer photos) still applies above.
+        const explicitRequestExclusions = resolved.flatMap(piece => {
           if (piece.anchor) return []
           const requestIssues = requestExclusionReasonsForPiece(piece, [
             toolContext.request,
@@ -2425,15 +2471,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasion_context
           ].filter(Boolean).join(' '))
           if (requestIssues.length) return [`${piece.name}: ${requestIssues.join(', ')}`]
-          const decision = proposalEligibility.decisionsById.get(Number(piece.id))
-          return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
+          return []
         })
-        if (hardGateIssues.length) {
+        if (explicitRequestExclusions.length) {
           const brokenOutfit = normalizeOutfitResult({
             label: label || 'Outfit',
             broken: true,
             retryPending: true,
-            rejectionReason: hardGateIssues.join('; '),
+            rejectionReason: explicitRequestExclusions.join('; '),
             pieceIds: resolved.map(p => Number(p.id)),
             pieces: resolved,
             occasion: resolvedOccasion,
@@ -2448,7 +2493,46 @@ async function executeToolInternal(name, args, toolContext = {}) {
             previewOnly: true
           }, {
             disposition: 'repairable',
-            findings: hardGateIssues.map((message, index) => ({ code: `eligibility_${index + 1}`, message, kind: 'eligibility' })),
+            findings: explicitRequestExclusions.map(issue => ({ rule: 'request_exclusion', message: issue })),
+            repair: { operation: 'complete', action: 'propose_outfit_retry' },
+            provenance: { flow: 'freeform_propose_outfit', source: 'proposed', composedBy: 'model', stage: 'request_exclusion' },
+          })
+          const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+          toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
+          bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
+          return {
+            status: "validation_error",
+            message: `The proposed outfit includes piece(s) prohibited by your request: ${explicitRequestExclusions.join('; ')}.`,
+            issues: explicitRequestExclusions
+          }
+        }
+
+        const autoGateIssues = resolved.flatMap(piece => {
+          if (piece.anchor) return []
+          const decision = proposalEligibility.decisionsById.get(Number(piece.id))
+          return decision?.allowed ? [] : [`${piece.name}: ${decision?.reasons?.join(', ') || 'ineligible'}`]
+        })
+        if (!isSingleOutfit && autoGateIssues.length) {
+          const brokenOutfit = normalizeOutfitResult({
+            label: label || 'Outfit',
+            broken: true,
+            retryPending: true,
+            rejectionReason: autoGateIssues.join('; '),
+            pieceIds: resolved.map(p => Number(p.id)),
+            pieces: resolved,
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            occasionContext: occasion_context || '',
+            why: why_it_works || '',
+            reason: why_it_works || '',
+            stylingInstructions: styling_instructions || '',
+            source: 'proposed',
+            activity: resolvedActivity,
+            debug: outfitDebug,
+            previewOnly: true
+          }, {
+            disposition: 'repairable',
+            findings: autoGateIssues.map((message, index) => ({ code: `eligibility_${index + 1}`, message, kind: 'eligibility' })),
             repair: { operation: 'substitute', action: 'propose_outfit_retry' },
             provenance: { flow: 'freeform_propose_outfit', source: 'proposed', composedBy: 'model', stage: 'eligibility_gate' },
           })
@@ -2457,8 +2541,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
           return {
             status: "validation_error",
-            message: `The proposed outfit includes piece(s) that fail the current occasion/activity/weather gates: ${hardGateIssues.join('; ')}. Search again with the same occasion, activity, and weather, then call propose_outfit with replacements. If the user explicitly asked to style/wear one of the rejected pieces, re-propose with anchor:true on that piece instead — the user's request overrides suitability gating.`,
-            issues: hardGateIssues
+            message: `The proposed outfit includes piece(s) that fail the current occasion/activity/weather gates: ${autoGateIssues.join('; ')}. Search again with the same occasion, activity, and weather, then call propose_outfit with replacements. If the user explicitly asked to style/wear one of the rejected pieces, re-propose with anchor:true on that piece instead — the user's request overrides suitability gating.`,
+            issues: autoGateIssues
+          }
+        }
+
+        const singleOutfitAdvisoryNotes = []
+        if (isSingleOutfit) {
+          for (const finding of nonBlockingFindings) {
+            let msg = finding.message
+            if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
+              msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
+            }
+            singleOutfitAdvisoryNotes.push({
+              type: finding.code?.startsWith('env_') || finding.kind === 'environment' ? 'Weather note' : 'Fit note',
+              message: msg
+            })
+          }
+          for (const msg of autoGateIssues) {
+            singleOutfitAdvisoryNotes.push({
+              type: 'Style note',
+              message: msg
+            })
           }
         }
         if (!toolContext.sourceLocked) toolContext.source = 'proposed_outfit'
@@ -2567,6 +2671,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             console.warn('packing roster coverage re-check failed:', err.message)
           }
         }
+        const finalAnnotations = [
+          ...(supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : []),
+          ...(singleOutfitAdvisoryNotes || [])
+        ]
+        const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -2587,8 +2696,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(packingRosterChange ? { packingRosterChange } : {}),
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
-          disposition: supersededEngineNote ? 'annotated' : 'accepted',
-          annotations: supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : [],
+          disposition: finalDisposition,
+          annotations: finalAnnotations,
+          findings: (singleOutfitAdvisoryNotes || []).map(n => ({ message: n.message, kind: 'advisory', severity: 'warning' })),
           provenance: {
             flow: 'freeform_propose_outfit',
             source: 'proposed',
@@ -2629,11 +2739,15 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...existingOutfits.filter(outfit => outfit !== supersededBroken),
           correctionRecovery?.value || proposedOutfit
         ]
+        if (isSingleOutfit) {
+          toolContext.singleOutfitProposalCompleted = true
+        }
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
           status: "success",
-          message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.`,
-          pieceNames: resolved.map(p => p.name)
+          message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.${finalAnnotations.length ? ` System notes: ${finalAnnotations.map(a => a.message).join('; ')}` : ''}`,
+          pieceNames: resolved.map(p => p.name),
+          ...(finalAnnotations.length ? { systemNotes: finalAnnotations } : {})
         }
       }
       case 'view_pieces': {
@@ -2653,145 +2767,30 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : new Set(Array.isArray(allowedSource) ? allowedSource.map(Number) : []))
           : null
         let ids = []
-        if (singleOutfitViewCall && priorSingleOutfitViewCalls === 0) {
-          const rawDirections = Array.isArray(args?.candidate_directions) ? args.candidate_directions : []
-          const directionIssues = []
-          const heroIds = new Set()
-          const pieceSetSignatures = new Set()
-          const unionIds = []
-          const unionSeen = new Set()
-          const normalizedDirections = []
-
-          if (!allowedSet) {
-            directionIssues.push('make the complete single-outfit search before choosing visual candidates')
+        if (singleOutfitViewCall) {
+          let rawIds = Array.isArray(args?.ids) ? args.ids : []
+          if (!rawIds.length && Array.isArray(args?.candidate_directions)) {
+            // Backward compatibility if model passes candidate_directions
+            rawIds = args.candidate_directions.flatMap(d => Array.isArray(d?.pieces) ? d.pieces.map(p => p?.id) : [])
           }
-          if (rawDirections.length < 2 || rawDirections.length > 3) {
-            directionIssues.push('candidate_directions must contain 2 or 3 model-authored outfit possibilities')
-          }
-
-          for (const [index, direction] of rawDirections.slice(0, 3).entries()) {
-            const number = index + 1
-            const label = String(direction?.label || '').trim()
-            const idea = String(direction?.idea || '').trim()
-            const heroId = Number(direction?.hero_id)
-            const rawPieces = Array.isArray(direction?.pieces) ? direction.pieces : []
-            const directionIds = []
-            const directionSeen = new Set()
-            const resolvedDirection = []
-
-            if (!label) directionIssues.push(`direction ${number} needs a short label`)
-            if (!idea) directionIssues.push(`direction ${number} needs a distinct visual idea`)
-            if (!Number.isFinite(heroId)) directionIssues.push(`direction ${number} needs a numeric hero_id`)
-
-            for (const entry of rawPieces) {
-              const id = Number(entry?.id)
-              const role = String(entry?.role || '').trim()
-              if (!Number.isFinite(id)) {
-                directionIssues.push(`direction ${number} contains a non-numeric piece ID`)
-                continue
-              }
-              if (directionSeen.has(id)) {
-                directionIssues.push(`direction ${number} repeats piece ${id}`)
-                continue
-              }
-              directionSeen.add(id)
-              directionIds.push(id)
-              if (allowedSet && !allowedSet.has(id)) {
-                directionIssues.push(`direction ${number} uses piece ${id}, which is not in the eligible catalog`)
-                continue
-              }
-              const row = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id)
-              if (!row) {
-                directionIssues.push(`direction ${number} uses piece ${id}, which is not an active wardrobe item`)
-                continue
-              }
-              resolvedDirection.push({ ...parsePiece(row), role })
-            }
-
-            if (!directionSeen.has(heroId)) {
-              directionIssues.push(`direction ${number}'s hero_id must be one of its own pieces`)
-            } else if (heroIds.has(heroId)) {
-              directionIssues.push(`direction ${number} must use a different hero from the other directions`)
-            } else {
-              heroIds.add(heroId)
-            }
-
-            const signature = [...directionSeen].sort((a, b) => a - b).join(',')
-            if (signature && pieceSetSignatures.has(signature)) {
-              directionIssues.push(`direction ${number} repeats another direction's complete piece set`)
-            } else if (signature) {
-              pieceSetSignatures.add(signature)
-            }
-
-            if (resolvedDirection.length === rawPieces.length && rawPieces.length) {
-              const structure = evaluateOutfitRoles(resolvedDirection)
-              if (!structure.valid) {
-                directionIssues.push(`direction ${number} is not a complete wearable system: ${structure.primaryFinding?.message || 'invalid role structure'}`)
-              }
-              if (toolContext?.declaredIntent?.layerRequirement === 'required' &&
-                  !resolvedDirection.some(piece => piece.role === 'outerwear' && wardrobeCategoryGroup(piece) === 'outerwear')) {
-                directionIssues.push(`direction ${number} needs an outerwear-role piece because this request requires a removable layer`)
-              }
-              // thread_1788985997110: both first-view directions spent photographs on
-              // `warm:moderate` outerwear for a certain 60->48F breezy range, even though the
-              // complete catalog already supplied enough physical facts for the shared final
-              // validator to reject them. Run that SAME validator before loading photos. This is
-              // not a shortlist or ranking: the model still authors every direction and receives
-              // only factual rejection reasons when its own candidate is already hard-invalid.
-              if (structure.valid && toolContext?.weatherProfile) {
-                const candidateValidation = evaluateWearableOutfit(resolvedDirection, {
-                  roleAware: true,
-                  includeLayerDirections: false,
-                  weatherContext: {
-                    weatherProfile: toolContext.weatherProfile,
-                    activity: toolContext.activity,
-                    requireThermalAdequacy: toolContext?.declaredIntent?.layerRequirement === 'required',
-                  },
-                })
-                const knownHardFindings = candidateValidation.hardFindings
-                if (knownHardFindings.length) {
-                  directionIssues.push(`direction ${number} fails known hard wearability facts before photo review: ${knownHardFindings.map(finding => finding.message).join('; ')}`)
-                  if (knownHardFindings.some(finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT)) {
-                    directionIssues.push(`direction ${number} may repair cold-end undershoot with either a compatible substantial layer_top beneath the outerwear or a warmer outerwear piece; do not assume a winter coat is the only repair`)
-                  }
-                }
-              }
-            } else if (!rawPieces.length) {
-              directionIssues.push(`direction ${number} needs role-assigned pieces`)
-            }
-
-            for (const id of directionIds) {
-              if (unionSeen.has(id)) continue
-              unionSeen.add(id)
-              unionIds.push(id)
-            }
-            normalizedDirections.push({ label, idea, hero_id: heroId, pieces: rawPieces })
-          }
-
-          if (unionIds.length > viewLimit) {
-            directionIssues.push(`candidate directions use ${unionIds.length} unique pieces; the first visual budget is ${viewLimit}`)
-          }
-          if (directionIssues.length) {
+          ids = [...new Set(rawIds.map(Number).filter(Number.isFinite))].slice(0, viewLimit)
+          if (!ids.length) {
             return {
-              status: 'validation_error',
-              message: `Before viewing candidates, fix the model-authored direction set: ${directionIssues.map((issue, index) => `(${index + 1}) ${issue}`).join('; ')}. Choose 2–3 genuinely different complete systems from the catalog; code will verify their structure but will not choose or rank them.`,
-              issues: directionIssues,
+              status: "validation_error",
+              message: priorSingleOutfitViewCalls === 0
+                ? 'view_pieces needs ids: [<wardrobe piece ids>] to assemble your visual workbench (choose 8–12 pieces across roles).'
+                : 'view_pieces needs ids: [<wardrobe piece ids>] with up to 4 replacements.'
             }
           }
-          ids = unionIds
-          toolContext.singleOutfitCandidateDirections = normalizedDirections
           toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.singleOutfitCandidateDirectionCount = normalizedDirections.length
-          toolContext.freeformDiagnostics.singleOutfitCandidatePieceCount = ids.length
+          toolContext.freeformDiagnostics.singleOutfitWorkbenchPieceCount = ids.length
         } else {
           ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, viewLimit)
-        }
-        if (!ids.length) {
-          return {
-            status: "validation_error",
-            message: singleOutfitViewCall && priorSingleOutfitViewCalls === 0
-              ? 'The first single-outfit view_pieces call needs candidate_directions with 2–3 complete model-authored outfit possibilities.'
-              : "view_pieces needs ids: [<wardrobe piece ids>]."
+          if (!ids.length) {
+            return {
+              status: "validation_error",
+              message: "view_pieces needs ids: [<wardrobe piece ids>]."
+            }
           }
         }
         const maxPx = args?.size === 'large' ? 896 : 448

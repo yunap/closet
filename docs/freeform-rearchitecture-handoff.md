@@ -1,5 +1,8 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Visual workbench and advisory wearability validation, implemented 2026-09-09:**
+> Converted `single_outfit` flow from an offline text-based constraint solver into a model-driven visual workbench. The model inspects the complete sparse `stylist_catalog` and pulls 8–12 piece IDs across roles onto its visual workbench via `view_pieces({ ids: [...] })`, with up to 4 replacements in a second targeted view if needed. Pre-photo wearability verification gates are removed from `view_pieces`. In `propose_outfit`, hard blocking validation is restricted to unverified IDs, structural role incompleteness (missing core slots or shoes, role category mismatches, collisions), and explicit user prohibitions. Inferred metadata issues (weather adequacy, sleeve bunching, register/activity fit) are surfaced as advisory `systemFlags` with `disposition: 'annotated'`, accepting the card. Upon card acceptance, the provider terminates the single-outfit tool loop immediately.
+
 > **Ordered middle-layer repair, implemented 2026-09-09:** the single-outfit flow could represent
 > `layer_top`, but the thermal owner collapsed all removable upper-body pieces to the warmest one.
 > A substantial top + substantial cardigan + light jacket therefore failed exactly like the jacket

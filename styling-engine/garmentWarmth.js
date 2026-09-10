@@ -194,7 +194,16 @@ export function insulatingCreditWeight(piece) {
 export function garmentWarmthScore(piece = {}) {
   if (warmthPlacementState(piece) !== 'placeable') return null
   const substance = SUBSTANCE[fabricWeight(piece)] ?? 0
-  return substance + insulatingCreditWeight(piece) + coverageAdjustment(piece)
+  const raw = substance + insulatingCreditWeight(piece) + coverageAdjustment(piece)
+  // Outerwear shell boundary (docs/garment-warmth-calibration.md §3.1):
+  // An outer layer with no insulating material (thermalMaterialVerdict !== 'insulating')
+  // is a shell (wind/rain protection), not an insulator. Coverage (long sleeves, knee hem)
+  // and fabric weight must not promote an uninsulated shell (cotton, nylon, or uninsulated leather)
+  // past 'light' (ceiling 0.5).
+  if (wardrobeCategoryGroup(piece) === 'outerwear' && thermalMaterialVerdict(piece) !== 'insulating') {
+    return Math.min(raw, LEVEL_RAW_BOUNDARIES[1])
+  }
+  return raw
 }
 
 /**
