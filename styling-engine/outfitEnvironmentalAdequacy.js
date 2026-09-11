@@ -35,6 +35,7 @@ export const ENVIRONMENTAL_ADEQUACY_CODES = {
   COOL_LAYER_IS_SEE_THROUGH: 'outfit_cool_layer_is_see_through',
   NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT: 'outfit_no_removable_layer_for_cool_transit',
   NO_WARM_LAYER_FOR_COLD: 'outfit_no_warm_layer_for_cold',
+  WARM_LAYER_RECOMMENDED: 'outfit_warm_layer_recommended_for_cool_conditions',
   THERMAL_UNDERSHOOT: 'outfit_thermal_capacity_below_conditions',
   WARM_END_THERMAL_UNDERSHOOT: 'outfit_remaining_layers_below_warm_endpoint',
   THERMAL_OVERSHOOT: 'outfit_thermal_capacity_above_conditions',
@@ -396,20 +397,18 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   }
   }
 
-  // --- minimum warmth floor (any cold, mild included) --------------------------------------------
-  // [R2]/[A3]: migrated from the plan specialization so every consumer of the canonical validator
-  // shares it, with its semantics and message intact. Contract C now owns both tiers — the floor
-  // here, the capability requirement below — which is what makes deleting the duplicate safe.
-  //
-  // docs/cold-layer-exposure-trigger-spec.md: requiresWarmLayerForColdExposure is an OPTIONAL,
-  // additive field a caller may set on the resolved weatherProfile (today: only the trip-plan path,
-  // computed once in buildPlanSlotWorkbench where activity/occasion/exposure are already resolved —
-  // this module never learns to resolve them itself). `?? weather.isCold` makes every existing
-  // caller that doesn't set it — which is every caller except trip plans — byte-identical to before.
-  const requiresWarmLayer = weather.requiresWarmLayerForColdExposure ?? weather.isCold
-  if (requiresWarmLayer && !indoorDestination && !hasMinimumWarmLayer(list)) {
+  // --- minimum warmth floor / presence requirement ---------------------------------------------
+  // Canonical exposure-aware presence authority: reads weather.coldPresenceRequirement.
+  // - state === 'required': verified severe cold outdoor exposure; hard error NO_WARM_LAYER_FOR_COLD.
+  // - state === 'recommended': ordinary cool/cold exposure with unknown duration; advisory WARM_LAYER_RECOMMENDED.
+  // - state === 'not_needed' or 'unknown' (or absent): zero findings (no fallback reconstruction).
+  const presence = weather?.coldPresenceRequirement
+  if (presence?.state === 'required' && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
-      'no warm layer for cold weather', { evidence }))
+      'no warm layer for cold weather', { evidence, severity: 'error', remedy: false }))
+  } else if (presence?.state === 'recommended' && !indoorDestination && !hasMinimumWarmLayer(list)) {
+    findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.WARM_LAYER_RECOMMENDED,
+      'a warm or midweight layer is recommended for cool weather', { evidence, severity: 'advisory' }))
   }
 
   // --- thermal amount, from the band (§8 step 3) -------------------------------------------------

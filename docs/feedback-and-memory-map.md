@@ -9,7 +9,7 @@ is written, and which consumer — if any — reads it back.**
 rounds; **amended 2026-08-12** for the owner-guidance work (footwear constraint selectors, shared
 season resolution, the `reported` synthesis status and its delete route, exclusion `changedAt`, and
 guidance becoming read-only); **amended 2026-08-25** for the canonical season/weather applicability
-projection. Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
+projection; **amended 2026-09-11** for whole-wardrobe feedback memory occasion formatting and display-only model-quality verdicts. Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
 [`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather than
 restate it. Ideas for hardening the verification tooling are out of scope here and live in
 [`feedback-audit-backlog.md`](feedback-audit-backlog.md).

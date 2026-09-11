@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
 import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateOutfitStructure, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
-import { pieceRequiresBaseLayer, pieceSleeveInterference, SLEEVE_SHAPE_VALUES } from '../styling-engine/attributes.js'
+import { pieceRequiresBaseLayer, pieceSleeveInterference, pieceOuterSleeveCapacity, SLEEVE_SHAPE_VALUES } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
 
@@ -128,7 +128,7 @@ test('directional construction: inner volume against a narrow outer is a concern
   assert.equal(trappedUnderNarrow.verdict, 'incompatible', 'a voluminous inner sleeve trapped under a narrow structured outer is a real construction concern')
 
   const deepArmholeInner = { id: 24, name: 'dolman-style top', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'deep_armhole', fabric_weight: 'light' }
-  const restrictiveOuter = { id: 25, name: 'set-in fitted jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'light' }
+  const restrictiveOuter = { id: 25, name: 'set-in fitted jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
   const deepArmholeConflict = evaluateLayerPairConstruction([restrictiveOuter, deepArmholeInner], { roleAware: true })
   assert.equal(deepArmholeConflict.verdict, 'incompatible', 'deep-armhole inner geometry under a restrictive outer is a concern')
 
@@ -153,12 +153,26 @@ test('directional construction: inner volume against a narrow outer is a concern
   const flaredConflict = evaluateLayerPairConstruction([narrowOuterSleeve, flaredInner], { roleAware: true })
   assert.equal(flaredConflict.verdict, 'incompatible', 'flared inner sleeve under a narrow outer sleeve is a concern')
 
-  // Puffer / boxy insulated outerwear: straight sleeve has ample room to accommodate gathered or voluminous sleeves
+  // Sleeve capacity: straight sleeve outerwear without generous cut returns null capacity, requiring visual check
   const gatheredInner = { id: 144, name: 'black turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'extra_long', sleeve_shape: 'gathered_ruched', silhouette: 'slim', fabric_weight: 'medium' }
-  const boxyPufferOuter = { id: 996775, name: 'Black puffer coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'boxy', fabric_weight: 'heavy', outerwear_role: 'cold_weather_outerwear', insulating_layer_materials: ['down'] }
+  const straightPufferOuter = { id: 996774, name: 'Straight down puffer coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'straight', fabric_weight: 'heavy', insulating_layer_materials: ['down'] }
+  assert.equal(pieceOuterSleeveCapacity(straightPufferOuter), null, 'straight sleeve without generous cut returns null capacity')
+  const straightPufferOverGathered = evaluateLayerPairConstruction([straightPufferOuter, gatheredInner], { roleAware: true })
+  assert.equal(straightPufferOverGathered.verdict, 'unknown', 'straight sleeve outer without generous cut over gathered sleeve is unknown capacity')
+  assert.equal(straightPufferOverGathered.sightRequired, 'both', 'requires sight check from both photos')
+
+  // Generous cut outerwear (boxy silhouette) accommodates gathered sleeves:
+  const boxyPufferOuter = { id: 996775, name: 'Black puffer coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'boxy', fabric_weight: 'heavy', insulating_layer_materials: ['down'] }
+  assert.equal(pieceOuterSleeveCapacity(boxyPufferOuter), 'accommodates', 'boxy silhouette accommodates')
   const pufferOverGathered = evaluateLayerPairConstruction([boxyPufferOuter, gatheredInner], { roleAware: true })
   assert.equal(pufferOverGathered.verdict, 'compatible', 'a boxy down puffer has ample room for gathered/ruched sleeves')
   assert.equal(pufferOverGathered.findings.length, 0, 'no sleeve conflict finding on puffer over gathered sleeve')
+
+  // Explicit fitted coat returns restricted and is incompatible with gathered sleeves:
+  const fittedCoat = { id: 996776, name: 'Fitted tailored coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'heavy' }
+  assert.equal(pieceOuterSleeveCapacity(fittedCoat), 'restricted', 'fitted sleeve shape is restricted')
+  const fittedOverGathered = evaluateLayerPairConstruction([fittedCoat, gatheredInner], { roleAware: true })
+  assert.equal(fittedOverGathered.verdict, 'incompatible', 'fitted outer sleeve over gathered sleeve is incompatible')
 
   const oversizedOuter = { id: 128, name: 'oversized jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'oversized', fabric_weight: 'medium' }
   const oversizedOverVoluminous = evaluateLayerPairConstruction([oversizedOuter, voluminousInner], { roleAware: true })

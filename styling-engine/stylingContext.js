@@ -4,6 +4,8 @@ import { weatherProfileFromContext } from './rules.js'
 import { normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, resolveWeatherContext, validateUserWeather, validateWeatherEstimate, wetExposureFromPrecipitation } from './weather.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
+import { resolveExposureContext } from './exposure.js'
+import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
 
 const SOURCE_ORDER = [
   ['explicit_request', 'explicitRequest'],
@@ -602,6 +604,13 @@ export function createStylingContextResolver({ weatherResolver = getCurrentWeath
       toolContext,
     })
     const calendarSeason = resolveCalendarSeason(seasonChoice.value, dateChoice.value)
+    // Canonical exposure-aware cold presence requirement: computed after environment, activity, and weather are all resolved.
+    const explicitEnvironment = explicitRequest?.environment || (weather.profile?.isIndoor ? 'indoor' : 'outdoor')
+    const exposureContext = resolveExposureContext({ environment: explicitEnvironment, activity }, weather.profile)
+    const coldPresenceRequirement = resolveColdLayerPresenceRequirement(exposureContext)
+    if (weather.profile && typeof weather.profile === 'object') {
+      weather.profile.coldPresenceRequirement = coldPresenceRequirement
+    }
     const applicabilityContext = projectStylingApplicabilityContext({
       occasion,
       activity,

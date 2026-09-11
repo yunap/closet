@@ -721,3 +721,9 @@ zero thermal-demand shift. `hiking` remains the only current activity value that
 clothing warmth discount. Removable-layer demand earns no activity discount, including on a hike,
 because it must cover stops and other low-output periods. Duration remains a separate unresolved
 exposure dimension rather than being invented from the word “walking.”
+
+### 11.2 Separation of facts and layer presence decisions (2026-09-11)
+
+`styling-engine/exposure.js` is strictly the facts-only owner: it resolves exposure conditions, severe-cold evidence, and waking-window temperatures encountered by the outfit (`duration: null` remains explicitly uninvented). It computes no warmth threshold or layer presence verdict.
+The exposure-aware layer presence requirements (`coldPresenceRequirement`, `transitColdPresenceRequirement`) are owned exclusively by `styling-engine/environmentalRequirements.js` via `resolveColdLayerPresenceRequirement`. When duration is unknown, ordinary cool/cold exposure produces an advisory `state: 'recommended'` rather than a 1-degree ambient hard cliff, while hard gating (`state: 'required'`) is strictly reserved for verified severe cold (`isColdSevere`, Contract D) or explicit user constraints.
+

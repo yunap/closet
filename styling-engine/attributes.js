@@ -1080,17 +1080,17 @@ export function pieceOuterSleeveCapacity(piece = {}, zone = null) {
   const isGenerousCut = ['boxy', 'oversized', 'relaxed', 'loose'].includes(silhouette) ||
     ['oversized', 'relaxed', 'loose'].includes(fitOnBody)
 
-  const isInsulatedOrColdWeather = (Array.isArray(piece?.insulating_layer_materials) && piece.insulating_layer_materials.length > 0) ||
-    piece?.outerwear_role === 'cold_weather_outerwear' ||
-    /\b(puffer|quilted|down)\b/i.test(piece?.name || '') || // ratchet-allow: fallback for unpopulated insulation
-    /\b(puffer|quilted|down)\b/i.test(piece?.reads_as || '') // ratchet-allow: fallback for unpopulated insulation
-
   const isOuter = wardrobeCategoryGroup(piece) === 'outerwear'
-  if (isOuter && (isInsulatedOrColdWeather || isGenerousCut)) {
+  if (isOuter && isGenerousCut) {
     return 'accommodates'
   }
 
-  if (!shape || shape === 'other' || shape === 'unknown') {
+  const isFittedCut = ['fitted', 'slim'].includes(silhouette) || ['fitted', 'slim'].includes(fitOnBody)
+  if (isOuter && isFittedCut) {
+    return 'restricted'
+  }
+
+  if (!shape || shape === 'other' || shape === 'unknown' || shape === 'straight') {
     return null
   }
 

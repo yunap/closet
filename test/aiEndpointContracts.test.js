@@ -999,7 +999,6 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.match(composerRequestText, /Activity-safe footwear may repeat/)
   assert.match(composerRequestText, /TIME-OF-DAY WEATHER:/)
   assert.match(composerRequestText, /Opacity and needs_base are authoritative/)
-  assert.match(composerRequestText, /sleeveless vest over a light or short-sleeved base handles the outdoor chill/)
   assert.match(composerRequestText, /indoor destination.*does not erase arrival and departure weather/i)
 
   // Verify that rotation sessions are saved

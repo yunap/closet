@@ -50,7 +50,7 @@ These extend the Engineering Principles in `AGENTS.md` with engine-specific mech
 
 ## Verification workflow for engine changes
 
-1. Diagnose with a `scratch/` script; paste distributions into the walkthrough.
+1. Diagnose with a `scratch/` script; paste distributions into the walkthrough. **Database Safety**: Never run against `wardrobe.db`. Any script importing `db.js` must set `process.env.WARDROBE_DB_PATH` to an isolated database (e.g. via `createIsolatedDbSnapshot()` from `lib/databaseSafety.js` or a temporary fixture). When copying the live DB, always copy `-wal` and `-shm` sidecars. Obey `docs/database-safety.md`.
 2. Implement at the layer the data indicates (data fix vs. attributes.js vs. rules.js).
 3. Re-run `scratch/rankings_ab_diff.js` against the recorded baseline commit hash; fill every
    `EXPLAINED BY` stub; new diffs in previously-stable scenarios are explained, not suppressed.

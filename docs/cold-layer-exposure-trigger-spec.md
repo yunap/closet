@@ -1,6 +1,6 @@
 # Spec — a narrow exposure-aware relaxation of the ordinary cold-layer trigger
 
-**Status:** Ratified 2026-09-05 — ready to implement. **Route:** [docs/README.md](README.md).
+**Status:** superseded-by [docs/exposure-conditions-spec.md](exposure-conditions-spec.md) / styling-engine/environmentalRequirements.js (2026-09-11). **Route:** [docs/README.md](README.md).
 Amends [cold-severity-spec.md](cold-severity-spec.md), which deferred exactly this question
 ("If the daily low is largely irrelevant to what someone wears, `isCold` keying on it is also
 questionable... it needs its own measurement and ruling rather than riding along with this
@@ -150,3 +150,9 @@ valid outfits to the pre-dawn daily low, while genuinely cold, ambiguous, evenin
 low-exertion cases remain exactly as conservative as before. `cold_layer_required` and
 `NO_WARM_LAYER_FOR_COLD` never disagree with each other, because both read the one fact computed
 once at the trip slot.
+
+## 8. Supersession (2026-09-11)
+
+This spec's boolean slot-level heuristic (`requiresWarmLayerForColdExposure`) and fallback reconstruction in Contract C (`?? weather.isCold`) are superseded by the exposure-aware presence decision engine in `styling-engine/environmentalRequirements.js` (`resolveColdLayerPresenceRequirement`).
+Presence decisions (`state: 'required' | 'recommended' | 'not_needed' | 'unknown'`) are resolved once during canonical context resolution and consumed directly by Contract C. Ordinary cold exposure produces an advisory recommendation (`state: 'recommended'`), eliminating the arbitrary 1-degree ambient hard cliff, while hard gating (`state: 'required'`) is strictly reserved for verified severe cold (Contract D) or explicit user constraints. Master booleans have been purged.
+

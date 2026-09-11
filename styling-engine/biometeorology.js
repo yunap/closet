@@ -1,101 +1,79 @@
-// Matzarakis PET (Physiological Equivalent Temperature) Biometeorological Scale
+// Owner-Calibrated Ambient Thermal Scale
 //
-// Ground-truth biometeorological thermal index based on the Munich Energy-balance Model for
-// Individuals (MEMI) (Matzarakis & Mayer 1996; Matzarakis et al. 1999).
-// Standardized for human energy balance under ordinary sedentary/light activity (80 W) with
-// clothing adaptation.
+// Ambient temperature scale inspired by biometeorological comfort reporting categories
+// (Matzarakis sedentary baseline). This scale classifies ambient temperature ranges and
+// maps them to thermal demand levels. It does NOT compute physiological PET (which requires
+// mean radiant temperature, air velocity, relative humidity, and metabolic rate).
 //
-// This module is the SINGLE AUTHORITATIVE DEFINITION for temperature boundaries across the styling engine.
-// All flows (weather.js, thermalDemand.js, rules.js, outfitSetPlanner.js, outfitEnvironmentalAdequacy.js)
-// derive their thermal thresholds from here rather than inventing ad-hoc constants.
+// This module defines neutral ambient category boundaries and sedentary demand levels.
+// It emits NO garment prescriptions and NO physiological stress claims.
 
 export const PET_BANDS = {
   VERY_COLD: {
     key: 'very_cold',
     label: 'Very Cold',
-    stress: 'extreme_cold_stress',
     minC: -Infinity,
     maxC: 4,
     minF: -Infinity,
     maxF: 39,
     demandLevel: 'very warm',
-    dressingGuidance: 'Heavy winter coat, down parka, thermal underwear, wool accessories',
-    requiresOuterwear: true,
   },
   COLD: {
     key: 'cold',
     label: 'Cold',
-    stress: 'strong_cold_stress',
     minC: 4,
     maxC: 8,
     minF: 39,
     maxF: 46,
     demandLevel: 'warm',
-    dressingGuidance: 'Wool coat, winter jacket, heavy knitwear or intentional 3-layer system',
-    requiresOuterwear: true,
   },
   COOL: {
     key: 'cool',
     label: 'Cool',
-    stress: 'moderate_cold_stress',
     minC: 8,
     maxC: 13,
     minF: 46,
     maxF: 55,
     demandLevel: 'warm',
-    dressingGuidance: 'Outerwear layer required (trench, fleece, jacket, leather jacket) over base',
-    requiresOuterwear: true,
   },
   SLIGHTLY_COOL: {
     key: 'slightly_cool',
     label: 'Slightly Cool',
-    stress: 'slight_cold_stress',
     minC: 13,
     maxC: 18,
     minF: 55,
     maxF: 64,
     demandLevel: 'moderate',
-    dressingGuidance: 'Midweight layer required (chunky sweater, cardigan, hoodie, light jacket)',
-    requiresOuterwear: false,
     needsRemovableCoolLayer: true,
   },
   COMFORTABLE: {
     key: 'comfortable',
     label: 'Comfortable',
-    stress: 'thermal_neutrality',
     minC: 18,
     maxC: 23,
     minF: 64,
     maxF: 73,
     demandLevel: 'light',
-    dressingGuidance: 'Transitional light layer or long sleeves (light cardigan, button-down, lightweight knit)',
-    requiresOuterwear: false,
     needsRemovableCoolLayer: false,
   },
   SLIGHTLY_WARM: {
     key: 'slightly_warm',
     label: 'Slightly Warm',
-    stress: 'slight_heat_stress',
     minC: 23,
     maxC: 29,
     minF: 73,
     maxF: 84,
     demandLevel: 'very light',
-    dressingGuidance: 'Single breathable layer (short sleeves, lightweight cotton or linen blend)',
-    requiresOuterwear: false,
     needsRemovableCoolLayer: false,
   },
   HOT: {
     key: 'hot',
     label: 'Hot',
-    stress: 'moderate_to_strong_heat_stress',
     minC: 29,
     maxC: Infinity,
     minF: 84,
     maxF: Infinity,
     demandLevel: 'very light',
-    dressingGuidance: 'Summer linen, sleeveless tops, tanks, shorts, airy dresses',
-    requiresOuterwear: false,
     needsRemovableCoolLayer: false,
   },
 }
@@ -112,17 +90,17 @@ export const PET_BAND_ORDER = [
 
 export const EXTREME_HEAT_F = 100
 
-// Canonical temperature thresholds derived from the PET scale:
-export const COLD_THRESHOLD_F = PET_BANDS.COOL.minF // 46°F: below this is strong/extreme cold stress (isCold)
-export const SEVERE_COLD_THRESHOLD_F = PET_BANDS.COLD.minF // 39°F: below this is extreme cold stress (isColdSevere)
+// Canonical ambient temperature thresholds:
+export const COLD_THRESHOLD_F = PET_BANDS.COOL.minF // 46°F: ambient threshold for Cold band
+export const SEVERE_COLD_THRESHOLD_F = PET_BANDS.COLD.minF // 39°F: ambient threshold for Very Cold band
 export const COOL_LAYER_THRESHOLD_F = PET_BANDS.COMFORTABLE.minF // 64°F: below this warrants a removable cool or midweight layer
-export const WARM_THRESHOLD_F = PET_BANDS.SLIGHTLY_WARM.minF // 73°F: at or above this is warm/hot weather (isHot)
-export const HOT_THRESHOLD_F = PET_BANDS.HOT.minF // 84°F: at or above this is high summer heat
+export const WARM_THRESHOLD_F = PET_BANDS.SLIGHTLY_WARM.minF // 73°F: at or above this is warm weather (isHot)
+export const HOT_THRESHOLD_F = PET_BANDS.HOT.minF // 84°F: at or above this is hot weather
 
 /**
- * Classifies a single Fahrenheit temperature into its corresponding Matzarakis PET band.
+ * Classifies a single Fahrenheit temperature into its corresponding ambient band.
  * @param {number} tempF
- * @returns {object|null} PET band definition or null if non-numeric
+ * @returns {object|null} band definition or null if non-numeric
  */
 export function classifyPetTemperature(tempF) {
   if (!Number.isFinite(tempF)) return null
@@ -133,7 +111,7 @@ export function classifyPetTemperature(tempF) {
 }
 
 /**
- * Classifies a Fahrenheit temperature range (e.g. daytime high and waking low) across the PET scale.
+ * Classifies a Fahrenheit temperature range across ambient comfort bands.
  * @param {object} range { highF, lowF }
  * @param {object} options { exclusive: boolean }
  * @returns {object}
@@ -157,11 +135,6 @@ export function classifyPetRange({ highF, lowF } = {}, { exclusive = true } = {}
   const highBand = classifyPetTemperature(high)
   const lowBand = classifyPetTemperature(low)
 
-  // In the PET scale:
-  // - isHot: high temperature is in Slightly Warm (>= 73°F) or Hot (>= 84°F)
-  // - isCold: low temperature is in Cold (< 46°F) or Very Cold (< 39°F)
-  // - isColdSevere: low temperature is in Very Cold (< 39°F)
-  // - needsRemovableCoolLayer: low drops into Slightly Cool (< 64°F) or Cool (< 55°F)
   const isHotRaw = high >= WARM_THRESHOLD_F
   const isColdRaw = low < COLD_THRESHOLD_F
   const isColdSevere = low < SEVERE_COLD_THRESHOLD_F
@@ -190,7 +163,7 @@ export function classifyPetRange({ highF, lowF } = {}, { exclusive = true } = {}
 }
 
 /**
- * Maps a PET band key to the corresponding 5-level thermal demand level
+ * Maps a band key to the corresponding 5-level thermal demand level
  * ('very light' | 'light' | 'moderate' | 'warm' | 'very warm').
  * @param {string} bandKey
  * @returns {string}
@@ -203,12 +176,11 @@ export function petBandToThermalDemand(bandKey) {
   return 'moderate'
 }
 
-// Biometeorological sedentary thermal demand boundaries matching Matzarakis PET scale
+// Ambient sedentary thermal demand boundaries inspired by biometeorological comfort reporting
 export const SEDENTARY_DEMAND_F = [
-  { atOrAbove: WARM_THRESHOLD_F, level: 'very light' }, // >= 73°F (Slightly Warm & Hot)
-  { atOrAbove: COOL_LAYER_THRESHOLD_F, level: 'light' }, // >= 64°F (Comfortable / Neutral)
-  { atOrAbove: PET_BANDS.SLIGHTLY_COOL.minF, level: 'moderate' }, // >= 55°F (Slightly Cool)
-  { atOrAbove: SEVERE_COLD_THRESHOLD_F, level: 'warm' }, // >= 39°F (Cold & Cool)
-  { atOrAbove: -Infinity, level: 'very warm' }, // < 39°F (Very Cold / Extreme Cold Stress)
+  { atOrAbove: WARM_THRESHOLD_F, level: 'very light' }, // >= 73°F
+  { atOrAbove: COOL_LAYER_THRESHOLD_F, level: 'light' }, // >= 64°F
+  { atOrAbove: PET_BANDS.SLIGHTLY_COOL.minF, level: 'moderate' }, // >= 55°F
+  { atOrAbove: SEVERE_COLD_THRESHOLD_F, level: 'warm' }, // >= 39°F
+  { atOrAbove: -Infinity, level: 'very warm' }, // < 39°F
 ]
-

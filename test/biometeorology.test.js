@@ -11,15 +11,23 @@ import {
   COOL_LAYER_THRESHOLD_F,
   WARM_THRESHOLD_F,
   HOT_THRESHOLD_F,
+  SEDENTARY_DEMAND_F,
 } from '../styling-engine/biometeorology.js'
 
-test('PET_BANDS covers all 7 thermal stress bands with contiguous boundaries', () => {
+test('PET_BANDS covers all 7 ambient thermal comfort bands with contiguous boundaries', () => {
   assert.strictEqual(PET_BAND_ORDER.length, 7)
   for (let i = 0; i < PET_BAND_ORDER.length - 1; i++) {
     const current = PET_BAND_ORDER[i]
     const next = PET_BAND_ORDER[i + 1]
     assert.strictEqual(current.maxF, next.minF, `Discontinuity between ${current.key} and ${next.key}`)
     assert.strictEqual(current.maxC, next.minC, `Celsius discontinuity between ${current.key} and ${next.key}`)
+  }
+})
+
+test('PET_BANDS contains no dressing guidance or physiological stress claims', () => {
+  for (const band of PET_BAND_ORDER) {
+    assert.strictEqual('dressingGuidance' in band, false, `band ${band.key} contains dressingGuidance`)
+    assert.strictEqual('stress' in band, false, `band ${band.key} contains stress claim`)
   }
 })
 
@@ -41,29 +49,39 @@ test('classifyPetTemperature maps representative temperatures to accurate bands'
   assert.strictEqual(classifyPetTemperature(95)?.key, 'hot')
 })
 
-test('classifyPetRange evaluates mutual exclusivity and band flags', () => {
+test('classifyPetRange evaluates mutual exclusivity and band flags without requiresOuterwear', () => {
   // 56°F single reading: Slightly Cool band, demands cool layer, not hot, not cold
   const sc56 = classifyPetRange({ highF: 56, lowF: 56 })
   assert.strictEqual(sc56.isHot, false)
   assert.strictEqual(sc56.isCold, false)
+  assert.strictEqual('requiresOuterwear' in sc56, false, 'classifyPetRange must not produce requiresOuterwear')
   assert.strictEqual(sc56.needsRemovableCoolLayer, true)
   assert.strictEqual(sc56.highBand.key, 'slightly_cool')
+
+  // 50°F single reading: Cool band (46°F-55°F)
+  const c50 = classifyPetRange({ highF: 50, lowF: 50 })
+  assert.strictEqual(c50.isCold, false)
+  assert.strictEqual(c50.needsRemovableCoolLayer, true)
+  assert.strictEqual('requiresOuterwear' in c50, false)
 
   // 42°F single reading: Cold band (< 46°F), isCold true
   const c42 = classifyPetRange({ highF: 42, lowF: 42 })
   assert.strictEqual(c42.isHot, false)
   assert.strictEqual(c42.isCold, true)
   assert.strictEqual(c42.isColdSevere, false)
+  assert.strictEqual('requiresOuterwear' in c42, false)
 
   // 32°F single reading: Very Cold band (< 39°F), isCold true and isColdSevere true
   const vc32 = classifyPetRange({ highF: 32, lowF: 32 })
   assert.strictEqual(vc32.isCold, true)
   assert.strictEqual(vc32.isColdSevere, true)
+  assert.strictEqual('requiresOuterwear' in vc32, false)
 
   // 90°F / 40°F wide trip range (non-exclusive): both isHot and isCold true
   const wide = classifyPetRange({ highF: 90, lowF: 40 }, { exclusive: false })
   assert.strictEqual(wide.isHot, true)
   assert.strictEqual(wide.isCold, true)
+  assert.strictEqual('requiresOuterwear' in wide, false)
 
   // 102°F: Extreme heat flag
   const extreme = classifyPetRange({ highF: 102, lowF: 78 })
@@ -80,8 +98,7 @@ test('petBandToThermalDemand maps bands to the 5-tier thermal scale', () => {
   assert.strictEqual(petBandToThermalDemand('hot'), 'very light')
 })
 
-test('SEDENTARY_DEMAND_F matches Matzarakis PET temperature tiers', async () => {
-  const { SEDENTARY_DEMAND_F } = await import('../styling-engine/biometeorology.js')
+test('SEDENTARY_DEMAND_F matches ambient comfort temperature tiers', () => {
   assert.strictEqual(SEDENTARY_DEMAND_F[0].level, 'very light')
   assert.strictEqual(SEDENTARY_DEMAND_F[0].atOrAbove, 73)
   assert.strictEqual(SEDENTARY_DEMAND_F[1].level, 'light')

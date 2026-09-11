@@ -530,14 +530,16 @@ function layerConstructionPair(added, base, direction = null) {
     const outerAccommodatesAllInner = SLEEVE_INTERFERENCE_ZONES.every(zone =>
       innerZones[zone] !== 'elevated' || pieceOuterSleeveCapacity(outerPiece, zone) === 'accommodates'
     )
-    if (innerFullyKnown && (outerFullyKnown || outerAccommodatesAllInner)) {
+    if (innerFullyKnown && outerFullyKnown && outerAccommodatesAllInner) {
       return { verdict: 'compatible', addedPiece: added, basePiece: base, findings: [], evidence, sightRequired: 'none' }
     }
     // The inner garment's geometry, the outer garment's capacity to accommodate it, or both are
     // unresolved — do not fabricate an incompatibility from an unknown outer sleeve's roominess.
     const message = !outerFullyKnown
       ? `${addedLabel} + ${baseLabel}: ${outerLabel}'s sleeve construction is not recorded, so whether it has room for ${innerLabel}'s sleeve is unknown`
-      : `${addedLabel} + ${baseLabel} are both cuffed-sleeve garments; sleeve shape is not recorded for one or both, so cuff/bulk compatibility is unknown`
+      : (innerFullyKnown && outerFullyKnown
+        ? `${addedLabel} + ${baseLabel}: whether ${outerLabel}'s sleeve has room to accommodate ${innerLabel}'s sleeve volume is unresolved from catalog data`
+        : `${addedLabel} + ${baseLabel} are both cuffed-sleeve garments; sleeve shape is not recorded for one or both, so cuff/bulk compatibility is unknown`)
     return {
       verdict: 'unknown',
       addedPiece: added,

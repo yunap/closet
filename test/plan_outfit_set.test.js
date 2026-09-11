@@ -1220,6 +1220,7 @@ test('identifyColdLayerRepairableFailures recognizes both the omission and false
     slots: [
       { id: 'city_day', label: 'City Day', allowedPieces: [qualifyingLayer] },
       { id: 'evening_out', label: 'Evening Out', allowedPieces: [qualifyingLayer] },
+      { id: 'severe_cold_day', label: 'Severe Cold Day', allowedPieces: [qualifyingLayer] },
     ]
   }
   const failures = [
@@ -1233,15 +1234,25 @@ test('identifyColdLayerRepairableFailures recognizes both the omission and false
       reasons: ["cold_layer_decision claims core_is_warm_enough for Evening Out but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false."],
       outfit: { title: 'Evening Look', pieceIds: [4, 5, 6] },
     },
+    {
+      slot_id: 'severe_cold_day', label: 'Severe Cold Day',
+      reasons: [
+        'no warm layer for cold weather',
+        'this outfit has no outer layer at all for sustained cold outdoor exposure — if no owned piece can satisfy this, say so as a wardrobe gap rather than resubmitting — re-plan at a milder context or accept the disclosed shortfall'
+      ],
+      outfit: { title: 'Severe Cold Look', pieceIds: [7, 8, 9] },
+    },
   ]
 
   const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
-  assert.equal(repairable.length, 2, 'both the omission and the false-claim shape must be recognized as repairable')
+  assert.equal(repairable.length, 3, 'omission, false-claim, and severe cold absence must all be recognized as repairable')
   const bySlot = new Map(repairable.map(entry => [entry.slot_id, entry]))
   assert.deepEqual(bySlot.get('city_day').piece_ids, [1, 2, 3], 'the original piece_ids must be carried through verbatim')
   assert.equal(bySlot.get('city_day').title, 'City Look')
   assert.deepEqual(bySlot.get('evening_out').piece_ids, [4, 5, 6])
   assert.equal(bySlot.get('evening_out').title, 'Evening Look')
+  assert.deepEqual(bySlot.get('severe_cold_day').piece_ids, [7, 8, 9])
+  assert.equal(bySlot.get('severe_cold_day').title, 'Severe Cold Look')
   assert.ok(bySlot.get('city_day').candidates.some(c => c.id === 900), 'the qualifying layer must be offered as a candidate')
 })
 
@@ -1341,7 +1352,7 @@ test('the exact live failure shape does not recur: an unnamed cold_layer_decisio
 
   const result = await executeTool('plan_outfit_set', {
     plan_kind: 'trip',
-    weather_estimate: { high_f: 55, low_f: 38 },
+    weather_estimate: { high_f: 42, low_f: 30 },
     slots: [
       { label: 'Sightseeing', occasion: 'city', activity: 'walking', count: 1 },
       { label: 'City Errands', occasion: 'city', activity: 'walking', count: 1 },
@@ -1408,7 +1419,7 @@ test('a false core_is_warm_enough claim lands in the same repairable batch as an
 
   const result = await executeTool('plan_outfit_set', {
     plan_kind: 'trip',
-    weather_estimate: { high_f: 55, low_f: 38 },
+    weather_estimate: { high_f: 42, low_f: 30 },
     slots: [
       { label: 'Omission Day', occasion: 'city', activity: 'walking', count: 1 },
       { label: 'False Claim Day', occasion: 'city', activity: 'walking', count: 1 },
@@ -2401,7 +2412,7 @@ test('plan_outfit_set + submit_plan_outfits persists weatherUsed/resolvedWeather
 // this proves it fires for a card built entirely from a structured weather_estimate.
 test('plan_outfit_set + submit_plan_outfits rejects a submitted card with no warm layer once weather_estimate establishes cold', async () => {
   db.prepare('DELETE FROM pieces').run()
-  insertPiece({ category: 'top', name: 'light city top', occasions: ['city'], formality: 'everyday', fabric_weight: 'light', sleeve_length: 'sleeveless' })
+  insertPiece({ category: 'top', name: 'light city top', occasions: ['city'], formality: 'everyday', fabric_weight: 'light', sleeve_length: 'short' })
   insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
   insertPiece({ category: 'shoes', name: 'city flats', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
 
@@ -2416,7 +2427,7 @@ test('plan_outfit_set + submit_plan_outfits rejects a submitted card with no war
     plan_kind: 'trip',
     location: 'Vienna, Virginia',
     date_range: { start: '2026-10-12', end: '2026-10-18' },
-    weather_estimate: { high_f: 55, low_f: 40 },
+    weather_estimate: { high_f: 42, low_f: 30 },
     slots: [{ label: 'City Day', occasion: 'city', activity: 'walking', count: 1 }]
   }, toolContext)
   assert.equal(workbench.status, 'slot_rosters')
@@ -9149,7 +9160,7 @@ test('the limited photo slots go to the garments hardest to describe in words', 
 })
 
 test('slotColdLayerPermitted returns true for cool-tier transition weather and transit cooling', () => {
-  const coldSlot = { environment: 'outdoor', weatherProfile: { isCold: true } }
+  const coldSlot = { environment: 'outdoor', weatherProfile: { isCold: true, coldPresenceRequirement: { state: 'required' } } }
   assert.equal(slotColdLayerRequired(coldSlot), true)
   assert.equal(slotColdLayerPermitted(coldSlot), true)
 

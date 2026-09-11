@@ -20,13 +20,10 @@ import {
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 export const HOT_F = 80
-// Exported (docs/cold-layer-exposure-trigger-spec.md) so the trip-slot cold-trigger relaxation can
-// compare a waking-window exposure temperature against THE SAME threshold isCold already uses,
-// rather than inventing a second number for the same question.
-export const COLD_F = 45
-// Aligned with the peer-reviewed Matzarakis PET Biometeorological Scale (biometeorology.js).
-// 64°F: below this is Slight Cold Stress (Slightly Cool / Cool), warranting a removable cool
-// or midweight layer (cardigan, chunky knit, light jacket).
+// Aligned with the ambient comfort scale (biometeorology.js).
+// 46°F: ambient threshold for Cold band.
+export const COLD_F = COLD_THRESHOLD_F
+// 64°F: below this warrants a removable cool or midweight layer.
 export const COOL_LOW_F = COOL_LAYER_THRESHOLD_F
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
 const FETCH_TIMEOUT_MS = 4000
@@ -170,7 +167,7 @@ function classify(highs, lows, { exclusive = true } = {}) {
   const maxHigh = Math.max(...highs)
   const minLow = Math.min(...lows)
   const isHot = maxHigh >= HOT_F
-  const isCold = minLow <= COLD_F
+  const isCold = minLow < COLD_F
   const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
   const needsRemovableCoolLayer = minLow <= COOL_LOW_F && !isCold
@@ -288,7 +285,7 @@ function isFiniteTemp(n) {
 export function classifyTemperatureRange({ highF, lowF } = {}, { exclusive = true } = {}) {
   if (!Number.isFinite(highF) || !Number.isFinite(lowF)) return { isHot: false, isCold: false }
   const isHot = highF >= HOT_F
-  const isCold = lowF <= COLD_F
+  const isCold = lowF < COLD_F
   const extreme = highF >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
   if (!exclusive) return { isHot, isCold, ...extreme }
   return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme }
@@ -376,10 +373,10 @@ export function validateWeatherEstimate(input) {
 // floor, and a 45F morning genuinely needs a layer. Only the maximize-toward-winter tier moves.
 // Whether isCold should key on the low at all is a larger, open question — recorded in
 // cold-severity-spec.md rather than decided here.
-// A qualitative "cold" band carries no numbers to compare, so the band itself is the statement:
-// someone saying "it will be cold" means the day is cold, not that one pre-dawn hour is.
+export const SEVERE_COLD_F = 45
+
 const coldSevereForRange = ({ highF, lowF } = {}) =>
-  Number.isFinite(highF) ? highF <= COLD_F : Number.isFinite(lowF) ? lowF <= COLD_F : false
+  Number.isFinite(highF) ? highF <= SEVERE_COLD_F : Number.isFinite(lowF) ? lowF <= SEVERE_COLD_F : false
 
 // docs/cool-weather-tier-spec.md. Does this outfit need a REMOVABLE layer for the cold end of the
 // day? Read off the low, and — per §5.2 — this is a range-level PROXY for an unspecified or full-day
@@ -391,7 +388,7 @@ const needsRemovableCoolLayerForRange = ({ highF, lowF } = {}) =>
 
 const BAND_FLAGS = {
   hot: { isHot: true, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false },
-  cold: { isHot: false, isCold: true, isColdSevere: true, needsRemovableCoolLayer: true },
+  cold: { isHot: false, isCold: true, isColdSevere: false, needsRemovableCoolLayer: true },
   mild: { isHot: false, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false },
 }
 
@@ -538,12 +535,14 @@ export async function resolveWeatherForRequest({
 } = {}) {
   const start = dateRange?.start || null
   const hasDestination = Boolean(location) && Boolean(start)
+  const normalizedUserWeather = userWeather?.temperature !== undefined ? userWeather : (validateUserWeather(userWeather) || userWeather)
+  const normalizedModelEstimate = modelEstimate?.highF !== undefined ? modelEstimate : (validateWeatherEstimate(modelEstimate) || modelEstimate)
 
   if (!hasDestination) {
     // A user-stated or estimated temperature still wins even without a live
     // lookup being attempted (an at-home request can still carry a stated
     // band, e.g. "it's cold today") — only the LIVE branch is skipped.
-    const resolved = resolveWeatherContext({ userWeather, liveWeather: null, modelEstimate, location, dateRange })
+    const resolved = resolveWeatherContext({ userWeather: normalizedUserWeather, liveWeather: null, modelEstimate: normalizedModelEstimate, location, dateRange })
     if (resolved.status === 'resolved') return resolved
     const heuristicProfile = heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
     return {
@@ -572,7 +571,7 @@ export async function resolveWeatherForRequest({
     liveWeather = null
   }
 
-  return resolveWeatherContext({ userWeather, liveWeather, modelEstimate, location, dateRange })
+  return resolveWeatherContext({ userWeather: normalizedUserWeather, liveWeather, modelEstimate: normalizedModelEstimate, location, dateRange })
 }
 
 // Spec §5.1, §7: persistence shape for cards / current_outfit_set / thread

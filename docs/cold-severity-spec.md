@@ -162,3 +162,9 @@ roughly the same margin it overstates morning.
 Changing `isCold` is a far larger blast radius than changing severity: it drives the minimum-warmth
 floor, bare-bottom exclusions, footwear gates and plan slot construction. It needs its own
 measurement and ruling rather than riding along with this amendment.
+
+### Amendment 2026-09-11 — Hard Cold Presence Gated Exclusively on Severe Cold
+
+The open question above is resolved by separating exposure facts from presence decisions in `styling-engine/environmentalRequirements.js` (`resolveColdLayerPresenceRequirement`).
+Ordinary cold (`lowF < 55°F` or ambient cool/cold weather) with unknown duration produces an advisory recommendation (`state: 'recommended'`, `WARM_LAYER_RECOMMENDED`), eliminating the 1-degree ambient hard cliff. Hard cold-layer rejection (`state: 'required'`, `NO_WARM_LAYER_FOR_COLD`) is strictly reserved for verified severe cold (`severeColdEvidence: true`, driven by `isColdSevere` where daytime high `highF <= 45°F` or explicit severe cold statements) or explicit user constraints. Master booleans (`requiresWarmLayerForColdExposure`) are purged from active code.
+
