@@ -34,7 +34,7 @@ test('settings layout is structured on desktop and stacks at mobile width', () =
 })
 
 test('sample-data maintenance remains secondary and disclosed', () => {
-  assert.match(source, /<details className="account-settings-disclosure">/)
+  assert.match(source, /<details className="account-settings-disclosure"[^>]*>/)
   assert.match(source, /Manage sample content stored in this wardrobe\./)
   assert.match(source, /Remove all demo pieces/)
 })

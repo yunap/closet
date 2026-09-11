@@ -7,7 +7,7 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { selectTripRosterViaModel, tripSeasonEligiblePool } from '../styling-engine/outfitSetPlanner.js'
+import { selectTripRosterViaModel, tripSeasonEligiblePool, buildTripPackingLines } from '../styling-engine/outfitSetPlanner.js'
 import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
 
 // docs/database-safety.md: routes/ai.js reaches db.js on import, so this must isolate
@@ -914,3 +914,104 @@ test('buildPieceText keeps surfacing visual roles by default -- only the trip ro
   const text = buildPieceText(COLOR_ACCENT_PLAIN)
   assert.match(text, /visual roles: color_accent/, 'every other caller (capsule roster selection included) must be unaffected')
 })
+
+test('tripRosterSelectionUserText includes destination, date, and forecast weather when available', () => {
+  const bench = [CITY_TOP]
+  const slots = [{
+    label: 'Nature Walks',
+    occasion: 'casual',
+    activity: 'hiking',
+    bestFor: 'local trails with friends',
+    targetOutfits: 2,
+    location: 'Vienna, Virginia',
+    date: '2026-10-12',
+    weatherLabel: '65°F high / 45°F low — seasonal estimate',
+    weatherProfile: { highF: 65, lowF: 45, isCold: true, needsRemovableCoolLayer: true }
+  }]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.match(text, /TRIP CONTEXT: Destination: Vienna, Virginia \| Date: 2026-10-12/)
+  assert.match(text, /65°F high \/ 45°F low/)
+})
+
+test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion realism guidance', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /STYLE CONSTITUTION — BODY CONTRACT:/)
+  assert.match(prompt, /OCCASION REALISM & PRACTICAL UTILITY:/)
+  assert.match(prompt, /Never rely solely on dressy, elevated, or high-maintenance outerwear/)
+})
+
+test('buildTripPackingLines recognizes assignedLayerIds as shown in the travel system', () => {
+  const trench = piece(996759, 'outerwear', { name: 'cream trench coat with belt' })
+  const top = piece(1, 'top', { name: 'turtleneck' })
+  const bottom = piece(2, 'bottom', { name: 'jeans' })
+  const shoes = piece(3, 'shoes', { name: 'sneakers' })
+  const roster = [top, bottom, shoes, trench]
+  const outfits = [{
+    pieces: [top, bottom, shoes],
+    assignedLayerIds: [996759]
+  }]
+  const lines = buildTripPackingLines(roster, outfits)
+  assert.match(lines[0], /WHAT TO PACK \(4\):/)
+  assert.equal(lines.some(l => l.includes('Packed but not shown on a card') && l.includes('cream trench coat')), false,
+    'a packed layer assigned to an outfit must not be reported as unshown')
+})
+
+test('tripRosterFailures flags an outdoor cool/cold slot when the only candidate outerwear is positively inadequate', () => {
+  const sunHoodie = piece(990358, 'outerwear', {
+    name: 'thin UPF technical hoodie',
+    occasions: ['casual', 'outdoor'],
+    fabric_weight: 'ultralight',
+    insulation: 'non_insulating',
+    interior_construction: 'unlined'
+  })
+  const hikeSlot = coldHikingSlot({
+    stylingContext: {
+      occasion: 'casual',
+      activity: 'hiking',
+      weatherProfile: { isCold: true, needsRemovableCoolLayer: true, highF: 65, lowF: 45 }
+    }
+  })
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, sunHoodie], { slots: [hikeSlot] })
+  assert.equal(result.ok, false)
+  const gap = result.failures.find(f => f.code === 'cold_floor_infeasible')
+  assert.ok(gap, 'a sun hoodie that is positively inadequate for cool/cold outdoor weather cannot satisfy the cold floor')
+})
+
+test('buildTripBench round-robins across distinct shoe construction buckets', async () => {
+  // Create candidate shoes with lower IDs for sneakers and higher IDs for boots/loafers
+  const sneaker1 = piece(10, 'shoes', { shoe_type: 'sneaker', name: 'white sneaker' })
+  const sneaker2 = piece(11, 'shoes', { shoe_type: 'sneaker', name: 'black sneaker' })
+  const sneaker3 = piece(12, 'shoes', { shoe_type: 'sneaker', name: 'grey sneaker' })
+  const boot = piece(90, 'shoes', { shoe_type: 'boot', name: 'leather boot' })
+  const loafer = piece(95, 'shoes', { shoe_type: 'loafer', name: 'black loafer' })
+  const top = piece(1, 'top')
+  const bottom = piece(2, 'bottom')
+
+  const pool = [top, bottom, sneaker1, sneaker2, sneaker3, boot, loafer]
+  const slot = {
+    id: 'city_walk',
+    label: 'City Walk',
+    targetOutfits: 1,
+    stylingContext: { occasion: 'city', activity: 'walking' }
+  }
+
+  const { bench } = await selectTripRosterViaModel({
+    pool,
+    slots: [slot],
+    benchSize: 5, // Truncate tightly to ensure diversity interleaving matters
+    chooseRoster: null
+  })
+
+  const shoeBenchTypes = bench.filter(p => p.category === 'shoes').map(p => p.shoe_type)
+  assert.ok(shoeBenchTypes.includes('boot'), 'boots must not be crowded out by lower-ID sneakers')
+  assert.ok(shoeBenchTypes.includes('loafer'), 'loafers must not be crowded out by lower-ID sneakers')
+  assert.ok(shoeBenchTypes.includes('sneaker'), 'sneakers must also be present')
+})
+
+test('tripRosterSelectionSystemPrompt includes footwear occasion register guidance', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /FOOTWEAR THAT SUITS EACH JOB/)
+  assert.match(prompt, /pack shoes appropriate for each register/i)
+  assert.match(prompt, /polished boots, loafers, or elevated flats for evening dining/i)
+})
+

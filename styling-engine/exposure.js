@@ -111,8 +111,14 @@ function resolveConditions(resolvedWeather = null) {
   // thermal model then went silent on museum days — no demand, every piece `neutral` — which is how
   // thread_1788427130315 put a down puffer on an October museum day with nothing to say against it.
   // §5.7 is explicit that an indoor destination excuses the base, never the trip.
-  const highF = Number.isFinite(t?.highF) ? t.highF : (Number.isFinite(t?.transitHighF) ? t.transitHighF : null)
-  const lowF = Number.isFinite(t?.lowF) ? t.lowF : (Number.isFinite(t?.transitLowF) ? t.transitLowF : null)
+  const highF = Number.isFinite(t?.highF) ? t.highF
+    : (Number.isFinite(t?.high_f) ? t.high_f
+    : (Number.isFinite(t?.transitHighF) ? t.transitHighF
+    : (Number.isFinite(t?.transit_high_f) ? t.transit_high_f : null)))
+  const lowF = Number.isFinite(t?.lowF) ? t.lowF
+    : (Number.isFinite(t?.low_f) ? t.low_f
+    : (Number.isFinite(t?.transitLowF) ? t.transitLowF
+    : (Number.isFinite(t?.transit_low_f) ? t.transit_low_f : null)))
   const rawWind = resolvedWeather?.wind?.value
     ?? resolvedWeather?.resolvedWeatherContext?.wind?.value
     ?? resolvedWeather?.wind

@@ -8,6 +8,7 @@ import { getCurrentUserId } from '../lib/requestContext.js'
 import { buildPrompts, DEFAULT_PROFILE, CONSTITUTION_LAYER_KEYS } from './prompts.js'
 
 export {
+  PHYSICAL_WEARABILITY_REALISM_RULES,
   EXPRESSIVE_HIERARCHY_RULES,
   TAG_PIECE_SYSTEM,
   EXTRACT_PIECES_SYSTEM,

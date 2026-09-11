@@ -153,6 +153,17 @@ test('directional construction: inner volume against a narrow outer is a concern
   const flaredConflict = evaluateLayerPairConstruction([narrowOuterSleeve, flaredInner], { roleAware: true })
   assert.equal(flaredConflict.verdict, 'incompatible', 'flared inner sleeve under a narrow outer sleeve is a concern')
 
+  // Puffer / boxy insulated outerwear: straight sleeve has ample room to accommodate gathered or voluminous sleeves
+  const gatheredInner = { id: 144, name: 'black turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'extra_long', sleeve_shape: 'gathered_ruched', silhouette: 'slim', fabric_weight: 'medium' }
+  const boxyPufferOuter = { id: 996775, name: 'Black puffer coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'boxy', fabric_weight: 'heavy', outerwear_role: 'cold_weather_outerwear', insulating_layer_materials: ['down'] }
+  const pufferOverGathered = evaluateLayerPairConstruction([boxyPufferOuter, gatheredInner], { roleAware: true })
+  assert.equal(pufferOverGathered.verdict, 'compatible', 'a boxy down puffer has ample room for gathered/ruched sleeves')
+  assert.equal(pufferOverGathered.findings.length, 0, 'no sleeve conflict finding on puffer over gathered sleeve')
+
+  const oversizedOuter = { id: 128, name: 'oversized jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'straight', silhouette: 'oversized', fabric_weight: 'medium' }
+  const oversizedOverVoluminous = evaluateLayerPairConstruction([oversizedOuter, voluminousInner], { roleAware: true })
+  assert.equal(oversizedOverVoluminous.verdict, 'compatible', 'oversized outerwear accommodates voluminous inner sleeve')
+
   // Unknown outer capacity: the inner garment has real volume, but the outer garment's own sleeve
   // shape is not recorded — must not fabricate an incompatibility from an unrecorded outer.
   const unknownCapacityOuter = { id: 28, name: 'unspecified-sleeve outer jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', fabric_weight: 'light' }

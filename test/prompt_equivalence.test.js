@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS } from '../styling-engine/prompts.js'
+import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
 
@@ -49,6 +49,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
           '- Respect the rotation warnings and any rejected-pairing memory provided.\n- Rotation is a soft tie-breaker, never a prohibition: repeat a recently shown garment when it is clearly the best or only valid choice. Do all comparison silently. Every returned field must describe only the final IDs in that outfit; never expose deliberation, rejected alternatives, self-correction, inventory checking, or rebuilding language.\n'
         )
       : snapshot[key]
+    // 2026-09-10: Whole-wardrobe visual composer incorporates shared physical wearability realism
+    // rules for multi-look parity. Keep frozen fixture intact and register byte delta.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        "Before finalizing each outfit, check its 'pieces' array:",
+        `${PHYSICAL_WEARABILITY_REALISM_RULES}\n\nBefore finalizing each outfit, check its 'pieces' array:`
+      )
+    }
     // 2026-09-06: single-card composition gains one structured intent fact for an explicit
     // removable-layer request. The accepted delta keeps the original fixture frozen while making
     // this additive routing/contract instruction visible at the byte-level prompt rail.
@@ -56,6 +64,10 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         '  * Proposing Outfits (default):',
         "  * Card Intent & Explicit Layers: Before composing cards outside the narrow implicit 2–5-look batch, call 'declare_intent' with `want:'cards'` and always set `layer_requirement`: use `required` only when the user's CURRENT message explicitly asks the outfit to include a removable layer, otherwise use `unspecified`. Unspecified never means forbidden; choose a layer when the weather and visual outfit call for one. When it is required, search outerwear visually and include the chosen owned layer in the same 'propose_outfit' card's ordinary piece IDs — not as prose, a packing annotation, or an off-card relation. If no eligible owned outerwear exists, report the wardrobe gap.\n  * Proposing Outfits (default):"
+      )
+      expected = expected.replace(
+        'Keep the existing rule that relative timing ("this weekend", "next month", "in a few days") is valid on its own and never by itself triggers a "when" question. For styling',
+        'Keep the existing rule that relative timing ("this weekend", "next month", "in a few days") is valid on its own and never by itself triggers a "when" question. When the user specifies a day of the week or relative date (e.g. "Friday", "tomorrow", "this Friday"), resolve that relative date against CURRENT DATE / DAY OF WEEK in your context to an explicit YYYY-MM-DD date and pass it as `date` on \'search_wardrobe\', \'propose_outfit\', or \'generate_outfits\'. If the user\'s message explicitly states qualitative weather (e.g. "mild weather", "chilly evening", "warm afternoon"), translate those conditions into `user_weather` (`temperature_band: \'mild\' | \'cold\' | \'hot\'`) rather than omitting structured weather. Explicit user-stated conditions must never be discarded to fall back to an unconstrained seasonal heuristic. For styling'
       )
     }
     // 2026-09-01: the shoes `fabric_category` enum had no `knit` value, so a knitted/flyknit upper
@@ -353,6 +365,20 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         'or cold — an office in a July heatwave is still air-conditioned, so do not serve sleeveless, breezy, or beachy pieces as if she\'ll be outside in the sun (offices often run cool, if anything). Reserve',
         'or cold. An office in a July heatwave is still air-conditioned and often runs cool rather than warm; judge the base\'s warmth for an ordinary indoor room, not for the day outside, and remember any layer worn for the walk there and back is not necessarily worn once indoors — the same distinction applies at arrival and departure regardless of season. Reserve'
+      )
+      // 2026-09-10: freeform stylist chat parity with ratified weather physics,
+      // catalog salience, card presentation, and dressing realism.
+      expected = expected.replace(
+        '  * Present each outfit as a rendered card, not a hand-written list: call \'propose_outfit\' once per outfit with the verified piece IDs (from \'search_wardrobe\') and each piece\'s role (primary_top/layer_top/primary_bottom/layer_bottom/dress/shoes/outerwear/accessory). The card shows the pieces, so in your prose give the outfit a creative title and a brief "why it works" (the visual relationship, silhouette drape, or texture contrast — avoid generic terms like "cohesive" or "perfect balance"), but do NOT also hand-write a "Pieces: A + B + C" line — the pieces live in the tool call.',
+        '  * Present each outfit as a rendered card: call \'propose_outfit\' once per outfit with the verified piece IDs (from \'search_wardrobe\') and each piece\'s role (primary_top/layer_top/primary_bottom/layer_bottom/dress/shoes/outerwear/accessory). Use your prose to give the outfit a creative title and a brief "why it works" (the visual relationship, silhouette drape, or texture contrast — avoid generic terms like "cohesive" or "perfect balance"); do not hand-write a "Pieces:" list, as the pieces live in the tool call. Do NOT output <card> tags, raw JSON, or machine markup in your text — the interactive card is rendered solely by propose_outfit / generate_outfits / submit_plan_outfits. Do NOT output markdown bullet lists or tables summarizing the pieces (e.g. \'* Primary Top: ... * Outerwear: ...\') — the UI card already renders every garment, photo, and role. Focus your prose on explaining the silhouette, visual proportion, texture interplay, and practical wearing advice.'
+      )
+      expected = expected.replace(
+        'Layer a single functional top (like a tee, knit top, or sweater) with a single outerwear piece (like a jacket, cardigan, vest, or explicitly saved overlay tank/shell) as appropriate for the temperature.',
+        'Layer a single functional top (like a tee, knit top, or sweater) with a single outerwear piece (like a jacket, cardigan, vest, or explicitly saved overlay tank/shell) as appropriate for the temperature. When conditions call for substantial warmth (sub-50°F / breezy), pull insulating coats (warmth:warm or very warm) OR middle layer knits (cardigans or vests tagged outerwear (layer_top), warmth:moderate) to construct an appropriately warm system; do not stack a cardigan under an insulating coat.'
+      )
+      expected = expected.replace(
+        'TUCK COMPATIBILITY (two-piece check before every tuck suggestion):',
+        `${PHYSICAL_WEARABILITY_REALISM_RULES}\n\nTUCK COMPATIBILITY (two-piece check before every tuck suggestion):`
       )
     }
     }

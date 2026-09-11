@@ -9,6 +9,7 @@ wardrobe.db-wal
 backups/
 uploads/
 .DS_Store
+.claude/
 scratch/*
 !scratch/check_text_matching_ratchet.js
 !scratch/ratchet_baseline.json
