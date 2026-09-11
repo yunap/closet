@@ -1,4 +1,15 @@
 import { weatherProfileFromContext } from './rules.js'
+import {
+  PET_BANDS,
+  COLD_THRESHOLD_F,
+  SEVERE_COLD_THRESHOLD_F,
+  COOL_LAYER_THRESHOLD_F,
+  WARM_THRESHOLD_F,
+  HOT_THRESHOLD_F,
+  EXTREME_HEAT_F,
+  classifyPetRange,
+  classifyPetTemperature,
+} from './biometeorology.js'
 
 // Spec 4: live weather, built new (not ported — nothing like this existed in the repo before).
 // Provider: Open-Meteo (free, no API key required — https://open-meteo.com) via its geocoding and
@@ -8,16 +19,15 @@ import { weatherProfileFromContext } from './rules.js'
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
-const HOT_F = 80
+export const HOT_F = 80
 // Exported (docs/cold-layer-exposure-trigger-spec.md) so the trip-slot cold-trigger relaxation can
 // compare a waking-window exposure temperature against THE SAME threshold isCold already uses,
 // rather than inventing a second number for the same question.
 export const COLD_F = 45
-// docs/cool-weather-tier-spec.md, ruled 2026-09-01. The temperature at which the cold end of a day
-// warrants something the wearer can put ON — distinct from COLD_F, which asks how warm the base
-// itself should be. Deliberately read off the LOW: the low is when a removable layer is wanted.
-const COOL_LOW_F = 55
-const EXTREME_HEAT_F = 100
+// Aligned with the peer-reviewed Matzarakis PET Biometeorological Scale (biometeorology.js).
+// 64°F: below this is Slight Cold Stress (Slightly Cool / Cool), warranting a removable cool
+// or midweight layer (cardigan, chunky knit, light jacket).
+export const COOL_LOW_F = COOL_LAYER_THRESHOLD_F
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
 const FETCH_TIMEOUT_MS = 4000
 
@@ -163,8 +173,9 @@ function classify(highs, lows, { exclusive = true } = {}) {
   const isCold = minLow <= COLD_F
   const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
-  if (!exclusive) return { isHot, isCold, ...extreme, ...observedRange }
-  return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme, ...observedRange }
+  const needsRemovableCoolLayer = minLow <= COOL_LOW_F && !isCold
+  if (!exclusive) return { isHot, isCold, needsRemovableCoolLayer, ...extreme, ...observedRange }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot, needsRemovableCoolLayer, ...extreme, ...observedRange }
 }
 
 async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive }) {

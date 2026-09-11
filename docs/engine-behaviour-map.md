@@ -1,6 +1,6 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26; **amended 2026-09-10** for freeform stylist chat parity with ratified weather physics, catalog salience, and advisory findings; **amended 2026-08-25** for the shared eligibility API retirement
+**Status:** twelfth pass, 2026-07-26; **amended 2026-09-11** for biometeorological weather unification with the Matzarakis PET scale; **amended 2026-09-10** for freeform stylist chat parity with ratified weather physics, catalog salience, and advisory findings; **amended 2026-08-25** for the shared eligibility API retirement
 audit and canonical applicability projection; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
@@ -15,6 +15,24 @@ composer (measured 0 reads against 30-49k written tokens on every sampled call) 
 **amended 2026-08-26** once more for `layerDirectionPromptRule()` and the verified
 `OUTFIT_EVALUATOR_GATE_SYSTEM` register/footwear fix.
 Companion to `docs/app-surface-map.md`.
+
+
+**[amended 2026-09-11 — biometeorological weather unification with the Matzarakis PET Scale]**
+To resolve fractured weather thresholds across four divergent modules (`styling-engine/weather.js`, `styling-engine/thermalDemand.js`, `styling-engine/rules.js`, and `styling-engine/outfitSetPlanner.js`) and eliminate the 55°F–80°F unclassified temperature dead zone (which previously treated 56°F as warm indoor baseline rather than requiring a midweight layer), the styling engine's thermal architecture is unified around the peer-reviewed **Matzarakis Physiological Equivalent Temperature (PET)** scale (Matzarakis & Mayer 1996; Matzarakis et al. 1999) based on the Munich Energy-balance Model for Individuals (MEMI) for sedentary/light activity (80 W) with standard clothing adaptation:
+1. **Authoritative Biometeorology Authority (`styling-engine/biometeorology.js`)**: Serves as the single source of truth for temperature boundaries across the styling engine. Defines contiguous PET bands:
+   - `VERY_COLD` (< 39°F / < 4°C, Extreme Cold Stress): `demandLevel: 'very warm'`, heavy winter coat, down parka, thermal underwear, wool accessories.
+   - `COLD` (39°F–46°F / 4°C–8°C, Strong Cold Stress): `demandLevel: 'warm'`, wool coat, winter jacket, heavy knitwear or intentional 3-layer system.
+   - `COOL` (46°F–55°F / 8°C–13°C, Moderate Cold Stress): `demandLevel: 'warm'`, outerwear required (trench, fleece, jacket, leather jacket) over base.
+   - `SLIGHTLY_COOL` (55°F–64°F / 13°C–18°C, Slight Cold Stress): `demandLevel: 'moderate'`, midweight layer required (chunky sweater, cardigan, hoodie, light jacket), `needsRemovableCoolLayer: true`.
+   - `COMFORTABLE` (64°F–73°F / 18°C–23°C, Thermal Neutrality): `demandLevel: 'light'`, transitional light layer or long sleeves.
+   - `SLIGHTLY_WARM` (73°F–84°F / 23°C–29°C, Slight Heat Stress): `demandLevel: 'very light'`, single breathable layer.
+   - `HOT` (> 84°F / > 29°C, Moderate to Strong Heat Stress): `demandLevel: 'very light'`, summer linen, tanks, shorts, airy dresses.
+   - `EXTREME_HEAT_F` (>= 100°F): extreme heat precautions.
+   Exports canonical thresholds (`COLD_THRESHOLD_F = 46`, `SEVERE_COLD_THRESHOLD_F = 39`, `COOL_LAYER_THRESHOLD_F = 64`, `WARM_THRESHOLD_F = 73`, `HOT_THRESHOLD_F = 84`, `EXTREME_HEAT_F = 100`) and pure classification functions (`classifyPetTemperature`, `classifyPetRange`, `petBandToThermalDemand`).
+2. **Thermal Demand Deduplication (`styling-engine/thermalDemand.js`)**: Replaced ad-hoc `SEDENTARY_DEMAND_F` thresholds with imports from `styling-engine/biometeorology.js` (`SEDENTARY_DEMAND_F`), aligning all sedentary thermal demand steps with the PET scale.
+3. **Weather Consolidation (`styling-engine/weather.js`)**: Replaced the arbitrary 55°F `COOL_LOW_F` cutoff with `COOL_LAYER_THRESHOLD_F` (64°F), ensuring temperatures between 55°F and 64°F classify as Slightly Cool and correctly trigger `needsRemovableCoolLayer: true`.
+
+
 
 
 **[amended 2026-09-10 — trip planning roster feasibility, weather context injection, and occasion realism]**
