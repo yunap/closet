@@ -3,6 +3,7 @@ import {
   pieceDressSupportsUnderlayer,
   pieceHasExplicitBaseLayerEvidence,
   pieceHasExplicitTopLayerEvidence,
+  pieceOuterSleeveCapacity,
   pieceRequiresBaseLayer,
   pieceSleeveInterference,
   pieceSleeveLayerEvidence,
@@ -510,7 +511,9 @@ function layerConstructionPair(added, base, direction = null) {
     const innerLabel = innerPiece === added ? addedLabel : baseLabel
     const outerZones = pieceSleeveInterference(outerPiece)
     const innerZones = pieceSleeveInterference(innerPiece)
-    const conflictZone = SLEEVE_INTERFERENCE_ZONES.find(zone => innerZones[zone] === 'elevated' && outerZones[zone] === 'none')
+    const conflictZone = SLEEVE_INTERFERENCE_ZONES.find(zone =>
+      innerZones[zone] === 'elevated' && pieceOuterSleeveCapacity(outerPiece, zone) === 'restricted'
+    )
     if (conflictZone) {
       const reason = `${innerLabel}'s sleeve carries excess volume at the ${SLEEVE_INTERFERENCE_ZONE_LABELS[conflictZone]} that ${outerLabel}'s narrower, structured sleeve has no room to accommodate`
       return {
@@ -524,7 +527,10 @@ function layerConstructionPair(added, base, direction = null) {
     }
     const innerFullyKnown = SLEEVE_INTERFERENCE_ZONES.every(zone => innerZones[zone] !== null)
     const outerFullyKnown = SLEEVE_INTERFERENCE_ZONES.every(zone => outerZones[zone] !== null)
-    if (innerFullyKnown && outerFullyKnown) {
+    const outerAccommodatesAllInner = SLEEVE_INTERFERENCE_ZONES.every(zone =>
+      innerZones[zone] !== 'elevated' || pieceOuterSleeveCapacity(outerPiece, zone) === 'accommodates'
+    )
+    if (innerFullyKnown && (outerFullyKnown || outerAccommodatesAllInner)) {
       return { verdict: 'compatible', addedPiece: added, basePiece: base, findings: [], evidence, sightRequired: 'none' }
     }
     // The inner garment's geometry, the outer garment's capacity to accommodate it, or both are

@@ -950,7 +950,7 @@ test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hin
 
   const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
   assert.ok(bottomLine)
-  assert.equal(bottomLine, 'ID ' + seeded.bottom + ': light beige linen wide-leg pants; fabric: linen; reads_as: soft structured light column')
+  assert.equal(bottomLine, 'ID ' + seeded.bottom + ': light beige linen wide-leg pants; warmth: light; weight: light; fabric: linen; reads_as: soft structured light column')
 
   const plainLine = textLines.find(line => line.startsWith(`ID ${plainPiece}:`))
   assert.ok(plainLine)
@@ -1072,6 +1072,7 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
     season: 'current season',
+    date: '2026-06-25T12:00:00Z',
     mood: 'modern bohemian',
     activity: 'walking',
     limit: 2,

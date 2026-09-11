@@ -50,6 +50,7 @@ import {
   MIN_ENFORCED_CAPSULE_BUDGET,
   truthfulWeatherLabel,
   slotColdLayerRequired,
+  slotColdLayerPermitted,
   identifyColdLayerRepairableFailures
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
@@ -401,6 +402,8 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
   return `#${Number(piece.id)} ${piece.name || 'unnamed'} | ${groupLabel}${facts.length ? ` | ${facts.join(';')}` : ''}`
 }
 
+export const stylistCatalogLine = singleOutfitStylistCatalogLine
+
 export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } = {}) {
   const unique = []
   const seen = new Set()
@@ -448,7 +451,7 @@ export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } 
   }
 
   const instruction = coldRequired
-    ? 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles. Because conditions call for substantial warmth, be sure to pull 2–3 insulating outer coats (warmth:warm or warmth:very warm) AND 2–3 middle layer knits (e.g. cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench alongside tops, bottoms, and shoes, so you have the visual candidates needed to construct an appropriately warm system. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. After inspecting photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
+    ? 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles. Because conditions call for substantial warmth, pull 2–3 insulating outer coats (warmth:warm or warmth:very warm) OR middle layer knits (e.g. cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench alongside tops, bottoms, and shoes, so you have the visual candidates needed to construct an appropriately warm system. A single warm coat over a top is sufficient on its own; do not layer a cardigan under a heavy coat or puffer. Reserve a 3-layer system for when using a lightweight, uninsulated shell. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. After inspecting photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
     : 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
 
   return {
@@ -1067,7 +1070,7 @@ const USER_WEATHER_SCHEMA = {
   properties: {
     high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature, set high_f and low_f to the same value." },
     low_f: { type: "number", description: "The user's stated low, Fahrenheit." },
-    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot') when the user gave no number. Never set this alongside high_f/low_f." },
+    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot', 'mild weather') when the user gave no number. Never set this alongside high_f/low_f." },
     precipitation: { type: "string", enum: PRECIPITATION_VALUES, description: "Only when the user stated it this turn." },
     wind: { type: "string", enum: WIND_VALUES, description: "Only when the user stated it this turn." }
   }
@@ -1094,20 +1097,20 @@ const WEATHER_ESTIMATE_SCHEMA = {
 // incoherent states (a "warm enough" claim carrying a layer ID too) a plain enum cannot represent.
 export function coldLayerDecisionSchemaProperty() {
   return {
-    type: "object",
+    type: 'object',
     additionalProperties: false,
     properties: {
       mode: {
-        type: "string",
-        enum: ["core_is_warm_enough", "assigned_packed_layer", "not_required"],
-        description: "core_is_warm_enough: piece_ids alone (its own outerwear piece, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: piece_ids is not warm enough on its own, and assigned_layer_piece_id names the packed roster layer worn WITH this look. not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
+        type: 'string',
+        enum: ['core_is_warm_enough', 'assigned_packed_layer', 'not_required'],
+        description: "core_is_warm_enough: piece_ids alone (either including an outerwear piece directly in piece_ids, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: pairs this outfit with a compatible packed roster layer (named by assigned_layer_piece_id) worn with this look when outdoors. not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
       },
       assigned_layer_piece_id: {
-        type: ["integer", "null"],
-        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity -- not part of the card's own visual identity, do not also put it in piece_ids. Must be null for every other mode."
+        type: ['integer', 'null'],
+        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity. Must be null for every other mode."
       }
     },
-    required: ["mode", "assigned_layer_piece_id"]
+    required: ['mode', 'assigned_layer_piece_id']
   }
 }
 
@@ -1325,7 +1328,7 @@ export const STYLIST_TOOLS = [
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
         location: { type: "string", description: "Real place named by the user, when weather affects the request. Pass it (with `date`) so the bounded composer uses user_weather if you supplied it, else the live forecast, else weather_estimate, rather than a seasonal guess." },
-        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day or relative date. Use CURRENT DATE / SEASON to resolve it. Pairs with `location`." },
+        date: { type: "string", description: "Resolved requested date in YYYY-MM-DD when the user names a day of week or relative date (e.g. 'Friday' or 'tomorrow'). Use CURRENT DATE / DAY OF WEEK to resolve it to an exact date. Pairs with `location`." },
         user_weather: USER_WEATHER_SCHEMA,
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
@@ -2404,7 +2407,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           : hardFindings
         const nonBlockingFindings = isSingleOutfit
           ? [...hardFindings.filter(finding => finding.kind !== 'role_structure'), ...advisoryFindings]
-          : []
+          : advisoryFindings
         const issues = blockingFindings.map(finding => finding.message)
 
         if (issues.length) {
@@ -2546,20 +2549,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const singleOutfitAdvisoryNotes = []
-        if (isSingleOutfit) {
-          for (const finding of nonBlockingFindings) {
-            let msg = finding.message
-            if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
-              msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
-            }
-            singleOutfitAdvisoryNotes.push({
-              type: finding.code?.startsWith('env_') || finding.kind === 'environment' ? 'Weather note' : 'Fit note',
-              message: msg
-            })
+        const advisoryNotes = []
+        for (const finding of nonBlockingFindings) {
+          let msg = finding.message
+          if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
+            msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
           }
+          advisoryNotes.push({
+            type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
+            message: msg
+          })
+        }
+        if (isSingleOutfit) {
           for (const msg of autoGateIssues) {
-            singleOutfitAdvisoryNotes.push({
+            advisoryNotes.push({
               type: 'Style note',
               message: msg
             })
@@ -2673,7 +2676,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const finalAnnotations = [
           ...(supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : []),
-          ...(singleOutfitAdvisoryNotes || [])
+          ...(advisoryNotes || [])
         ]
         const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
@@ -2698,7 +2701,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }, {
           disposition: finalDisposition,
           annotations: finalAnnotations,
-          findings: (singleOutfitAdvisoryNotes || []).map(n => ({ message: n.message, kind: 'advisory', severity: 'warning' })),
+          findings: (advisoryNotes || []).map(n => ({ message: n.message, kind: 'advisory', severity: 'warning' })),
           provenance: {
             flow: 'freeform_propose_outfit',
             source: 'proposed',
@@ -2735,10 +2738,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             message: 'The corrected outfit still fails the same hard outfit validator after substitution. Search for another replacement and re-propose the complete card.',
           }
         }
-        toolContext.generatedOutfits = [
-          ...existingOutfits.filter(outfit => outfit !== supersededBroken),
-          correctionRecovery?.value || proposedOutfit
-        ]
+        const nextOutfit = correctionRecovery?.value || proposedOutfit
+        toolContext.generatedOutfits = isSingleOutfit
+          ? [nextOutfit]
+          : [
+              ...existingOutfits.filter(outfit => outfit !== supersededBroken),
+              nextOutfit
+            ]
         if (isSingleOutfit) {
           toolContext.singleOutfitProposalCompleted = true
         }
@@ -2822,13 +2828,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           viewed.push({
             id: parsed.id,
             name: parsed.name,
-            // The compact single-outfit catalog is the candidate-selection truth surface. Repeat
+            // The compact catalog is the candidate-selection truth surface. Repeat
             // that same decision-useful projection beside the selected photograph so fit, warmth,
             // sleeve, waist and weather-construction facts do not disappear at the moment of
-            // comparison. Other flows retain their established manifest truth line.
-            truth: singleOutfitViewCall
-              ? singleOutfitStylistCatalogLine(parsed)
-              : buildWardrobeManifestLine(parsed),
+            // comparison across all flows.
+            truth: singleOutfitStylistCatalogLine(parsed),
             evidence_note: 'Photos support visible drape, bulk, texture and behavior—not exact fiber composition. A shown configuration proves feasibility only; judge its visible result separately and do not rank an unseen alternative.',
             ...(image ? { image } : { note: 'no photo on file — tags are the only truth for this piece' })
           })
@@ -3861,7 +3865,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             const isAlreadyNotRequired = decision.mode === 'not_required' && decision.assigned_layer_piece_id == null
             if (isAlreadyNotRequired) return outfit
             const slot = slotById.get(String(outfit?.slot_id || ''))
-            if (!slot || slotColdLayerRequired(slot)) return outfit
+            if (!slot || slotColdLayerRequired(slot) || slotColdLayerPermitted(slot)) return outfit
             correctedColdLayerDecisions.push({ slot_id: outfit.slot_id, title: outfit.title || '', original_cold_layer_decision: decision })
             return { ...outfit, cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }
           })
@@ -4223,8 +4227,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         let resolvedSeason = stylingContext.season
         if (boundedMultiLook) {
           const resolvedWeather = stylingContext.weatherProfile
-          const forecastTemperature = Number.isFinite(Number(resolvedWeather.highF))
-            ? `forecast high ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? `, low ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
+          const hasHigh = Number.isFinite(Number(resolvedWeather.highF))
+          const hasLow = Number.isFinite(Number(resolvedWeather.lowF))
+          const roundedHigh = hasHigh ? Math.round(Number(resolvedWeather.highF)) : null
+          const roundedLow = hasLow ? Math.round(Number(resolvedWeather.lowF)) : null
+          const forecastTemperature = hasHigh
+            ? (hasLow && roundedHigh !== roundedLow
+                ? `forecast high ${roundedHigh}°F, low ${roundedLow}°F`
+                : `temperature around ${roundedHigh}°F`)
             : ''
           // Cold gets the same 3-tier treatment as heat (isExtremeHeat) rather than
           // collapsing "chilly" and "freezing" into one "cold weather" label that
@@ -4245,8 +4255,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
             : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
-          toolContext.boundedWeatherSummary = Number.isFinite(Number(resolvedWeather.highF))
-            ? `a forecast high of ${Math.round(Number(resolvedWeather.highF))}°F${Number.isFinite(Number(resolvedWeather.lowF)) ? ` and low of ${Math.round(Number(resolvedWeather.lowF))}°F` : ''}`
+          toolContext.boundedWeatherSummary = hasHigh
+            ? (hasLow && roundedHigh !== roundedLow
+                ? `a forecast high of ${roundedHigh}°F and low of ${roundedLow}°F`
+                : `a temperature around ${roundedHigh}°F`)
             : ''
           toolContext.boundedLocation = stylingContext.location
           toolContext.boundedWeatherUnavailable = resolvedWeather.weatherSource === 'unavailable'

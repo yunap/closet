@@ -1059,6 +1059,44 @@ export function pieceSleeveInterference(piece = {}) {
   return { ...zones }
 }
 
+// Canonical outer-sleeve capacity reader: does this outer garment's sleeve have the physical room
+// to accommodate elevated inner sleeve volume (gathered/ruched, voluminous, puff shoulder, flared) at
+// the specified zone? Returns 'accommodates' | 'restricted' | null (unresolved).
+//
+// A garment's own sleeve shape may be 'straight' (meaning it carries no localized volume of its own),
+// but an outerwear piece with generous cut (boxy, oversized, relaxed silhouette/fit) or cold-weather
+// insulation (puffer, down fill) has ample sleeve circumference and armhole space to comfortably
+// accommodate inner sleeve volume. Conversely, fitted outer sleeves or slim/fitted-silhouette outer layers
+// genuinely lack room and restrict inner volume.
+export function pieceOuterSleeveCapacity(piece = {}, zone = null) {
+  const shape = String(piece?.sleeve_shape || '').toLowerCase().trim() || null
+  if (shape === 'fitted') return 'restricted'
+
+  const zones = pieceSleeveInterference(piece)
+  if (zone && zones[zone] === 'elevated') return 'accommodates'
+
+  const silhouette = String(piece?.silhouette || '').toLowerCase().trim()
+  const fitOnBody = String(piece?.fit_on_body || '').toLowerCase().trim()
+  const isGenerousCut = ['boxy', 'oversized', 'relaxed', 'loose'].includes(silhouette) ||
+    ['oversized', 'relaxed', 'loose'].includes(fitOnBody)
+
+  const isInsulatedOrColdWeather = (Array.isArray(piece?.insulating_layer_materials) && piece.insulating_layer_materials.length > 0) ||
+    piece?.outerwear_role === 'cold_weather_outerwear' ||
+    /\b(puffer|quilted|down)\b/i.test(piece?.name || '') || // ratchet-allow: fallback for unpopulated insulation
+    /\b(puffer|quilted|down)\b/i.test(piece?.reads_as || '') // ratchet-allow: fallback for unpopulated insulation
+
+  const isOuter = wardrobeCategoryGroup(piece) === 'outerwear'
+  if (isOuter && (isInsulatedOrColdWeather || isGenerousCut)) {
+    return 'accommodates'
+  }
+
+  if (!shape || shape === 'other' || shape === 'unknown') {
+    return null
+  }
+
+  return 'restricted'
+}
+
 // Atomic construction evidence for a garment's own sleeve, independent of any other garment it
 // might layer with. `outfitValidation.js` composes two of these into a pair verdict; this reader
 // only normalizes and classifies one garment's own tagged fields. `null` on a classifier means the

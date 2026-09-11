@@ -29,7 +29,7 @@
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
-import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate } from './outfitEnvironmentalAdequacy.js'
+import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, ENVIRONMENTAL_ADEQUACY_CODES } from './outfitEnvironmentalAdequacy.js'
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -186,9 +186,12 @@ function collectPieceRoster(outfits = []) {
 // does not get a "remember to add jacket" note pasted onto every card that omits it, which is the
 // per-card noise this whole architecture exists to stop producing. Selected-but-not-demonstrated
 // pieces are named explicitly, the same disclosure discipline the capsule roster already gets.
-function buildTripPackingLines(tripRoster = [], tripOutfits = []) {
+export function buildTripPackingLines(tripRoster = [], tripOutfits = []) {
   if (!tripRoster.length) return []
-  const shownIds = new Set(tripOutfits.flatMap(outfit => (outfit.pieces || []).map(piece => Number(piece?.id))))
+  const shownIds = new Set(tripOutfits.flatMap(outfit => [
+    ...(outfit.pieces || []).map(piece => Number(piece?.id)),
+    ...(Array.isArray(outfit.assignedLayerIds) ? outfit.assignedLayerIds.map(Number) : [])
+  ]))
   const names = tripRoster.map(piece => piece?.name || 'Garment')
   const undemonstrated = tripRoster.filter(piece => !shownIds.has(Number(piece?.id)))
   const lines = [`WHAT TO PACK (${tripRoster.length}): ${names.join(', ')}`]
@@ -2603,10 +2606,17 @@ function planWorkbenchPieceLine(piece = {}) {
     ? `waistband:${piece.waistband_type}`
     : ''
   const capability = outerwearCapabilityDisplay(piece)
+  const group = wardrobeCategoryGroup(piece) || piece.category || ''
+  const kind = garmentKind(piece)
+  const groupLabel = group === 'outerwear' && (kind === 'cardigan' || kind === 'vest')
+    ? 'outerwear (layer_top)'
+    : group
+  const warmth = !['shoes', 'accessory'].includes(group) ? garmentWarmthLevel(piece) : null
   const bits = [
     `ID ${piece.id}`,
     piece.name || 'Garment',
-    wardrobeCategoryGroup(piece) || piece.category || '',
+    groupLabel,
+    warmth ? `warmth:${warmth}` : '',
     colors ? `colors:${colors}` : '',
     occasions ? `occasions:${occasions}` : '',
     piece.formality ? `formality:${piece.formality}` : '',
@@ -3670,12 +3680,21 @@ function tripReuseScore(piece, slots, gateSlots) {
 }
 
 // A bench candidate's construction bucket — the same already-tagged attribute
-// (wardrobeCategoryGroup + garmentKind) outerLayerSevereColdAdequacy, pieceFidelityChecklist and the
-// rest of this file already use to distinguish real construction differences, not an invented
-// diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different buckets; two cardigans are
-// the same bucket regardless of color/pattern.
+// (wardrobeCategoryGroup + garmentKind / shoe_type / bottomKind) outerLayerSevereColdAdequacy,
+// pieceFidelityChecklist and the rest of this file already use to distinguish real construction
+// differences, not an invented diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different
+// buckets; 'shoes:boot' and 'shoes:sneaker' are different buckets; two cardigans are the same bucket
+// regardless of color/pattern.
 function tripBenchBucketKey(piece) {
-  return `${wardrobeCategoryGroup(piece)}:${garmentKind(piece) || 'other'}`
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes') {
+    const shoeType = String(piece?.shoe_type || '').toLowerCase().trim()
+    return `shoes:${shoeType || garmentKind(piece) || 'other'}`
+  }
+  if (group === 'bottom') {
+    return `bottom:${bottomKind(piece) || 'other'}`
+  }
+  return `${group}:${garmentKind(piece) || 'other'}`
 }
 
 // thread_1788504927533: buildCoveredCandidateSet (candidateSet.js) truncates its RANKED INPUT ORDER
@@ -3874,11 +3893,15 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   for (const { slot, slotEligible, label } of gateSlots) {
     const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
     const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
-    // Reads the same relaxed fact slotColdLayerRequired uses (cold-layer-exposure-trigger-spec.md),
-    // not raw isCold directly — this loop is a third consumer of that question and was disagreeing
-    // with the card-level check it exists to predict for a mild, activity-relaxed cold slot.
-    if (isIndoor || !slotColdLayerRequired({ weatherProfile, environment: slot.environment })) continue
-    if (slotEligible.some(piece => hasMinimumWarmLayer([piece]))) continue
+    if (isIndoor) continue
+    const isCold = Boolean(weatherProfile.isCold || weatherProfile.isColdSevere)
+    const needsCool = Boolean(weatherProfile.needsRemovableCoolLayer)
+    if (!isCold && !needsCool) continue
+    const hasViableLayer = slotEligible.some(piece =>
+      hasMinimumWarmLayer([piece]) ||
+      (wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+    )
+    if (hasViableLayer) continue
     failures.push({
       code: 'cold_floor_infeasible',
       message: `${label} cannot form a cold-valid outfit from this roster: no slot-eligible qualifying warm layer or heavy main is available.`
@@ -4363,7 +4386,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
     // was built to remove.
     planKind === 'trip'
-      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. When a slot\'s cold_layer_required is true, its submitted outfit itself must actually be warm: either piece_ids already includes an outerwear piece, or a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). If neither is true, choose a packed layer from the current packing roster that fits this specific look and its occasion/activity, and name its ID via cold_layer_decision (mode \'assigned_packed_layer\', assigned_layer_piece_id set) — do not put it in piece_ids just to satisfy this. When cold_layer_required is false, use mode \'not_required\' with assigned_layer_piece_id null.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When cold_layer_required is false, mode \'not_required\' (assigned_layer_piece_id null) is standard; however, if the slot notes cool transition temperatures or a removable cool layer is needed, you may include the layer in piece_ids (mode \'core_is_warm_enough\') or assign an appropriate packed outerwear layer via mode \'assigned_packed_layer\'. If neither cold nor cool layer applies, use mode \'not_required\' with assigned_layer_piece_id null.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
@@ -4837,6 +4860,15 @@ export function slotColdLayerRequired(slot = {}) {
   return Boolean(requiresWarmLayer) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
 }
 
+export function slotColdLayerPermitted(slot = {}) {
+  if (slotColdLayerRequired(slot)) return true
+  const isIndoor = slot.environment === 'indoor' || slot.weatherProfile?.isIndoor === true
+  if (isIndoor) {
+    return Boolean(slot.weatherProfile?.transitIsCold || slot.weatherProfile?.transitNeedsRemovableCoolLayer)
+  }
+  return Boolean(slot.weatherProfile?.needsRemovableCoolLayer)
+}
+
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Pure identification
 // only -- no provider call lives here. The caller (tools.js's atomic trip branch) owns invoking the
 // actual repair composition with these candidates and re-validating the response through
@@ -5005,20 +5037,33 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // logically incoherent states (a "warm enough" claim carrying a layer ID too) that would need
     // their own special-cased rejection just to name the incoherence.
     const coldLayerRequired = slotColdLayerRequired(slot)
+    const coldLayerPermitted = slotColdLayerPermitted(slot)
     const decision = raw?.cold_layer_decision && typeof raw.cold_layer_decision === 'object' ? raw.cold_layer_decision : {}
     const mode = String(decision.mode || '').trim()
     const decisionLayerId = Number.isFinite(Number(decision.assigned_layer_piece_id)) && Number(decision.assigned_layer_piece_id) > 0
       ? Number(decision.assigned_layer_piece_id)
       : null
     if (!coldLayerRequired) {
-      // Unenforced-invariant fix (traced live via thread_1788577086327/run 1336's gallery_lunch
-      // card): the schema's own description already tells the model to answer 'not_required' when
-      // cold_layer_required is false, but nothing here checked it — a non-cold slot could carry a
-      // packed layer relation unchallenged.
-      if (mode && mode !== 'not_required') {
-        reasons.push(`cold_layer_decision.mode must be 'not_required' for ${label} — this slot's cold_layer_required is false.`)
-      } else if (decisionLayerId !== null) {
-        reasons.push(`cold_layer_decision.assigned_layer_piece_id must be null for ${label} — this slot's cold_layer_required is false.`)
+      if (!coldLayerPermitted) {
+        // When neither cold nor cool layer applies, mode must be 'not_required' with assigned_layer_piece_id null
+        if (mode && mode !== 'not_required') {
+          reasons.push(`cold_layer_decision.mode must be 'not_required' for ${label} — this slot's cold_layer_required is false.`)
+        } else if (decisionLayerId !== null) {
+          reasons.push(`cold_layer_decision.assigned_layer_piece_id must be null for ${label} — this slot's cold_layer_required is false.`)
+        }
+      } else {
+        // Cold layer is not strictly required, but cool transition layer is permitted
+        if (!mode || mode === 'not_required') {
+          if (decisionLayerId !== null) {
+            reasons.push(`cold_layer_decision.assigned_layer_piece_id must be null when mode is 'not_required' for ${label}.`)
+          }
+        } else if (mode === 'core_is_warm_enough') {
+          if (decisionLayerId !== null) {
+            reasons.push(`cold_layer_decision.mode is 'core_is_warm_enough' for ${label} but assigned_layer_piece_id is also set — choose one.`)
+          }
+        } else if (mode !== 'assigned_packed_layer') {
+          reasons.push(`cold_layer_decision.mode must be one of 'core_is_warm_enough', 'assigned_packed_layer', or 'not_required' for ${label}.`)
+        }
       }
     } else if (mode === 'not_required') {
       reasons.push(`cold_layer_decision.mode cannot be 'not_required' for ${label} — this slot's cold_layer_required is true.`)
@@ -5042,7 +5087,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // the plain-omission shape and keeping this block's own new reasons scoped to genuinely new
     // validation surface (schema misuse, false claims) rather than duplicating the existing floor.
     const assignedLayers = []
-    if (coldLayerRequired && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
+    if ((coldLayerRequired || coldLayerPermitted) && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
       const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
         reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
@@ -5102,6 +5147,12 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // literal enumeration" means), so it must not be fed into checks that assume it is.
         ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
       })
+      if (Array.isArray(wearableValidation.advisoryFindings) && wearableValidation.advisoryFindings.length) {
+        outfit.systemFlags = wearableValidation.advisoryFindings.map(finding => ({
+          type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
+          message: finding.message
+        }))
+      }
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
         reasons.push(`this outfit has a visual relationship that saved garment facts cannot resolve — call view_pieces on [${wearableValidation.unresolvedSightPieceIds.join(', ')}] first, then resubmit after judging it from sight`)
@@ -5440,7 +5491,8 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     statedPalette: Array.isArray(pendingPlan?.statedPalette) ? pendingPlan.statedPalette : [],
     coverageGaps
   }).map(outfit => normalizeOutfitResult(outfit, {
-    disposition: 'accepted',
+    disposition: (Array.isArray(outfit.systemFlags) && outfit.systemFlags.length) ? 'annotated' : 'accepted',
+    annotations: outfit.systemFlags || [],
     provenance: { flow: 'plan_outfit_set', source, composedBy: 'model', stage: 'plan_validation' },
   }))
 }

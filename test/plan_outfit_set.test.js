@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY, resolveToolStylingContext } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory, slotColdLayerRequired, slotColdLayerPermitted } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
@@ -9146,4 +9146,75 @@ test('the limited photo slots go to the garments hardest to describe in words', 
     [2, 3],
   )
   assert.equal(visuallyPrioritizedPieces([], 5).length, 0)
+})
+
+test('slotColdLayerPermitted returns true for cool-tier transition weather and transit cooling', () => {
+  const coldSlot = { environment: 'outdoor', weatherProfile: { isCold: true } }
+  assert.equal(slotColdLayerRequired(coldSlot), true)
+  assert.equal(slotColdLayerPermitted(coldSlot), true)
+
+  const mildNoLayerSlot = { environment: 'outdoor', weatherProfile: { isCold: false, needsRemovableCoolLayer: false } }
+  assert.equal(slotColdLayerRequired(mildNoLayerSlot), false)
+  assert.equal(slotColdLayerPermitted(mildNoLayerSlot), false)
+
+  const coolTransitionSlot = { environment: 'outdoor', weatherProfile: { isCold: false, needsRemovableCoolLayer: true } }
+  assert.equal(slotColdLayerRequired(coolTransitionSlot), false)
+  assert.equal(slotColdLayerPermitted(coolTransitionSlot), true)
+
+  const indoorCoolTransitSlot = { environment: 'indoor', weatherProfile: { isIndoor: true, isCold: false, transitNeedsRemovableCoolLayer: true } }
+  assert.equal(slotColdLayerRequired(indoorCoolTransitSlot), false)
+  assert.equal(slotColdLayerPermitted(indoorCoolTransitSlot), true)
+})
+
+test('validateSubmittedPlanOutfits accepts assigned_packed_layer for cool transition weather without forcing not_required', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'light tee', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'casual pants', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'walking shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'field jacket', occasions: ['casual'], formality: 'everyday', fabric_weight: 'medium' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+
+  const slots = normalizePlanSlots([{
+    label: 'Coastal Bluff Walk',
+    occasion: 'casual',
+    activity: 'walking',
+    count: 1,
+    weather: 'mild',
+  }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'trip to carmel' })
+  const targetSlot = workbench.pendingPlan.slots[0]
+  targetSlot.weatherProfile = {
+    ...targetSlot.weatherProfile,
+    isCold: false,
+    needsRemovableCoolLayer: true,
+  }
+
+  // In a trip plan, the packing roster holds the packed layer (jacketId)
+  workbench.pendingPlan.packingRoster = [allPieces.find(p => Number(p.id) === Number(jacketId))].filter(Boolean)
+
+  // 1. With assigned_packed_layer and a valid packed outerwear piece:
+  const validationWithLayer = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: targetSlot.id,
+    title: 'Breezy walk',
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+    cold_layer_decision: {
+      mode: 'assigned_packed_layer',
+      assigned_layer_piece_id: Number(jacketId),
+    },
+  }])
+  assert.equal(validationWithLayer.accepted.length, 1, 'assigned_packed_layer must be accepted for cool transition slots')
+  assert.deepEqual(validationWithLayer.accepted[0].assignedLayerIds, [Number(jacketId)])
+
+  // 2. With not_required: also accepted because cool layer is permitted rather than strictly required,
+  // and the packing roster covers the layer requirement at the trip set level
+  const validationNotRequired = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: targetSlot.id,
+    title: 'Breezy walk casual',
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+    cold_layer_decision: {
+      mode: 'not_required',
+      assigned_layer_piece_id: null,
+    },
+  }])
+  assert.equal(validationNotRequired.accepted.length, 1, 'mode not_required must also be accepted when cold_layer_required is false')
 })

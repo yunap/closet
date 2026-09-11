@@ -17,7 +17,12 @@ const text = value => String(value ?? '').trim()
 const identity = value => value
 const normalizeSeason = value => text(value) || 'current season'
 const normalizeRequestText = value => text(value)
-const normalizeDate = value => value || null
+const normalizeDate = value => {
+  if (!value) return null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
 
 function valueForField(source = {}, field = '') {
   if (field === 'requestText') return source.requestText ?? source.request ?? source.question

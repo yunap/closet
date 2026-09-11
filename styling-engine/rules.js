@@ -67,7 +67,8 @@ import {
   pieceMatchesPieceName,
   necklineWarmth,
   sleeveCoverage,
-  thermalMaterialVerdict
+  thermalMaterialVerdict,
+  pieceOuterwearRole
 } from './attributes.js'
 import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
 
@@ -1829,8 +1830,17 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
         : (Array.isArray(outfit.pieces) ? outfit.pieces : [])
       const pieceText = pieces.map(p => p?.name).filter(Boolean).join(' + ')
       const formula = payload.formulaFamily || outfit.formulaFamily || ''
-      const occasion = payload.occasion || outfit.bestFor || ''
-      const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
+      let note = ''
+      if (row.note) {
+        const rawNote = String(row.note).trim()
+        if (rawNote.length <= 220) {
+          note = ` — ${rawNote}`
+        } else {
+          const cut = rawNote.slice(0, 220)
+          const lastSpace = cut.lastIndexOf(' ')
+          note = ` — ${(lastSpace > 160 ? cut.slice(0, lastSpace) : cut).trim()}...`
+        }
+      }
       const line = `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${occasion ? ` (${occasion})` : ''}${formula ? ` | formula: ${formula}` : ''}${pieceText ? ` | pieces: ${pieceText}` : ''}${note}`
       if (NEGATIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(row.feedback_type)) negatives.push(line)
     }
@@ -3255,6 +3265,10 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
 
+    const rosterDemand = weatherProfile ? requiredThermalBand(resolveExposureContext({}, weatherProfile)) : null
+    const isColdDemand = (weatherProfile && weatherProfile.isCold)
+      || (rosterDemand && (rosterDemand.level === 'warm' || rosterDemand.level === 'very warm'))
+
     // Sort and limit per category
     for (const cat of Object.keys(byCategory)) {
       const pieces = byCategory[cat]
@@ -3263,16 +3277,47 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       // Sort by relevance score descending, stably by recency and piece ID ascending
       pieces.sort((a, b) => comparePieces(a, b))
 
-      let categoryKeptCount = 0
-      for (const p of pieces) {
-        if (isSelected(p)) {
-          afterStep4.push(p)
-          categoryKeptCount++
-        } else if (categoryKeptCount < limit) {
-          afterStep4.push(p)
-          categoryKeptCount++
-        } else {
-          exclude(p, 'roster cap: category limit')
+      if (cat === 'outerwear' && isColdDemand && pieces.length > limit) {
+        // Partition cold weather outerwear: reserve up to half the limit (at least 2) for insulating coats / cold weather outerwear
+        const isColdCoat = p => pieceOuterwearRole(p) === 'cold_weather_outerwear'
+          || (Array.isArray(p.insulating_layer_materials) && p.insulating_layer_materials.length > 0)
+          || ['warm', 'very warm'].includes(garmentWarmthLevel(p))
+          || (pieceHasInsulatingMaterial(p) && pieceOuterwearRole(p) !== 'indoor_layer')
+
+        const coats = pieces.filter(isColdCoat)
+        const others = pieces.filter(p => !isColdCoat(p))
+
+        const targetCoats = Math.min(coats.length, Math.max(2, Math.floor(limit / 2)))
+        const targetOthers = limit - targetCoats
+
+        const keptCoats = coats.slice(0, targetCoats)
+        const keptOthers = others.slice(0, targetOthers)
+        const keptSet = new Set([...keptCoats, ...keptOthers].map(p => p.id))
+
+        let categoryKeptCount = 0
+        for (const p of pieces) {
+          if (isSelected(p)) {
+            afterStep4.push(p)
+            categoryKeptCount++
+          } else if (keptSet.has(p.id)) {
+            afterStep4.push(p)
+            categoryKeptCount++
+          } else {
+            exclude(p, 'roster cap: category limit')
+          }
+        }
+      } else {
+        let categoryKeptCount = 0
+        for (const p of pieces) {
+          if (isSelected(p)) {
+            afterStep4.push(p)
+            categoryKeptCount++
+          } else if (categoryKeptCount < limit) {
+            afterStep4.push(p)
+            categoryKeptCount++
+          } else {
+            exclude(p, 'roster cap: category limit')
+          }
         }
       }
     }
@@ -3349,20 +3394,21 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       // overshoot penalty apply on top.
       const rosterFit = thermalRankingFit(garmentWarmthLevel(p), garmentWarmthScore(p), rosterDemand)
       if (rosterDemand.level && rosterFit.fit !== 'unknown') {
-        const off = rosterFit.offset ?? 0
-        if (off < 0) {
-          const catGroup = wardrobeCategoryGroup(p)
-          if (catGroup === 'bottom' || catGroup === 'dress') {
-            weatherBonus -= 10
-            pushAdjustmentReason(p.id, 'thermal band: lighter than the conditions call for (-10)')
-          }
-        } else if (off > 0) {
-          const penalty = 10 * Math.min(2, off)
+        const catGroup = wardrobeCategoryGroup(p)
+        if (rosterFit.fit === 'adequate') {
+          const fineAdjustment = Math.min(4, Math.abs(rosterFit.offset ?? 0) * 2)
+          weatherBonus += (10 - fineAdjustment)
+          pushAdjustmentReason(p.id, 'thermal band: well matched to the conditions (+10)')
+        } else if (rosterFit.fit === 'overshoot') {
+          const penalty = 10 * Math.min(2, Math.max(1, rosterFit.steps ?? 1))
           weatherBonus -= penalty
           pushAdjustmentReason(p.id, `thermal band: warmer than the conditions call for (-${penalty})`)
-        } else {
-          weatherBonus += 10
-          pushAdjustmentReason(p.id, 'thermal band: well matched to the conditions (+10)')
+        } else if (rosterFit.fit === 'undershoot') {
+          if (catGroup === 'bottom' || catGroup === 'dress') {
+            const penalty = 10 * Math.min(2, Math.max(1, Math.abs(rosterFit.steps ?? 1)))
+            weatherBonus -= penalty
+            pushAdjustmentReason(p.id, `thermal band: lighter than the conditions call for (-${penalty})`)
+          }
         }
       }
     }

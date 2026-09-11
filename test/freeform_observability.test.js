@@ -693,7 +693,7 @@ test('card markup and raw unfenced outfit JSON payloads in closing prose are wit
   const rawWithCard = `${good}\n\n<card>{"label": "Market & Brunch Stroll"}</card>`
   assert.equal(stripPieceIdCitations(rawWithCard), good, 'stripPieceIdCitations strips <card> tags and inner content')
 
-  const danglingCardTag = `${good} <card> Here is the look </card>`
+  const danglingCardTag = `${good} <card> Here is the look`
   assert.equal(stripPieceIdCitations(danglingCardTag), `${good} Here is the look`)
 })
 
@@ -1172,10 +1172,9 @@ test('single-outfit payload keeps exact weather and excludes the universal workb
   assert.equal(payload.historyDiagnostics.historyMessagesIncluded, 0)
   assert.equal(payload.wardrobeManifestIncluded, false)
   assert.ok(payload.system.length < 15000, `narrow system unexpectedly large: ${payload.system.length}`)
-  assert.match(payload.system, /Ordinary walking, sightseeing, museums, and city days are not exercise/)
-  assert.match(payload.system, /three-quarter-sleeve jersey bulky/)
-  assert.match(payload.system, /primary_top \(or dress\) → layer_top .* → outerwear/)
-  assert.match(payload.system, /Do not force this formula when a simpler outfit is stronger/)
+  assert.match(payload.system, /Walking, sightseeing, and city errands are low-exertion outdoor exposure and do not earn warmth credits/)
+  assert.match(payload.system, /Layering & Sleeve Physics: Follow sleeve layering compatibility/)
+  assert.match(payload.system, /construct an intentional 3-layer system with a middle knit layer/)
   assert.doesNotMatch(payload.system, /Planning a Coordinated Multi-Outfit Set|OCCASION & CLIMATE PROFILES|SAVED STYLIST FEEDBACK|THREAD STATE/)
 })
 
@@ -2353,6 +2352,17 @@ test('bounded multi-look introduction uses exact live weather context without ma
   })
   assert.equal(answer, 'For a forecast high of 69°F and low of 55°F in Sausalito, CA, I’d compare these two directions.')
   assert.doesNotMatch(answer, /wardrobe-verified|for this request/i)
+})
+
+test('bounded multi-look introduction uses clean phrasing for single-temperature weather context', () => {
+  const answer = boundedAtomicMultiLookResponse({
+    atomicMultiLookCompleted: true,
+    atomicMultiLookRequestedCount: 3,
+    boundedWeatherSummary: 'a temperature around 58°F',
+    boundedLocation: 'San Francisco',
+    generatedOutfits: [{ label: 'One' }, { label: 'Two' }, { label: 'Three' }]
+  })
+  assert.equal(answer, 'For a temperature around 58°F in San Francisco, I’d compare these 3 directions.')
 })
 
 test('bounded multi-look introduction names the actual number of ready directions', () => {
@@ -4056,6 +4066,7 @@ test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans
     colors: ['camel'],
     fabric_category: 'wool',
     fabric_weight: 'heavy',
+    sleeve_length: 'long',
     silhouette: 'straight',
     formality: 'elevated',
   }
@@ -4083,7 +4094,7 @@ test('buildSingleOutfitStylistCatalog provides cold workbench seeding guidance w
       weatherProfile: { highF: 46, lowF: 46, tempBand: 'cold' }
     }
   })
-  assert.match(catalogOutput.instruction, /pull 2–3 insulating outer coats \(warmth:warm or warmth:very warm\) AND 2–3 middle layer knits/)
+  assert.match(catalogOutput.instruction, /pull 2–3 insulating outer coats \(warmth:warm or warmth:very warm\) OR middle layer knits/)
   assert.match(catalogOutput.thermal_guidance, /Outdoor conditions call for/)
 })
 
@@ -4092,10 +4103,14 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
   const toolContext = {
     executionProfile: 'single_outfit',
     singleOutfitCatalogEligibleIds: new Set([10, 20, 30, 40]),
+    retrievedPieceIds: new Set([10, 20, 30, 40]),
+    visuallySeenPieceIds: new Set([10, 20, 30, 40]),
     freeformDiagnostics: {},
-    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold' },
+    userWeather: { high_f: 40, low_f: 40 },
+    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold', isCold: true },
     activity: 'walking',
   }
+  declareSingleOutfitIntent(toolContext)
 
   // A light jacket worn in 40F cold walk -> triggers thermal undershoot advisory
   const lightJacket = {
@@ -4103,20 +4118,25 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
     name: 'Olive Field Jacket',
     category: 'outerwear',
     fabric_weight: 'light',
-    fiber_content: 'cotton',
+    fiber_content: JSON.stringify(['cotton']),
+    insulating_layer_materials: JSON.stringify([]),
+    sleeve_length: 'long',
   }
   const tee = {
     id: 20,
     name: 'White Tee',
     category: 'top',
     fabric_weight: 'light',
-    fiber_content: 'cotton',
+    fiber_content: JSON.stringify(['cotton']),
+    sleeve_length: 'short',
   }
   const pants = {
     id: 30,
     name: 'Raw Denim Jeans',
     category: 'bottom',
-    bottom_shape: 'straight',
+    fabric_weight: 'medium',
+    fiber_content: JSON.stringify(['cotton']),
+    bottom_subtype: 'straight',
   }
   const shoes = {
     id: 40,
@@ -4133,7 +4153,7 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
       pieces: [
         { id: 10, role: 'outerwear' },
         { id: 20, role: 'primary_top' },
-        { id: 30, role: 'bottom' },
+        { id: 30, role: 'primary_bottom' },
         { id: 40, role: 'shoes' },
       ],
       label: 'Cold Walk Test',
@@ -4144,22 +4164,102 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
 
   // Insert mock records into test DB
   for (const p of [lightJacket, tee, pants, shoes]) {
-    try {
-      db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, bottom_shape, walk_support) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.bottom_shape || null, p.walk_support || null
-      )
-    } catch {
-      // If table columns vary in test db schema, insert minimal
-      db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category) VALUES (?, ?, ?)`).run(p.id, p.name, p.category)
-    }
+    db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, insulating_layer_materials, bottom_subtype, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.insulating_layer_materials || null, p.bottom_subtype || null, p.walk_support || null, p.sleeve_length || null
+    )
   }
 
-  const result = await executeTool(toolCall, toolContext)
+  const result = await executeTool(toolCall.name, toolCall.args, toolContext)
   assert.equal(result.status, 'success', 'Proposal succeeds because thermal undershoot is advisory in single_outfit')
   assert.ok(toolContext.generatedOutfits?.length > 0)
   const proposed = toolContext.generatedOutfits[0]
-  assert.equal(proposed.disposition, 'annotated')
-  assert.ok(proposed.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
+  assert.equal(proposed.result?.disposition, 'annotated')
+  assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
   assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+})
+
+test('propose_outfit merges advisory findings into non-blocking notes in full_stylist', async () => {
+  const lightJacket = {
+    id: 10,
+    name: 'Olive Field Jacket',
+    category: 'outerwear',
+    fabric_weight: 'light',
+    fiber_content: JSON.stringify(['cotton']),
+    sleeve_length: 'long',
+  }
+  const tee = {
+    id: 20,
+    name: 'White Tee',
+    category: 'top',
+    fabric_weight: 'light',
+    fiber_content: JSON.stringify(['cotton']),
+    sleeve_length: 'short',
+  }
+  const pants = {
+    id: 30,
+    name: 'Raw Denim Jeans',
+    category: 'bottom',
+    fabric_weight: 'medium',
+    fiber_content: JSON.stringify(['cotton']),
+    bottom_subtype: 'straight',
+  }
+  const shoes = {
+    id: 40,
+    name: 'Running Sneakers',
+    category: 'shoes',
+    walk_support: 'high',
+  }
+
+  for (const p of [lightJacket, tee, pants, shoes]) {
+    db.prepare(`INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, insulating_layer_materials, bottom_subtype, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.insulating_layer_materials || null, p.bottom_subtype || null, p.walk_support || null, p.sleeve_length || null
+    )
+  }
+
+  const toolContext = {
+    executionProfile: 'full_stylist',
+    declaredIntent: { want: 'cards', outfitCount: 1 },
+    retrievedPieceIds: new Set([10, 20, 30, 40]),
+    visuallySeenPieceIds: new Set([10, 20, 30, 40]),
+    freeformDiagnostics: {},
+    userWeather: { high_f: 40, low_f: 40 },
+    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold', isCold: true },
+    activity: 'walking',
+  }
+
+  const toolCall = {
+    name: 'propose_outfit',
+    args: {
+      pieces: [
+        { id: 10, role: 'outerwear' },
+        { id: 20, role: 'primary_top' },
+        { id: 30, role: 'primary_bottom' },
+        { id: 40, role: 'shoes' },
+      ],
+      label: 'Cold Walk Full Stylist Test',
+      why_it_works: 'Simple walk outfit.',
+      styling_instructions: 'Zip up jacket.'
+    }
+  }
+
+  const result = await executeTool(toolCall.name, toolCall.args, toolContext)
+  assert.equal(result.status, 'success', 'Proposal failed: ' + JSON.stringify(result))
+  assert.ok(toolContext.generatedOutfits?.length > 0)
+  const proposed = toolContext.generatedOutfits[0]
+  assert.equal(proposed.result?.disposition, 'annotated')
+  assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
+  assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+})
+
+test('view_pieces projects stylistCatalogLine truth across all execution profiles', async () => {
+  const toolContext = {
+    executionProfile: 'full_stylist',
+    freeformDiagnostics: {},
+  }
+  const viewed = await executeTool('view_pieces', { ids: [10, 20] }, toolContext)
+  assert.equal(viewed.length, 2)
+  const jacket = viewed.find(item => item.id === 10)
+  assert.ok(jacket.truth)
+  assert.match(jacket.truth, /warmth:light/)
 })
 

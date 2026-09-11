@@ -1,4 +1,6 @@
 import { outerwearCapabilityDisplay } from '../../styling-engine/outerwearCapability.js'
+import { garmentWarmthLevel } from '../../styling-engine/garmentWarmth.js'
+import { garmentKind, wardrobeCategoryGroup } from '../../styling-engine/attributes.js'
 const CLOTHING_WITH_TUCK = new Set(['top', 'dress', 'outerwear'])
 
 export function safeJsonParse(value, fallback = null) {
@@ -388,6 +390,11 @@ export function buildWardrobeManifestLine(piece = {}) {
   const colorList = colors.join('/')
   const color = [readsAs, readsAs && colorList ? `colors ${colorList}` : (colorList || '')]
     .filter(Boolean).join('; ')
+  const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
+  const kind = garmentKind(piece)
+  const isOuterwearLayerTop = group === 'outerwear' && (kind === 'cardigan' || kind === 'vest')
+  const warmth = !['shoes', 'accessory'].includes(group) ? garmentWarmthLevel(piece) : null
+
   const weightField = (piece.category === 'shoes' || piece.category === 'accessory') ? 'visual_weight' : 'fabric_weight'
   const weightValue = piece[weightField]
   const fabric = piece.fabric_category
@@ -409,6 +416,8 @@ export function buildWardrobeManifestLine(piece = {}) {
 
   const attrs = [
     color,
+    isOuterwearLayerTop ? 'outerwear (layer_top)' : '',
+    warmth ? `warmth:${warmth}` : '',
     fabric ? `fabric ${fabric}` : '',
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
     piece.needs_base === 'yes' ? 'needs base layer' : '',

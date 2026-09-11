@@ -42,6 +42,7 @@ import {
 
 import {
   prompts,
+  PHYSICAL_WEARABILITY_REALISM_RULES,
   STYLE_SELECTED_ITEM_FEW_SHOTS,
   OUTFIT_MISSIONS,
   TAG_PIECE_SYSTEM,
@@ -70,7 +71,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID } from 'node:crypto'
@@ -149,9 +150,11 @@ import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, ev
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction, insulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
 import { resolveExposureContext } from '../styling-engine/exposure.js'
 import { requiredThermalBand } from '../styling-engine/thermalDemand.js'
+import { garmentWarmthLevel } from '../styling-engine/garmentWarmth.js'
+import { evaluateBatchThermalCoherence } from '../styling-engine/outfitThermalCoherence.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -1224,7 +1227,18 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
 
 export const composerPieceLineSuffix = piece => {
   const doNotPairRules = pieceGarmentIntelligence(piece).doNotPairRules
-  return `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
+  const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
+  const warmth = garmentWarmthLevel(piece)
+  const insulation = insulatingLayerMaterials(piece)
+  const weight = (group === 'shoes' || group === 'accessory') ? piece.visual_weight : piece.fabric_weight
+  const insulationStr = Array.isArray(insulation) && insulation.length ? insulation.join('+') : ''
+  const protectStr = Array.isArray(piece.weather_protection) && piece.weather_protection.length ? piece.weather_protection.filter(Boolean).join('/') : ''
+
+  return `${warmth && !['shoes', 'accessory'].includes(group) ? `; warmth: ${warmth}` : ''}` +
+    `${weight ? `; weight: ${weight}` : ''}` +
+    `${insulationStr ? `; insulation: ${insulationStr}` : ''}` +
+    `${protectStr ? `; protect: ${protectStr}` : ''}` +
+    `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
     `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
     `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
     `${piece.fit_on_body ? `; fit_on_body: ${piece.fit_on_body}` : ''}` +
@@ -1365,19 +1379,24 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   }
   if (activityProfile) {
     const preferred = [
-      ...(activityProfile.rules?.preferred_footwear || []),
       ...(activityProfile.rules?.preferred_materials || []),
+      ...(activityProfile.rules?.preferred_footwear || []),
       ...(activityProfile.rules?.preferred_pieces || [])
     ].join(', ')
+    const isWarmOrHot = Boolean(weatherProfile?.isHot)
+    const isSummer = season === 'summer'
     const discouraged = [
       ...(activityProfile.rules?.discouraged_materials || []),
+      ...(isWarmOrHot ? (activityProfile.rules?.discouraged_materials_warm || []) : []),
       ...(activityProfile.rules?.discouraged_footwear || []),
+      ...(isSummer ? (activityProfile.rules?.discouraged_footwear_summer || []) : []),
+      ...(isWarmOrHot ? (activityProfile.rules?.discouraged_footwear_warm || []) : []),
       ...(activityProfile.rules?.discouraged_pieces || [])
     ].join(', ')
     const activityGuidance = [
       activityProfile.vibe ? `Activity vibe: ${activityProfile.vibe}` : '',
       preferred ? `For this activity, lean toward: ${preferred}` : '',
-      discouraged ? `For this activity, use sparingly and justify: ${discouraged}` : ''
+      discouraged ? `For this activity, use sparingly and justify in watchFor: ${discouraged}` : ''
     ].filter(Boolean).join('\n')
     occasionProfileGuidance = [occasionProfileGuidance, activityGuidance].filter(Boolean).join('\n\n')
   }
@@ -1425,10 +1444,18 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   }
 
   await addPieceImage(selectedPiece, 'SELECTED ANCHOR', 'high')
+  const supportGroupHeadingMap = {
+    top: '=== SUPPORT TOPS ===',
+    bottom: '=== SUPPORT BOTTOMS ===',
+    dress: '=== SUPPORT DRESSES ===',
+    shoes: '=== SUPPORT SHOES ===',
+    outerwear: '=== SUPPORT OUTERWEAR ===',
+    accessory: '=== SUPPORT ACCESSORIES ==='
+  }
   for (const group of grouped.keys()) {
     const pieces = grouped.get(group)
     if (!pieces?.length) continue
-    content.push({ type: 'text', text: `=== SUPPORT ${group.toUpperCase()}S ===` })
+    content.push({ type: 'text', text: supportGroupHeadingMap[group] || `=== SUPPORT ${group.toUpperCase()}S ===` })
     for (const p of pieces) await addPieceImage(p, 'SUPPORT')
   }
 
@@ -2380,12 +2407,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         ...(activityProfile.rules?.preferred_materials || []),
         ...(activityProfile.rules?.preferred_footwear || [])
       ].join(', ')
+      const isWarmOrHot = Boolean(weatherProfile?.isHot)
+      const isSummer = season === 'summer'
       const discouraged = [
         ...(activityProfile.rules?.discouraged_materials || []),
-        ...(activityProfile.rules?.discouraged_materials_warm || []),
+        ...(isWarmOrHot ? (activityProfile.rules?.discouraged_materials_warm || []) : []),
         ...(activityProfile.rules?.discouraged_footwear || []),
-        ...(activityProfile.rules?.discouraged_footwear_summer || []),
-        ...(activityProfile.rules?.discouraged_footwear_warm || []),
+        ...(isSummer ? (activityProfile.rules?.discouraged_footwear_summer || []) : []),
+        ...(isWarmOrHot ? (activityProfile.rules?.discouraged_footwear_warm || []) : []),
         ...(activityProfile.rules?.discouraged_pieces || [])
       ].join(', ')
       
@@ -2644,7 +2673,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     for (const group of grouped.keys()) {
       const pieces = grouped.get(group)
       if (!pieces?.length) continue
-      content.push({ type: 'text', text: `=== ${group.toUpperCase()}S ===` })
+      const categoryHeading = {
+        top: 'TOPS',
+        bottom: 'BOTTOMS',
+        dress: 'DRESSES',
+        shoes: 'SHOES',
+        outerwear: 'OUTERWEAR',
+        accessory: 'ACCESSORIES'
+      }[group] || `${group.toUpperCase()}S`
+      content.push({ type: 'text', text: `=== ${categoryHeading} ===` })
       for (const p of pieces) {
         const photoFile = p.worn_photo || p.photo || ''
         if (!photoFile) continue
@@ -2690,12 +2727,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
       'Garment wear facts in the image labels are constraints. Obey them silently. Opacity and needs_base are authoritative: do not call an opaque, independently wearable garment sheer or invent an underlayer for it. Do not repeat a fixed fact the owner already knows merely to fill styling_instructions; use that field only for an actual, useful action or chosen relationship between pieces.',
-      'WEAR MECHANICS BELONG ON THE CARD: if the user asked for a specific wear mechanic — untucked, belted, sleeves pushed, worn open — state it in that outfit\'s styling_instructions. Saying it only in the surrounding reply loses it: the card is what persists, what the renderer reads, and what a later turn revises. Prose commenting on a card may not be its only record.',
-      'RENDERER CONTRACT: the image generator treats styling_instructions—not silhouette—as authoritative garment-placement guidance. If silhouette states a useful physical relationship such as a top worn over a waistband, repeat that relationship concisely in styling_instructions even though the card also shows the silhouette.',
+      'CARD WEAR MECHANICS & RENDERER CONTRACT: styling_instructions is the authoritative placement guidance for the image renderer and persists on the card. If the user requested a specific wear mechanic (untucked, belted, sleeves pushed, worn open) or if two pieces have a physical placement relationship (such as a top over a waistband, or an open cardigan over a dress), state it concisely in styling_instructions.',
       'TIME-OF-DAY WEATHER: Judge the part of the forecast range relevant to the request, not only the daily high. For an evening or early-morning outing near a cooler low, include a plausible removable transition layer when the shown wardrobe supports one. At roughly 55°F, do not claim that a sleeveless vest over a light or short-sleeved base handles the outdoor chill; use sleeve-bearing outerwear, a genuinely warm long-sleeved base plus an adequate layer, or state the wardrobe gap. An indoor destination may shape the base outfit, but it does not erase arrival and departure weather. This also runs the other direction: the BASE outfit — what carries the main part of the day — should track the day\'s HIGH, not a cooler morning/evening low. Do not choose a heavy or insulating-fiber top or bottom (a chunky knit, wool, a mock neck) alongside bare warm-weather footwear (sandals, open-toe shoes) just because the low dipped cool; bare feet already say the day reads warm enough for that, so the rest of the base outfit should match — cover the cooler edges of the day with a removable layer instead of a heavier base garment.',
+      (weatherProfile?.needsRemovableCoolLayer || weatherProfile?.isCold)
+        ? 'COOL/COLD WEATHER LAYER REQUIREMENT: The conditions call for a removable outer layer. Every proposed outfit MUST include a suitable outer layer (jacket, coat, or cardigan) from the shown outerwear pieces to provide necessary warmth. Do not propose a standalone top + bottom outfit without an outer layer.'
+        : '',
       `Compose ${requestedLimit} outfits.`,
       comparisonSetGuidance && requestedLimit > 1
-        ? 'COMPARISON SET CONTRACT: These options will be compared side by side. When the eligible pieces shown support it, use meaningfully different outfit formulas or clearly different silhouettes/proportion logic. Changing only the color, print, or individual garments while repeating the same top + bottom + shoe shape does not create a useful alternative. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.'
+        ? 'COMPARISON SET CONTRACT: These options will be compared side by side. When the eligible pieces shown support it, use meaningfully different outfit formulas or clearly different silhouettes/proportion logic. Changing only the color, print, or individual garments while repeating the same top + bottom + shoe shape does not create a useful alternative. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.\nTHERMAL & SEASONAL COHERENCE: All proposed options in this comparison batch are for the same single occasion and must share a consistent thermal and seasonal weight suitable for the event. Do not mix extreme warm-weather pieces (such as lightweight linen, bare open sandals, or breezy summer tops) in one look with cool-weather pieces (such as heavy wool knits or outerwear jackets) in another look.'
         : '',
       savedVariantGuidance,
       rotationWarningsText,
@@ -3021,7 +3060,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       requestedLimit,
       { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
     )
-    let structuredOutfits = gatedModel.outfits.slice(0, requestedLimit)
+    const batchThermalResult = requestedLimit > 1
+      ? evaluateBatchThermalCoherence(gatedModel.outfits, {
+          candidatePieces: allowedPieces,
+          weatherProfile,
+          maxSpread: 1
+        })
+      : { coherentOutfits: gatedModel.outfits, rejected: [] }
+    const batchThermalRejected = batchThermalResult.rejected || []
+    let structuredOutfits = batchThermalResult.coherentOutfits.slice(0, requestedLimit)
     let softBackfillCount = 0
     let diagnosticBrokenCount = 0
     let gatedLocal = { outfits: [], rejected: [] }
@@ -3061,6 +3108,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const rejectedModelDiagnostics = [
           ...structurallyRejectedModelOutfits,
           ...visuallyRejectedModelOutfits,
+          ...batchThermalRejected,
           ...gatedModel.rejected
             .filter(item => item?.outfit)
             .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' }))
@@ -3105,6 +3153,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const paidRejectedDiagnostics = [
       ...structurallyRejectedModelOutfits,
       ...visuallyRejectedModelOutfits,
+      ...batchThermalRejected,
       ...gatedModel.rejected
         .filter(item => item?.outfit)
         .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' })),
@@ -3117,6 +3166,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       deliveredKeys.add(key)
       diagnosticBrokenCount += 1
     }
+    visualDebugLog.batchThermalRejectedCount = batchThermalRejected.length
+    visualDebugLog.batchThermalRejectedReasons = rejectionSummary(batchThermalRejected)
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
     visualDebugLog.localBackfillRecovery = localBackfillRecoveryReport
@@ -4496,9 +4547,12 @@ Each use case below states how many distinct outfits it needs — that number is
 
 REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a capsule wardrobe: a top or a layer that works for both sightseeing and a nature walk earns its place twice over, and should be preferred over two narrower pieces that each cover only one use case, all else equal. Judge each candidate by how many of the stated use cases it can genuinely serve, not just whether it is eligible for one.
 
-FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers.
+FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers. When a trip spans both active outdoor exploration and evening dinners or elevated dining, pack shoes appropriate for each register (e.g. durable walking shoes or sneakers for daytime/hikes; polished boots, loafers, or elevated flats for evening dining) rather than relying on sneakers or athletic shoes for dinner.
 
 LAYERING / OUTERWEAR THAT SUITS THE TRIP. Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions; do not choose a layer merely because one is required structurally.
+
+OCCASION REALISM & PRACTICAL UTILITY:
+For active walks, coastal bluff trails, beach walks, hikes, or outdoor exploration, choose practical, durable, and weather-appropriate garments (such as fleece, casual utility jackets, or knit layers) and supportive walking shoes or sneakers. Never rely solely on dressy, elevated, or high-maintenance outerwear (such as belted tailored trench coats, blazers, or delicate evening layers) to cover outdoor nature walks or hikes when casual alternatives exist in the candidate pool. Conversely, for evening dinners and elevated occasions, select polished footwear and garments suited to the dining register.
 
 A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
 
@@ -4508,7 +4562,22 @@ In packing_reasoning, briefly explain the overall shape of what you packed and w
 
 On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
 
-Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.`
+Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.
+
+STYLE CONSTITUTION — BODY CONTRACT:
+${prompts.BODY_CONTRACT}
+
+PROVEN FORMULAS:
+${prompts.PROVEN_FORMULAS}
+
+AESTHETIC GRAVITY:
+${prompts.AESTHETIC_GRAVITY}
+
+LANE NEUTRALITY:
+${prompts.LANE_NEUTRALITY}
+
+WORKING STYLE:
+${prompts.WORKING_STYLE}`
 }
 
 // Mirrors capsuleRosterRepairText — same "fix exactly these problems, keep the rest" contract,
@@ -4528,9 +4597,27 @@ export function tripRosterSelectionUserText({
   // styling-role judgment, not an authoritative garment fact for trip packing -- surfacing them in
   // text would shape the roster model the same way the now-disabled image-fidelity boost did.
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece, { includeVisualRoles: false })}`)
+  const destination = slots[0]?.location || slots[0]?.stylingContext?.location || ''
+  const rawDate = slots[0]?.date || slots[0]?.stylingContext?.date || ''
+  const dateStr = (() => {
+    if (!rawDate) return ''
+    const s = String(rawDate).trim()
+    const isoMatch = s.match(/\b\d{4}-\d{2}-\d{2}\b/)
+    if (isoMatch) return isoMatch[0]
+    const parsed = new Date(s)
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+    return s
+  })()
+  const contextHeader = [destination ? `Destination: ${destination}` : '', dateStr ? `Date: ${dateStr}` : ''].filter(Boolean).join(' | ')
   const slotLines = slots.map(slot => {
     const distinctOutfits = Math.max(1, Number(slot.targetOutfits) || 1)
-    return `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}) — needs ${distinctOutfits} distinct outfit${distinctOutfits === 1 ? '' : 's'}: ${slot.bestFor || slot.label}`
+    const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+    const tempText = Number.isFinite(Number(weatherProfile.highF))
+      ? `${Math.round(Number(weatherProfile.highF))}°F high${Number.isFinite(Number(weatherProfile.lowF)) ? ` / ${Math.round(Number(weatherProfile.lowF))}°F low` : ''}`
+      : ''
+    const weatherText = slot.weatherLabel || slot.slotWeather || tempText
+    const weatherPart = weatherText ? `, ${weatherText}` : ''
+    return `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}${weatherPart}) — needs ${distinctOutfits} distinct outfit${distinctOutfits === 1 ? '' : 's'}: ${slot.bestFor || slot.label}`
   })
   const repairBlock = attempt > 1
     ? `\n\n${tripRosterRepairText({ failures, previousRosterIds })}`
@@ -4541,7 +4628,8 @@ export function tripRosterSelectionUserText({
   const acceptedLessonsBlock = String(acceptedLessons || '').trim()
     ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
     : ''
-  return `USE CASES THIS TRIP MUST COVER:
+  const headerBlock = contextHeader ? `TRIP CONTEXT: ${contextHeader}\n\n` : ''
+  return `${headerBlock}USE CASES THIS TRIP MUST COVER:
 ${slotLines.join('\n')}${ownerRulesBlock}${acceptedLessonsBlock}
 
 CANDIDATES:
@@ -4677,7 +4765,9 @@ export function tripPlanCompositionSystemPrompt() {
 
 Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Two looks in this rotation must never share the identical set of piece_ids — reuse across DIFFERENT looks is the entire point of a packed suitcase (a top or a layer that earns its place across multiple use cases is a strength, not a compromise), so vary at least one piece between any two looks that would otherwise be identical. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
-This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. Every outfit requires a cold_layer_decision: when a slot's own instructions state a cold-weather layering requirement, decide whether the core pieces are already warm enough on their own (mode 'core_is_warm_enough') or name a shared packed layer separately from piece_ids (mode 'assigned_packed_layer' with assigned_layer_piece_id) rather than forcing it into piece_ids; when no cold-weather layering requirement applies, use mode 'not_required' with assigned_layer_piece_id null.
+This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. For active walks, coastal bluff trails, beach walks, hikes, or outdoor exploration, choose practical, durable, and weather-appropriate garments. Never assign dressy, elevated, or high-maintenance outerwear (such as belted tailored trench coats, blazers, or delicate evening layers) to beach, coastal, or nature walks when casual or active alternatives exist in the roster. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). When no cold-weather layering requirement applies, mode 'not_required' with assigned_layer_piece_id null is standard, but if a slot indicates cool temperatures or breezy exposure (needs_removable_cool_layer), including an outerwear piece in piece_ids (mode 'core_is_warm_enough') or naming a packed outer layer via mode 'assigned_packed_layer' is fully permitted and encouraged if needed for warmth.
+
+${PHYSICAL_WEARABILITY_REALISM_RULES}
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}

@@ -71,8 +71,8 @@ test('at equal raw distance from the target, overshoot scores strictly worse tha
   // own center (1.5), isolated from every other adjustment this scoring path can add (no isHot/isCold
   // flags, no fabric-mass bonus) — this is the OVERSHOOT_RANKING_WEIGHT itself, not a side effect of
   // some other rule.
-  const under = { category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 0.5, center 1.5 -> distance -1
-  const over = { category: 'outerwear', fabric_weight: 'heavy', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 2.5, center 1.5 -> distance +1
+  const under = { category: 'top', fabric_weight: 'light', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 0.5, center 1.5 -> distance -1
+  const over = { category: 'top', fabric_weight: 'heavy', fiber_content: ['cotton'], insulating_layer_materials: [], sleeve_length: 'long' } // raw 2.5, center 1.5 -> distance +1
   const w = W(60, 56) // resolves to a `moderate` demand at this exposure-less call
   const underScore = score(under, w)
   const overScore = score(over, w)
