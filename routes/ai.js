@@ -2716,9 +2716,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // evidence itself.
     const weatherDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
     const isWeatherFiltered = Boolean(weatherProfile.isHot || weatherDemand.level)
+    const tempText = Number.isFinite(Number(weatherProfile?.highF))
+      ? `${Math.round(Number(weatherProfile.highF))}°F high${Number.isFinite(Number(weatherProfile?.lowF)) ? ` / ${Math.round(Number(weatherProfile.lowF))}°F low` : ''}`
+      : ''
     content.push({ type: 'text', text: [
+      location ? `Location: ${location}` : '',
       `Occasion: ${occasion}`,
       `Season: ${season}`,
+      tempText ? `Temperature: ${tempText}` : '',
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',

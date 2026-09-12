@@ -21,6 +21,7 @@ import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerCon
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
 import { evaluateWearableOutfit } from './outfitValidation.js'
+import { ENVIRONMENTAL_ADEQUACY_CODES } from './outfitEnvironmentalAdequacy.js'
 import { validatedSubstitute } from './recovery.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
@@ -5418,6 +5419,10 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     if (!validation.hardValid) {
       reject(repaired, validation.primaryFinding?.message || 'not a complete wardrobe outfit')
       continue
+    }
+    for (const finding of validation.advisoryFindings || []) {
+      const flagType = finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note'
+      repaired = appendSystemFlag(repaired, flagType, finding.message)
     }
     if (ownedIds.size && pieceIds.some(id => !ownedIds.has(id))) {
       reject(repaired, 'contains non-owned piece')

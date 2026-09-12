@@ -442,7 +442,7 @@ test('planKind coordinated_plan is unaffected by the trip roster wiring', async 
 // ─── SET LEVEL vs CARD LEVEL, through the real submission path ─────────────────────────────────
 import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
 
-test('a card with no layer of its own is accepted when the packing roster already has one, rejected when it does not', async () => {
+test('a card with no layer of its own is accepted cleanly when the packing roster already has one, and carries an advisory weather note when it does not', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] }) // includes JACKET (id 8)
   const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
@@ -457,15 +457,20 @@ test('a card with no layer of its own is accepted when the packing roster alread
   const withRoster = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
   assert.equal(withRoster.failures.length, 0, 'the packed jacket covers it even though this card does not show it')
   assert.equal(withRoster.accepted.length, 1)
+  assert.ok(!withRoster.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'packed jacket suppresses the removable-layer advisory note')
 
   // Same card, same weather, but the packing roster is empty (the un-wired, pre-existing behavior)
-  // — the per-card requirement must still apply exactly as before.
+  // — the cool layer finding is advisory (severity: 'warning'), so the card is accepted with an advisory flag in systemFlags.
   const noRosterPlan = { ...workbench.pendingPlan, packingRoster: [], heldOutfits: [] }
   const withoutRoster = validateSubmittedPlanOutfits(noRosterPlan, [cityCard])
-  assert.ok(withoutRoster.failures.length > 0, 'without a packing roster, the card must still carry its own layer')
+  assert.equal(withoutRoster.failures.length, 0, 'advisory warning does not hard-fail the card')
+  assert.equal(withoutRoster.accepted.length, 1)
+  assert.ok(withoutRoster.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'without a packing roster, the card receives an advisory weather note')
 })
 
-test('a card with no layer of its own is still rejected when the packing roster\'s only "layer" is positively inadequate', async () => {
+test('a card with no layer of its own still receives an advisory weather note when the packing roster\'s only "layer" is positively inadequate', async () => {
   // Same shape as the test above, JACKET (id 8) swapped for USELESS_HOODIE (id 12) — an ultralight,
   // explicitly non-insulating, explicitly unlined piece that is category 'outerwear' but not a real
   // layer. packingRosterHasLayer must read false here, the same way hasRosterLayer must at roster
@@ -479,9 +484,10 @@ test('a card with no layer of its own is still rejected when the packing roster\
 
   const cityCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer on the card itself
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
-  assert.equal(result.accepted.length, 0)
-  assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no layer to put on for the cooler part of the day'))),
-    'a useless hoodie sitting in the roster must not suppress the per-card removable-layer finding')
+  assert.equal(result.failures.length, 0, 'advisory warning does not hard-fail the card')
+  assert.equal(result.accepted.length, 1)
+  assert.ok(result.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'a useless hoodie sitting in the roster must not suppress the per-card removable-layer advisory finding')
 })
 
 // ─── COLD FLOOR: cold_layer_decision (thread_1788508369689 arc, product ruling "use B"; enum shape

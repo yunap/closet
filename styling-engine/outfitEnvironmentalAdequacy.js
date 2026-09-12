@@ -353,7 +353,7 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         // that a removable layer was needed, so a down puffer satisfied it on a 65/48 day — seven
         // times. The demand is stated so the requirement can be met proportionately.
         corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
-        { evidence, remedy: true }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
     } else if (!someLayerContributesWarmth(layers)) {
       // ADJUDICATED (docs/README.md: trip roster architecture, item 3) rather than left unexamined
       // once thermal coverage moved to the SET level: does this finding own a factual/physical
@@ -363,13 +363,15 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       // comment) because no threshold could separate a sheer shrug from a legitimately light jacket
       // without being arbitrary. So this answers "does the garment provide meaningful coverage at
       // all," a construction fact closer to "no sole on this shoe" than to "not warm enough" — it
-      // survives facts-not-judgments on its own terms and stays a hard finding. It already inherits
+      // survives facts-not-judgments on its own terms and stays a finding, but is demoted to advisory
+      // warning alongside NO_REMOVABLE_COOL_LAYER so it surfaces as an advisory note rather than
+      // rejecting legitimate aesthetic layering. It already inherits
       // the roster demotion above (the shared `!layerCoveredByRoster` guard around both tiers): a
       // card pairing a sheer layer with real protection packed elsewhere in the roster is exactly the
       // owner's own example — legitimate aesthetic layering, not rejected for being non-insulating.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so there is still nothing useful to put on when it cools'),
-        { evidence, remedy: true }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
     }
   }
 
@@ -388,11 +390,11 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
         corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
-        { evidence, remedy: true }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
-        { evidence, remedy: true }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
     }
   }
   }

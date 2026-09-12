@@ -24,6 +24,7 @@ const UNTAGGED_COAT = { id: 24, category: 'outerwear', name: 'unlined coat', fab
 
 const codes = (r) => r.findings.map(f => f.code)
 const hardCodes = (r) => r.hardFindings.map(f => f.code)
+const advisoryCodes = (r) => r.advisoryFindings.map(f => f.code)
 
 // --- no context, no verdict ------------------------------------------------------------------
 
@@ -412,14 +413,15 @@ test('a mild band does not manufacture severity', () => {
 
 // --- needsRemovableCoolLayer (docs/cool-weather-tier-spec.md) -----------------------------------
 
-test('COOL: an outfit with no layer at all is a hard finding', () => {
+test('COOL: an outfit with no layer at all is an advisory warning', () => {
   // The live defect: a 65F/48F October day produced no weather handling whatsoever, because isCold
   // needs lowF <= 45. Both Sightseeing cards shipped with no outer layer; one was a sleeveless tank.
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
     weatherProfile: { needsRemovableCoolLayer: true },
   })
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
-  assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'supply-sensitive findings name a legal move')
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.equal(result.advisoryFindings[0].severity, 'warning')
 })
 
 // SET LEVEL vs CARD LEVEL (docs/README.md: trip roster architecture). A card composed from an
@@ -458,7 +460,8 @@ test('COOL: a WARM BASE does not satisfy it — removability is the point', () =
     [top({ fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' }), bottom(), shoes()],
     { weatherProfile: { needsRemovableCoolLayer: true } },
   )
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
 })
 
 test('COOL: silent on a genuinely warm day', () => {
@@ -515,7 +518,9 @@ test('COOL TRANSIT: an indoor destination excuses the base, never the trip there
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
     weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
   })
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+  assert.equal(result.advisoryFindings[0].severity, 'warning')
 })
 
 test('COOL TRANSIT: any layer satisfies it — including a sleeveless one', () => {
@@ -551,7 +556,9 @@ test('COOL: a see-through layer does not satisfy the tier', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
     weatherProfile: { needsRemovableCoolLayer: true },
   })
-  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+  assert.equal(result.advisoryFindings[0].severity, 'warning')
 })
 
 // docs/README.md: trip roster architecture, item 3 — adjudicated rather than left behind. This
@@ -569,14 +576,15 @@ test('COOL: a card pairing a sheer layer with real protection packed elsewhere i
   assert.deepEqual(codes(result), [])
 })
 
-test('COOL: outside an active trip (no roster at all), a see-through layer is still rejected exactly as before', () => {
+test('COOL: outside an active trip (no roster at all), a see-through layer produces an advisory warning', () => {
   // No regression to the ordinary, non-trip case: packingRosterHasLayer is simply absent/false, and
   // this finding behaves identically to the unmodified original.
   const shrug = { id: 30, category: 'outerwear', name: 'sheer shrug', outerwear_role: 'indoor_layer', fabric_weight: 'light', opacity: 'semi_sheer', fiber_content: ['polyester'] }
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
     weatherProfile: { needsRemovableCoolLayer: true },
   })
-  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
 })
 
 test('COOL: a cardigan satisfies it, and so does a light opaque jacket', () => {
@@ -612,7 +620,8 @@ test('COOL TRANSIT: the adequacy bar applies there too', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes(), shrug], {
     weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
   })
-  assert.deepEqual(hardCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.COOL_LAYER_IS_SEE_THROUGH])
 })
 
 // --- piece.season corroboration (docs/piece-season-as-weather-evidence.md) -----------------------
@@ -633,8 +642,9 @@ test('season corroborates a shortfall the physical rule already found', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
     weatherProfile: { needsRemovableCoolLayer: true },
   })
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
-  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.match(result.advisoryFindings[0].message, /tagged as warm-season clothing/)
   assert.equal(result.evidence.baseIsWarmSeasonOnly, true)
 })
 
@@ -649,8 +659,9 @@ test('THE CONTROL: the same shortfall fires without season corroboration', () =>
     weatherProfile: { needsRemovableCoolLayer: true },
   })
   assert.deepEqual(hardCodes(withoutSeason), hardCodes(withSeason), 'same code')
-  assert.equal(withoutSeason.hardFindings[0].severity, withSeason.hardFindings[0].severity, 'same severity')
-  assert.doesNotMatch(withoutSeason.hardFindings[0].message, /warm-season/)
+  assert.deepEqual(advisoryCodes(withoutSeason), advisoryCodes(withSeason), 'same code')
+  assert.equal(withoutSeason.advisoryFindings[0].severity, withSeason.advisoryFindings[0].severity, 'same severity')
+  assert.doesNotMatch(withoutSeason.advisoryFindings[0].message, /warm-season/)
   assert.ok(!withoutSeason.evidence.baseIsWarmSeasonOnly)
 })
 
@@ -658,16 +669,18 @@ test('a MIXED base does not corroborate — every piece must be warm-season', ()
   const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), neutralBottom(), shoes()], {
     weatherProfile: { needsRemovableCoolLayer: true },
   })
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
-  assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER])
+  assert.doesNotMatch(result.advisoryFindings[0].message, /warm-season/)
 })
 
 test('season corroboration reaches the transit finding too', () => {
   const result = evaluateOutfitEnvironmentalAdequacy([warmTop(), warmBottom(), shoes()], {
     weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true }, environment: 'indoor',
   })
-  assert.deepEqual(hardCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
-  assert.match(result.hardFindings[0].message, /tagged as warm-season clothing/)
+  assert.deepEqual(hardCodes(result), [])
+  assert.deepEqual(advisoryCodes(result), [C.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT])
+  assert.match(result.advisoryFindings[0].message, /tagged as warm-season clothing/)
 })
 
 test('season does not leak into the cold or severe tiers', () => {
