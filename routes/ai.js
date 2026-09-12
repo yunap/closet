@@ -154,7 +154,6 @@ import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTE
 import { resolveExposureContext } from '../styling-engine/exposure.js'
 import { requiredThermalBand } from '../styling-engine/thermalDemand.js'
 import { garmentWarmthLevel } from '../styling-engine/garmentWarmth.js'
-import { evaluateBatchThermalCoherence } from '../styling-engine/outfitThermalCoherence.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -2728,9 +2727,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
       'Garment wear facts in the image labels are constraints. Obey them silently. Opacity and needs_base are authoritative: do not call an opaque, independently wearable garment sheer or invent an underlayer for it. Do not repeat a fixed fact the owner already knows merely to fill styling_instructions; use that field only for an actual, useful action or chosen relationship between pieces.',
       'CARD WEAR MECHANICS & RENDERER CONTRACT: styling_instructions is the authoritative placement guidance for the image renderer and persists on the card. If the user requested a specific wear mechanic (untucked, belted, sleeves pushed, worn open) or if two pieces have a physical placement relationship (such as a top over a waistband, or an open cardigan over a dress), state it concisely in styling_instructions.',
-      'TIME-OF-DAY WEATHER: Judge the part of the forecast range relevant to the request, not only the daily high. For an evening or early-morning outing near a cooler low, include a plausible removable transition layer when the shown wardrobe supports one. At roughly 55°F, do not claim that a sleeveless vest over a light or short-sleeved base handles the outdoor chill; use sleeve-bearing outerwear, a genuinely warm long-sleeved base plus an adequate layer, or state the wardrobe gap. An indoor destination may shape the base outfit, but it does not erase arrival and departure weather. This also runs the other direction: the BASE outfit — what carries the main part of the day — should track the day\'s HIGH, not a cooler morning/evening low. Do not choose a heavy or insulating-fiber top or bottom (a chunky knit, wool, a mock neck) alongside bare warm-weather footwear (sandals, open-toe shoes) just because the low dipped cool; bare feet already say the day reads warm enough for that, so the rest of the base outfit should match — cover the cooler edges of the day with a removable layer instead of a heavier base garment.',
+      'TIME-OF-DAY WEATHER: Judge the part of the forecast range relevant to the request, not only the daily high. For an evening or early-morning outing near a cooler low, include a plausible removable transition layer when the shown wardrobe supports one. An indoor destination may shape the base outfit, but it does not erase arrival and departure weather. This also runs the other direction: the BASE outfit — what carries the main part of the day — should track the day\'s HIGH, not a cooler morning/evening low. Do not choose a heavy or insulating-fiber top or bottom (a chunky knit, wool, a mock neck) alongside bare warm-weather footwear (sandals, open-toe shoes) just because the low dipped cool; bare feet already say the day reads warm enough for that, so the rest of the base outfit should match — cover the cooler edges of the day with a removable layer instead of a heavier base garment.',
       (weatherProfile?.needsRemovableCoolLayer || weatherProfile?.isCold)
-        ? 'COOL/COLD WEATHER LAYER REQUIREMENT: The conditions call for a removable outer layer. Every proposed outfit MUST include a suitable outer layer (jacket, coat, or cardigan) from the shown outerwear pieces to provide necessary warmth. Do not propose a standalone top + bottom outfit without an outer layer.'
+        ? 'COOL/COLD WEATHER GUIDANCE: The conditions indicate cool or cold temperatures where a removable layer or protective outerwear provides practical comfort. When the shown pieces support it, pair the outfit with an appropriate outerwear layer or midweight knit.'
         : '',
       `Compose ${requestedLimit} outfits.`,
       comparisonSetGuidance && requestedLimit > 1
@@ -3060,15 +3059,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       requestedLimit,
       { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
     )
-    const batchThermalResult = requestedLimit > 1
-      ? evaluateBatchThermalCoherence(gatedModel.outfits, {
-          candidatePieces: allowedPieces,
-          weatherProfile,
-          maxSpread: 1
-        })
-      : { coherentOutfits: gatedModel.outfits, rejected: [] }
-    const batchThermalRejected = batchThermalResult.rejected || []
-    let structuredOutfits = batchThermalResult.coherentOutfits.slice(0, requestedLimit)
+    let structuredOutfits = (gatedModel.outfits || []).slice(0, requestedLimit)
     let softBackfillCount = 0
     let diagnosticBrokenCount = 0
     let gatedLocal = { outfits: [], rejected: [] }
@@ -3108,7 +3099,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const rejectedModelDiagnostics = [
           ...structurallyRejectedModelOutfits,
           ...visuallyRejectedModelOutfits,
-          ...batchThermalRejected,
           ...gatedModel.rejected
             .filter(item => item?.outfit)
             .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' }))
@@ -3153,7 +3143,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const paidRejectedDiagnostics = [
       ...structurallyRejectedModelOutfits,
       ...visuallyRejectedModelOutfits,
-      ...batchThermalRejected,
       ...gatedModel.rejected
         .filter(item => item?.outfit)
         .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' })),
@@ -3166,8 +3155,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       deliveredKeys.add(key)
       diagnosticBrokenCount += 1
     }
-    visualDebugLog.batchThermalRejectedCount = batchThermalRejected.length
-    visualDebugLog.batchThermalRejectedReasons = rejectionSummary(batchThermalRejected)
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
     visualDebugLog.localBackfillRecovery = localBackfillRecoveryReport
@@ -4541,18 +4528,26 @@ export function tripRosterSelectionSystemPrompt() {
 
 Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY from the supplied candidates. There is no fixed count: packing efficiency is your own judgment call for THIS trip, not a formula. A roster that is too small leaves a use case unwearable; a roster that is too large defeats the point of packing light. Both are real failures, weighed against each other, not just against a target number.
 
+SUITCASE SCALE & PACKING EFFICIENCY:
+A suitcase is a compact, curated travel capsule, not a whole wardrobe. Aim for a focused suitcase that covers the trip's use cases with combinatorial headroom while packing light. Every piece in the suitcase should earn its luggage space through high utility or versatility across the planned use cases.
+
 Cover every stated use case. A roster that leaves one use case without a complete, gate-valid outfit is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits, with footwear that suits it.
 
 Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster where one use case's need for 3 distinct outfits can only actually produce 1 before every remaining option is a piece-for-piece repeat has not covered that use case, even though every individual outfit in isolation would pass its gates.
 
 REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a capsule wardrobe: a top or a layer that works for both sightseeing and a nature walk earns its place twice over, and should be preferred over two narrower pieces that each cover only one use case, all else equal. Judge each candidate by how many of the stated use cases it can genuinely serve, not just whether it is eligible for one.
 
-FOOTWEAR THAT SUITS EACH JOB. A shoe passing the engine's gates only means it is technically eligible for one use case. Cover each materially different footwear job the trip actually asks for — a walking-heavy city day, a hike, a polished evening — without manufacturing duplicates for jobs a single versatile pair already covers. When a trip spans both active outdoor exploration and evening dinners or elevated dining, pack shoes appropriate for each register (e.g. durable walking shoes or sneakers for daytime/hikes; polished boots, loafers, or elevated flats for evening dining) rather than relying on sneakers or athletic shoes for dinner.
+CROSS-REGISTER VERSATILITY & SUITCASE EFFICIENCY:
+Versatile pieces that transition naturally between daytime exploration and evening dining are valuable for travel. Select footwear that comfortably covers the itinerary's walking and dining needs without packing redundant pairs or separate entire wardrobes for each use case.
 
-LAYERING / OUTERWEAR THAT SUITS THE TRIP. Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions; do not choose a layer merely because one is required structurally.
+BOTTOMS VARIETY & ACTIVITY SEPARATION:
+A multi-day suitcase spanning varied activities benefits from distinct bottoms suited to different registers and wear contexts. Where activities contrast significantly (e.g. active outdoor trails versus tailored evening dining), provide practical separation rather than relying on a single piece across conflicting physical demands.
 
-OCCASION REALISM & PRACTICAL UTILITY:
-For active walks, coastal bluff trails, beach walks, hikes, or outdoor exploration, choose practical, durable, and weather-appropriate garments (such as fleece, casual utility jackets, or knit layers) and supportive walking shoes or sneakers. Never rely solely on dressy, elevated, or high-maintenance outerwear (such as belted tailored trench coats, blazers, or delicate evening layers) to cover outdoor nature walks or hikes when casual alternatives exist in the candidate pool. Conversely, for evening dinners and elevated occasions, select polished footwear and garments suited to the dining register.
+OCCASION REALISM & PRACTICAL UTILITY: FOOTWEAR THAT SUITS EACH JOB:
+When a trip spans distinct activities, pack shoes appropriate for each register without manufacturing duplicates: durable walking shoes or sneakers for daytime exploration or hikes; polished boots, loafers, or elevated flats for evening dining. For outdoor walks, coastal trails, or hikes, choose practical, durable garments and supportive walking shoes or sneakers. Avoid delicate or high-maintenance pieces for active outdoor slots when practical alternatives exist in the candidate bench.
+
+LAYERING / OUTERWEAR THAT SUITS THE TRIP:
+Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions. Ensure the outerwear you pack covers the real outdoor activities on the trip. Never rely solely on dressy, elevated, or high-maintenance outerwear when the trip includes trail walking, nature hikes, or active outdoor exploration — pack a practical, casual layer suited to the activity. Avoid packing rainwear or heavy storm layers unless wet weather or rain is actually indicated in the trip context.
 
 A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
 
@@ -4591,24 +4586,31 @@ The replacements you bring in are held to the same standard as the original pick
 }
 
 export function tripRosterSelectionUserText({
-  bench = [], slots = [], attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
+  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
 } = {}) {
   // includeVisualRoles:false (thread_1788518048013): hero_piece/color_accent/etc. are a capsule-era
   // styling-role judgment, not an authoritative garment fact for trip packing -- surfacing them in
   // text would shape the roster model the same way the now-disabled image-fidelity boost did.
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece, { includeVisualRoles: false })}`)
   const destination = slots[0]?.location || slots[0]?.stylingContext?.location || ''
-  const rawDate = slots[0]?.date || slots[0]?.stylingContext?.date || ''
+  const startDate = dateRange?.start || slots[0]?.date || slots[0]?.stylingContext?.date || ''
+  const endDate = dateRange?.end || ''
   const dateStr = (() => {
-    if (!rawDate) return ''
-    const s = String(rawDate).trim()
-    const isoMatch = s.match(/\b\d{4}-\d{2}-\d{2}\b/)
-    if (isoMatch) return isoMatch[0]
-    const parsed = new Date(s)
-    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
-    return s
+    const startStr = startDate ? String(startDate).slice(0, 10) : ''
+    const endStr = endDate ? String(endDate).slice(0, 10) : ''
+    if (!startStr) return ''
+    if (endStr && endStr !== startStr) {
+      const d1 = new Date(startStr)
+      const d2 = new Date(endStr)
+      const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const durationStr = Number.isFinite(diffDays) && diffDays > 0
+        ? ` (${diffDays} day${diffDays === 1 ? '' : 's'}${diffDays === 7 ? ' / 1 week' : ''})`
+        : ''
+      return `Dates: ${startStr} to ${endStr}${durationStr}`
+    }
+    return `Date: ${startStr}`
   })()
-  const contextHeader = [destination ? `Destination: ${destination}` : '', dateStr ? `Date: ${dateStr}` : ''].filter(Boolean).join(' | ')
+  const contextHeader = [destination ? `Destination: ${destination}` : '', dateStr].filter(Boolean).join(' | ')
   const slotLines = slots.map(slot => {
     const distinctOutfits = Math.max(1, Number(slot.targetOutfits) || 1)
     const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
@@ -4640,12 +4642,12 @@ ${truthCatalog.join('\n')}${repairBlock}`
 // cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
 // the initial call wrote instead of re-paying for every thumbnail.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
 } = {}) {
   const content = [{
     type: 'text',
     text: tripRosterSelectionUserText({
-      bench, slots, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: []
+      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: []
     }),
     cache_control: { type: 'ephemeral' }
   }]
@@ -4669,7 +4671,7 @@ export function tripRosterSelectionContent({
 // production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
 // plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
 // output, because this function did not exist to be wired in.
-export async function chooseTripRosterWithProvider({ bench, slots, attempt, failures, previousRosterIds }, toolContext) {
+export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds }, toolContext) {
   const imageParts = []
   for (const piece of bench) {
     const photoFile = piece.worn_photo || piece.photo || ''
@@ -4702,7 +4704,7 @@ export async function chooseTripRosterWithProvider({ bench, slots, attempt, fail
     })),
   })
   const content = tripRosterSelectionContent({
-    bench, slots, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
+    bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
     attempt, failures, previousRosterIds, imageParts
   })
 
@@ -4763,9 +4765,9 @@ ${prompts.WORKING_STYLE}`
 export function tripPlanCompositionSystemPrompt() {
   return `You are the composition stage of a trip-packing tool. The conversational stylist has already interpreted the request, chosen the trip's use-case slots, and the packing roster is already fixed.
 
-Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Two looks in this rotation must never share the identical set of piece_ids — reuse across DIFFERENT looks is the entire point of a packed suitcase (a top or a layer that earns its place across multiple use cases is a strength, not a compromise), so vary at least one piece between any two looks that would otherwise be identical. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. CRITICAL CROSS-SLOT DEDUPLICATION: Submitting the identical complete set of piece_ids in two looks — even across different slots (e.g. a city museum look and a nature walk look) — is rejected by the engine and creates a coverage gap. Every look must be distinct in its full piece set; vary at least one garment (such as the top, bottom, outer layer, or footwear). Reuse across different looks is the foundation of a packed suitcase (a top or layer that earns its place across multiple use cases is a strength, not a compromise), but each outfit card must represent a distinct wearable combination. (Note: in enforced capsule mode, core combinations of top+bottom or dress must also be unique across looks; for standard trips, complete outfit uniqueness is enforced.) Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
-This is a suitcase you are packing against a real itinerary and its weather and activities, not a wardrobe rotation to demonstrate: judge each combination on whether it genuinely suits the stated use case, not on whether every roster piece appears somewhere. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. For active walks, coastal bluff trails, beach walks, hikes, or outdoor exploration, choose practical, durable, and weather-appropriate garments. Never assign dressy, elevated, or high-maintenance outerwear (such as belted tailored trench coats, blazers, or delicate evening layers) to beach, coastal, or nature walks when casual or active alternatives exist in the roster. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). When no cold-weather layering requirement applies, mode 'not_required' with assigned_layer_piece_id null is standard, but if a slot indicates cool temperatures or breezy exposure (needs_removable_cool_layer), including an outerwear piece in piece_ids (mode 'core_is_warm_enough') or naming a packed outer layer via mode 'assigned_packed_layer' is fully permitted and encouraged if needed for warmth.
+This is a suitcase you are packing against a real itinerary and its weather and activities: judge each combination on whether it genuinely suits the stated use case, while aiming for the representative rotation to showcase the core versatile pieces from the packed roster. While not every piece must appear in every look, avoid leaving large portions of the packed suitcase untouched. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. OCCASION REALISM & ACTIVITY SEPARATION: Align pieces with their appropriate use-case contexts: wear practical, durable garments and supportive shoes for active outdoor slots, and tailored or elevated pieces for evening dining or cultural visits when distinct options exist in the packed roster. Avoid pairing high-maintenance or delicate layers with active outdoor trails when practical alternatives exist in the suitcase. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). When no cold-weather layering requirement applies, mode 'not_required' with assigned_layer_piece_id null is standard, but if a slot indicates cool temperatures or breezy exposure (needs_removable_cool_layer), including an outerwear piece in piece_ids (mode 'core_is_warm_enough') or naming a packed outer layer via mode 'assigned_packed_layer' is fully permitted and encouraged if needed for warmth.
 
 ${PHYSICAL_WEARABILITY_REALISM_RULES}
 

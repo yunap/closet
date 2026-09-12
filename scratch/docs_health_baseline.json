@@ -1,6 +1,6 @@
 {
-  "warningCount": 54,
-  "recordedAt": "2026-08-31",
+  "warningCount": 53,
+  "recordedAt": "2026-09-11",
   "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in. Restored to 54 on 2026-08-31 by adding the missing status header to docs/active-memory-surface-spec.md; the ratchet was repaired rather than weakened.",
   "composition": {
     "missingStatusHeader": "~40 — docs predate the Status/Last-verified convention. Backfilling them is the planned next commit; each one that gets a header lowers this number.",

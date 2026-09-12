@@ -43,6 +43,7 @@ import {
   resolveRegisterCeiling,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
+import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
 import { requiredThermalBand } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
@@ -3894,9 +3895,9 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
     const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
     const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
     if (isIndoor) continue
-    const isCold = Boolean(weatherProfile.isCold || weatherProfile.isColdSevere)
+    const isRequired = weatherProfile.coldPresenceRequirement?.state === 'required'
     const needsCool = Boolean(weatherProfile.needsRemovableCoolLayer)
-    if (!isCold && !needsCool) continue
+    if (!isRequired && !needsCool) continue
     const hasViableLayer = slotEligible.some(piece =>
       hasMinimumWarmLayer([piece]) ||
       (wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
@@ -3918,7 +3919,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
 // proxy this file used before was flagged as partially undoing the roster/cards separation). This
 // is the one place that mapping is written down, so a future slotGateEligiblePieces field it starts
 // reading and this projection stops carrying is a one-file fix, not a silent gap.
-const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'isWetExposure', 'isRainy', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
+const TRIP_SLOT_WEATHER_FIELDS = ['isHot', 'isCold', 'isColdSevere', 'coldPresenceRequirement', 'needsRemovableCoolLayer', 'isExtremeHeat', 'isIndoor', 'highF', 'lowF', 'weatherSource', 'isWetExposure', 'isRainy', 'transitIsHot', 'transitIsCold', 'transitIsColdSevere', 'transitNeedsRemovableCoolLayer', 'transitHighF', 'transitLowF']
 
 export function serializeTripRequirementSlot(slot = {}) {
   const weatherSource = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
@@ -3961,6 +3962,7 @@ export function restoreTripRequirementSlot(persisted = {}) {
     activity: persisted.activity,
     season: persisted.season,
     transitSeason: persisted.transitSeason,
+    weatherProfile: persisted.weatherProfile || {},
     stylingContext: {
       occasion: persisted.occasion,
       activity: persisted.activity,
@@ -3989,6 +3991,7 @@ export async function selectTripRosterViaModel({
   slots = [],
   benchSize = TRIP_BENCH_SIZE,
   calendarSeason = '',
+  dateRange = {},
   chooseRoster = null,
   onDiagnostic = null,
 } = {}) {
@@ -4021,7 +4024,7 @@ export async function selectTripRosterViaModel({
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench, slots, attempt: 1, failures: [] })
+  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [] })
   let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
   if (!failures.length) {
     return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
@@ -4029,7 +4032,7 @@ export async function selectTripRosterViaModel({
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench, slots, attempt: 2, failures,
+    bench, slots, dateRange, attempt: 2, failures,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
   const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
@@ -4045,34 +4048,6 @@ export async function selectTripRosterViaModel({
     bench,
     coverageGaps: ['[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]'],
   }
-}
-
-// docs/cold-layer-exposure-trigger-spec.md: a narrow, additive relaxation of the ordinary
-// isCold-driven cold-layer trigger for trip slots only -- computed once, here, where
-// activity/occasion/environment/weather are all already resolved. Never taught to shared Contract
-// C (outfitEnvironmentalAdequacy.js), which only ever reads the resulting boolean with a legacy
-// `?? weather.isCold` fallback for every other caller. Deliberately conservative: every gate below
-// must hold, or the slot keeps exactly today's isCold-only behavior -- no exertion-degree formula,
-// no requiredThermalBand dependency, no new temperature threshold (reuses weather.js's own COLD_F).
-//
-// The one activity this spec found actually classified as elevated exertion: ACTIVITY_VALUES is
-// exactly ['none', 'walking', 'hiking'], and 'hiking' is the only one with authored exertion above
-// baseline (footwear-comfort.js's own activity profiles). Not a formula -- a narrow, named
-// allowlist matching what the taxonomy already distinguishes.
-const COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES = new Set(['hiking'])
-
-export function computeRequiresWarmLayerForColdExposure(slot, weatherProfile, environment) {
-  if (!weatherProfile?.isCold) return false
-  if (weatherProfile.isColdSevere) return true // severe cold untouched -- never relaxed here
-  const isIndoor = environment === 'indoor' || weatherProfile.isIndoor === true
-  if (isIndoor) return true // indoor already neutralizes isCold upstream; unreachable in practice
-  if (!COLD_LAYER_RELAXATION_QUALIFYING_ACTIVITIES.has(slot?.activity)) return true
-  // Explicit "evening" occasion only -- never inferred from prose, per the spec's own non-goal.
-  if (resolveOccasionProfile(slot?.occasion)?.id === 'evening_social') return true
-  const exposure = resolveExposureContext({ activity: slot?.activity, environment }, weatherProfile)
-  const conditions = exposure?.conditions
-  if (!conditions?.known || !Number.isFinite(conditions.wakingLowF)) return true
-  return !(conditions.wakingLowF > COLD_F)
 }
 
 export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
@@ -4093,13 +4068,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       fetchImpl,
       seasonIsCalendarOnly: isSeasonalCapsule,
     })
-    // docs/cold-layer-exposure-trigger-spec.md: trip slots only -- a narrow refinement of the
-    // trip-plan cold-layer trigger, not a general thermal-model change. Added as one more field on
-    // the same resolved profile so both downstream readers (the top-level slot.weatherProfile
-    // field, and stylingContext.weatherProfile just below, built from this exact object) see it.
-    const weatherProfile = planKind === 'trip'
-      ? { ...weatherProfileResolved, requiresWarmLayerForColdExposure: computeRequiresWarmLayerForColdExposure(slot, weatherProfileResolved, slot.environment) }
-      : weatherProfileResolved
     const stylingContext = await resolveStylingContext({
       explicitRequest: {
         occasion: slot.occasion,
@@ -4109,10 +4077,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
         requestText: slotRequestText,
         location: slot.location || location,
         date: slot.date || dateRange.start,
-        weatherProfile,
+        weatherProfile: weatherProfileResolved,
       },
       policy: { allowLiveWeather: false },
     })
+    const weatherProfile = stylingContext.weatherProfile || weatherProfileResolved
     return { ...slot, stylingContext, weatherProfile, weatherLabel }
   }))
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
@@ -4155,6 +4124,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       pool: allPieces,
       slots,
       calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
+      dateRange,
       chooseRoster: chooseTripRoster,
       onDiagnostic,
     })
@@ -4848,16 +4818,12 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
 // the submission to validateSubmittedPlanOutfits, rather than only after — see
 // styling-engine/tools.js's atomic trip branch, which strips an assigned_layer_piece_ids the
 // composer attached to a non-cold slot rather than losing the whole card to a one-shot rejection.
-// One formula, not two independent copies that could drift.
-//
-// docs/cold-layer-exposure-trigger-spec.md: reads requiresWarmLayerForColdExposure (computed once
-// in buildPlanSlotWorkbench, trip slots only) with a `?? isCold` fallback, so this stays exactly
-// today's behavior for every non-trip caller and for any trip slot where the relaxation didn't
-// apply. This is the SAME fact NO_WARM_LAYER_FOR_COLD reads (outfitEnvironmentalAdequacy.js) — the
-// two must never independently recompute it.
+// Canonical presence authority: reads slot.weatherProfile?.coldPresenceRequirement.
+// Only state === 'required' mandates a cold-weather layer.
 export function slotColdLayerRequired(slot = {}) {
-  const requiresWarmLayer = slot.weatherProfile?.requiresWarmLayerForColdExposure ?? slot.weatherProfile?.isCold
-  return Boolean(requiresWarmLayer) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
+  const req = slot.weatherProfile?.coldPresenceRequirement
+  const isRequired = req ? req.state === 'required' : false
+  return Boolean(isRequired) && slot.environment !== 'indoor' && slot.weatherProfile?.isIndoor !== true
 }
 
 export function slotColdLayerPermitted(slot = {}) {
@@ -4866,7 +4832,11 @@ export function slotColdLayerPermitted(slot = {}) {
   if (isIndoor) {
     return Boolean(slot.weatherProfile?.transitIsCold || slot.weatherProfile?.transitNeedsRemovableCoolLayer)
   }
-  return Boolean(slot.weatherProfile?.needsRemovableCoolLayer)
+  return Boolean(
+    slot.weatherProfile?.needsRemovableCoolLayer ||
+    slot.weatherProfile?.isCold ||
+    slot.weatherProfile?.coldPresenceRequirement?.state === 'recommended'
+  )
 }
 
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md (Part B, ratified). Pure identification
@@ -4886,6 +4856,7 @@ export function slotColdLayerPermitted(slot = {}) {
 // cold-layer decision for this card doesn't hold up."
 const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
+  /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
 ]
 

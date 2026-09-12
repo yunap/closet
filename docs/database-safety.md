@@ -1,12 +1,25 @@
 # Database safety
 
-The project-root `wardrobe.db` is live owner data. Importing `db.js` from a standalone script no
-longer opens that file implicitly.
+**Status:** Active. Enforced by `lib/databaseSafety.js` and `test/database_safety.test.js`.
+
+The project-root `wardrobe.db` is live owner data. Standalone scripts and diagnostics must never
+run directly against it.
 
 ## Standalone diagnostics
 
 Every diagnostic, probe, migration, or one-off script must choose its isolated database or
 multi-user root before importing `db.js`:
+
+```js
+import { createIsolatedDbSnapshot } from '../lib/databaseSafety.js'
+const { dbPath, cleanup } = createIsolatedDbSnapshot()
+process.env.WARDROBE_DB_PATH = dbPath
+const { db } = await import('../db.js')
+// ... run diagnostic safely ...
+cleanup()
+```
+
+Or manually:
 
 ```js
 process.env.WARDROBE_DB_PATH = '/tmp/wardrobe-probe/wardrobe.db'
@@ -18,10 +31,11 @@ tests.
 
 Use a copied database when real garment data is required. Do not point destructive or fixture-based
 diagnostics at the live file. An intentional live-data maintenance operation must opt in with
-`WARDROBE_ALLOW_LIVE_DB=1`; that flag is an acknowledgement, not a default for scripts.
+`WARDROBE_ALLOW_LIVE_DB=1`; that flag is an explicit, user-confirmed acknowledgement for manual ops,
+and is **strictly forbidden under `NODE_ENV=test` and automated tests**.
 
-The application server remains allowed to open the default database through `server.js`. Tests keep
-using their existing temporary `WARDROBE_DB_PATH` pattern.
+The application server remains allowed to open the default database through `server.js`. Tests must
+always run against isolated databases via `WARDROBE_DB_PATH` or `WARDROBE_USERS_DIR`.
 
 ## Automatic recovery snapshots
 

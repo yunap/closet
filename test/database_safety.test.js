@@ -7,6 +7,7 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import {
   assertDefaultDatabaseAccess,
+  createIsolatedDbSnapshot,
   createRotatingSqliteBackup,
 } from '../lib/databaseSafety.js'
 
@@ -128,3 +129,39 @@ test('rotating backups are valid SQLite snapshots and retain only the newest fil
     restored.close()
   }
 })
+
+test('assertDefaultDatabaseAccess refuses WARDROBE_ALLOW_LIVE_DB=1 under NODE_ENV=test', () => {
+  assert.throws(
+    () => assertDefaultDatabaseAccess({
+      explicitDbPath: '',
+      allowLiveDb: '1',
+      entrypoint: '/tmp/test_runner.mjs',
+      serverPath: path.join(process.cwd(), 'server.js'),
+      nodeEnv: 'test',
+    }),
+    /Refusing to open the live wardrobe database: WARDROBE_ALLOW_LIVE_DB=1 cannot be used under NODE_ENV=test/
+  )
+})
+
+test('createIsolatedDbSnapshot copies db and sidecars to a temporary directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-source-'))
+  const srcDbPath = path.join(root, 'wardrobe.db')
+  const srcDb = new Database(srcDbPath)
+  srcDb.pragma('journal_mode = WAL')
+  srcDb.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT); INSERT INTO items (title) VALUES (\'live item\')')
+  srcDb.close()
+
+  const snapshot = createIsolatedDbSnapshot({ sourceDbPath: srcDbPath })
+  try {
+    assert.notStrictEqual(snapshot.dbPath, srcDbPath)
+    assert.strictEqual(fs.existsSync(snapshot.dbPath), true)
+    const checkDb = new Database(snapshot.dbPath, { readonly: true })
+    const rows = checkDb.prepare('SELECT title FROM items').all()
+    checkDb.close()
+    assert.deepStrictEqual(rows, [{ title: 'live item' }])
+  } finally {
+    snapshot.cleanup()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+

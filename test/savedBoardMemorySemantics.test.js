@@ -18,6 +18,7 @@ const {
   getExactOutfitReactionMemory,
   getAcceptedFeedbackSynthesisMemory,
   compatibilityScoreForSelectedItem,
+  getWholeWardrobeFeedbackMemory,
 } = await import('../styling-engine/rules.js')
 const { syncStructuredReasonsFromSavedBoard, syncFeedbackFromSavedBoard } = await import('../routes/crud.js')
 const { buildOutfitLogicEvidence } = await import('../lib/feedbackTaxonomy.js')
@@ -750,3 +751,31 @@ test('generated-board feedback is not duplicated when its saved board carries th
   assert.doesNotMatch(memory, /Deduped board/)
   assert.match(memory, /Unsaved board/)
 })
+
+test('getWholeWardrobeFeedbackMemory formats payload.occasion and outfit.bestFor without ReferenceError', () => {
+  db.prepare(`
+    INSERT INTO stylist_feedback (feedback_type, target_type, context_type, label, payload)
+    VALUES ('bad_occasion', 'whole_wardrobe_outfit', 'wardrobe', 'Too formal', ?)
+  `).run(JSON.stringify({
+    occasion: 'gallery opening',
+    formulaFamily: 'column_outer',
+    pieces: [{ name: 'Silk blouse' }, { name: 'Pleated skirt' }],
+  }))
+
+  db.prepare(`
+    INSERT INTO stylist_feedback (feedback_type, target_type, context_type, label, payload)
+    VALUES ('not_me', 'whole_wardrobe_outfit', 'wardrobe', 'Over-styled', ?)
+  `).run(JSON.stringify({
+    outfit: {
+      bestFor: 'weekend brunch',
+      formulaFamily: 'relaxed_tailoring',
+      pieces: [{ name: 'Linen blazer' }, { name: 'Denim jeans' }],
+    },
+  }))
+
+  const memory = getWholeWardrobeFeedbackMemory(20)
+  assert.match(memory, /Whole-wardrobe outfit feedback to suppress/)
+  assert.match(memory, /bad_occasion \/ Too formal \(gallery opening\) \| formula: column_outer \| pieces: Silk blouse \+ Pleated skirt/)
+  assert.match(memory, /not_me \/ Over-styled \(weekend brunch\) \| formula: relaxed_tailoring \| pieces: Linen blazer \+ Denim jeans/)
+})
+

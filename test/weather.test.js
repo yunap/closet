@@ -6,6 +6,7 @@ import {
   getCurrentWeatherProfile, getWeatherProfileForPlan, _clearWeatherCachesForTests, serializeWeatherProfile, restoreWeatherProfile,
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
+  COLD_F,
 } from '../styling-engine/weather.js'
 
 test('resolved weather physics round-trips independently from display season text', () => {
@@ -368,12 +369,22 @@ test('resolveWeatherForRequest: no named location/date retains the existing heur
   assert.equal(context.temperature.isHot, true)
 })
 
-test('contract parity: profileRuleFit behaves identically given a live vs heuristic profile with the same isHot/isCold', () => {
-  const piece = { id: 1, category: 'top', fabric_category: 'wool' }
-  const mergedRules = { prohibited_materials_warm: ['wool'] }
-  const liveProfile = { isHot: true, isCold: false, weatherSource: 'live' }
-  const heuristicProfile = { isHot: true, isCold: false, weatherSource: 'heuristic' }
-  const liveFit = profileRuleFit(piece, mergedRules, { weatherProfile: liveProfile })
-  const heuristicFit = profileRuleFit(piece, mergedRules, { weatherProfile: heuristicProfile })
-  assert.deepEqual(liveFit, heuristicFit)
+test('ambient comfort scale alignment in weather classification', () => {
+  assert.equal(COLD_F, 46)
+
+  // 45°F is in the Cold band: isCold is true
+  const at45 = classifyTemperatureRange({ highF: 65, lowF: 45 })
+  assert.equal(at45.isCold, true)
+  assert.equal('requiresOuterwear' in at45, false)
+
+  // 46°F is in the Cool band: isCold is false
+  const at46 = classifyTemperatureRange({ highF: 65, lowF: 46 })
+  assert.equal(at46.isCold, false)
+  assert.equal('requiresOuterwear' in at46, false)
+
+  // 56°F is Slightly Cool: isCold is false
+  const at56 = classifyTemperatureRange({ highF: 65, lowF: 56 })
+  assert.equal(at56.isCold, false)
+  assert.equal('requiresOuterwear' in at56, false)
 })
+

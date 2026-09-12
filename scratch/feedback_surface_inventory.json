@@ -151,7 +151,10 @@
         "wrong_length", "wrong_garment_details", "body_proportions_drift", "identity_drift", "bad_reference"
       ],
       "display_only": [
-        "piece_rule_receipt"
+        "piece_rule_receipt",
+        "model_quality_good",
+        "model_quality_questionable",
+        "model_quality_bad"
       ]
     },
     "legacy_aliases": {

@@ -11,26 +11,13 @@
 // Passing a bare forecast here would repeat this arc's signature failure: a correct primitive fed
 // the wrong inputs, which is how a 5am trough came to size a museum visit.
 import { WARMTH_LEVELS, LEVEL_RAW_BOUNDARIES } from './garmentWarmth.js'
+import { SEDENTARY_DEMAND_F } from './biometeorology.js'
 
 const LEVEL_INDEX = new Map(WARMTH_LEVELS.map((l, i) => [l, i]))
 
-// STATED CALIBRATION, validated against §12.1's pinned cases — not derived from a comfort equation.
-// §11.7 refuses the apparatus (PMV, IREQ, metabolic watts), so there is no equation to derive from,
-// and inventing one would be the fake precision §11.8 prohibits. These are the temperatures at
-// which a sedentary, ordinary-exposure person needs each level, chosen so the pinned cases hold and
-// stated plainly so they can be argued with.
-//
-// Anchored where the reference table CAN anchor (§15.3): the middle of the scale corresponds to
-// ordinary indoor-to-outdoor autumn dressing, which is exactly the band the CBE/ASHRAE garment
-// entries cover. The top is an ordinal extension (§15.5) and gets no temperature claim beyond
-// "colder than the range our anchors cover".
-const SEDENTARY_DEMAND_F = [
-  { atOrAbove: 75, level: 'very light' },
-  { atOrAbove: 66, level: 'light' },
-  { atOrAbove: 56, level: 'moderate' },
-  { atOrAbove: 44, level: 'warm' },
-  { atOrAbove: -Infinity, level: 'very warm' },
-]
+// Stated calibration aligned with the peer-reviewed Matzarakis PET Biometeorological Scale
+// (imported from biometeorology.js).
+
 
 // Genuine exertion lowers required insulation at the same ambient temperature — the relationship
 // §11.1 took from the cold-exercise literature and the reason a hiker and a stationary diner must

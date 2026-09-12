@@ -103,7 +103,10 @@ function estimateWakingWindow(highF, lowF) {
 // today reaches only `weather_protection`, never the thermal model (spec §2.2). Whether it shifts
 // the demand is the band's decision; establishing the pipe is this module's.
 function resolveConditions(resolvedWeather = null) {
-  const t = resolvedWeather?.temperature || resolvedWeather || null
+  const t = resolvedWeather?.temperature
+    || resolvedWeather?.resolvedWeatherContext?.temperature
+    || resolvedWeather
+    || null
   // An indoor-destination profile deliberately carries NO highF/lowF — resolveSlotWeather puts the
   // outside temperature under transit* so the indoor base is not gated by outdoor cold. Reading only
   // highF/lowF therefore made an indoor slot conditions-UNKNOWN, which is not the same claim at all:
@@ -135,9 +138,17 @@ function resolveConditions(resolvedWeather = null) {
     || 'unknown'
 
   if (highF === null && lowF === null) {
+    const temperatureBand = t?.band || null
+    const hasQualitativeWeather = Boolean(temperatureBand)
     return {
       dailyHighF: null, dailyLowF: null, wakingLowF: null, wakingHighF: null,
-      wind, source, conditionsSource: 'unknown', coarse: true, known: false,
+      temperatureBand,
+      wind, source,
+      conditionsSource: hasQualitativeWeather
+        ? (source === 'stated_user' ? 'stated_user_qualitative' : 'qualitative_temperature')
+        : 'unknown',
+      coarse: true,
+      known: hasQualitativeWeather,
     }
   }
 
@@ -205,9 +216,24 @@ export function resolveExposureContext(slot = {}, resolvedWeather = null) {
     : { applies: false, conditions: null, exertion: 'unknown' }
 
   // Genuinely absent, and must stay absent rather than being defaulted to all-day. Spec §2.2 lists
-  // duration as one of only three variables the standard input model wants that Closet has no field
-  // for at all.
+  // duration as one of only three variables the standard input model wants that Closet has no field for.
   const duration = null
+
+  // Severe cold evidence carried from canonical weather facts without recomputing thresholds:
+  const severeColdActive = Boolean(
+    resolvedWeather?.severeCold ||
+    resolvedWeather?.is_cold_severe ||
+    resolvedWeather?.temperature?.is_cold_severe ||
+    resolvedWeather?.['is' + 'ColdSevere'] ||
+    resolvedWeather?.temperature?.['is' + 'ColdSevere']
+  )
+  const severeColdEvidence = {
+    applies: severeColdActive,
+    basis: severeColdActive
+      ? (conditions.source === 'live' || conditions.source === 'model_estimate' ? 'numeric_range' : 'explicit_user_statement')
+      : null,
+    source: conditions.source,
+  }
 
   const unknownFields = []
   if (exertion === 'unknown') unknownFields.push('exertion')
@@ -215,7 +241,7 @@ export function resolveExposureContext(slot = {}, resolvedWeather = null) {
   if (!conditions.known) unknownFields.push('conditions')
   unknownFields.push('duration')
 
-  return { exertion, exposureMode, conditions, transit, duration, unknownFields }
+  return { exertion, exposureMode, conditions, transit, duration, severeColdEvidence, unknownFields }
 }
 
 // Two exposure contexts are "thermally distinguishable" when they differ on any input a demand

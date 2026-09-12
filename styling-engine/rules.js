@@ -142,11 +142,9 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const extremeHeatSignal = hasExtremeHeatTemperature || /\b(extreme heat|100s|triple[- ]digit)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
   const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal && !seasonIsCalendarOnly)
-  // "chilly" is deliberately NOT in this severe list — it's a mild-cool word
-  // (extractWeatherContext in stylingIntent.js already buckets it separately
-  // from cold/freezing/frigid/snow/winter) and only ever needs to reach
-  // isCold via hasCoolSignal below, not isColdSevere.
-  const hasSevereColdSignal = /\b(cold|freezing|frigid|snow|winter)\b/.test(text)
+  // Plain "cold" is an ordinary cool/cold signal and is NOT severe.
+  // Severe cold vocabulary: freezing, frigid, blizzard, sub-zero, snow, winter, or temperature <= 45°F.
+  const hasSevereColdSignal = /\b(freezing|frigid|blizzard|sub[- ]?zero|snow|winter)\b/.test(text)
     || hasColdTemperature
   const explicitCold = hasSevereColdSignal || (hasCoolSignal && !strongHotSignal)
 
@@ -1830,6 +1828,7 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
         : (Array.isArray(outfit.pieces) ? outfit.pieces : [])
       const pieceText = pieces.map(p => p?.name).filter(Boolean).join(' + ')
       const formula = payload.formulaFamily || outfit.formulaFamily || ''
+      const occasion = payload.occasion || outfit.bestFor || ''
       let note = ''
       if (row.note) {
         const rawNote = String(row.note).trim()
