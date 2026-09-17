@@ -8,7 +8,7 @@ import { GoogleGenAI } from '@google/genai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
 import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
-import { captureNormalizedProviderInput, captureWireProviderInput } from '../lib/providerInputCapture.js'
+import { captureNormalizedProviderInput, captureWireProviderInput, captureProviderOutput, newProviderCaptureCallId } from '../lib/providerInputCapture.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructuredPayload } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, resolveGeminiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
@@ -973,7 +973,11 @@ export function extractToolResultImages(result) {
     if (normalizedImage) {
       // item.weatherFit no longer exists (docs/search-propose-signal-inventory.md) — this silently
       // dropped to undefined and got filtered out, not a crash, but a stale reference worth clearing.
-      const flags = [item.ruleFit].filter(f => f && f !== 'neutral').join(', ')
+      // Experiment instrumentation (default off): no engine tier appended to the photo label.
+      // 2026-09-15: a photo label states a hard-gate or missing-metadata tier only. `preferred`
+      // and `discouraged` are ratified soft scoring, and captioning a photograph with a taste
+      // verdict is the same duplicate claim removed from the composer prompts.
+      const flags = [item.ruleFit].filter(f => f === 'prohibited' || f === 'unknown').join(', ')
       images.push({
         ...normalizedImage,
         label: `ID ${item.id}: ${item.name || 'unnamed garment'}${flags ? ` — ${flags}` : ''}`
@@ -1095,7 +1099,7 @@ export async function askClaude({ system = prompts.STYLIST_SYSTEM, messages, max
   return text
 }
 
-export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, captureMeta = null, signal = null }) {
   // Spec 31: an explicit per-call model override (the importer's cheap classification tier).
   const resolvedModel = model || ANTHROPIC_MODEL
   const anthropicKey = resolveAnthropicKey()
@@ -1109,12 +1113,14 @@ export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, mess
     ...message,
     content: toAnthropicContentBlocks(message.content)
   }))
-  const response = await client.messages.create({
+  const request = {
     model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
     messages: sanitizedMessages
-  })
+  }
+  // captureMeta is passed only by askStylistWithUsage, which owns this call's capture id.
+  const response = await client.messages.create(captureMeta ? wireCaptured(captureMeta, request) : request, { signal })
   return {
     text: response.content?.[0]?.text || '',
     usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
@@ -1213,14 +1219,21 @@ export function withMovingCacheBreakpoint(messages = []) {
   return cleaned
 }
 
-export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, providerOverride = null }) {
-  const { text } = await askStylistWithUsage({ system, messages, maxTokens, providerOverride })
+export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, providerOverride = null, signal = null }) {
+  const { text } = await askStylistWithUsage({ system, messages, maxTokens, providerOverride, signal })
   return text
 }
 
 // providerOverride (plan §4): only ever set by a comparison-run script or the Stage-0 spike,
 // never by a route/session/UI. Absent, resolves to today's AI_PROVIDER exactly as before.
-export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, providerOverride = null }) {
+// Single-shot calls: records the exact SDK request object as this call's wire capture, sharing the
+// call's id with its normalized input and raw output, and returns the object unchanged.
+function wireCaptured(meta, request) {
+  captureWireProviderInput({ ...meta, request })
+  return request
+}
+
+export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, providerOverride = null, subflow = 'ask_stylist_with_usage', signal = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
@@ -1232,19 +1245,20 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
 
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
-  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow: 'ask_stylist_with_usage', system, messages, tools: [] })
+  const captureCallId = newProviderCaptureCallId()
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, callId: captureCallId, system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
     const startedAt = Date.now()
     let interaction
     try {
-      interaction = await ai.interactions.create({
+      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, callId: captureCallId }, {
         model: target.model,
         system_instruction: plainSystem,
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
         generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
-      })
+      }), { signal })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
@@ -1257,26 +1271,30 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
+    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
     return { text, usage }
   }
 
   if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const response = await client.chat.completions.create({
+    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, callId: captureCallId }, {
       model: target.model,
       max_tokens: maxTokens,
       messages: [
         { role: 'system', content: plainSystem },
         ...messages.map(m => ({ role: m.role, content: contentToOpenAI(m.content) }))
       ]
-    })
+    }), { signal })
+    captureProviderOutput({ provider: 'openai', model: target.model, subflow, callId: captureCallId, stopReason: response.choices?.[0]?.finish_reason ?? null, output: response.choices?.[0]?.message?.content ?? null })
     return {
       text: response.choices?.[0]?.message?.content || '',
       usage: normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason: response.choices?.[0]?.finish_reason })
     }
   }
 
-  return askClaudeWithUsage({ system, messages, maxTokens, model })
+  const claudeResult = await askClaudeWithUsage({ system, messages, maxTokens, model, signal, captureMeta: { provider: 'anthropic', model: model || ANTHROPIC_MODEL, subflow, callId: captureCallId } })
+  captureProviderOutput({ provider: 'anthropic', model: model || ANTHROPIC_MODEL, subflow, callId: captureCallId, stopReason: claudeResult.usage?.stopReason ?? null, output: claudeResult.text })
+  return claudeResult
 }
 
 // One provider call with a provider-enforced object schema. Use this for small deterministic
@@ -1290,7 +1308,9 @@ export async function askStylistStructuredWithUsage({
   description = 'Return the requested structured response.',
   maxTokens = 1200,
   model = null,
-  providerOverride = null
+  providerOverride = null,
+  subflow = 'structured_response',
+  signal = null
 }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1310,14 +1330,15 @@ export async function askStylistStructuredWithUsage({
 
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
-  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow: 'execution_router', system, messages, tools: [] })
+  const captureCallId = newProviderCaptureCallId()
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, callId: captureCallId, system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
     const startedAt = Date.now()
     let interaction
     try {
-      interaction = await ai.interactions.create({
+      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, callId: captureCallId }, {
         model: target.model,
         system_instruction: plainSystem,
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
@@ -1336,7 +1357,7 @@ export async function askStylistStructuredWithUsage({
         // 'description' have no field on that type at all, also copy-pasted from OpenAI's
         // json_schema wrapper shape and silently ignored rather than erroring.
         response_format: { type: 'text', mime_type: 'application/json', schema },
-      })
+      }), { signal })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
@@ -1349,6 +1370,7 @@ export async function askStylistStructuredWithUsage({
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
+    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1359,7 +1381,7 @@ export async function askStylistStructuredWithUsage({
 
   if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const response = await client.chat.completions.create({
+    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, callId: captureCallId }, {
       model: target.model,
       max_tokens: maxTokens,
       messages: [
@@ -1370,10 +1392,11 @@ export async function askStylistStructuredWithUsage({
         type: 'json_schema',
         json_schema: { name, strict: true, schema }
       }
-    })
+    }), { signal })
     const text = response.choices?.[0]?.message?.content || ''
     const stopReason = response.choices?.[0]?.finish_reason
     const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason })
+    captureProviderOutput({ provider: 'openai', model: target.model, subflow, callId: captureCallId, stopReason: stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1384,7 +1407,7 @@ export async function askStylistStructuredWithUsage({
 
   const resolvedModel = model || ANTHROPIC_MODEL
   const client = new Anthropic({ apiKey: resolveAnthropicKey() })
-  const response = await client.messages.create({
+  const response = await client.messages.create(wireCaptured({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId }, {
     model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
@@ -1394,9 +1417,10 @@ export async function askStylistStructuredWithUsage({
     })),
     tools: [{ name, description, input_schema: schema }],
     tool_choice: { type: 'tool', name }
-  })
+  }), { signal })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
   const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
+  captureProviderOutput({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
   // A tool_use block that hit max_tokens mid-generation can still have a complete-looking,
   // valid `input` object — just missing whatever fields the model hadn't reached yet (e.g. an
   // empty `outfits` array instead of the requested count). The !toolUse?.input check alone
@@ -1462,6 +1486,7 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     }],
     schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
     name: 'freeform_execution_route',
+    subflow: 'execution_router',
     description: 'Choose one narrow execution profile only when its contract and supplied compact context are sufficient.',
     // Gemini bills thinking tokens out of this same cap (normalizeAiUsage folds
     // total_thought_tokens into outputTokens) and thinking_level 'low' still lets that vary a
@@ -1481,12 +1506,18 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
   // supplied, otherwise explicit user language, instead of letting a probabilistic classification
   // silently remove garments. Profile/occasion remain model-owned; this narrow factual axis is
   // deterministic and conservative.
+  //
+  // A structured `none` is NOT a statement that there is no activity: the chat UI's activity picker defaults to "No special
+  // activity" and sends `none` on every turn. Treating that default as authority discarded explicit request language
+  // ("I'll be walking around the city…"), locked the turn to `none`, and left the walking footwear gate off on /ask search and
+  // the Whole Wardrobe roster (live threads thread_1789501326521 and thread_1789501370356, 2026-09-15). Only a structured
+  // walking/hiking selection is authority; otherwise the conservative explicit-language extractor decides.
   const structuredActivity = String(explicitActivity || '').toLowerCase().trim()
   return {
     ...routed,
     value: {
       ...routed.value,
-      activity: ACTIVITY_VALUES.includes(structuredActivity)
+      activity: ACTIVITY_VALUES.includes(structuredActivity) && structuredActivity !== 'none'
         ? normalizeActivity(structuredActivity)
         : extractExplicitActivity(question),
     },
@@ -1727,7 +1758,7 @@ export function canonicalHistoryToGeminiInput(unsyncedEntries) {
   return input
 }
 
-async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }) {
+async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens, captureCallId = null, iterationIndex = null }) {
   const client = new Anthropic({ apiKey: resolveAnthropicKey() })
   const formattedMessages = withMovingCacheBreakpoint(canonicalHistoryToAnthropicMessages(canonicalMessages))
   const anthropicRequest = {
@@ -1737,8 +1768,10 @@ async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }
     messages: formattedMessages,
     ...(tools.length ? { tools } : {})
   }
-  captureWireProviderInput({ provider: 'anthropic', model: ANTHROPIC_MODEL, subflow: 'stylist_tool_loop', request: anthropicRequest })
+  captureWireProviderInput({ provider: 'anthropic', model: ANTHROPIC_MODEL, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, request: anthropicRequest })
   const response = await client.messages.create(anthropicRequest)
+  // Raw turn output before any parsing: text blocks and tool_use blocks exactly as returned.
+  captureProviderOutput({ provider: 'anthropic', model: ANTHROPIC_MODEL, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
   const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL, stopReason: response.stop_reason })
   const toolUses = (response.content || []).filter(block => block.type === 'tool_use')
   return {
@@ -1749,7 +1782,7 @@ async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens }
   }
 }
 
-async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens }) {
+async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens, captureCallId = null, iterationIndex = null }) {
   const client = new OpenAI({ apiKey: resolveOpenAiKey() })
   const openAiRequest = {
     model: OPENAI_MODEL,
@@ -1759,8 +1792,10 @@ async function callOpenAiTurn({ plainSystem, canonicalMessages, tools, maxTokens
       tools: tools.map(toOpenAiFunctionTool)
     } : {})
   }
-  captureWireProviderInput({ provider: 'openai', model: OPENAI_MODEL, subflow: 'stylist_tool_loop', request: openAiRequest })
+  captureWireProviderInput({ provider: 'openai', model: OPENAI_MODEL, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, request: openAiRequest })
   const response = await client.chat.completions.create(openAiRequest)
+  // Raw turn output before any parsing, including tool-call arguments as the unparsed JSON string.
+  captureProviderOutput({ provider: 'openai', model: OPENAI_MODEL, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, stopReason: response.choices?.[0]?.finish_reason ?? null, output: response.choices?.[0]?.message ?? null })
   const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
   const message = response.choices?.[0]?.message
   if (!message) return { text: '', toolCalls: [], usage, hasToolCalls: false, noMessage: true }
@@ -1811,7 +1846,7 @@ function describeGeminiInputShape(input, continuation, toolCount) {
 // at all: askStylistWithTools short-circuits on takeTestAiResponse before ever reaching a provider
 // branch, so the ordinary mock path skips this function's own status/truncation/malformed-call
 // handling entirely.
-export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model }) {
+export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model, captureCallId = null, iterationIndex = null }) {
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
   const input = canonicalHistoryToGeminiInput(unsyncedEntries)
   const callKind = tools.length ? 'tool_loop' : 'text'
@@ -1832,9 +1867,12 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
   // has both via previous_interaction_id. That's not missing input, it's a different transport for
   // the same logical context; compare against the 'normalized' capture (canonicalMessages), not this
   // one, to see what the model logically had.
-  captureWireProviderInput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', request: geminiRequest })
+  captureWireProviderInput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, request: geminiRequest })
   try {
     interaction = await ai.interactions.create(geminiRequest)
+    // Raw turn output before any parsing or usability check: status and every step (model_output,
+    // function_call) exactly as returned, so an unusable turn is captured too.
+    captureProviderOutput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, stopReason: interaction?.status ?? null, output: { status: interaction?.status ?? null, steps: interaction?.steps ?? null, output_text: interaction?.output_text ?? null } })
     assertGeminiInteractionUsable(interaction, { model })
   } catch (err) {
     await logAiCall({
@@ -2012,12 +2050,13 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     }
     const availableTools = stylistToolsForTurn(toolContext)
     const unsyncedEntries = currentMessages.slice(syncedHistoryLength)
+    const captureCallId = newProviderCaptureCallId()
     captureNormalizedProviderInput({
-      provider: target.provider, model: target.model, subflow: 'stylist_tool_loop', iterationIndex: iter,
+      provider: target.provider, model: target.model, subflow: 'stylist_tool_loop', iterationIndex: iter, callId: captureCallId,
       system, messages: currentMessages, tools: availableTools,
     })
     const turn = await callProviderTurn(target.provider, {
-      system, plainSystem, model: target.model,
+      system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
       canonicalMessages: currentMessages,
       unsyncedEntries, continuation: providerContinuation,
       tools: availableTools, maxTokens,

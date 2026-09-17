@@ -20,7 +20,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache, outfitEvaluationSystemPrompt, buildStylistConversationPayload } = await import('../styling-engine/core.js')
 const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
-const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, compactFreeformAnswerSystem } = await import('../routes/ai.js')
+const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, compactFreeformAnswerSystem, orderLayersByThermalFit } = await import('../routes/ai.js')
 
 let server
 let baseUrl
@@ -411,7 +411,7 @@ function mockAiHandler({ system, messages, maxTokens }) {
         dominantDirection: 'soft casual comfort',
         silhouette: 'relaxed top over easy lower line',
         bestFor: 'outdoor daytime social',
-        pieceIds: [badTop, seeded.bottom, badShoe].filter(Boolean),
+        ...slots({ top: badTop ?? null, bottom: seeded.bottom, shoes: badShoe ?? null }),
         reason: 'The hoodie and athletic shoes make the outfit easy for walking.',
         watchFor: 'Very casual.',
       }, {
@@ -420,7 +420,7 @@ function mockAiHandler({ system, messages, maxTokens }) {
         dominantDirection: 'botanical structure with grounded loafers',
         silhouette: 'expressive top over controlled midi line',
         bestFor: 'outdoor daytime social',
-        pieceIds: [goodTop, goodBottom, goodShoe].filter(Boolean),
+        ...slots({ top: goodTop ?? null, bottom: goodBottom ?? null, shoes: goodShoe ?? null }),
         reason: 'The textured top and botanical skirt keep the outfit social while the loafers stay walkable.',
         watchFor: 'Keep the shoe visible.',
       }],
@@ -438,7 +438,7 @@ function mockAiHandler({ system, messages, maxTokens }) {
         dominantDirection: 'city structure with boot',
         silhouette: 'controlled top over grounded lower line',
         bestFor: 'walking',
-        pieceIds: [seeded.top, seeded.bottom, seeded.boot],
+        ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.boot }),
         reason: 'The boot grounds the light trouser visually.',
         watchFor: 'May not be ideal for long walking.',
       }],
@@ -456,7 +456,7 @@ function mockAiHandler({ system, messages, maxTokens }) {
         dominantDirection: 'city structure with grounded shoe',
         silhouette: 'controlled top over grounded lower line',
         bestFor: 'city',
-        pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+        ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.shoe }),
         reason: 'The dark top clarifies the light pant and the shoe keeps the floor line readable.',
         watchFor: 'Keep the shoe visible.',
       }],
@@ -530,6 +530,11 @@ function mockAiHandler({ system, messages, maxTokens }) {
   }
 
   return 'Mock stylist answer with generated outfit context.'
+}
+
+// Composer cards answer in ID slots (styling-engine/composerSlots.js); every slot is stated.
+function slots({ top = null, bottom = null, dress = null, middle = null, outer = null, shoes = null } = {}) {
+  return { base_top_id: top, bottom_id: bottom, dress_id: dress, middle_layer_id: middle, outer_layer_id: outer, shoes_id: shoes }
 }
 
 function selectedPieceOutfit() {
@@ -704,7 +709,10 @@ test('generation_runs is not written on selected-piece error path', async () => 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM generation_runs').get().count, 0)
 })
 
-test('selected-piece visual composer pins the selected anchor when model omits it', async () => {
+// ATOMIC STRUCTURED OUTPUT (2026-09-13). The anchor used to be unshifted into any card that omitted
+// it, which presented an answer the model never gave. The composer is still told the anchor is the
+// premise; a card without it is shown as Needs review, saying so, with the model's own slots.
+test('selected-piece visual composer shows a card that omits the selected anchor as Needs review, never inserting it', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
     return {
@@ -714,11 +722,11 @@ test('selected-piece visual composer pins the selected anchor when model omits i
         dominantDirection: 'support pieces without anchor',
         silhouette: 'dark top with quiet shoe',
         bestFor: 'city',
-        pieceIds: [seeded.top, seeded.shoe],
+        ...slots({ top: seeded.top, shoes: seeded.shoe }),
         reason: 'The support pieces are compatible.',
-        watchFor: 'Selected anchor must be restored.',
+        styling_instructions: '',
+        watchFor: 'Selected anchor is missing.',
       }],
-      rejected: [],
       skip: '',
       saveableLearning: '',
     }
@@ -731,8 +739,12 @@ test('selected-piece visual composer pins the selected anchor when model omits i
   })
 
   assert.equal(json.pipeline, 'selected_piece_visual_composer')
-  assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
-  assert.ok(json.structuredOutfits[0].pieces.some(p => Number(p.id) === Number(seeded.bottom)))
+  const card = json.structuredOutfits.find(outfit => outfit.label === 'Mock omitted-anchor outfit')
+  assert.ok(card, 'the model card is shown, not dropped')
+  assert.equal(card.broken, true)
+  assert.equal(card.pieceIds.includes(seeded.bottom), false, 'the anchor is not inserted into the model answer')
+  assert.match(card.rejectionReason, new RegExp(`selected piece \\(ID ${seeded.bottom}\\) is in no slot`))
+  assert.equal(card.modelSlots.base_top_id, seeded.top)
 })
 
 test('selected-piece visual composer excludes boots from the June walking roster', async () => {
@@ -747,7 +759,7 @@ test('selected-piece visual composer excludes boots from the June walking roster
         dominantDirection: 'structured pants with boot grounding',
         silhouette: 'wide pant over boot',
         bestFor: 'casual walk',
-        pieceIds: [seeded.bottom, seeded.top, seeded.boot],
+        ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.boot }),
         reason: 'The boot grounds the pant.',
         watchFor: 'Warm walking should prefer lighter footwear.',
       }],
@@ -772,6 +784,15 @@ test('selected-piece visual composer excludes boots from the June walking roster
   const composerCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
   const composerText = JSON.stringify(composerCall?.messages || [])
   assert.doesNotMatch(composerText, /brown ankle boots/i, 'June walking should not show ankle boots to the composer roster')
+
+  // 2026-09-15 (cross-path): the selected-piece composer is the third path that received the
+  // occasion/activity taste lists. They are ratified SOFT scoring, so this warm walking turn must
+  // carry no "lean toward"/"use sparingly" directive and no soft prohibition sentence — while the
+  // roster itself (built by the same scoring) still keeps the low-support boot out, as asserted
+  // above. Prompt and ranking now make the same claim exactly once, in the ratified place.
+  assert.doesNotMatch(composerText, /lean toward|use sparingly and justify/, 'no taste directive on the selected-piece path')
+  assert.doesNotMatch(composerText, /warm-weather boots/, 'the SOFT warm-boot list is not stated as a prohibition')
+  assert.doesNotMatch(composerText, /at most ONE bold print/i, 'the retired print cap reaches no path')
 })
 
 test('selected-piece generator accepts and forwards mission and mood parameters', async () => {
@@ -924,7 +945,7 @@ test('whole-wardrobe current-season composition receives applicable summer lesso
   assert.match(promptText, /not preferred for summer outfits/)
 })
 
-test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hints', async () => {
+test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line (no derived warmth, tagger read or pairing cautions)', async () => {
   aiCalls = []
   const plainPiece = insertPiece({
     name: 'plain grey tee',
@@ -948,13 +969,20 @@ test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hin
     .filter(part => part?.type === 'text')
     .map(part => part.text)
 
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { parsePiece } = await import('../db.js')
+  const lineFor = id => sharedGarmentEvidenceLine(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)))
   const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
   assert.ok(bottomLine)
-  assert.equal(bottomLine, 'ID ' + seeded.bottom + ': light beige linen wide-leg pants; warmth: light; weight: light; fabric: linen; reads_as: soft structured light column')
+  assert.equal(bottomLine, lineFor(seeded.bottom))
+  assert.match(bottomLine, /fabric linen; fibre linen; whole garment: weight light/)
+  assert.doesNotMatch(bottomLine, /warmth|reads_as|do not pair/)
 
   const plainLine = textLines.find(line => line.startsWith(`ID ${plainPiece}:`))
   assert.ok(plainLine)
-  assert.equal(plainLine, `ID ${plainPiece}: plain grey tee`)
+  assert.equal(plainLine, lineFor(plainPiece))
+  assert.match(plainLine, /sleeves unknown/, 'an unrecorded sleeve length is stated, not left to guess')
+  assert.ok(textLines.some(line => line.startsWith('Garment facts are recorded values only.')), 'the fact conventions are stated once')
 })
 
 test('visual wardrobe composer endpoint returns outfits and populates debug shownPieceCount', async () => {
@@ -995,11 +1023,17 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
     .map(part => part.text)
     .join('\n')
   assert.match(composerRequestText, /COMPARISON SET CONTRACT:/)
-  assert.match(composerRequestText, /meaningfully different outfit formulas or clearly different silhouettes/)
+  // 2026-09-15 (owner ruling): forced cross-formula diversity is retired — a card is judged
+  // worthwhile on its own merits, not on how different it looks from its neighbors.
+  assert.match(composerRequestText, /do not choose a weaker outfit merely to avoid repeating a sound formula/)
   assert.match(composerRequestText, /Activity-safe footwear may repeat/)
-  assert.match(composerRequestText, /TIME-OF-DAY WEATHER:/)
-  assert.match(composerRequestText, /Opacity and needs_base are authoritative/)
-  assert.match(composerRequestText, /indoor destination.*does not erase arrival and departure weather/i)
+  assert.doesNotMatch(composerRequestText, /meaningfully different outfit formulas or clearly different silhouettes/, 'the forced-diversity directive is retired')
+  // TIME-OF-DAY WEATHER was removed (owner ruling 2026-09-15): its garment and layer prescriptions were not neutral facts,
+  // and the stated range and request text already carry the conditions.
+  assert.doesNotMatch(composerRequestText, /TIME-OF-DAY WEATHER|removable transition layer|indoor destination/)
+  assert.match(composerRequestText, /Opacity and base-layer facts are authoritative: do not call an opaque garment sheer\./)
+  assert.match(composerRequestText, /Do not infer a required base layer from lace, armhole, neckline or sleeve shape; layer underneath only when it serves a stated styling or practical purpose\./, 'legitimate layering stays open; invented exposure does not')
+  assert.doesNotMatch(composerRequestText, /needs_base/, 'no rule may name a label the garment lines no longer print')
 
   // Verify that rotation sessions are saved
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
@@ -1083,7 +1117,9 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   
   const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
-  assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The visual composer prompt must contain walking guidance')
+  // 2026-09-15: the sentence now names only gate-enforced exclusions; warm-weather boots are
+  // ratified SOFT (score penalty, never suppression) and are no longer stated as a prohibition.
+  assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals'), 'The visual composer prompt must contain walking guidance')
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
   assert.match(returnedNames, /brown ankle boots/, 'visual composer should keep the model-selected shoe visible')
   assert.ok(json.structuredOutfits.some(outfit => outfit.systemSuggestion?.type === 'comfort' && Number(outfit.systemSuggestion.swapOut) === Number(seeded.boot)))
@@ -1115,7 +1151,11 @@ test('visual wardrobe composer derives hot weather from styling request text bef
   assert.ok(visualComposerCalls.length >= 1)
   const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Styling request: not too dressy, hot weather'))
-  assert.ok(contentText.includes('Off-season pieces have been deprioritized or removed; everything shown is weather-optimized.'))
+  // The disclosure states what actually happened to the roster. This request DOES exclude pieces
+  // (the wool dress below), so it says so and counts them — the old text claimed "everything shown
+  // is weather-optimized" whenever a demand existed, including runs where nothing was excluded at
+  // all (live run 2077), telling the model a question had been settled that had not been.
+  assert.match(contentText, /pieces? plainly unsuited to these conditions (?:was|were) removed from this roster; that removal does not certify the rest as warm enough — the rest are ordered by overall relevance/)
   assert.doesNotMatch(contentText, /plum wool dress/i, 'hot-weather-invalid wool dress should not be shown to the visual composer')
 })
 
@@ -1143,6 +1183,252 @@ test('visual wardrobe composer excludes lightweight linen bottoms for cold reque
   assert.doesNotMatch(contentText, /light beige linen wide-leg pants/i, 'lightweight linen pants should not be shown to the visual composer for cold weather')
 })
 
+// --- the cool-end layer block is EVIDENCE, not an instruction (live run 2077) -------------------
+//
+// The first version of this block told the model a layer was REQUIRED at a named warmth and then
+// licensed the opposite one sentence later ("a midweight knit or cardigan counts"). Four of five
+// live cards took the licence. These pin the replacement: state the demand, state what the shown
+// wardrobe can answer it with, and leave the choice to the model (AGENTS.md principle 3).
+
+test('COOL END: the tail states the CONDITIONS, never a level the outfit must reach', async () => {
+  // Naming a target level turned composition into arithmetic against a published scale: with every
+  // base at `moderate` and one `moderate` layer visibly short of `warm`, the arithmetic route to the
+  // stated number is a second layer — and cards arrived carrying two coats
+  // (thread_1789241567145). The conditions are the fact; the level was our inference published back
+  // to the model as a requirement.
+  aiCalls = []
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'fall',
+    userWeather: { high_f: 65, low_f: 46 },
+    limit: 2,
+  })
+  assert.equal(json.debug.weatherProfile.needsRemovableCoolLayer, true)
+
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+
+  assert.match(contentText, /Temperature: 65°F high \/ 46°F low — judge the outfit against the range, not against a number/)
+  assert.doesNotMatch(contentText, /warmth:/, 'garment lines carry recorded construction, not a derived warmth label to sum')
+  assert.doesNotMatch(contentText, /needs to read about/, 'no target level')
+  assert.doesNotMatch(contentText, /conditions call for `\w+`/, 'and none on the roster heading either')
+})
+
+test('COOL END: no engine-derived layer requirement; the stated conditions carry the cool end', async () => {
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 46 }, limit: 2,
+  })
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+
+  // COOL-END LAYER was removed (2026-09-15): an engine-derived requirement that also quoted the retired `opacity: sheer` label format.
+  assert.doesNotMatch(contentText, /COOL-END LAYER|needs something removable|the base underneath can stay mild/)
+  assert.match(contentText, /Temperature: 65°F high \/ 46°F low/, 'the cool end is stated as the condition itself')
+  // The count sentence went with the target: once the layer band admitted every ordinary layer it
+  // read "7 of 7 suit these conditions", which is the "everything shown is weather-optimized"
+  // false reassurance in new clothes.
+  assert.doesNotMatch(contentText, /suits? these conditions on (?:its|their) own label/)
+})
+
+test('COOL END: no imperative, and no self-contradicting licence', async () => {
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'fall',
+    userWeather: { high_f: 65, low_f: 46 },
+    limit: 2,
+  })
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+
+  assert.doesNotMatch(contentText, /every outfit you propose must include/i, 'the engine discloses; it does not command')
+  assert.doesNotMatch(contentText, /midweight knit or cardigan counts/i,
+    'this licensed exactly the moderate layers the demand excludes — the contradiction that produced run 2077')
+})
+
+test('the roster disclosure says nothing was removed when nothing was', async () => {
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'fall',
+    userWeather: { high_f: 65, low_f: 46 },
+    limit: 2,
+  })
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+  assert.match(contentText, /No piece was removed for weather; the roster is ordered by overall relevance, which counts weather fit alongside occasion and wear history/)
+  assert.doesNotMatch(contentText, /everything shown is weather-optimized/)
+})
+
+// --- the demand at the point of choice (live runs 2077 and 3) -----------------------------------
+//
+// Both runs were told the demand in the volatile tail — first as a requirement, then as evidence —
+// and both picked the layer by looks, then narrated warmth afterwards ("a `warmth: very light`
+// cashmere vest for warmth"). The number sat ~2,000 characters from the labels it had to be
+// compared against. These pin it to the heading of the section the layer is chosen from, and pin
+// the section's own order.
+
+test('LAYER CHOICE: every roster heading is a plain category heading — no ordering verdict and no level', async () => {
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'fall',
+    userWeather: { high_f: 65, low_f: 46 },
+    limit: 2,
+  })
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
+  const texts = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text)
+
+  const outerwearHeading = texts.find(t => t.startsWith('=== OUTERWEAR'))
+  assert.ok(outerwearHeading, 'the roster must still be grouped by category')
+  assert.equal(outerwearHeading, '=== OUTERWEAR ===')
+  for (const heading of texts.filter(t => t.startsWith('=== '))) {
+    assert.doesNotMatch(heading, /ordered for these conditions|`\w+`/, `${heading} must stay a plain category heading`)
+  }
+})
+
+test('LAYER CHOICE: layers are ordered best-fit first, and an untagged layer keeps its place', () => {
+  const demand = { level: 'warm', range: ['moderate', 'very warm'], certain: true }
+  const vest = { id: 1, category: 'outerwear', name: 'open front vest', fabric_weight: 'light', fiber_content: ['cotton'] }
+  const untagged = { id: 2, category: 'outerwear', name: 'unmeasured jacket' }
+  const woolCoat = { id: 3, category: 'outerwear', name: 'wool coat', fabric_weight: 'heavy', fiber_content: ['wool'], interior_construction: 'full_lining', sleeve_length: 'long' }
+
+  const ordered = orderLayersByThermalFit([vest, untagged, woolCoat], demand)
+  assert.equal(ordered[0].id, 3, 'the layer that answers the conditions leads its own section')
+
+  // Live run thread_1789247972106: ordering by `offset` — which is overshoot-WEIGHTED — sorted the
+  // one adequate layer (a `warm` puffer, 0.75 above the level's centre) BELOW four undershooting
+  // `moderate` cardigans, in a section headed "ordered for these conditions". The owner chose that
+  // occasion expecting that coat; the model was shown it fifth. Level distance is symmetric.
+  const puffer = { id: 4, category: 'outerwear', name: 'quilted puffer', fabric_weight: 'medium', fiber_content: ['nylon'], insulating_layer_materials: ['polyester'], sleeve_length: 'long' }
+  const cardigan = { id: 5, category: 'outerwear', name: 'knit cardigan', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'long' }
+  const coolDay = orderLayersByThermalFit([cardigan, puffer], demand)
+  assert.equal(coolDay[0].id, 4, `the layer that answers the cool end must lead, not the one just under it: ${JSON.stringify(coolDay.map(p => p.id))}`)
+  assert.equal(ordered.length, 3, 'ranking, never gating — every layer is still shown')
+  assert.equal(ordered.indexOf(untagged), 1, 'an untagged layer holds its incoming position: unknown is not inadequacy')
+
+  assert.deepEqual(orderLayersByThermalFit([vest, woolCoat], null).map(p => p.id), [1, 3],
+    'with no demand the roster order is returned untouched')
+})
+
+// --- the one corrective pass (owner ruling 2026-09-12) ------------------------------------------
+//
+// Every other composition flow returns its validation findings to the model; this one had no
+// channel back, so three live runs shipped four undershoot cards each under three different prompt
+// wordings. One pass, capped, and only when it can actually change something.
+
+async function seedWarmCoatAndLightShell() {
+  const coatPhoto = await makeImage('wool-coat.png', '#111111')
+  const shellPhoto = await makeImage('nylon-shell.png', '#9aa7b0')
+  const coat = insertPiece({
+    name: 'black double-breasted wool coat',
+    category: 'outerwear',
+    colors: ['black'],
+    occasions: ['city', 'casual'],
+    photo: coatPhoto,
+    reads_as: 'tailored black coat',
+    fabric_weight: 'heavy',
+    fiber_content: ['wool'],
+  })
+  // insertPiece enumerates its columns and silently drops the rest — the same shape that once cost
+  // a session on opacity — so the thermal construction fields are set directly. Heavy wool with
+  // sleeves reaches `warm`; a recorded fill would push it to `very warm`, which the layer band
+  // treats as a winter coat rather than a layer for a 65/46 day.
+  db.prepare("UPDATE pieces SET sleeve_length = 'long' WHERE id = ?").run(coat)
+  const puffer = insertPiece({
+    name: 'black down puffer coat',
+    category: 'outerwear',
+    colors: ['black'],
+    occasions: ['city', 'casual'],
+    photo: await makeImage('down-puffer.png', '#1b1b1b'),
+    reads_as: 'filled winter coat',
+    fabric_weight: 'heavy',
+    fiber_content: ['nylon'],
+  })
+  db.prepare("UPDATE pieces SET insulating_layer_materials = ?, sleeve_length = 'long' WHERE id = ?")
+    .run(JSON.stringify(['down']), puffer)
+  const shell = insertPiece({
+    name: 'thin nylon shell',
+    category: 'outerwear',
+    colors: ['gray'],
+    occasions: ['city', 'casual'],
+    photo: shellPhoto,
+    reads_as: 'light technical shell',
+    fabric_weight: 'light',
+    fiber_content: ['nylon'],
+  })
+  return { coat, shell, puffer }
+}
+
+// The missing-layer repair pass replaced the retired revision pass (owner ruling 2026-09-13). This
+// test owns the no-op half of its contract: a card that already carries a layer is not deficient,
+// so no repair is attempted, no second model call is made, and the card ships exactly as composed.
+test('MISSING-LAYER REPAIR: a card that already has a layer is untouched and costs no second call', async () => {
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Shell and denim', strength: 'strong', dominantDirection: 'city structure',
+          silhouette: 'top over bottom', bestFor: 'city',
+          ...slots({ top: seeded.top, bottom: seeded.jeans, outer: shell, shoes: seeded.shoe }),
+          reason: 'A dark top over denim, finished with a thin shell.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 46 }, limit: 1,
+  })
+
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.deficientCount, 0, 'a card carrying a layer is not missing one')
+  assert.equal(repair.attempted, false, 'and the pass does not fire as an expensive no-op')
+  assert.equal(aiCalls.filter(call => String(call.system || '').includes('has no removable layer')).length, 0,
+    'no repair call is made')
+  assert.equal(json.debug.finalSelection.coolLayerSetDisclosure, '', 'nothing to disclose at the set level')
+
+  const delivered = json.structuredOutfits[0]
+  const ids = (delivered.pieces || []).map(piece => Number(piece.id))
+  assert.ok(ids.includes(shell), "the composer's own layer survives untouched")
+  assert.ok(!ids.includes(coat), 'and nothing is swapped in')
+  assert.equal(delivered.pieces.length, 4, "the card ships with the composer's own four pieces")
+})
+
+// THE DETERMINISTIC REPAIR CONTRACT (owner ruling 2026-09-12).
+//
+// The six tests that stood here exercised the MECHANICS of the model-authored corrective pass —
+// how a proposal was parsed, re-gated and accepted. That pass has been deleted, not merely
+// disabled: its application dropped every outerwear piece and appended one replacement, so tests
+// green against it were describing a defect. They are not kept as skips, because a skipped test
+// asserts nothing while looking like coverage.
+//
+// What replaces them is the contract any future repair must satisfy, written down here so it is
+// reviewed with this file rather than rediscovered:
+//
+//   1. DETERMINISTIC, per-card repair operations computed by the engine — not a second model call
+//      asked to re-style; the model composes, the engine repairs what it can prove.
+//   2. SWAP ONLY. A repair exchanges one layer for another. It never adds or removes a garment, and
+//      it never collapses a `layer_top` + `outerwear` composition into a single layer.
+//   3. ROLE AND WEAR ORDER PRESERVED, since the card's roles are the only record of which piece is
+//      the base and which is worn over it.
+//   4. RE-GATED exactly as the original card was. A corrective pass is not a licence to ship
+//      something the gate would have rejected.
+//   5. PER DIRECTION. Curing a shortfall by causing an overshoot is not neutral, so acceptance
+//      compares each direction separately rather than a single misfit count.
+//   6. PROSE CONSISTENCY. A swapped layer may not ship under prose describing the garment it
+//      replaced.
+//
+// Until such a repair exists, the executable contract is the one directly above: the pass cannot
+// run, makes no model call, and leaves the composer's card exactly as delivered.
+
+
 test('visual wardrobe composer shows rejected model cards as broken diagnostics', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
@@ -1154,7 +1440,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
           dominantDirection: 'city structure',
           silhouette: 'top over bottom',
           bestFor: 'city',
-          pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+          ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.shoe }),
           reason: 'A complete model outfit with top, bottom, and shoe.',
           watchFor: 'None.',
         }, {
@@ -1163,7 +1449,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
           dominantDirection: 'unfinished column',
           silhouette: 'top over bottom',
           bestFor: 'city',
-          pieceIds: [seeded.top, seeded.bottom],
+          ...slots({ top: seeded.top, bottom: seeded.bottom }),
           reason: 'The model proposed a top and bottom but no shoe.',
           watchFor: 'Missing grounding.',
         }, {
@@ -1172,7 +1458,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
           dominantDirection: 'overbuilt dress formula',
           silhouette: 'dress plus bottom',
           bestFor: 'city',
-          pieceIds: [seeded.dress, seeded.bottom, seeded.shoe],
+          ...slots({ dress: seeded.dress, bottom: seeded.bottom, shoes: seeded.shoe }),
           reason: 'The model mixed a dress with a separate bottom.',
           watchFor: 'Too many lower-body pieces.',
         }],
@@ -1348,9 +1634,16 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
-  assert.match(contentText, /use sparingly and justify in watchFor:/i)
-  assert.match(contentText, /hoodie/i)
-  assert.match(contentText, /athletic running shoe/i)
+  // 2026-09-15: the occasion/activity taste lists are ratified SOFT scoring and no longer rendered
+  // as instructions. The roster itself (and its scoring) is unchanged, so the pieces still arrive.
+  assert.doesNotMatch(contentText, /use sparingly and justify in watchFor:/i)
+  // These two words only ever appeared in the discouraged taste list itself ("hoodie",
+  // "athletic running shoe" are outdoor_daytime_social's discouraged_pieces/footwear entries) —
+  // the roster names the garment "hooded sweatshirt". With the soft list out of the prompt, the
+  // assertions now check what actually matters: the composer still SEES the pieces, and the
+  // annotation path above still flags the occasion concern on the returned card.
+  assert.doesNotMatch(contentText, /\bhoodie\b|athletic running shoe/i, 'the soft list no longer reaches the model as text')
+  assert.match(contentText, /hooded sweatshirt/i, 'the piece itself is still on the composer roster')
 })
 
 
@@ -1539,7 +1832,7 @@ test('saved outfit formula variants reject collapsed model cards for two-top sou
           dominantDirection: 'single top over relaxed pants',
           silhouette: 'button-down top + wide pants',
           bestFor: 'city',
-          pieceIds: [buttonDown, seeded.bottom, seeded.shoe],
+          ...slots({ top: buttonDown, bottom: seeded.bottom, shoes: seeded.shoe }),
           reason: 'The button-down is used as the only top.',
           watchFor: 'Collapsed source formula.',
         }, {
@@ -1548,7 +1841,7 @@ test('saved outfit formula variants reject collapsed model cards for two-top sou
           dominantDirection: 'single top with grounded boot',
           silhouette: 'button-down top + wide pants',
           bestFor: 'city',
-          pieceIds: [buttonDown, seeded.bottom, seeded.boot],
+          ...slots({ top: buttonDown, bottom: seeded.bottom, shoes: seeded.boot }),
           reason: 'The button-down is again used as the only top.',
           watchFor: 'Collapsed source formula.',
         }, {
@@ -1557,7 +1850,7 @@ test('saved outfit formula variants reject collapsed model cards for two-top sou
           dominantDirection: 'single top with dark jeans',
           silhouette: 'button-down top + jeans',
           bestFor: 'city',
-          pieceIds: [buttonDown, seeded.jeans, seeded.shoe],
+          ...slots({ top: buttonDown, bottom: seeded.jeans, shoes: seeded.shoe }),
           reason: 'The button-down is still the only top.',
           watchFor: 'Collapsed source formula.',
         }],
@@ -1816,6 +2109,20 @@ test('freeform ask stays conversational from turn 1', async () => {
   assert.ok(payload.system.includes(PROMPT_CACHE_BREAKPOINT), 'freeform text-first entry establishes the conversational cache immediately')
 })
 
+// thread_1789526496845 (complete capture): the composer's own "Composition rules" carried a
+// SEPARATE, standing set-wide diversity requirement ("Each outfit must have a different visual
+// thesis... Do not return five variations of one formula") that directly conflicted with the
+// per-request COMPARISON SET CONTRACT's corrected wording ("do not choose a weaker outfit merely to
+// avoid repeating a sound formula"). In this run, changing the outerwear on every card was the
+// easiest way to satisfy the standing rule, even where repeating one of two sound cold-weather
+// choices would have made stronger outfits. Retired; each outfit is now selected on its own merits.
+test('the whole-wardrobe composer no longer requires a different visual thesis on every card', () => {
+  const system = wholeWardrobeVisualComposerSystemPrompt('')
+  assert.doesNotMatch(system, /different visual thesis|Do not return five variations of one formula/)
+  assert.match(system, /Select each outfit on its own merits\. Repeating a strong garment, outerwear choice, or outfit formula is fully acceptable\./)
+  assert.match(system, /never weaken an outfit to increase variety across the set/)
+})
+
 test('whole-wardrobe generation is a one-shot entry and writes no conversational cache', () => {
   const system = wholeWardrobeVisualComposerSystemPrompt('some saved-variant guidance')
   assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)
@@ -1842,6 +2149,87 @@ test('whole-wardrobe generation does not cache_control the candidate image manif
 test('selected-item generation is a one-shot entry and writes no conversational cache', () => {
   const system = selectedItemVisualComposerSystemPrompt()
   assert.equal(system.includes(PROMPT_CACHE_BREAKPOINT), false)
+})
+
+// 2026-09-15: this prompt serializes BOTH profile lists as RULES-AS-DATA, so it was the third path
+// republishing the soft taste lists after they were removed from /ask and the composer tails —
+// with its own wording, which is how two chat paths end up giving different taste instructions.
+// One shared filter (stripSoftRankingRules) now serves every serializing path.
+test('the selected-piece composer serializes profiles without the soft taste lists', () => {
+  const system = selectedItemVisualComposerSystemPrompt()
+  assert.match(system, /OCCASION & CLIMATE PROFILES \(RULES-AS-DATA\)/)
+  assert.match(system, /ACTIVITY PROFILES \(RULES-AS-DATA\)/)
+
+  // Ratified SOFT scoring: never republished as a rule on any path.
+  assert.doesNotMatch(system, /preferred_materials|preferred_footwear|discouraged_materials|discouraged_footwear|discouraged_pieces/,
+    'soft ranking lists must not reach the model as rules-as-data')
+
+  // Ratified HARD keys: still published, because the engine enforces them.
+  assert.match(system, /prohibited_footwear/, 'hard prohibitions still reach the model')
+  assert.match(system, /register_ceiling/, 'the register ceiling is a hard gate and stays')
+  assert.match(system, /required_occasion_tags/, 'activity tag requirements stay')
+  assert.match(system, /"id": "city_smart_casual"/, 'classification fields stay')
+})
+
+// 2026-09-15: the other half of the stated-context boundary. test/freeform_observability.test.js
+// pins that a stated range and a stated activity survive into THREAD STATE; this pins that they
+// still read correctly in the composer request itself. On the live capture the composer happened
+// to recover the full range by its own route, which is exactly why both ends are pinned: a path
+// that cannot recover it must still send what the user actually said.
+test('the composer request states both endpoints of a stated range', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return mockAiHandler({ system, messages })
+  }
+  // Deliberately a plain warm range with no activity: what this pins is that BOTH endpoints of a
+  // stated range survive into the composer request, which has nothing to do with temperature or
+  // exposure. Colder/outdoor-walking variants make this fixture stop before composing — correctly,
+  // for want of a complete outfit path including a required coverage layer — which would turn the
+  // assertion into one about supply. The stated ACTIVITY reaching the composer is pinned by
+  // 'visual wardrobe composer endpoint propagates activity parameter to LLM prompt' above, which
+  // seeds walkable pieces for exactly that purpose.
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    userWeather: { high_f: 82, low_f: 70 },
+    limit: 1,
+  })
+  const composerCall = aiCalls.find(c => String(c.system || '').includes('personal stylist. You are looking at photos'))
+  assert.ok(composerCall, `a visual composer call was recorded (keys=${Object.keys(json || {}).join(',')}; feedback=${String(json?.feedback || '').slice(0, 240)}; debug=${JSON.stringify(json?.debug || {}).slice(0, 600)})`)
+  const text = (composerCall.messages[0].content || []).filter(p => p.type === 'text').map(p => p.text).join('\n')
+  assert.match(text, /82°F high \/ 70°F low/, 'both endpoints of the stated range reach the composer, not just one')
+})
+
+// 2026-09-16 (thread_1789526496845, reopened): a first attempt hedged the composer's Temperature
+// line itself ("timing within the day unknown") — but `weatherProfile.highF/lowF` is, by ratified
+// contract (docs/app-surface-map.md, 2026-09-12), taken verbatim as the range the wearer will
+// actually be outside in end to end (exposure.js's `stated_user` branch never applies a
+// waking-window estimate to it, unlike a live/model-estimated forecast). Hedging the SAME number
+// here while the exposure/ranking engine still treats it as certain was a self-contradiction, not a
+// fix — and it would have wrongly hedged the dedicated "Temperatures you'll be out in" UI field
+// too, which this exact composer also serves and which explicitly means what it says. This test
+// pins that a genuinely-certain stated range (the ratified contract's own shape) reaches the
+// composer WITHOUT any timing hedge, so a future change cannot reintroduce the contradiction here.
+// The actual fix — keeping an ambiguous daily-forecast-vs-outing-window statement from being
+// certified as this same field in the first place — belongs upstream, at the model's own
+// translation into `user_weather` (see USER_WEATHER_SCHEMA's range-scope instruction in
+// styling-engine/tools.js, and its own pinned test).
+test('a genuinely stated exposure range reaches the composer verbatim, with no timing hedge', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    userWeather: { high_f: 50, low_f: 40 },
+    limit: 1,
+  })
+  const composerCall = aiCalls.find(c => String(c.system || '').includes('personal stylist. You are looking at photos'))
+  assert.ok(composerCall, `a visual composer call was recorded (debug=${JSON.stringify(json?.debug || {}).slice(0, 600)})`)
+  const text = (composerCall.messages[0].content || []).filter(p => p.type === 'text').map(p => p.text).join('\n')
+  assert.match(text, /Temperature: 50°F high \/ 40°F low — judge the outfit against the range, not against a number/)
+  assert.doesNotMatch(text, /timing within the day unknown|daily high|daily low/, 'no self-contradicting hedge on a number the engine treats as certain')
 })
 
 test('critique/feedback is a one-shot entry and writes no conversational cache on full or followup', () => {
@@ -2541,7 +2929,14 @@ test('freeform ask system prompt includes context persistence and no hallucinati
   assert.match(lastCall.system, /Context Persistence:/)
   assert.match(lastCall.system, /Strictly No Garment Hallucination:/)
   assert.match(lastCall.system, /Occasion Realism & Styling Sense:/)
-  assert.match(lastCall.system, /Layering Logic & No Double-Vests:/)
+  // 2026-09-12: renamed from "Layering Logic & No Double-Vests" when the garment-category
+  // prohibitions came out. Whether two garments layer is a physical question owned by roles, the
+  // structural caps, required-base evidence and evaluateLayerPairConstruction — the prompt no
+  // longer forbids by category, and must not, since the same file's own three-layer example is a
+  // cardigan under a coat.
+  assert.match(lastCall.system, /Layering Logic:/)
+  assert.doesNotMatch(lastCall.system, /two vests, two cardigans/)
+  assert.doesNotMatch(lastCall.system, /a single functional top .{0,40}with a single outerwear piece/)
   assert.match(lastCall.system, /Precise Garment Naming:/)
   assert.match(lastCall.system, /never as a generic category checklist/)
 })
@@ -3680,7 +4075,8 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   // FACTS, not a verdict (docs/search-propose-signal-inventory.md): the light linen's own warmth
   // fact, not a "good for heat" label computed against this call's weather. The model judges fit
   // itself; search_wardrobe states what the garment is.
-  assert.match(linen.thermal, /warmth:/)
+  assert.match(linen.thermal, /insulating layer:|season:/)
+  assert.doesNotMatch(linen.thermal, /warmth:/, 'recorded construction, not a derived warmth level')
   assert.equal(bottoms.some(p => p.id === seeded.jeans), false, 'compose mode excludes the hard hot-weather failure')
 
   const explainedBottoms = await executeTool('search_wardrobe', {
@@ -3690,7 +4086,8 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
     intent: 'explain',
   })
   const denim = explainedBottoms.find(p => p.id === seeded.jeans)
-  assert.match(denim.thermal, /warmth:/, 'explain mode preserves the rejected piece and its thermal facts')
+  assert.match(denim.thermal, /season:/, 'explain mode preserves the rejected piece and its thermal facts')
+  assert.doesNotMatch(denim.thermal, /warmth:/)
 
   const hikingShoes = await executeTool('search_wardrobe', {
     category: 'shoes',
@@ -3699,8 +4096,11 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   })
   const boot = hikingShoes.find(p => p.id === seeded.boot)
   const slipOn = hikingShoes.find(p => p.id === seeded.shoe)
-  assert.equal(boot.ruleFit, 'neutral')
-  assert.equal(slipOn.ruleFit, 'neutral')
+  // 2026-09-15: soft tiers no longer reach the model. Both shoes are wearable for hiking and
+  // fully tagged, so neither carries a tier at all — `neutral` was information-free, and
+  // `preferred`/`discouraged` were the ratified soft ranking lists restated as verdicts.
+  assert.equal(boot.ruleFit, undefined)
+  assert.equal(slipOn.ruleFit, undefined)
 })
 
 test('executeTool search_wardrobe excludes prohibited pieces in compose mode and surfaces them in explain mode', async () => {
@@ -3717,7 +4117,16 @@ test('executeTool search_wardrobe excludes prohibited pieces in compose mode and
     const composed = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking' })
     assert.ok(!composed.some(p => p.id === heelId), 'prohibited high heel should be filtered out of compose-mode results')
     assert.ok(composed.some(p => (p.note || '').includes('filtered out by hard occasion/activity/weather gates')), 'a gate-exclusion note should be present')
-    assert.ok(composed.some(p => p.id && p.ruleFit && p.ruleFit !== 'prohibited'), 'wearable shoes still remain (filter is selective)')
+    // 2026-09-15: wearable shoes still come back (the filter is selective), and none of them
+    // carries a taste tier. `unknown` may legitimately remain — under hiking the footwear enum gate
+    // is active, so a shoe with no heel_height/walk_support recorded is annotated as untagged,
+    // which is a fact about missing metadata rather than a preference.
+    const wearable = composed.filter(p => p.id)
+    assert.ok(wearable.length, 'wearable shoes still remain')
+    assert.ok(
+      wearable.every(p => !p.ruleFit || p.ruleFit === 'unknown'),
+      `no taste tier survives in compose mode; saw ${[...new Set(wearable.map(p => p.ruleFit))].join(', ')}`
+    )
 
     // explain: the same prohibited piece IS returned, with its reasoning label.
     const explained = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking', intent: 'explain' })
@@ -3788,8 +4197,9 @@ test('executeTool search_wardrobe uses a structured toolContext weather profile 
   // the model's own call omits weather args — not a verdict text (docs/search-propose-signal-
   // inventory.md removed weatherFit). Both pieces resolving with their thermal facts intact proves
   // the toolContext-sourced profile reached stylingContext rather than the call short-circuiting.
-  assert.match(linen.thermal, /warmth:/)
-  assert.match(denim.thermal, /warmth:/)
+  assert.match(linen.thermal, /season:/)
+  assert.match(denim.thermal, /season:/)
+  assert.doesNotMatch(`${linen.thermal} ${denim.thermal}`, /warmth:/)
 })
 
 test('freeform eligibility evaluates current season against the resolved request date', async () => {
@@ -4198,7 +4608,9 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
   const extracted = extractToolResultImages(result)
   assert.equal(extracted.images.length, 1)
   // item.weatherFit removed (docs/search-propose-signal-inventory.md) along with the field it read.
-  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred')
+  // 2026-09-15: a `preferred` tier no longer captions the photograph — soft taste ranking is not
+  // a fact about the garment, and a label is the most verdict-like place it could appear.
+  assert.equal(extracted.images[0].label, 'ID 42: linen top')
   assert.equal(extracted.images[0].mime, 'image/jpeg')
   assert.equal(extracted.images[0].base64, 'abc123')
   assert.ok(!JSON.parse(extracted.textResult)[0].image)
@@ -5104,9 +5516,13 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.ok(hikeCall, 'complete hiking supply should reach the visual composer')
   const hikeUserMessage = hikeCall.messages[0].content.map(part => part?.text || '').join('\n')
   assert.ok(hikeUserMessage.includes('Occasion guidance:'), 'Should contain occasion guidance header')
-  assert.ok(hikeUserMessage.includes('use sparingly and justify in watchFor'), 'Should contain use-sparingly block')
-  assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
-  assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
+  // 2026-09-15: hiking's SOFT lists (suede/silk materials, mules and sandals, warm-weather boots,
+  // dresses/skirts/blouses) are ratified as score penalties, never suppression or prohibition, so
+  // they no longer reach the model as a "use sparingly" directive. The hard gate still speaks: the
+  // comfort sentence below names only what the footwear gate actually enforces.
+  assert.ok(!hikeUserMessage.includes('use sparingly and justify in watchFor'), 'the soft taste list is no longer a directive')
+  assert.ok(hikeUserMessage.includes('require sneakers, athletic shoes, or flat rugged boots'), 'the ratified HARD footwear requirement still reaches the model')
+  assert.ok(!/avoid heels, wedges, dress shoes, delicate sandals, mules, and sandals/.test(hikeUserMessage), 'SOFT mules/sandals must not be stated as prohibitions')
 })
 
 test('prompt cache breakpoint splits the system into stable + volatile blocks', () => {
@@ -5512,6 +5928,8 @@ test('declare_intent records the turn contract and acks the capability gap for i
 })
 
 test('single-outfit explicit layer contract rejects omission and role spoofing, then accepts an ordered moderate three-layer system for the same stated exposure', async () => {
+  // Light-weight cloth: with no blanket outerwear ceiling, a `light` placement now has to come from the
+  // garment's own substance rather than from being uninsulated outerwear.
   const lightTrench = insertPiece({
     name: 'known light acceptance trench',
     category: 'outerwear',
@@ -5519,7 +5937,7 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
     occasions: ['city'],
     photo: seeded.photos.jacket,
     reads_as: 'straight trench',
-    fabric_weight: 'medium',
+    fabric_weight: 'light',
     fiber_content: ['cotton'],
   })
   const warmCoat = insertPiece({
@@ -5566,10 +5984,17 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
     fiber_content: ['polyester'],
   })
   db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', interior_construction = 'full_lining', insulating_layer_materials = '[]' WHERE id = ?`).run(lightTrench)
+  // 2026-09-12, Concern 2: the warm-endpoint contract now fires on a SUBSTANTIAL shortfall, so the
+  // satin shell is bare-cut. A three-quarter-sleeve version of the same top is ONE level under the
+  // 60F warm endpoint, which the approved model treats as a ranking preference rather than a fault.
+
   db.prepare(`UPDATE pieces SET sleeve_length = 'long', interior_construction = 'full_lining', insulating_layer_materials = '["down"]' WHERE id = ?`).run(warmCoat)
   db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'fitted', fit_on_body = 'skims' WHERE id = ?`).run(rangeTop)
   db.prepare(`UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', fit_on_body = 'skims', insulating_layer_materials = NULL WHERE id = ?`).run(middleCardigan)
-  db.prepare(`UPDATE pieces SET sleeve_length = 'three_quarter' WHERE id = ?`).run(lightSatinTop)
+  // 2026-09-12, Concern 2: bare-cut, because the warm-endpoint contract now fires on a SUBSTANTIAL
+  // shortfall. The three-quarter-sleeve version of this same top is ONE level under the 60F warm
+  // endpoint, which the approved model treats as a ranking preference rather than a fault.
+  db.prepare(`UPDATE pieces SET sleeve_length = 'sleeveless' WHERE id = ?`).run(lightSatinTop)
   db.prepare(`UPDATE pieces SET sleeve_length = 'sleeveless' WHERE id = ?`).run(seeded.top)
 
   const toolContext = { generatedOutfits: [], turnMode: 'new_request' }
@@ -5625,6 +6050,11 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
   assert.equal(spoofed.status, 'validation_error')
   assert.match(spoofed.message, /contains no outerwear piece/, 'a model-authored layer role cannot replace structured category truth')
 
+  // 2026-09-12, Concern 2: this outfit is a SUBSTANTIAL shortfall in the tool path — a light top
+  // under an unlined trench sits two levels below the 48F cold target with no worn configuration in
+  // between — so the explicit layer contract still hard-blocks it. The adjacent-vs-substantial
+  // boundary itself is pinned in test/thermalAdequacyMigration.test.js, where the fixtures are
+  // constructed rather than seeded.
   const tooLight = await executeTool('propose_outfit', {
     label: 'Too-light Santa Fe layer',
     pieces: [
@@ -5634,7 +6064,11 @@ test('single-outfit explicit layer contract rejects omission and role spoofing, 
     why_it_works: 'The trench is removable after sunset.',
   }, toolContext)
   assert.equal(tooLight.status, 'validation_error')
-  assert.match(tooLight.message, /less warmth than the conditions call for/)
+  // 2026-09-12, Concern 2: the finding is now stated across configurations, because the evaluator
+  // asks whether ANY worn state suits the endpoint — the tool surfaces the finding's message, and
+  // the code itself is asserted in test/thermalAdequacyMigration.test.js.
+  assert.match(tooLight.message, /\[outfit_thermal_capacity_below_conditions\]/)
+  assert.match(tooLight.message, /no way of wearing this outfit carries enough warmth/)
   assert.match(tooLight.message, /either a compatible, substantial middle garment assigned layer_top beneath the outerwear or a warmer visually verified outerwear candidate/)
   assert.match(tooLight.message, /Do not assume a winter coat is the only repair/)
   assert.doesNotMatch(tooLight.message, /keep the pieces you chose/, 'thermal correction must not tell the model to preserve the inadequate layer')
@@ -6528,7 +6962,10 @@ test('search_wardrobe trims to judgment only when the manifest is actually in th
   // Trimmed: per-request info plus the join key into the manifest. weatherFit is gone
   // (docs/search-propose-signal-inventory.md); its replacement, `thermal`, is null for shoes (the
   // category this test searches), so it is not asserted here.
-  assert.ok('ruleFit' in trimmed, 'per-request judgment always survives')
+  // 2026-09-15: a wearable, fully-tagged piece carries no tier — the per-request judgment that
+  // survives the trim is the hard-gate/missing-metadata annotation plus the join key.
+  assert.equal(trimmed.ruleFit, undefined, 'no taste tier on a wearable piece')
+  assert.ok('id' in trimmed && 'name' in trimmed, 'the join key into the manifest always survives')
   assert.equal(trimmed.silhouette, undefined, 'stable truth is left to the cached manifest')
   assert.equal(trimmed.fabric_category, undefined)
   assert.equal(trimmed.occasions, undefined)
@@ -6949,4 +7386,1324 @@ test('tool schemas are byte-identical across turn modes, so the cached prefix su
   // turn-ending boundary, not policy text inside a cached schema.
   assert.equal(stylistToolsForTurn({ atomicMultiLookCompleted: true }).length, 0)
   assert.equal(stylistToolsForTurn({ slotSwapCompleted: true }).length, 0)
+})
+
+// ─── the incident card, through the production propose_outfit path ──────────────────────────────
+//
+// thread_1789274442146: a gathered/ruched turtleneck, a cream open cardigan and a fitted quilted
+// puffer were accepted as a clean card. Both adjacent pairs read `compatible` because the pairwise
+// construction rule treats accommodation as absorption, so the turtleneck's sleeve volume vanished
+// from the system before the puffer was judged. The model had photographs of all three garments
+// and composed it anyway, justifying the card by asserting that the puffer's ribbed TORSO panels
+// supply sleeve capacity — an invention that went unchallenged precisely because the engine
+// returned nothing for it to answer to.
+//
+// This pins the structural shape at the flow level, not the primitive: the card must not come back
+// clean, and the controls must still come back clean.
+// 2026-09-14 (owner ruling): sleeve geometry is log-only across production. The propagated chain verdict is still
+// computed, as shadow evidence on the card's debug, but it no longer blocks the card or reaches the model.
+test('PROPOSE_OUTFIT: sleeve volume propagated through a middle layer is recorded as shadow evidence, not a block (log-only)', async () => {
+  const ruched = insertPiece({
+    name: 'black ruched-sleeve turtleneck', category: 'top', colors: ['black'],
+    occasions: ['city', 'casual'], photo: await makeImage('ruched-top.png', '#0b0b0b'),
+    fabric_weight: 'medium', fiber_content: ['wool'],
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'extra_long', sleeve_shape = 'gathered_ruched' WHERE id = ?").run(ruched)
+  const cardigan = insertPiece({
+    name: 'cream open knit cardigan', category: 'outerwear', colors: ['cream'],
+    occasions: ['city', 'casual'], photo: await makeImage('cream-cardigan.png', '#efe7d8'),
+    fabric_weight: 'medium', fiber_content: ['cotton'], silhouette: 'relaxed',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'extra_long', sleeve_shape = 'straight', fit_on_body = 'hangs_straight' WHERE id = ?").run(cardigan)
+  const fittedPuffer = insertPiece({
+    name: 'navy quilted puffer', category: 'outerwear', colors: ['navy'],
+    occasions: ['city', 'casual'], photo: await makeImage('navy-puffer.png', '#1e2a44'),
+    fabric_weight: 'medium', fiber_content: ['nylon'], silhouette: 'fitted',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', fit_on_body = 'skims' WHERE id = ?").run(fittedPuffer)
+  const boxyPuffer = insertPiece({
+    name: 'black boxy puffer coat', category: 'outerwear', colors: ['black'],
+    occasions: ['city', 'casual'], photo: await makeImage('boxy-puffer.png', '#141414'),
+    fabric_weight: 'heavy', fiber_content: ['nylon'], silhouette: 'boxy',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', fit_on_body = 'hangs_straight' WHERE id = ?").run(boxyPuffer)
+
+  const contextFor = () => ({
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([ruched, cardigan, fittedPuffer, boxyPuffer, seeded.bottom, seeded.shoe]),
+    visuallySeenPieceIds: new Set([ruched, cardigan, fittedPuffer, boxyPuffer, seeded.bottom, seeded.shoe]),
+    generatedOutfits: [],
+  })
+  const card = (outer, label) => executeTool('propose_outfit', {
+    label,
+    pieces: [
+      { id: ruched, role: 'primary_top' },
+      { id: cardigan, role: 'layer_top' },
+      { id: outer, role: 'outerwear' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+    occasion: 'city',
+    why_it_works: 'a layered column for a cold day',
+    styling_instructions: 'Cardigan over the turtleneck, coat over both.',
+  }, contextFor())
+
+  const incidentContext = contextFor()
+  const incident = await executeTool('propose_outfit', {
+    label: 'Layered Puffer & Cardigan Look',
+    pieces: [
+      { id: ruched, role: 'primary_top' },
+      { id: cardigan, role: 'layer_top' },
+      { id: fittedPuffer, role: 'outerwear' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+    occasion: 'city',
+    why_it_works: 'a layered column for a cold day',
+    styling_instructions: 'Cardigan over the turtleneck, coat over both.',
+  }, incidentContext)
+  assert.equal(incident.status, 'success', `a sleeve-geometry verdict no longer blocks the card: ${incident.message}`)
+  assert.doesNotMatch(JSON.stringify(incident), /sleeve construction conflict|still inside|layer_construction/, 'the verdict never reaches the model')
+  const incidentCard = incidentContext.generatedOutfits.at(-1)
+  const shadow = (incidentCard?.debug?.sleeveGeometryShadow || []).find(finding => finding.code === 'layer_construction_sleeve_conflict')
+  assert.ok(shadow, 'the propagated verdict is kept as shadow evidence on the card debug')
+  assert.match(shadow.message, /still inside/, 'the shadow evidence still says the volume is inside the middle layer')
+
+  // CONTROL: the same base and middle layer under genuinely roomy outerwear is a real outfit.
+  const accepted = await card(boxyPuffer, 'Boxy Puffer & Cardigan Look')
+  assert.equal(accepted.status, 'success', `a roomy outer layer accommodates the system: ${accepted.message}`)
+
+  // CONTROL: a fine fitted EXTRA-LONG sleeve under the fitted puffer stays valid — sleeve length is
+  // extent, not trapped volume, and must never stand in for the unrecorded thickness dimension.
+  const fineTop = insertPiece({
+    name: 'fine black jersey top', category: 'top', colors: ['black'],
+    occasions: ['city', 'casual'], photo: await makeImage('fine-jersey.png', '#0a0a0a'),
+    fabric_weight: 'light', fiber_content: ['modal'],
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'extra_long', sleeve_shape = 'fitted' WHERE id = ?").run(fineTop)
+  const fineContext = contextFor()
+  fineContext.retrievedPieceIds.add(fineTop)
+  fineContext.visuallySeenPieceIds.add(fineTop)
+  const fineCard = await executeTool('propose_outfit', {
+    label: 'Fine Jersey & Puffer',
+    pieces: [
+      { id: fineTop, role: 'primary_top' },
+      { id: fittedPuffer, role: 'outerwear' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+    occasion: 'city',
+    why_it_works: 'a slim column under a fitted coat',
+    styling_instructions: 'Let the extra-long cuffs sit past the jacket sleeve.',
+  }, fineContext)
+  assert.equal(fineCard.status, 'success', `an extra-long fitted sleeve is not trapped volume: ${fineCard.message}`)
+})
+
+// ─── the five-look 65/50 batch, through the production endpoint ─────────────────────────────────
+//
+// Live thread_1789274358263: five cards at 65/50, four of them carrying NO_REMOVABLE_COOL_LAYER.
+// Every one was detected, `advisorFlaggedCount` counted them, and nothing consumed that number —
+// so the set shipped knowing four of its five cards lacked the configuration the conditions call
+// for. Diverse formulas stay allowed; what is not allowed is delivering that set silently.
+test('FIVE-LOOK 65/50: a batch of layerless cards is repaired where possible and disclosed where not', async () => {
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  // Three genuinely different formulas, so the diversity gate keeps all three and the set really is
+  // a comparison set rather than one card deduped three times.
+  const cards = [
+    { label: 'Tee and denim', ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }) },
+    { label: 'Top and trousers', ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.boot }) },
+    { label: 'Dress alone', ...slots({ dress: seeded.dress, shoes: seeded.shoe }) },
+  ].map((card, index) => ({
+    ...card, strength: 'strong', dominantDirection: 'easy daytime', silhouette: 'column', bestFor: 'city',
+    reason: `A simple look, variation ${index + 1}.`, watchFor: 'None.',
+  }))
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return { outfits: cards, rejected: [], skip: '', saveableLearning: '' }
+    }
+    if (String(system || '').includes('has no removable layer')) {
+      // One real repair with a layer that actually answers the conditions, one honest decline, and
+      // one card left unaddressed — all three outcomes the contract has to survive.
+      return {
+        repairs: [{ cardIndex: 0, layerId: coat, pieceIds: [seeded.top, seeded.jeans, seeded.shoe, coat], reason: 'The coat finishes the column and covers the cool end.', stylingInstructions: 'Coat open over the tee.' }],
+        declines: [{ cardIndex: 1, reason: 'nothing shown sits right over this proportion' }],
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 3,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+
+  // The pass fired exactly once, on real deficiency, with real candidates.
+  assert.ok(repair.deficientCount >= 2, `the deficient cards were counted, not just annotated per card: ${JSON.stringify(repair)}`)
+  assert.equal(repair.attempted, true)
+  assert.equal(aiCalls.filter(call => String(call.system || '').includes('has no removable layer')).length, 1,
+    'ONE bounded batched attempt, never recursive')
+  assert.equal(repair.repairedCount, 1, `the viable repair was accepted: ${JSON.stringify(repair.rejections)} ${JSON.stringify(repair.rejectionDetail)}`)
+
+  // The repaired card keeps every original garment and gains exactly one layer.
+  const repaired = json.structuredOutfits.find(outfit => (outfit.pieces || []).some(piece => Number(piece.id) === coat))
+  assert.ok(repaired, 'the accepted repair is in the delivered set')
+  const repairedIds = repaired.pieces.map(piece => Number(piece.id))
+  for (const original of [seeded.top, seeded.jeans, seeded.shoe]) {
+    assert.ok(repairedIds.includes(original), 'every original non-layer piece is preserved')
+  }
+  assert.equal(repairedIds.length, 4, 'exactly one garment was added')
+  assert.ok(!repairedIds.includes(shell), 'and only the layer the model named')
+  assert.ok(!(repaired.systemFlags || []).some(flag => /something removable is needed/.test(flag.message)),
+    'the repaired card no longer carries the finding that triggered the repair')
+
+  // Declined and unaddressed cards are NOT mutated, dropped, or completed by the engine…
+  const untouched = json.structuredOutfits.filter(outfit => !(outfit.pieces || []).some(piece => Number(piece.id) === coat))
+  assert.ok(untouched.length >= 1, 'declined and unaddressed cards still ship')
+  for (const outfit of untouched) {
+    assert.ok((outfit.systemFlags || []).some(flag => /something removable is needed/.test(flag.message)),
+      'and keep their own advisory — the advisory stays advisory')
+  }
+
+  // …but the SET says so once, plainly.
+  assert.match(json.coolLayerSetDisclosure, /have nothing removable to put on/)
+  assert.equal(json.debug.finalSelection.coolLayerSetDisclosure, json.coolLayerSetDisclosure)
+  assert.equal(json.debug.finalSelection.layerRepair.deficientAfterCount, untouched.length)
+})
+
+// thread_1789546295700 (2026-09-16, owner review): the set-level disclosure used to say "The bases
+// suit the high" for every card missing a cool layer, regardless of what the SAME evaluator run
+// already said about that card's own warm end. A card whose base independently overshoots the warm
+// end (a moderate-weight, non-insulating top reading two full levels above a hot day's "very light"
+// target) cannot also be told its base "suits the high" — it fails to span the day's range at
+// either end, not merely at the low, and the disclosure must say so instead.
+test('set-level disclosure: a card that overshoots the high is described as failing to span the range, not as suiting it', async () => {
+  const moderateTop = insertPiece({
+    name: 'grey knit crewneck sweater',
+    category: 'top',
+    colors: ['grey'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'quiet knit top',
+    fabric_category: 'knit',
+    fabric_weight: 'medium',
+    fiber_content: ['cotton', 'rayon'],
+    sleeve_length: 'short',
+    style_profile_json: { coverage: 'normal', bareness: 'normal' },
+  })
+  const card = {
+    label: 'Overheated Column',
+    strength: 'strong',
+    dominantDirection: 'easy daytime',
+    silhouette: 'column',
+    bestFor: 'city',
+    reason: 'A simple look for a hot afternoon.',
+    watchFor: 'None.',
+    ...slots({ top: moderateTop, bottom: seeded.bottom, shoes: seeded.shoe }),
+  }
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return { outfits: [card], rejected: [], skip: '', saveableLearning: '' }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'summer', userWeather: { high_f: 85, low_f: 60 }, limit: 1,
+  })
+  assert.match(json.coolLayerSetDisclosure, /nothing removable to put on/)
+  assert.match(json.coolLayerSetDisclosure, /already runs too warm at the high and still lacks a layer for the low/,
+    `a card whose own warm-end evidence already says it overshoots must not also be told its base "suits the high": ${json.coolLayerSetDisclosure}`)
+  assert.match(json.coolLayerSetDisclosure, /fails to span the day's range, not just its cool end/)
+  assert.doesNotMatch(json.coolLayerSetDisclosure, /The bases suit the high/,
+    'the blanket "suits the high" clause must not appear when the only deficient card overshoots the high')
+})
+
+test('FIVE-LOOK 65/50: a repair that is not a missing-layer repair is rejected, and the card survives', async () => {
+  const { shell } = await seedWarmCoatAndLightShell()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Layerless look', strength: 'strong', dominantDirection: 'easy daytime',
+          silhouette: 'top over bottom', bestFor: 'city',
+          ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+          reason: 'A simple column.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    if (String(system || '').includes('has no removable layer')) {
+      // A RECOMPOSITION, not a repair: the bottom is swapped out while the layer goes on. The
+      // retired pass mutated piece lists exactly this freely; this one rebuilds from the original
+      // pieces and treats a disagreeing id list as evidence the wrong thing was asked for.
+      return { repairs: [{ cardIndex: 0, layerId: shell, pieceIds: [seeded.top, seeded.bottom, seeded.shoe, shell], reason: 'restyled', stylingInstructions: 'x' }], declines: [] }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.repairedCount, 0)
+  assert.equal(repair.rejections.not_a_layer_repair, 1)
+  const delivered = json.structuredOutfits[0]
+  assert.deepEqual(delivered.pieces.map(piece => Number(piece.id)).sort(), [seeded.top, seeded.jeans, seeded.shoe].sort(),
+    'the original card survives a rejected repair unchanged')
+})
+
+test('RUN DEBUG: the resolved exposure the evaluator used is recorded once, in run debug', async () => {
+  // Whole Wardrobe and trip now pass their structured activity into the exposure context. Without
+  // this record that propagation is unverifiable from a live capture — and a per-card copy would be
+  // a second persisted representation of something the run already knows, with no consumer.
+  db.prepare("UPDATE pieces SET heel_height = 'flat', walk_support = 'high', shoe_type = 'sneaker', formality = 'everyday' WHERE id = ?").run(seeded.shoe)
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Walking column', strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+          ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+          reason: 'A simple column.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', activity: 'walking', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const exposure = json.debug.finalSelection?.resolvedExposure
+  assert.ok(exposure, `the run recorded its exposure: ${JSON.stringify(json.debug.finalSelection)}`)
+  assert.equal(exposure.activity, 'walking', 'the structured activity reached the run that evaluated the cards')
+  assert.equal(exposure.highF, 65)
+  assert.equal(exposure.lowF, 50)
+  assert.ok(!('activity' in json.structuredOutfits[0]), 'and is not duplicated onto every card')
+})
+
+test('COST GUARD: weather-suitable layers exist, none is viable on the deficient card, so no repair call is made', async () => {
+  // The valuable version of the guard. A layer that suits the WEATHER is not a candidate for a
+  // particular card — it has to survive the complete evaluator on that base. Here the only
+  // weather-suitable layer is tagged see-through, so adding it would introduce
+  // `outfit_cool_layer_is_see_through` — a new, non-inability finding — and the repair screen
+  // rejects it for this card. The pass must notice that BEFORE paying for a call that could only
+  // produce a rejected repair.
+  // 2026-09-14: this fixture used to rely on a sleeve-geometry conflict (ruched base + fitted coat).
+  // Sleeve geometry is now log-only and a sleeve-only conflict leaves the layer viable (pinned by
+  // "LOG-ONLY SLEEVE GEOMETRY (repair)"), so the non-viability cause here is a tagged coverage fact.
+  const ruchedTop = insertPiece({
+    name: 'plain knit top', category: 'top', colors: ['black'],
+    occasions: ['city', 'casual'], photo: await makeImage('ruched-city-top.png', '#101010'),
+    fabric_weight: 'medium', fiber_content: ['wool'],
+  })
+  const narrowCoat = insertPiece({
+    name: 'sheer mesh overlay jacket', category: 'outerwear', colors: ['charcoal'],
+    occasions: ['city', 'casual'], photo: await makeImage('narrow-coat.png', '#33383d'),
+    fabric_weight: 'heavy', fiber_content: ['wool'], silhouette: 'relaxed',
+  })
+  db.prepare("UPDATE pieces SET opacity = 'sheer' WHERE id = ?").run(narrowCoat)
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Ruched knit and denim', strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+          ...slots({ top: ruchedTop, bottom: seeded.jeans, shoes: seeded.shoe }),
+          reason: 'A simple column.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+
+  assert.equal(repair.deficientCount, 1, 'the card is genuinely missing a layer')
+  assert.ok(repair.qualifyingLayerIds.includes(narrowCoat), 'and a weather-suitable layer does exist')
+  assert.deepEqual(repair.viableLayerIdsByCard[0].viableLayerIds.includes(narrowCoat), false,
+    'but it is not mechanically viable on THIS card')
+  assert.equal(repair.repairableCount, 0)
+  assert.equal(repair.attempted, false, 'so no paid call is made')
+  assert.match(repair.reason, /mechanically viable/)
+  assert.equal(aiCalls.filter(call => String(call.system || '').includes('has no removable layer')).length, 0)
+
+  // The card still ships with its own advisory, and the set still discloses the gap.
+  assert.equal(json.structuredOutfits[0].pieces.length, 3)
+  assert.match(json.coolLayerSetDisclosure, /nothing removable to put on/)
+})
+
+test('ORDERING: a layerless card added by local backfill is repaired and counted like any other', async () => {
+  // The repair and the disclosure run on the FINAL valid-card set. An earlier version ran before
+  // local backfill, so any layerless card the fill appended afterwards was neither repaired nor
+  // counted — the set could still ship a deficiency the engine had already learned how to name.
+  const { coat } = await seedWarmCoatAndLightShell()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    // The composer returns nothing, so every delivered card comes from local backfill.
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return { outfits: [], rejected: [], skip: '', saveableLearning: '' }
+    }
+    if (String(system || '').includes('has no removable layer')) {
+      return { repairs: [], declines: [{ cardIndex: 0, reason: 'the proportions do not carry a layer' }] }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 2,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+  const delivered = json.structuredOutfits.filter(outfit => !outfit.diagnosticOnly && !outfit.broken)
+
+  if (delivered.some(outfit => !(outfit.pieces || []).some(piece => Number(piece.id) === coat))) {
+    // Whatever the fill produced, a layerless delivered card is visible to the pass.
+    assert.ok(repair.deficientCount >= 1,
+      `backfilled cards are evaluated too: ${JSON.stringify({ repair, delivered: delivered.map(o => o.pieces.map(p => Number(p.id))) })}`)
+    assert.match(json.coolLayerSetDisclosure, /nothing removable to put on/)
+  }
+  // And diagnostic cards are never repair targets — they are broken by construction, shown to be
+  // looked at rather than fixed.
+  const diagnostics = json.structuredOutfits.filter(outfit => outfit.diagnosticOnly || outfit.broken)
+  for (const card of diagnostics) {
+    assert.ok(!(repair.viableLayerIdsByCard || []).some(entry => entry.label === card.label),
+      'a diagnostic card is not a repair target')
+  }
+})
+
+test('REPAIR PAYLOAD: the call carries each card\'s own words, the finding verbatim, the request, and one photo per garment', async () => {
+  // "Preserve the card's idea" is unactionable when the idea was never sent. An earlier version of
+  // this call shipped a label and a piece list, made visual and register judgments with no
+  // constitution, and re-sent every shared candidate photograph once per card.
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  const cards = [
+    { label: 'Tee and denim', ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }) },
+    { label: 'Top and trousers', ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.boot }) },
+  ].map((card, index) => ({
+    ...card, strength: 'strong', dominantDirection: 'easy daytime', silhouette: 'column', bestFor: 'city',
+    reason: `Idea number ${index + 1}: the shoe carries the whole look.`,
+    styling_instructions: `Tuck nothing, cuff the hem once (card ${index + 1}).`,
+    watchFor: `Card ${index + 1} risk: the proportion goes boxy if layered badly.`,
+  }))
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return { outfits: cards, rejected: [], skip: '', saveableLearning: '' }
+    }
+    if (String(system || '').includes('repairing cards you composed')) {
+      return { repairs: [], declines: [{ cardIndex: 0, reason: 'proportions do not carry a layer' }] }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', mood: 'quiet and grounded', limit: 2,
+    userWeather: { high_f: 65, low_f: 50 },
+    request: 'five distinct looks, and do not make every one follow the same layering formula',
+  })
+
+  const repairCall = aiCalls.find(call => String(call.system || '').includes('repairing cards you composed'))
+  assert.ok(repairCall, 'the repair call was made')
+  const parts = repairCall.messages[0].content
+  const text = parts.filter(part => part.type === 'text').map(part => part.text).join('\n')
+
+  // The constitution is interpolated, exactly as it is for every other stylist prompt. Asserted per
+  // LAYER: a length check passes just as happily with four of the five ratified layers present,
+  // which is exactly how `working_style` went missing here once.
+  assert.match(repairCall.system, /STYLE CONSTITUTION:/)
+
+  // Each card's own words travel with it.
+  assert.match(text, /Idea number 1: the shoe carries the whole look\./)
+  assert.match(text, /Tuck nothing, cuff the hem once \(card 1\)\./)
+  assert.match(text, /Card 1 risk: the proportion goes boxy if layered badly\./)
+
+  // The triggering finding, verbatim rather than paraphrased.
+  assert.match(text, /Engine finding: .*something removable is needed/)
+
+  // The turn's own request and mood — the tension a repair has to respect.
+  assert.match(text, /do not make every one follow the same layering formula/)
+  assert.match(text, /Mood: quiet and grounded/)
+
+  // ONE photograph per garment: images equal the number of distinct ids referenced, not the sum
+  // across cards. Both cards share the same candidate layers, so a per-card payload would repeat them.
+  const images = parts.filter(part => part.type === 'image')
+  const referencedIds = new Set([...text.matchAll(/ID (\d+)/g)].map(match => Number(match[1])))
+  assert.equal(images.length, referencedIds.size,
+    `each garment is sent once: ${images.length} images for ${referencedIds.size} referenced ids`)
+  assert.ok(referencedIds.has(coat) || referencedIds.has(shell), 'candidate layers are in the manifest')
+  // The assertion above is only meaningful because the two cards genuinely share candidates: with a
+  // per-card payload the shared layers would be sent twice and images would exceed distinct ids.
+  const cardBlocks = [...text.matchAll(/Layer candidates for THIS card[^\n]*/g)].map(match => match[0])
+  assert.equal(cardBlocks.length, 2, 'both cards were sent for repair')
+  assert.equal(cardBlocks[0], cardBlocks[1], 'and they share the same candidate list, so dedup is load-bearing')
+
+  // And each card still gets its own candidate list, by id, now carrying the completed-system
+  // verdict per candidate.
+  assert.match(text, /Layer candidates for THIS card, each with what the COMPLETED outfit reads as/)
+  assert.match(text, /ID \d+ — with this layer ON, the completed outfit reads /)
+})
+
+test('REPAIR EVIDENCE: candidates of different warmth arrive with different completed-system cold-end verdicts', async () => {
+  // The shape of thread_1789288270913's unresolved half: two `moderate` layers (996760/996762) and a
+  // `light` one were all viable on all four cards, and the repair chose light ones. deficientAfter:0
+  // only proved the advisory cleared — it never proved the best weather option was offered visibly.
+  //
+  // This asserts the FACTS reach the model, not which garment it picks. The model may still take the
+  // adjacent option for a compelling aesthetic reason; it just has to know it is doing that.
+  // A warmer wool coat and a thin shell: different garments, and — the point — different readings
+  // for the COMPLETED outfit once each is added to the same base.
+  await seedWarmCoatAndLightShell()
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Layerless column', strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+          ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+          reason: 'A simple column.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    if (String(system || '').includes('repairing cards you composed')) {
+      return { repairs: [], declines: [{ cardIndex: 0, reason: 'holding for the test' }] }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+
+  const repairCall = aiCalls.find(call => String(call.system || '').includes('repairing cards you composed'))
+  assert.ok(repairCall, 'the repair call was made')
+  const text = repairCall.messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+
+  // Every candidate carries a completed-system cold-end verdict…
+  const candidateLines = [...text.matchAll(/ {2}ID (\d+) — with this layer ON, the completed outfit reads ([^;\n]+?) for the cold end/g)].map(match => ({ id: Number(match[1]), cold: match[2].trim() }))
+  assert.ok(candidateLines.length >= 2, `candidates carry evidence lines: ${JSON.stringify(candidateLines)}`)
+
+  // …and the verdicts DIFFER across candidates of different warmth, which is the whole point: a
+  // flat list of ids could not have told the model that one choice lands on target and another does
+  // not. The specific wording comes from the evaluator's own verdicts.
+  const verdicts = new Set(candidateLines.map(line => line.cold))
+  assert.ok(verdicts.size >= 2, `different candidates read differently for the completed system: ${JSON.stringify([...verdicts])}`)
+  for (const line of candidateLines) {
+    assert.match(line.cold, /on target|under target|over target|unknown/,
+      'each verdict is one of the evaluator\'s existing endpoint results')
+  }
+
+  // No adjacency was converted into a rejection: the acceptable-neighbour candidates are still
+  // offered, and the debug record shows the same evidence the model received.
+  const repair = json.debug.finalSelection.layerRepair
+  const offered = repair.viableLayerIdsByCard[0].candidateEndpointFit
+  assert.ok(offered.length >= 2)
+  assert.ok(offered.some(entry => /acceptable/.test(entry.cold)), 'an acceptable-neighbour candidate is still offered')
+  assert.ok(offered.some(entry => /on target/.test(entry.cold)), 'and so is the one that lands on target')
+  assert.deepEqual(offered.map(entry => entry.layerId).sort(), [...repair.viableLayerIdsByCard[0].viableLayerIds].sort(),
+    'every viable candidate carries evidence — none is filtered out for being merely adjacent')
+})
+
+test('REPAIR BENCH: a capacity-excluded layer reaches the repair; a validity-excluded one never does', async () => {
+  // Owner ruling 2026-09-13, against the PR 315 / PR 316 precedents: a later stage gets the full
+  // eligible set, not the first stage's presentation cut. `recoveryEligiblePieces` is the existing
+  // authority for that distinction, so this proves BOTH halves of it with named fixtures rather
+  // than asserting a count.
+  const { coat, shell, puffer } = await seedWarmCoatAndLightShell()
+
+  // Capacity-excluded: a perfectly wearable layer that loses its roster slot to the image cap.
+  const cappedLayer = insertPiece({
+    name: 'olive lightweight jacket', category: 'outerwear', colors: ['olive'],
+    occasions: ['city', 'casual'], photo: await makeImage('olive-jacket.png', '#5d6b4a'),
+    fabric_weight: 'medium', fiber_content: ['wool'], fabric_category: 'knit',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'long' WHERE id = ?").run(cappedLayer)
+
+  // Validity-excluded: prohibited for this occasion by the register gate at TWO ranks above, which
+  // remains a genuine exclusion after the register change.
+  const dressyLayer = insertPiece({
+    name: 'beaded evening jacket', category: 'outerwear', colors: ['black'],
+    occasions: ['evening'], photo: await makeImage('beaded-jacket.png', '#141414'),
+    fabric_weight: 'medium', fiber_content: ['silk'], formality: 'dressy',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'long' WHERE id = ?").run(dressyLayer)
+
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Layerless column', strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+          ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+          reason: 'A simple column.', watchFor: 'None.',
+        }],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    if (String(system || '').includes('repairing cards you composed')) {
+      return { repairs: [], declines: [{ cardIndex: 0, reason: 'holding for the test' }] }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  // maxImages is deliberately tiny so the roster cap really bites and `cappedLayer` is excluded for
+  // CAPACITY rather than for any validity reason.
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.benchSource, 'recovery_eligible_layers')
+
+  // (1) capacity-excluded → present in the bench.
+  assert.ok(repair.qualifyingLayerIds.includes(cappedLayer),
+    `a layer omitted only for presentation reaches the repair bench: ${JSON.stringify(repair.qualifyingLayerIds)}`)
+
+  // (2) validity-excluded → absent, and absent for the right reason: two ranks above a casual/city
+  // ceiling is still a genuine register exclusion after the preference change.
+  assert.ok(!repair.qualifyingLayerIds.includes(dressyLayer),
+    'a validity-excluded layer is never reintroduced by the bench')
+
+  // The weather filter still binds on the bench itself.
+  assert.ok(!repair.qualifyingLayerIds.includes(puffer), 'a very warm winter coat is not a layer for a 65F day')
+  assert.ok(repair.qualifyingLayerIds.includes(coat) || repair.qualifyingLayerIds.includes(shell))
+  assert.ok(repair.qualifyingLayerIds.length >= repair.shownLayerCount,
+    'the bench is never capped by what the composer happened to show')
+
+  // Every bench candidate is actually shown to the model — one photograph each, no shortlisting
+  // stage between the bench and the call.
+  const repairCall = aiCalls.find(call => String(call.system || '').includes('repairing cards you composed'))
+  const text = repairCall.messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+  for (const id of repair.viableLayerIdsByCard[0].viableLayerIds) {
+    assert.ok(text.includes(`ID ${id}`), `candidate ${id} is shown, not shortlisted away`)
+  }
+})
+
+// ─── thread_1789341140366: four defects, one production shape ───────────────────────────────────
+//
+// A helper for all five regressions below: one deficient card, a CLEAN candidate (clears every
+// weather note) and an ADJACENT one (leaves "a warm or midweight layer is recommended" standing).
+let lightBaseTop = null
+async function seedRepairChoiceWardrobe() {
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  // A LIGHT base, like the live run's graphic tee: with it, the cool-tier presence advisory ("a warm
+  // or midweight layer is recommended") is live, so a light shell clears the missing-layer finding
+  // and leaves that one standing while the wool coat clears both. A medium base satisfies the
+  // minimum-warmth floor on its own and the distinction disappears — which is what this fixture is
+  // for, so it is stated rather than left to the seed's defaults.
+  lightBaseTop = insertPiece({
+    name: 'light graphic tee', category: 'top', colors: ['black'],
+    occasions: ['city', 'casual'], photo: await makeImage('light-tee.png', '#0d0d0d'),
+    fabric_weight: 'light', fiber_content: ['cotton'],
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'short' WHERE id = ?").run(lightBaseTop)
+
+  // The adjacent candidate needs two independent negative warmth signals — non-insulating
+  // construction and an unlined interior — because `hasMinimumWarmLayer` accepts any layer that is
+  // not POSITIVELY inadequate. Without them a thin shell satisfies the minimum-warmth floor and the
+  // "retains an advisory" case cannot exist, which is exactly what the live card's olive
+  // lightweight jacket did not do.
+  const thinShell = insertPiece({
+    name: 'thin unlined windbreaker', category: 'outerwear', colors: ['olive'],
+    occasions: ['city', 'casual'], photo: await makeImage('thin-windbreaker.png', '#5d6b4a'),
+    fabric_weight: 'light', fiber_content: ['polyester'], fabric_category: 'nylon',
+  })
+  db.prepare("UPDATE pieces SET sleeve_length = 'long', interior_construction = 'unlined', insulating_layer_materials = ? WHERE id = ?")
+    .run(JSON.stringify([]), thinShell)
+  return { cleanLayer: coat, adjacentLayer: thinShell, unusedShell: shell }
+}
+const layerlessCard = (label = 'Layerless column') => ({
+  label, strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+  ...slots({ top: lightBaseTop, bottom: seeded.jeans, shoes: seeded.shoe }),
+  reason: 'A simple column.', watchFor: 'None.',
+})
+const isComposer = system => String(system || '').includes("personal stylist. You are looking at photos")
+const isRepair = system => String(system || '').includes('repairing cards you composed')
+const isCritic = system => String(system || '').includes('second stylist reviewing outfits')
+
+test('REPAIR CHOICE: an adjacent candidate that retains weather advice is accepted only with a stated tradeoff', async () => {
+  const { adjacentLayer } = await seedRepairChoiceWardrobe()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      return { repairs: [{ cardIndex: 0, layerId: adjacentLayer, pieceIds: [lightBaseTop, seeded.jeans, seeded.shoe, adjacentLayer], reason: 'The thin shell keeps the column light.', stylingInstructions: 'Shell open.', tradeoff: 'the shell keeps the long vertical line the coat would break' }], declines: [] }
+    }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+
+  // The evidence the choice was made against is recorded per candidate.
+  const evidence = repair.viableLayerIdsByCard[0].candidateEndpointFit
+  assert.ok(evidence.length >= 2)
+
+  assert.equal(repair.repairedCount, 1)
+  assert.equal(repair.repairedCleanCount, 0, 'this repair is NOT counted as clean')
+  assert.equal(repair.repairsRetainingAdvice.length, 1, 'it is accounted separately, with what it retains')
+  assert.ok(repair.repairsRetainingAdvice[0].retains.length)
+  assert.match(repair.repairsRetainingAdvice[0].tradeoff, /vertical line/)
+
+  // The card ships with the layer AND keeps the advisory it did not clear — no silent contradiction.
+  const card = json.structuredOutfits[0]
+  assert.ok(card.pieces.some(piece => Number(piece.id) === adjacentLayer))
+  assert.ok((card.systemFlags || []).some(flag => /warm or midweight layer is recommended/.test(flag.message)))
+})
+
+test('REPAIR CHOICE: the same adjacent repair is refused when the tradeoff is unexplained', async () => {
+  const { adjacentLayer } = await seedRepairChoiceWardrobe()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      // No `tradeoff`, and a clean candidate was on the same list.
+      return { repairs: [{ cardIndex: 0, layerId: adjacentLayer, pieceIds: [lightBaseTop, seeded.jeans, seeded.shoe, adjacentLayer], reason: 'A thin shell.', stylingInstructions: 'Shell open.' }], declines: [] }
+    }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.repairedCount, 0)
+  assert.equal(repair.rejections.unexplained_tradeoff, 1)
+  assert.ok(repair.rejectionDetail.some(entry => entry.retains?.length), 'the record says what it would have retained')
+
+  // The original card ships unchanged, with its own advisory and in the set disclosure.
+  assert.equal(json.structuredOutfits[0].pieces.length, 3)
+  assert.match(json.coolLayerSetDisclosure, /nothing removable to put on/)
+})
+
+test('REPAIR DECLINE: a blanket decline that weighs none of the strongest candidates is recorded unsupported', async () => {
+  const { adjacentLayer } = await seedRepairChoiceWardrobe()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard('Green dress shape')], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      // thread_1789341140366's shape: one sweeping claim, no candidates weighed.
+      return { repairs: [], declines: [{ cardIndex: 0, reason: 'the structured silhouette with thick straps and a waist sash does not accept any of the available cardigans or jackets cleanly' }] }
+    }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const decline = json.debug.finalSelection.layerRepair.declines[0]
+  assert.equal(decline.supported, false)
+  assert.match(decline.unsupportedReason, /named no candidate/)
+
+  // A decline that names one arbitrary id does not license dismissing the bench either.
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard('Green dress shape')], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      // Names one candidate — deliberately the weaker one, not the candidate that clears every
+      // weather note — and extrapolates from it to the whole bench.
+      return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [adjacentLayer], reason: 'the windbreaker fights the waist seam and so would everything else on the bench' }] }
+    }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const second = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const partial = second.debug.finalSelection.layerRepair.declines[0]
+  assert.equal(partial.supported, false)
+  assert.match(partial.unsupportedReason, /strongest candidates/)
+})
+
+test('REPAIRED-CARD REVIEW: a repaired combination the critic rejects is restored, not dropped', async () => {
+  const { cleanLayer } = await seedRepairChoiceWardrobe()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      return { repairs: [{ cardIndex: 0, layerId: cleanLayer, pieceIds: [lightBaseTop, seeded.jeans, seeded.shoe, cleanLayer], reason: 'The coat finishes the column.', stylingInstructions: 'Coat open.' }], declines: [] }
+    }
+    // An explicit reject: only that restores a repair. A verdict-less flag now reads as a note.
+    if (isCritic(system)) return { flagged: [{ index: 0, verdict: 'reject', reason: 'the coat and the tee fight at the shoulder in the photos' }] }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const review = json.debug.finalSelection.layerRepair.repairedCardReview
+
+  assert.ok(review, 'the repaired subset was reviewed at all — the original defect was reviewedCount 0')
+  assert.equal(review.restoredCount, 1)
+  assert.match(review.restored[0].reason, /fight at the shoulder/)
+
+  // Restored means the ORIGINAL card, with its advisory — not dropped, not re-repaired.
+  assert.equal(json.structuredOutfits.length, 1)
+  assert.equal(json.structuredOutfits[0].pieces.length, 3)
+  assert.ok(!json.structuredOutfits[0].pieces.some(piece => Number(piece.id) === cleanLayer))
+  assert.ok((json.structuredOutfits[0].systemFlags || []).some(flag => /something removable is needed/.test(flag.message)))
+  assert.equal(aiCalls.filter(call => isRepair(call.system)).length, 1, 'no second repair attempt')
+
+  // And the restored card rejoins the set disclosure.
+  assert.match(json.coolLayerSetDisclosure, /nothing removable to put on/)
+
+  // Accounting describes what SHIPS: one repair was accepted, none was delivered.
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.acceptedRepairCount, 1)
+  assert.equal(repair.acceptedCleanCount, 1)
+  assert.equal(repair.deliveredRepairCount, 0, 'recomputed after the critic restored the original')
+  assert.equal(repair.deliveredCleanCount, 0)
+})
+
+test('SET DISCLOSURE: the direct Whole Wardrobe response prose carries it, and says "has" for one card', async () => {
+  await seedRepairChoiceWardrobe()
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [], reason: 'holding' }] }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  // Stored and visible, without a new UI component: the prose the user reads carries the sentence.
+  assert.match(json.feedback, /nothing removable to put on for the cool end of the day/)
+  assert.match(json.feedback, /1 of the 1 ready outfit has nothing removable/, 'counts ready outfits only, with singular agreement')
+  assert.equal(json.feedback.split('nothing removable to put on').length - 1, 1, 'said once, not duplicated')
+})
+
+
+// ─── thread_1789346300319: conservative critic, delivered accounting, ready-only disclosure ───────
+
+test('REPAIRED-CARD REVIEW: a debatable "note" annotates the repair instead of restoring it', async () => {
+  // The live false positive: a conventional navy-stripe / olive-cargo / grey-cardigan repair was
+  // restored on a tone-harmony opinion. Colour harmony and uncertainty are notes; only an explicit,
+  // photograph-grounded reject restores a card. The critic also no longer receives taste-suppression
+  // memory, which primed it to reject.
+  const { cleanLayer } = await seedRepairChoiceWardrobe()
+  aiCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      return { repairs: [{ cardIndex: 0, layerId: cleanLayer, pieceIds: [lightBaseTop, seeded.jeans, seeded.shoe, cleanLayer], reason: 'The coat finishes the column.', stylingInstructions: 'Coat open.' }], declines: [] }
+    }
+    if (isCritic(system)) return { flagged: [{ index: 0, verdict: 'note', reason: 'the olive and cool grey tones are not an ideal match' }] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const repair = json.debug.finalSelection.layerRepair
+  assert.equal(repair.repairedCardReview.restoredCount, 0, 'a note never restores')
+  assert.equal(repair.repairedCardReview.annotatedCount, 1)
+  assert.equal(repair.deliveredRepairCount, 1)
+
+  const card = json.structuredOutfits[0]
+  assert.ok(card.pieces.some(piece => Number(piece.id) === cleanLayer), 'the repair ships')
+  assert.ok((card.systemFlags || []).some(flag => flag.type === 'Visual note' && /not an ideal match/.test(flag.message)),
+    'with the critic\'s observation attached')
+
+  const criticCall = aiCalls.find(call => isCritic(call.system))
+  const criticText = JSON.stringify(criticCall.messages)
+  assert.doesNotMatch(criticText, /Taste memory/, 'no suppression memory in an independent visual check')
+})
+
+test('REPAIRED-CARD REVIEW: a flag with no verdict is read as a note, never a reject', async () => {
+  const { cleanLayer } = await seedRepairChoiceWardrobe()
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    if (isComposer(system)) return { outfits: [layerlessCard()], rejected: [], skip: '', saveableLearning: '' }
+    if (isRepair(system)) {
+      return { repairs: [{ cardIndex: 0, layerId: cleanLayer, pieceIds: [lightBaseTop, seeded.jeans, seeded.shoe, cleanLayer], reason: 'The coat finishes the column.', stylingInstructions: 'Coat open.' }], declines: [] }
+    }
+    if (isCritic(system)) return { flagged: [{ index: 0, reason: 'something about the tones' }] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1,
+  })
+  const review = json.debug.finalSelection.layerRepair.repairedCardReview
+  assert.equal(review.restoredCount, 0, 'uncertainty in the response cannot become a rejection')
+  assert.equal(review.annotatedCount, 1)
+})
+
+test('DIAGNOSTIC CARD: a spliced model card keeps every structural finding and its own prose, and is not a ready outfit', async () => {
+  // thread_1789346300319's fifth card: pieces spanning two outfit ideas — two bottoms and no top —
+  // under prose describing a garment that is not on the card. The card stays visible during
+  // development as evidence of how the composer failed, so its fields are preserved verbatim; it is
+  // excluded only from ready counts, repair targets and the disclosure denominator.
+  await seedRepairChoiceWardrobe()
+  const splicedProse = 'The cream linen piece acts as a lightweight top under the floral cardigan.'
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    if (isComposer(system)) {
+      return {
+        outfits: [
+          layerlessCard('Ready layerless card'),
+          {
+            label: 'Ribbed Knit Top & Bubble Skirt', strength: 'strong', dominantDirection: 'volume', silhouette: 'fitted top paired with sculptural volume', bestFor: 'city',
+            // The splice as the slot contract can express it: a bottom answered in the top slot.
+            ...slots({ top: seeded.jeans, bottom: seeded.bottom, shoes: seeded.shoe }),
+            reason: splicedProse, watchFor: 'None.',
+          },
+        ],
+        rejected: [], skip: '', saveableLearning: '',
+      }
+    }
+    if (isRepair(system)) return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [], reason: 'holding for the test' }] }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 2,
+  })
+
+  const diagnostic = json.structuredOutfits.find(outfit => outfit.diagnosticOnly)
+  assert.ok(diagnostic, 'the malformed card is shown, not hidden')
+  assert.equal(diagnostic.broken, true)
+  const codes = (diagnostic.structuralFindings || []).map(finding => finding.code)
+  assert.ok(codes.includes('slot_category_mismatch'), `every structural finding is kept: ${JSON.stringify(codes)}`)
+  assert.ok(codes.includes('multiple_bottoms'), 'the shared evaluator still runs under the slot contract')
+  assert.ok(codes.includes('missing_top_or_dress'), 'including the one the primary finding used to mask')
+  assert.match(diagnostic.rejectionReason, /wrong slot/)
+  assert.match(diagnostic.rejectionReason, /more than one bottom/)
+  assert.match(diagnostic.rejectionReason, /missing top/)
+  assert.equal(diagnostic.modelSlots.base_top_id, seeded.jeans, 'the model slots are kept as evidence')
+  assert.equal(diagnostic.reason, splicedProse, 'the model\'s own prose is preserved as evidence, not suppressed')
+
+  // Not a repair target, and not in the disclosure's denominator.
+  const targets = (json.debug.finalSelection.layerRepair.viableLayerIdsByCard || []).map(entry => entry.label)
+  assert.ok(!targets.includes(diagnostic.label))
+  assert.match(json.coolLayerSetDisclosure, /1 of the 1 ready outfit has/, 'the diagnostic card is not counted as a ready outfit')
+})
+
+// EXPERIMENT INSTRUMENTATION (2026-09-13 A/B plan): WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS removes the
+// collapsed verdict words the Whole Wardrobe flow adds to model-facing text, and nothing else.
+test('NEUTRAL VERDICTS: the flag strips the ordering heading, the taste lists and "acceptable" from composer and repair payloads, and only those', async () => {
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  const card = {
+    label: 'Tee and denim', strength: 'strong', dominantDirection: 'easy daytime', silhouette: 'column', bestFor: 'city',
+    ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+    reason: 'The shoe carries the look.', styling_instructions: '', watchFor: 'None.',
+  }
+  const run = async neutral => {
+    // Each run starts from the same session state: the first run's cards would otherwise enter the
+    // second run's payload as "Recently shown garments" rotation memory.
+    db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+    if (neutral) process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS = 'true'
+    else delete process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS
+    aiCalls = []
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+      aiCalls.push({ system, messages })
+      if (String(system || '').includes('personal stylist. You are looking at photos')) return { outfits: [card], skip: '', saveableLearning: '' }
+      if (String(system || '').includes('repairing cards you composed')) return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [coat, shell], reason: 'holding for the test' }] }
+      return mockAiHandler({ system, messages })
+    }
+    try {
+      await postJson('/api/ai/generate-wardrobe-outfits-visual', { occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1 })
+    } finally {
+      delete process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS
+    }
+    const textOf = call => (call?.messages?.[0]?.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n')
+    return {
+      composer: textOf(aiCalls.find(call => String(call.system || '').includes('personal stylist. You are looking at photos'))),
+      repair: textOf(aiCalls.find(call => String(call.system || '').includes('repairing cards you composed'))),
+    }
+  }
+  const production = await run(false)
+  const neutral = await run(true)
+
+  assert.doesNotMatch(production.composer, /ordered for these conditions/, 'production carries no ordering heading verdict either (2026-09-15)')
+  assert.match(production.repair, /\(acceptable\)|An acceptable neighbour/)
+  assert.ok(neutral.repair.length > 0, 'the repair call still happens under the flag')
+  assert.doesNotMatch(neutral.composer, /ordered for these conditions/)
+  assert.doesNotMatch(neutral.repair, /acceptable/i)
+  assert.doesNotMatch(`${neutral.composer}\n${neutral.repair}`, /\bpreferred\b|\bdiscouraged\b/)
+
+  // Nothing else moves: removing exactly the verdict words from the production text yields the neutral text.
+  // 2026-09-15: the taste lists left the prompt on BOTH arms — they are ratified soft scoring, not
+  // instructions — so there is no longer a taste-line difference for this flag to strip.
+  assert.doesNotMatch(production.composer, /lean toward|use sparingly and justify/, 'production carries no taste directive either')
+  assert.doesNotMatch(neutral.composer, /lean toward|use sparingly and justify/)
+  assert.deepEqual(production.composer.split('\n'), neutral.composer.split('\n'))
+  const strippedRepair = production.repair
+    .replace("layer on — the engine's own ranking evidence, not a rule. An acceptable neighbour is a\nlegitimate choice; pick it knowing what it costs:", 'layer on, stated as its level relative to the target:')
+    .replaceAll(' (acceptable)', '')
+  assert.equal(strippedRepair, neutral.repair)
+})
+
+// 2026-09-15: this no longer needs the experiment flag. Soft taste tiers are gone from photo
+// labels by default; what remains is a hard-gate verdict, which is a fact about eligibility.
+test('search photo labels carry no taste tier — only a hard-gate or missing-metadata tier', async () => {
+  const { extractToolResultImages: extract } = await import('../styling-engine/provider.js')
+  const item = { id: 7, name: 'navy quilted puffer', ruleFit: 'preferred', image: { mime: 'image/jpeg', base64: 'AAAA' } }
+  assert.equal(extract([item]).images[0].label, 'ID 7: navy quilted puffer', 'a soft tier never captions a photo')
+  assert.equal(extract([{ ...item, ruleFit: 'neutral' }]).images[0].label, 'ID 7: navy quilted puffer')
+  assert.match(extract([{ ...item, ruleFit: 'prohibited' }]).images[0].label, /— prohibited$/, 'a hard-gate exclusion is still stated')
+  assert.match(extract([{ ...item, ruleFit: 'unknown' }]).images[0].label, /— unknown$/, 'missing metadata is still stated')
+})
+
+// COMPOSER-ONLY EXPERIMENT BOUNDARY (docs/stage1-cause-matrix-2026-09-14.md §4–7). Permanent: the mode is
+// a production no-op unless a manifest is named, preserves every upstream production stage, applies only
+// the declared substitutions, and stops immediately after the composer response.
+async function composerExperimentRun({ manifest = null, manifestPath = null, limit = 2 } = {}) {
+  db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+  const card = {
+    label: 'Tee and denim', strength: 'strong', dominantDirection: 'easy daytime', silhouette: 'column', bestFor: 'city',
+    ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }),
+    reason: 'The shoe carries the look.', styling_instructions: '', watchFor: 'None.',
+  }
+  if (manifest) {
+    manifestPath = path.join(fs.mkdtempSync(path.join(tmpRoot, 'composer-manifest-')), 'manifest.json')
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest))
+  }
+  if (manifestPath) process.env.WARDROBE_EXPERIMENT_COMPOSER_MANIFEST = manifestPath
+  else delete process.env.WARDROBE_EXPERIMENT_COMPOSER_MANIFEST
+  const calls = []
+  const isComposer = system => String(system || '').includes('personal stylist. You are looking at photos')
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages, maxTokens }) => {
+    calls.push({ system, messages, maxTokens })
+    if (isComposer(system)) return { outfits: [card], skip: '', saveableLearning: '' }
+    if (String(system || '').includes('repairing cards you composed')) return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [], reason: 'holding for the test' }] }
+    if (String(system || '').includes('second stylist reviewing')) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  let response
+  try {
+    response = await fetch(`${baseUrl}/api/ai/generate-wardrobe-outfits-visual`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit }),
+    })
+  } finally {
+    delete process.env.WARDROBE_EXPERIMENT_COMPOSER_MANIFEST
+  }
+  const json = await response.json()
+  const composer = calls.filter(call => isComposer(call.system))
+  return { status: response.status, json, calls, composer: composer[0] || null, composerCalls: composer.length }
+}
+const composerTextParts = call => (call?.messages?.[0]?.content || []).filter(part => part.type === 'text').map(part => part.text)
+const composerImageData = call => (call?.messages?.[0]?.content || []).filter(part => part.type === 'image').map(part => part.source?.data)
+const identityManifest = { experiment: 'boundary-test', stopAfterComposer: true, garmentLine: 'production', sleeveGuidance: 'production', holdOutComparisonSet: false, maxTokensForCount: null }
+
+test('COMPOSER-ONLY EXPERIMENT: with no manifest the route is unchanged production (no experiment output, downstream stages run)', async () => {
+  const production = await composerExperimentRun({ limit: 2 })
+  assert.equal(production.status, 200)
+  assert.equal(production.json.experimentComposerOnly, undefined)
+  assert.ok(Array.isArray(production.json.structuredOutfits), 'production delivery runs')
+  assert.ok(production.json.debug?.finalSelection, 'post-composition selection runs')
+  const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const { EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE } = await import('../routes/ai.js')
+  // Since 2026-09-14 production itself states the neutral sleeve sentence (the geometry verdict is log-only).
+  assert.ok(production.composer.system.includes(layerConstructionPromptRule()))
+  assert.ok(production.composer.system.includes(EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE))
+})
+
+test('COMPOSER-ONLY EXPERIMENT: before any declared substitution the composer receives the same roster, order, photographs and resolved context as production, and nothing runs after it', async () => {
+  const production = await composerExperimentRun({ limit: 2 })
+  const identity = await composerExperimentRun({ manifest: identityManifest, limit: 2 })
+  assert.equal(identity.status, 200)
+  assert.equal(identity.calls.length, 1, 'exactly one model call: the composer; no critic, repair or other call')
+  assert.equal(identity.composer.system, production.composer.system)
+  assert.deepEqual(composerTextParts(identity.composer), composerTextParts(production.composer), 'same roster, order, garment lines and resolved context text')
+  assert.deepEqual(composerImageData(identity.composer), composerImageData(production.composer), 'same photographs, byte for byte, in the same order')
+  assert.equal(identity.composer.maxTokens, production.composer.maxTokens)
+  const out = identity.json.experimentComposerOnly
+  assert.ok(out, 'the experiment returns the raw composer result')
+  assert.equal(identity.json.structuredOutfits, undefined, 'no delivery transformation ran')
+  assert.equal(identity.json.debug, undefined)
+  assert.deepEqual(out.raw.outfits.map(outfit => outfit.base_top_id), [seeded.top], 'raw composer output is preserved untouched')
+  const idsInText = composerTextParts(production.composer).map(text => text.match(/^ID (\d+):/)?.[1]).filter(Boolean).map(Number)
+  assert.deepEqual(out.roster, idsInText, 'the reported roster is the production roster in production order')
+  assert.equal(out.imageManifest.length, out.request.imageCount)
+  assert.ok(out.imageManifest.every(entry => /^[0-9a-f]{64}$/.test(entry.sentSha256) && ['worn', 'hanger'].includes(entry.photoKind)))
+  assert.equal(out.resolvedContext.highF, 65)
+  assert.equal(out.resolvedContext.lowF, 50)
+})
+
+test('COMPOSER-ONLY EXPERIMENT: the declared substitutions change only the garment line, the sleeve sentence, the held-out comparison paragraph and the token budget', async () => {
+  const { layerConstructionPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const { structuredResponseMaxTokens } = await import('../styling-engine/core.js')
+  const { EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE, composerCompleteFactsSuffix } = await import('../routes/ai.js')
+  const { parsePiece } = await import('../db.js')
+  const production = await composerExperimentRun({ limit: 2 })
+  const substituted = await composerExperimentRun({ limit: 2, manifest: { ...identityManifest, garmentLine: 'complete', sleeveGuidance: 'neutral', holdOutComparisonSet: true, maxTokensForCount: 5 } })
+  assert.equal(substituted.composer.system, production.composer.system.replace(layerConstructionPromptRule(), `- ${EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE}`))
+  assert.equal(substituted.composer.maxTokens, structuredResponseMaxTokens(5))
+  assert.deepEqual(composerImageData(substituted.composer), composerImageData(production.composer), 'photographs unchanged')
+  const productionText = composerTextParts(production.composer)
+  const substitutedText = composerTextParts(substituted.composer)
+  assert.ok(productionText.some(text => text.includes('COMPARISON SET CONTRACT')))
+  assert.ok(!substitutedText.some(text => text.includes('COMPARISON SET CONTRACT') || text.includes('OUTFIT CONDITIONS FIT')))
+  const expected = productionText.map(text => {
+    const id = text.match(/^ID (\d+):/)?.[1]
+    if (id) return `${text}${composerCompleteFactsSuffix(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(Number(id))))}`
+    return text.split('\n').filter(line => !line.startsWith('COMPARISON SET CONTRACT') && !line.startsWith('OUTFIT CONDITIONS FIT')).join('\n')
+  })
+  assert.deepEqual(substitutedText, expected, 'every other text part is identical')
+})
+
+test('COMPOSER-ONLY EXPERIMENT: one versus five cards differ only in the stated count and the schema bounds', async () => {
+  const manifest = { ...identityManifest, garmentLine: 'complete', sleeveGuidance: 'neutral', holdOutComparisonSet: true, maxTokensForCount: 5 }
+  const one = await composerExperimentRun({ limit: 1, manifest })
+  const five = await composerExperimentRun({ limit: 5, manifest })
+  assert.equal(one.composer.system, five.composer.system)
+  assert.equal(one.composer.maxTokens, five.composer.maxTokens)
+  assert.deepEqual(composerImageData(one.composer), composerImageData(five.composer))
+  const differing = composerTextParts(one.composer).map((text, index) => [text, composerTextParts(five.composer)[index]]).filter(([a, b]) => a !== b)
+  assert.equal(differing.length, 1, 'exactly one text part differs')
+  assert.equal(differing[0][0].replace('Compose 1 outfits.', 'Compose 5 outfits.'), differing[0][1], 'and only by the count')
+  assert.equal(one.json.experimentComposerOnly.request.schema.properties.outfits.minItems, 1)
+  assert.equal(five.json.experimentComposerOnly.request.schema.properties.outfits.maxItems, 5)
+  const oneSchema = JSON.parse(JSON.stringify(one.json.experimentComposerOnly.request.schema))
+  oneSchema.properties.outfits.minItems = 5; oneSchema.properties.outfits.maxItems = 5
+  assert.deepEqual(oneSchema, five.json.experimentComposerOnly.request.schema, 'schema differs only in its bounds')
+})
+
+test('COMPOSER-ONLY EXPERIMENT: a named but missing or invalid manifest refuses instead of running production', async () => {
+  const missing = await composerExperimentRun({ manifestPath: path.join(tmpRoot, 'no-such-manifest.json') })
+  assert.equal(missing.status, 500)
+  assert.equal(missing.calls.length, 0, 'no model call')
+  const invalid = await composerExperimentRun({ manifest: { ...identityManifest, stopAfterComposer: false } })
+  assert.equal(invalid.status, 500)
+  assert.equal(invalid.calls.length, 0)
+})
+
+test('COMPOSER-ONLY EXPERIMENT: every B1 garment line is the exact B0 line plus appended facts, with no role vocabulary', async () => {
+  const production = await composerExperimentRun({ limit: 2, manifest: { ...identityManifest, sleeveGuidance: 'neutral' } })
+  const complete = await composerExperimentRun({ limit: 2, manifest: { ...identityManifest, sleeveGuidance: 'neutral', garmentLine: 'complete' } })
+  const garmentLines = call => composerTextParts(call).filter(text => /^ID \d+:/.test(text))
+  const b0 = garmentLines(production.composer)
+  const b1 = garmentLines(complete.composer)
+  assert.ok(b0.length >= 3)
+  assert.equal(b1.length, b0.length, 'same garments in the same order')
+  b0.forEach((line, index) => {
+    assert.ok(b1[index].startsWith(line), `B1 keeps the B0 line byte-for-byte: ${line}`)
+    const appended = b1[index].slice(line.length)
+    assert.match(appended, /^(; [a-z_]+: [^;]+)+$/, `only appended "; field: value" facts: ${appended}`)
+    assert.doesNotMatch(b1[index], /layer_top|primary_top|primary_bottom/, 'no one-outfit role vocabulary')
+  })
+  assert.ok(b1.some(line => /; length_hits_at: /.test(line)), 'construction facts are appended')
+  const nonGarment = call => composerTextParts(call).filter(text => !/^ID \d+:/.test(text))
+  assert.deepEqual(nonGarment(complete.composer), nonGarment(production.composer), 'nothing else differs')
+  assert.equal(complete.composer.system, production.composer.system)
+})
+
+
+test('COMPOSER-ONLY EXPERIMENT: a sealed request refuses before any provider call on a request-identity mismatch, and proceeds on a match', async () => {
+  const base = { ...identityManifest, garmentLine: 'complete', sleeveGuidance: 'neutral', holdOutComparisonSet: true, maxTokensForCount: 5 }
+  const unsealed = await composerExperimentRun({ limit: 1, manifest: base })
+  const identity = unsealed.json.experimentComposerOnly.requestIdentity
+  assert.match(identity.sha256, /^[0-9a-f]{64}$/)
+  for (const field of ['systemSha256', 'textPartsSha256', 'imagesSha256', 'schemaSha256']) assert.match(identity[field], /^[0-9a-f]{64}$/)
+  assert.ok(identity.model, 'the resolved model is part of the identity')
+  assert.equal(identity.maxTokens, unsealed.composer.maxTokens)
+
+  const matched = await composerExperimentRun({ limit: 1, manifest: { ...base, requireSealedRequest: true, expectedRequestIdentitySha256: identity.sha256 } })
+  assert.equal(matched.status, 200)
+  assert.equal(matched.calls.length, 1)
+
+  const mismatched = await composerExperimentRun({ limit: 1, manifest: { ...base, requireSealedRequest: true, expectedRequestIdentitySha256: 'f'.repeat(64) } })
+  assert.equal(mismatched.status, 500)
+  assert.match(mismatched.json.error, /Sealed composer request identity mismatch/)
+  assert.equal(mismatched.calls.length, 0, 'no provider call is made')
+
+  // A different request (count 5 instead of 1) against the sealed count-1 identity also refuses.
+  const changedRequest = await composerExperimentRun({ limit: 5, manifest: { ...base, requireSealedRequest: true, expectedRequestIdentitySha256: identity.sha256 } })
+  assert.equal(changedRequest.status, 500)
+  assert.equal(changedRequest.calls.length, 0)
+
+  const unsealedButRequired = await composerExperimentRun({ limit: 1, manifest: { ...base, requireSealedRequest: true, expectedRequestIdentitySha256: null } })
+  assert.equal(unsealedButRequired.status, 500)
+  assert.equal(unsealedButRequired.calls.length, 0)
+})
+
+test('COMPOSER-ONLY EXPERIMENT: the day-wear substitution appends only the neutral instruction and one required output string, for one and five cards', async () => {
+  const { DAY_WEAR_EXPLANATION_INSTRUCTION } = await import('../routes/ai.js')
+  for (const limit of [1, 5]) {
+    const production = await composerExperimentRun({ limit })
+    const control = await composerExperimentRun({ limit, manifest: { ...identityManifest, dayWearGuidance: 'production' } })
+    const explain = await composerExperimentRun({ limit, manifest: { ...identityManifest, dayWearGuidance: 'explain' } })
+    assert.equal(control.composer.system, production.composer.system, `control is the production system prompt (${limit})`)
+    assert.ok(!production.composer.system.includes('wear_through_day'), 'production never asks for the explanation')
+    assert.equal(explain.composer.system, `${production.composer.system}\n\n${DAY_WEAR_EXPLANATION_INSTRUCTION}`, 'the instruction is appended, nothing else in the system changes')
+    assert.deepEqual(composerTextParts(explain.composer), composerTextParts(control.composer), 'same roster, garment lines and conditions text')
+    assert.deepEqual(composerImageData(explain.composer), composerImageData(control.composer), 'same photographs')
+    assert.equal(explain.composer.maxTokens, control.composer.maxTokens, 'same token budget')
+    const controlSchema = control.json.experimentComposerOnly.request.schema
+    const explainSchema = JSON.parse(JSON.stringify(explain.json.experimentComposerOnly.request.schema))
+    assert.equal(controlSchema.properties.outfits.items.properties.wear_through_day, undefined)
+    assert.deepEqual(explainSchema.properties.outfits.items.properties.wear_through_day, { type: 'string' })
+    assert.ok(explainSchema.properties.outfits.items.required.includes('wear_through_day'))
+    delete explainSchema.properties.outfits.items.properties.wear_through_day
+    explainSchema.properties.outfits.items.required = explainSchema.properties.outfits.items.required.filter(key => key !== 'wear_through_day')
+    assert.deepEqual(explainSchema, controlSchema, 'the schema differs only by the one output string')
+    assert.equal(explain.json.experimentComposerOnly.manifest.dayWearGuidance, 'explain')
+  }
+  const invalid = await composerExperimentRun({ manifest: { ...identityManifest, dayWearGuidance: 'required_layer' } })
+  assert.equal(invalid.status, 500)
+  assert.equal(invalid.calls.length, 0, 'an invalid day-wear value refuses before any model call')
+})
+
+test('DAY-WEAR EXPLANATION: the instruction asks for intention and coverage at each end, with no engine verdict, layer requirement or garment category', async () => {
+  const { DAY_WEAR_EXPLANATION_INSTRUCTION: text } = await import('../routes/ai.js')
+  assert.match(text, /warmest part and the coolest part/)
+  assert.match(text, /when the conditions do not change, describe the whole period once/)
+  assert.match(text, /covered or uncovered: arms, neck, torso and legs/)
+  assert.match(text, /or that nothing changes/)
+  assert.match(text, /do not present warmth as certain/)
+  assert.doesNotMatch(text, /\b(acceptable|adequate|inadequate|recommended|required|requires|must|should add|always|never|avoid|ordered for these conditions|too warm|too cold|sufficient|insufficient|on target|over target|under target|warmth level)\b/i, 'no verdict or requirement vocabulary')
+  assert.doesNotMatch(text, /\b(dress|cardigan|wool|knit|sleeveless|tank|puffer|coat|jacket|fleece|sweater)\b/i, 'names no garment category')
+  const { composerOutfitSlotsSchema } = await import('../styling-engine/composerSlots.js')
+  assert.deepEqual(composerOutfitSlotsSchema({ minOutfits: 3 }), composerOutfitSlotsSchema({ minOutfits: 3, wearThroughDay: false }), 'the production schema is unchanged by default')
+})
+
+test('DEFAULT GARMENT EVIDENCE: the Whole Wardrobe request carries shared fact lines and saved-record notes, and no stale weather wording', async () => {
+  const run = await composerExperimentRun({ limit: 2 })
+  const parts = composerTextParts(run.composer)
+  const text = parts.join('\n')
+  const garmentLines = parts.filter(t => /^ID \d+:/.test(t))
+  assert.ok(garmentLines.length > 0)
+  assert.ok(garmentLines.every(line => /^ID \d+: [^;]+; (top|bottom|dress|shoes|outerwear|accessory)\b/.test(line)), 'every garment line is the shared fact line')
+  assert.ok(garmentLines.every(line => !/warmth|reads_as|do not pair|tagger/.test(line)), 'no derived warmth, tagger read or pairing caution')
+  assert.equal(parts.filter(t => t.startsWith('Garment facts are recorded values only.')).length, 1, 'conventions and saved-record notes arrive once')
+  assert.match(text, /Temperature: 65°F high \/ 50°F low — judge the outfit against the range, not against a number/)
+  assert.doesNotMatch(text, /COOL-END LAYER|TIME-OF-DAY WEATHER|ordered for these conditions|each piece states its own/)
+})
+
+// SLEEVE GEOMETRY IS LOG-ONLY (owner ruling 2026-09-14): cross-flow route tests. A gathered/ruched inner sleeve under a
+// fitted, straight-sleeved coat used to be a hard sleeve conflict; it must now neither reject the Whole Wardrobe card nor
+// exclude the coat from missing-layer repair, and the verdict must reach no model.
+async function seedLogOnlySleevePair() {
+  const { coat, shell } = await seedWarmCoatAndLightShell()
+  db.prepare("UPDATE pieces SET sleeve_length = 'extra_long', sleeve_shape = 'gathered_ruched', silhouette = 'slim' WHERE id = ?").run(seeded.top)
+  db.prepare("UPDATE pieces SET sleeve_length = 'long', sleeve_shape = 'straight', silhouette = 'fitted' WHERE id = ?").run(coat)
+  return { coat, shell }
+}
+
+// GARMENT-FACT INTEGRITY: TUCK (live thread_1789508440573, 2026-09-15). Cards told the wearer to tuck tops recorded
+// wear_over_only although the fact line said so, and the renderer obeys the recorded fact. The delivered card must carry a Fit note
+// naming the contradiction; a card that keeps the base top untucked must not.
+test('TUCK INTEGRITY (Whole Wardrobe): a tuck instruction on a wear_over_only base top is flagged on the delivered card', async () => {
+  db.prepare("UPDATE pieces SET tuck_behavior = 'wear_over_only' WHERE id = ?").run(seeded.top)
+  db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+  try {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+      if (String(system || '').includes('personal stylist. You are looking at photos')) {
+        return { outfits: [
+          { label: 'Tucked base', strength: 'strong', dominantDirection: 'clean', silhouette: 'column', bestFor: 'city', ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }), reason: 'Clean line.', styling_instructions: 'Top tucked into the jeans.', watchFor: 'None.' },
+          { label: 'Untucked base', strength: 'strong', dominantDirection: 'easy', silhouette: 'relaxed', bestFor: 'city', ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.shoe }), reason: 'Easy line.', styling_instructions: 'Top worn untucked over the trousers.', watchFor: 'None.' },
+        ], skip: '', saveableLearning: '' }
+      }
+      if (isRepair(system)) return { repairs: [], declines: [] }
+      if (isCritic(system)) return { flagged: [] }
+      return mockAiHandler({ system, messages })
+    }
+    const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', { occasion: 'city', season: 'fall', userWeather: { high_f: 70, low_f: 60 }, limit: 2 })
+    const cards = json.structuredOutfits || []
+    const tucked = cards.find(card => card.label === 'Tucked base')
+    const untucked = cards.find(card => card.label === 'Untucked base')
+    assert.ok(tucked, 'the card is still delivered (advisor mode: annotate, not repair)')
+    assert.ok((tucked.systemFlags || []).some(flag => flag.code === 'tuck_instruction_contradicts_wear_over_only' && /recorded as wear over only/.test(flag.message)), JSON.stringify(tucked.systemFlags))
+    // The card stays visible, but the contradicted clause is not shipped as authoritative placement guidance.
+    assert.doesNotMatch(tucked.stylingInstructions || '', /tucked into/)
+    assert.match(tucked.stylingInstructions || '', /worn untucked \(recorded wear over only\)/)
+    assert.equal(tucked.stylingInstructionsOriginal, 'Top tucked into the jeans.', 'what the model wrote is kept on the card')
+    if (untucked) assert.ok(!(untucked.systemFlags || []).some(flag => flag.code === 'tuck_instruction_contradicts_wear_over_only'))
+  } finally {
+    db.prepare('UPDATE pieces SET tuck_behavior = NULL WHERE id = ?').run(seeded.top)
+  }
+})
+
+test('LOG-ONLY SLEEVE GEOMETRY (Whole Wardrobe): a card whose only issue is a sleeve-geometry verdict is delivered, recorded in debug only', async () => {
+  const { coat } = await seedLogOnlySleevePair()
+  db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+  const calls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    calls.push({ system, messages })
+    if (String(system || '').includes('personal stylist. You are looking at photos')) {
+      return { outfits: [{ label: 'Ruched knit under the coat', strength: 'strong', dominantDirection: 'layered', silhouette: 'column', bestFor: 'city',
+        ...slots({ top: seeded.top, bottom: seeded.jeans, outer: coat, shoes: seeded.shoe }), reason: 'The coat carries the look.', styling_instructions: 'Coat worn open.', watchFor: 'None.' }], skip: '', saveableLearning: '' }
+    }
+    if (isRepair(system)) return { repairs: [], declines: [] }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', { occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1 })
+  const card = (json.structuredOutfits || []).find(outfit => outfit.label === 'Ruched knit under the coat')
+  assert.ok(card, 'the card is delivered')
+  assert.notEqual(card.broken, true, `not demoted to a diagnostic card: ${card.rejectionReason || ''}`)
+  assert.doesNotMatch(`${card.rejectionReason || ''} ${JSON.stringify(card.systemFlags || [])}`, /sleeve/i)
+  const shadow = (json.debug?.sleeveGeometryShadow || []).find(entry => entry.label === 'Ruched knit under the coat')
+  assert.ok(shadow?.findings?.some(finding => finding.code === 'layer_construction_sleeve_conflict'), 'the verdict is kept as structured debug evidence')
+  for (const call of calls) assert.doesNotMatch(`${call.system}\n${JSON.stringify(call.messages)}`, /sleeve construction conflict|no room to accommodate/, 'no model receives the verdict')
+})
+
+test('LOG-ONLY SLEEVE GEOMETRY (repair): a layer that conflicts only by sleeve geometry stays a repair candidate', async () => {
+  const { coat } = await seedLogOnlySleevePair()
+  db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+  const calls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    calls.push({ system, messages })
+    if (String(system || '').includes('personal stylist. You are looking at photos')) {
+      return { outfits: [{ label: 'Ruched knit column', strength: 'strong', dominantDirection: 'easy', silhouette: 'column', bestFor: 'city',
+        ...slots({ top: seeded.top, bottom: seeded.jeans, shoes: seeded.shoe }), reason: 'The shoe carries the look.', styling_instructions: '', watchFor: 'None.' }], skip: '', saveableLearning: '' }
+    }
+    if (isRepair(system)) return { repairs: [], declines: [{ cardIndex: 0, consideredLayerIds: [coat], reason: 'holding for the test' }] }
+    if (isCritic(system)) return { flagged: [] }
+    return mockAiHandler({ system, messages })
+  }
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', { occasion: 'city', season: 'fall', userWeather: { high_f: 65, low_f: 50 }, limit: 1 })
+  const repair = calls.find(call => isRepair(call.system))
+  assert.ok(repair, 'the missing-layer repair call happens')
+  const repairText = (repair.messages?.[0]?.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n')
+  assert.match(repairText, new RegExp(`ID ${coat}:`), 'the fitted coat is offered as a layer candidate, not excluded by the sleeve verdict')
+  assert.doesNotMatch(`${repair.system}\n${repairText}`, /sleeve construction conflict|no room to accommodate/)
+})
+
+test('LOG-ONLY SLEEVE GEOMETRY (propose_outfit): a sleeve-geometry verdict neither blocks the proposal nor reaches the model, in single-outfit and freeform turns', async () => {
+  const { coat } = await seedLogOnlySleevePair()
+  for (const executionProfile of ['single_outfit', undefined]) {
+    const toolContext = {
+      occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' },
+      retrievedPieceIds: new Set([seeded.top, seeded.jeans, coat, seeded.shoe]), visuallySeenPieceIds: new Set([seeded.top, seeded.jeans, coat, seeded.shoe]), generatedOutfits: [],
+      ...(executionProfile ? { executionProfile } : {}),
+    }
+    const proposed = await executeTool('propose_outfit', {
+      label: `Ruched knit under the coat (${executionProfile || 'freeform'})`,
+      pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.jeans, role: 'primary_bottom' }, { id: coat, role: 'outerwear' }, { id: seeded.shoe, role: 'shoes' }],
+      occasion: 'city', season: 'current season', why_it_works: 'the coat carries the look', styling_instructions: 'Coat worn open.',
+    }, toolContext)
+    const toModel = JSON.stringify(proposed)
+    assert.doesNotMatch(toModel, /sleeve construction conflict|no room to accommodate|layer_construction/, `${executionProfile || 'freeform'}: the tool result never carries the verdict`)
+    assert.notEqual(proposed.status, 'validation_error', `${executionProfile || 'freeform'}: not blocked: ${proposed.message}`)
+    const card = toolContext.generatedOutfits.at(-1)
+    assert.ok(card && card.broken !== true, `${executionProfile || 'freeform'}: the card is delivered, not a broken attempt`)
+    assert.ok((card.debug?.sleeveGeometryShadow || []).some(finding => finding.code === 'layer_construction_sleeve_conflict'), `${executionProfile || 'freeform'}: kept as debug shadow evidence`)
+  }
 })
