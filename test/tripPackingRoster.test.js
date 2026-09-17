@@ -290,6 +290,33 @@ test('a single-use-case-only piece survives the bench even when 60+ cross-slot-r
     assert.ok(!benchIds.has(101) && !benchIds.has(102), 'warm-tagged bottom/shoes must not reach the roster bench on a winter trip')
     assert.ok(benchIds.has(103), 'the warm-tagged top stays eligible')
   })
+
+  // thread_1789628875203 (owner ruling 2026-09-17): a live Sept 19-22 Paso Robles trip resolved to
+  // calendar `fall` (OUT_OF_SEASON.fall === 'warm') but ran up to 94.9°F -- the hard exclusion above
+  // purged every warm-tagged bottom before the model ever saw one, leaving a single non-hiking
+  // fallback pair to cover every casual/outdoor slot. This narrow override reuses weather.js's own
+  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Deliberately
+  // scoped to `bottom` only -- dress/outerwear keep the unconditional exclusion from the tests above.
+  test('tripSeasonEligiblePool keeps a warm-tagged bottom on a fall/winter trip when tripHasHotWeather is true', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR], 'fall', { tripHasHotWeather: true })
+    assert.deepEqual(result, [WARM_BOTTOM], 'only the bottom is spared -- shoes/dress/outerwear stay excluded even on a hot day')
+  })
+
+  test('tripSeasonEligiblePool still excludes a warm-tagged bottom on a fall/winter trip when the trip is not actually hot', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM], 'fall', { tripHasHotWeather: false })
+    assert.deepEqual(result, [], 'the override never fires without a genuinely hot day -- this stays the ratified default')
+  })
+
+  test('selectTripRosterViaModel: a warm-tagged bottom reaches the bench on a calendar-fall trip whose slot weather is genuinely hot', async () => {
+    const hotHikingSlot = { ...SLOTS[1], weatherProfile: { isHot: true } }
+    const warmHikingBottom = piece(110, 'bottom', { season: 'warm', occasions: ['casual', 'outdoor'] })
+    const pool = [warmHikingBottom, HIKE_TOP, HIKE_SHOES]
+    const result = await selectTripRosterViaModel({
+      pool, slots: [hotHikingSlot], chooseRoster: null, calendarSeason: 'fall',
+    })
+    const benchIds = new Set(result.bench.map(p => Number(p.id)))
+    assert.ok(benchIds.has(110), 'the warm-tagged bottom reaches the bench once the trip is confirmed genuinely hot')
+  })
 }
 
 // ─── ROSTER-LEVEL FEASIBILITY (thread_1788501349296) ────────────────────────────────────────────

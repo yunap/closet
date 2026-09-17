@@ -5041,3 +5041,42 @@ low-confidence for it (`occasion_confidence.outdoor: 'low'`) is treated the same
 outdoor-tagged piece with no low-confidence marker still gets the label (no over-suppression); and
 the new prompt sentence is present.
 
+### Amendment (2026-09-17) — a genuinely hot trip day now overrides the season-eligibility hard exclusion, for bottoms only (thread_1789628875203)
+
+**Incident.** The same live Paso Robles run: the trip's calendar season resolved to `fall`
+(`OUT_OF_SEASON.fall === 'warm'`, `docs/trip-roster-season-eligibility-spec.md` §4), so
+`tripSeasonEligiblePool` hard-excluded every `season: 'warm'`-tagged bottom — utility shorts, cargo
+shorts, linen shorts, linen hiking pants — from the candidate pool before the model ever saw them,
+even though the live Open-Meteo forecast ran up to 94.9°F. The only casual bottom left in the
+roster candidates was a single floral tapestry pair, which the model then had to reuse across every
+casual/outdoor slot. A competing proposal to instead override season with weather generally (any
+category, any direction) was considered and narrowed: the spec's own non-goals already forbid
+touching `dress` (§3: "not a cocktail-dress-style exception") and `outerwear`'s season-tag rule is
+its own, separately-reasoned asymmetry (§4) — reopening either without a dedicated incident for
+them would be scope creep, not a fix for the one thing that actually broke.
+
+**The fix.** `tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather })` — a new third
+parameter, `{}` by default so every existing caller/test is unaffected. When `tripHasHotWeather` is
+true and the calendar's `OUT_OF_SEASON` mismatch is `'warm'` (i.e. a fall or winter trip), a
+`bottom`-group piece is kept regardless of its own `season: 'warm'` tag; every other category keeps
+the exact existing rule. `tripHasHotWeather` is derived inside `selectTripRosterViaModel`, not
+passed in from further up the call stack: `slots.some(slot => slot.weatherProfile?.isHot)` — reusing
+`weather.js`'s own `HOT_F` (80°F) threshold and the `isHot` flag every weather-resolution path
+(live, hourly, heuristic, model-estimate) already computes consistently, rather than defining a
+second 80°F threshold that could drift out of sync with it. Any one slot running hot is enough to
+open the pool for the whole trip — a roster is chosen once for the whole trip, not per slot, the
+same simplification the rest of this spec already makes for calendar season itself.
+
+**This is a real, narrow reversal of the spec's own stated principle** ("season... never creates a
+thermal finding," `piece-season-as-weather-evidence.md`) for one category and one direction only —
+not a general precedent. A future finding that wants the same override for `dress` or `outerwear`,
+or wants it to run the other direction (a cold snap on a summer-calendar trip), needs its own
+incident and its own ruling, not an extension of this one by analogy.
+
+Regression: `test/tripPackingRoster.test.js` — a warm-tagged bottom is kept on a fall trip when
+`tripHasHotWeather: true`, still excluded when the trip genuinely isn't hot (the override never
+fires unconditionally), and reaches the actual roster bench end-to-end through
+`selectTripRosterViaModel` once a slot's own `weatherProfile.isHot` is true — with the existing
+suite's dress/shoes/outerwear exclusion tests on a winter trip passing unchanged, confirming the
+override's category scope.
+

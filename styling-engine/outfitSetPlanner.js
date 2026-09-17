@@ -48,7 +48,7 @@ import {
   registerFitPieceAdvisory,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
-import { seasonFitPieceAdvisory, seasonEligibleForCalendar } from '../lib/seasonContext.js'
+import { seasonFitPieceAdvisory, seasonEligibleForCalendar, OUT_OF_SEASON } from '../lib/seasonContext.js'
 import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
 import { garmentWarmthLevel, WARMTH_LEVELS } from './garmentWarmth.js'
 import { SEVERE_COLD_THRESHOLD_F } from './biometeorology.js'
@@ -2968,10 +2968,24 @@ export { seasonFitPieceAdvisory }
 // excluded as outerwear, on any trip -- it may be the one thing warm enough for an unexpectedly cold
 // day or evening. Same asymmetry capsuleSeasonEligiblePool already grants outerwear on a summer
 // capsule; this generalizes it to every calendar season rather than leaving it summer-specific.
-export function tripSeasonEligiblePool(pool = [], calendarSeason = '') {
+//
+// `tripHasHotWeather` (thread_1789628875203, owner ruling 2026-09-17) is a narrow, deliberate
+// supersession of the spec's own stated non-goal above: a Sept 19-22 Paso Robles trip resolves to
+// calendar `fall` (OUT_OF_SEASON.fall === 'warm'), but the live forecast ran up to 94.9°F, and the
+// hard exclusion purged every hot-weather bottom (shorts, linen hiking pants) from the candidate
+// pool before the model ever saw them -- the only casual bottom left was a floral tapestry pair the
+// model then had no choice but to reuse everywhere. Scoped to `bottom` only (the category the live
+// incident evidenced and the owner ruling named) -- `dress` and `outerwear` keep their existing hard
+// exclusion; a warm-tagged sundress or blazer question, if it comes up, is a separate ruling. This
+// is a real reversal of "season never creates a thermal finding" for this one category, not an
+// extension of it -- do not generalize this override to dress/outerwear without a fresh ruling.
+export function tripSeasonEligiblePool(pool = [], calendarSeason = '', { tripHasHotWeather = false } = {}) {
   const calendar = String(calendarSeason || '').toLowerCase().trim()
   if (!calendar) return pool
-  return pool.filter(piece => seasonEligibleForCalendar(piece, calendar, wardrobeCategoryGroup(piece)))
+  return pool.filter(piece => {
+    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && wardrobeCategoryGroup(piece) === 'bottom') return true
+    return seasonEligibleForCalendar(piece, calendar, wardrobeCategoryGroup(piece))
+  })
 }
 
 // "how much warmth do these conditions call for", as a short phrase the model can act on.
@@ -3941,9 +3955,9 @@ function pieceHasGenuineOutdoorAffinity(piece) {
 // requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
 // trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
 // rather than a hidden reason it was never shown a piece at all.
-function buildTripBench(pool = [], { slots = [], calendarSeason = '' } = {}) {
+function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
-  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason)
+  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather })
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const slotLabelsById = new Map()
@@ -4217,7 +4231,13 @@ export async function selectTripRosterViaModel({
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
-  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason })
+  // thread_1789628875203 (owner ruling 2026-09-17): reuses weather.js's own HOT_F (80°F) threshold,
+  // already computed per slot as `weatherProfile.isHot` by the time slots reach here — no second
+  // threshold definition to drift out of sync with it. Any one slot running hot is enough: a trip
+  // roster is chosen once for the whole trip, and a genuinely hot day anywhere in it means hot-
+  // weather bottoms belong in the candidate pool regardless of the trip's overall calendar season.
+  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot))
+  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
   const benchById = pieceMapForPieces(bench)
 
   if (typeof chooseRoster !== 'function') {
