@@ -82,6 +82,7 @@ import {
   shoeCoverage,
   sleeveCoverage,
   pieceRequiresBaseLayer,
+  getOccasionConfidence,
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
@@ -3908,6 +3909,34 @@ export async function selectCapsuleRosterViaModel({
 // diversityInterleavedByBucket are removed with the cap they existed to soften; nothing else called
 // them.
 
+// thread_1789628875203: a live Paso Robles run labeled #996782 (a collared rayon popover blouse
+// with no "outdoor" occasion tag at all) `slots: Winery Days, Hiking` -- the model then reused it
+// as its Hiking layer instead of an actual cotton tee/tank. slotGateEligiblePieces' occasion check
+// only compares against the slot's generic `occasion` field ("casual" for both Winery Days and
+// Hiking here), which every casual-tagged piece trivially passes regardless of activity; nothing in
+// that check looks at the HIKING ACTIVITY PROFILE's own `required_occasion_tags`
+// (footwear-comfort.js: `["outdoor", "outdoor active", "hiking"]`) at all. The fix stays a labeling
+// correction, not a new suppression: `capsulePiecesEligibleForAnySlot`/`slotGateEligiblePieces` still
+// decide overall bench membership unchanged (a day dress stays roster-eligible for outdoor-active,
+// per the 2026-06-12 ratification rules.js cites against ever hard-gating on `required_occasion_tags`
+// -- this never touches that). Only the per-slot LABEL this function attaches is narrowed: a slot
+// whose resolved activity profile requires an "outdoor" tag family only claims a piece for that slot
+// once the piece actually carries one of those tags and isn't recorded low-confidence for outdoor
+// (`occasion_confidence.outdoor`) -- otherwise the piece stays in the bench (still labeled for
+// whichever slots it does honestly qualify for) but the model is no longer told, as a "structurally
+// computed" fact, that it is gate-eligible for a use case it was never tagged for.
+function slotRequiresGenuineOutdoorAffinity(slot = {}) {
+  const activityProfile = resolveActivityProfile({ activity: slot.activity, occasion: slot.occasion })
+  const requiredTags = (activityProfile?.rules?.required_occasion_tags || []).map(tag => String(tag).toLowerCase().trim())
+  return requiredTags.includes('outdoor')
+}
+
+function pieceHasGenuineOutdoorAffinity(piece) {
+  const tags = (Array.isArray(piece?.occasions) ? piece.occasions : []).map(tag => String(tag).toLowerCase().trim())
+  if (!tags.includes('outdoor')) return false
+  return getOccasionConfidence(piece, 'outdoor') !== 'low'
+}
+
 // The bench: every active, season-eligible, composable-group piece gate-eligible for at least one
 // requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
 // trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
@@ -3920,7 +3949,9 @@ function buildTripBench(pool = [], { slots = [], calendarSeason = '' } = {}) {
   const slotLabelsById = new Map()
   normalizedSlots.forEach((slot, index) => {
     const slotLabel = slot.slot || slot.label || `slot_${index}`
+    const requiresOutdoorAffinity = slotRequiresGenuineOutdoorAffinity(slot)
     for (const piece of slotGateEligiblePieces(eligible, slot, {})) {
+      if (requiresOutdoorAffinity && !pieceHasGenuineOutdoorAffinity(piece)) continue
       const id = Number(piece.id)
       if (!slotLabelsById.has(id)) slotLabelsById.set(id, [])
       slotLabelsById.get(id).push(slotLabel)

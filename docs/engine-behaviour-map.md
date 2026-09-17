@@ -4994,3 +4994,50 @@ stated `time_window` short-circuiting the check, far-term/no-hourly-coverage deg
 rather than fabricating a verdict, and the full `clarification_recommended` → answered → `success`
 conversational round-trip through `executeTool`).
 
+### Amendment (2026-09-17) — a piece with no genuine outdoor affinity no longer claims a Hiking slot's label, and the roster prompt stops letting a base top double as a layer (thread_1789628875203)
+
+**Incident.** A live Paso Robles run (real dev pair, real wardrobe) labeled `#996782` (a collared
+rayon/viscose popover blouse — no `"outdoor"` occasion tag at all) `slots: Winery Days, Hiking` in
+the trip roster candidate catalog. The model then packed it and reasoned, in its own words, that it
+would be "a lightweight layer for varied outdoor temps," choosing it over the wardrobe's actual
+cotton tees and tanks. A separate reviewer proposed fixing this by hard-disqualifying rayon/viscose,
+collared, or long-sleeve pieces from hiking slots outright — rejected (owner ruling 2026-09-17):
+this codebase has repeatedly, deliberately kept fabric/silhouette suitability advisory-only for
+tops/bottoms (the identical territory as the "sleeve shape is not incompatibility" and "print
+judgment is case by case" rulings, and `rules.js`'s own `required_occasion_tags` comment: "a hard
+gate would contradict the 2026-06-12 ratification... and would make the roster depend on tagging
+density"). The chosen fix is narrower and does not touch suitability judgment at all.
+
+**Root cause.** `buildTripBench`'s per-slot label loop (`slotLabelsById`, `outfitSetPlanner.js`)
+called `slotGateEligiblePieces`, which checks a piece's occasion tags against the slot's own generic
+`occasion` field only (`"casual"` for both Winery Days and Hiking in this trip) — any casual-tagged
+piece trivially passes, regardless of activity. Nothing consulted the Hiking activity profile's own
+`required_occasion_tags` (`footwear-comfort.js`: `["outdoor", "outdoor active", "hiking"]`) at all,
+even though that field already exists and is already used elsewhere (`rules.js`) as a ranking signal
+for the single-outfit/freeform path.
+
+**The fix, scoped to the label only.** Two new helpers in `outfitSetPlanner.js`:
+`slotRequiresGenuineOutdoorAffinity(slot)` resolves the slot's activity profile and checks whether
+`required_occasion_tags` includes `"outdoor"`; `pieceHasGenuineOutdoorAffinity(piece)` checks the
+piece's own `occasions` for an `"outdoor"` tag AND that `getOccasionConfidence(piece, 'outdoor')`
+(newly exported from `attributes.js`) is not `'low'`. `buildTripBench`'s label loop now skips
+attaching a slot's label to a piece that fails this check when the slot requires it. **This changes
+nothing about bench membership or roster eligibility** — `capsulePiecesEligibleForAnySlot` and
+`slotGateEligiblePieces` are untouched, so a day dress stays roster-eligible for outdoor-active
+exactly as the 2026-06-12 ratification requires; the piece is still packable, still visible, still
+labeled for whichever slots it does honestly qualify for (Winery Days, here). Only the specific
+"gate-eligible for Hiking" claim — a claim `TRIP_ROSTER_CATALOG_CONVENTIONS` already documents as
+"structurally computed, not a suitability verdict" — is corrected to actually be true.
+
+**The prompt fix (Fix 2b).** `tripRosterSelectionSystemPrompt`'s existing LAYERING/OUTERWEAR section
+gained one sentence: a button-up, popover, or collared woven blouse is a base top, not a layering
+garment or outerwear substitute, and must not double as both a look's base and its own layer. This
+addresses the model's stated reasoning directly, as a clarification alongside the section's existing
+"never rely solely on dressy... outerwear" guidance, not a new rule family.
+
+Regression: `test/tripPackingRoster.test.js` — a piece with no outdoor tag never claims a Hiking
+label despite sharing the slot's generic occasion; a piece tagged outdoor but recorded
+low-confidence for it (`occasion_confidence.outdoor: 'low'`) is treated the same way; a genuinely
+outdoor-tagged piece with no low-confidence marker still gets the label (no over-suppression); and
+the new prompt sentence is present.
+

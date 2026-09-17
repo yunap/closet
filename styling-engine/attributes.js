@@ -932,7 +932,7 @@ export function isTop(p) {
   return wardrobeCategoryGroup(p) === 'top'
 }
 
-function getOccasionConfidence(piece, occasion) {
+export function getOccasionConfidence(piece, occasion) {
   try {
     const profile = typeof piece?.style_profile_json === 'string'
       ? JSON.parse(piece.style_profile_json)

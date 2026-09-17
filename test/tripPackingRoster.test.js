@@ -1037,6 +1037,15 @@ test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion r
   assert.match(prompt, /Never rely solely on dressy, elevated, or high-maintenance outerwear/)
 })
 
+// thread_1789628875203: the model packed a collared rayon popover blouse and reasoned it would
+// "serve as a lightweight layer for varied outdoor temps" -- a real garment-category confusion, not
+// a fabric/neckline hard-gate question (that fix stays a labeling correction above; this is the
+// companion prompt clarification, per the owner's own Fix 2b).
+test('tripRosterSelectionSystemPrompt clarifies that a button-up/popover blouse is a base top, not a layering substitute', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /button-up, popover, or collared woven blouse is a base top, not a layering garment/)
+})
+
 test('buildTripPackingLines recognizes assignedLayerIds as shown in the travel system', () => {
   const trench = piece(996759, 'outerwear', { name: 'cream trench coat with belt' })
   const top = piece(1, 'top', { name: 'turtleneck' })
@@ -1249,4 +1258,51 @@ test('truthfulWeatherLabel is unaffected by dailySeries variation for non-live s
     { date: '2026-09-20', highF: 58, lowF: 38 },
   ] }
   assert.equal(truthfulWeatherLabel(statedUser, { location: 'Paso Robles, CA' }), '60°F high / 48°F low — you said so')
+})
+
+// thread_1789628875203: a live Paso Robles run labeled a collared rayon popover blouse with NO
+// "outdoor" occasion tag at all `slots: Winery Days, Hiking` -- the model then reused it as its
+// Hiking layer over actual cotton tees/tanks. The slot's generic `occasion: 'casual'` trivially
+// matched the piece's `casual` tag, and nothing checked the Hiking activity profile's own
+// `required_occasion_tags` (footwear-comfort.js: outdoor/outdoor active/hiking). Fixed as a labeling
+// correction only -- the piece stays roster-eligible (still labeled for Winery Days, still
+// selectable), it just stops being told to the model as gate-eligible for a use case it was never
+// tagged for. Reached through the real path (selectTripRosterViaModel -> buildTripBench), not by
+// calling an unexported helper directly.
+test('a piece with no outdoor occasion tag is never labeled eligible for a Hiking slot, even though it shares the slot\'s generic occasion', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  const blouse = piece(20, 'top', { occasions: ['casual', 'city', 'smart-casual'] })
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [20, 4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: [...POOL, blouse], slots: [hikingSlot], chooseRoster })
+  assert.ok(!(capturedLabels.get(20) || []).includes('Hiking'), 'a piece never tagged outdoor must not claim the Hiking slot')
+})
+
+test('a piece tagged outdoor but recorded low-confidence for it is never labeled eligible for a Hiking slot', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  const lowConfidencePiece = piece(21, 'top', {
+    occasions: ['casual', 'outdoor'],
+    style_profile_json: { garment_intelligence: { occasion_confidence: { outdoor: 'low' } } },
+  })
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [21, 4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: [...POOL, lowConfidencePiece], slots: [hikingSlot], chooseRoster })
+  assert.ok(!(capturedLabels.get(21) || []).includes('Hiking'), 'low-confidence outdoor affinity must not claim the Hiking slot either')
+})
+
+test('a piece genuinely tagged outdoor, with no low-confidence marker, still gets the Hiking label (no over-suppression)', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: POOL, slots: [hikingSlot], chooseRoster })
+  assert.ok((capturedLabels.get(4) || []).includes('Hiking'), 'a genuinely outdoor-tagged piece must keep its Hiking label')
 })
