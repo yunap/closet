@@ -152,44 +152,74 @@ test('no fixed budget: the model may choose fewer or more pieces than any capsul
   assert.ok(!result.failures.some(f => f.code === 'roster_size'), 'trip rosters have no size contract, unlike capsules')
 })
 
-// ─── BENCH CONSTRUCTION DIVERSITY (thread_1788504927533) ────────────────────────────────────────
-// The cardigan-only Vienna roster traced back to the bench the roster model was shown, not to its
-// judgment: buildTripBench ranked candidates by (tripReuseScore desc, id asc), and once many pieces
-// tie on reuse score (the common case), ascending id alone decided who survived capacity truncation.
-// A wardrobe with 16 real jackets/coats and 6 cardigans put every cardigan in the bench and NONE of
-// the 16 structured pieces in it, purely because the cardigans happened to have lower ids -- the
-// model was never shown a real jacket to weigh against a cardigan. This is a property of the bench's
-// own ranking, not anything specific to outerwear: the same truncation can silently narrow any
-// category down to whichever construction bucket has the most low-id members. These reproduce that
-// exact shape and prove the fix (diversityInterleavedByBucket) without asserting "a jacket must be
-// present" anywhere -- only that every construction bucket gate-eligible for the trip gets a turn
-// before capacity truncates, the same guarantee for every category, not a special case for outerwear.
+// ─── BENCH HAS NO CAP (thread_1788504927533, superseded by thread_1789598100140) ────────────────
+// The cardigan-only Vienna roster traced back to a bench cap + reuse ranking that silently narrowed
+// candidates before the model ever saw them: buildTripBench used to rank by (tripReuseScore desc, id
+// asc), truncate at a 60-piece cap, and round-robin across construction buckets only to soften that
+// truncation, not remove it. Owner ruling 2026-09-16: removed the cap and the ranking entirely
+// (thread_1789598100140 found the same mechanism starving single-use-case-essential pieces, not just
+// disadvantaging low-id ones) -- roster selection is now text-only, so there is no cost reason to
+// withhold any season-eligible candidate. These fixtures reproduce the original Vienna shape and now
+// assert the stronger guarantee: every gate-eligible piece survives, construction bucket or id
+// notwithstanding, because nothing truncates the bench at all.
 const manyLowIdCardigans = [10, 11, 12, 13, 14, 15].map(id => piece(id, 'outerwear', { name: `cardigan ${id}` }))
 const oneLowIdVest = piece(16, 'outerwear', { name: 'vest 16' })
 const fewHighIdJackets = [900, 901, 902].map(id => piece(id, 'outerwear', { name: `jacket ${id}` }))
 const fewHighIdCoats = [903, 904].map(id => piece(id, 'outerwear', { name: `coat ${id}` }))
 const DIVERSITY_POOL = [CITY_TOP, CITY_BOTTOM, CITY_SHOES, ...manyLowIdCardigans, oneLowIdVest, ...fewHighIdJackets, ...fewHighIdCoats]
 
-test('a bench capped well below total supply still contains every gate-eligible construction bucket, not just the lowest-id one', async () => {
-  const result = await selectTripRosterViaModel({ pool: DIVERSITY_POOL, slots: [SLOTS[0]], chooseRoster: null, benchSize: 10 })
+test('the bench contains every gate-eligible construction bucket, with no cap to truncate any of them', async () => {
+  const result = await selectTripRosterViaModel({ pool: DIVERSITY_POOL, slots: [SLOTS[0]], chooseRoster: null })
   const benchIds = new Set(result.bench.map(p => Number(p.id)))
-  assert.ok([...benchIds].some(id => id >= 900 && id <= 902), 'a jacket-bucket piece must survive truncation even though every jacket id is higher than every cardigan id')
-  assert.ok([...benchIds].some(id => id >= 903 && id <= 904), 'a coat-bucket piece must survive truncation for the same reason')
-  assert.ok([...benchIds].some(id => id >= 10 && id <= 15), 'the cardigan bucket must still be represented -- this is diversity, not exclusion of the low-id bucket')
-  assert.ok(benchIds.has(16), 'the single-member vest bucket must also get its turn')
-  assert.equal(result.bench.length, 10, 'sanity: the cap was actually binding')
+  assert.ok([900, 901, 902].every(id => benchIds.has(id)), 'every jacket must survive -- there is no cap to truncate at')
+  assert.ok([903, 904].every(id => benchIds.has(id)), 'every coat must survive for the same reason')
+  assert.ok([10, 11, 12, 13, 14, 15].every(id => benchIds.has(id)), 'every cardigan must also survive -- inclusion, not a diversity quota')
+  assert.ok(benchIds.has(16), 'the single-member vest bucket must survive too')
+  assert.equal(result.bench.length, DIVERSITY_POOL.length, 'sanity: nothing was excluded from the gate-eligible pool')
 })
 
-test('bench diversity applies to any category with many tied candidates, not only outerwear', async () => {
+test('bench inclusion applies to any category with many candidates, not only outerwear', async () => {
   // Six low-id tops, one high-id top of a materially different construction (garmentKind 'button-
   // shirt' vs the default 'tee'-adjacent bucket the plain fixtures fall into) -- same shape as the
   // outerwear case, a different category, to prove the fix is not outerwear-special-cased.
   const manyLowIdTees = [20, 21, 22, 23, 24, 25].map(id => piece(id, 'top', { name: `tee ${id}` }))
   const oneHighIdShirt = piece(950, 'top', { name: 'button-up shirt 950' })
   const pool = [CITY_BOTTOM, CITY_SHOES, ...manyLowIdTees, oneHighIdShirt]
-  const result = await selectTripRosterViaModel({ pool, slots: [SLOTS[0]], chooseRoster: null, benchSize: 4 })
+  const result = await selectTripRosterViaModel({ pool, slots: [SLOTS[0]], chooseRoster: null })
   const benchIds = new Set(result.bench.map(p => Number(p.id)))
-  assert.ok(benchIds.has(950), 'a materially different top construction must survive truncation even at high id, same guarantee as outerwear')
+  assert.ok(benchIds.has(950), 'a materially different top construction must survive, same guarantee as outerwear')
+  assert.ok([20, 21, 22, 23, 24, 25].every(id => benchIds.has(id)), 'every tee must also survive -- no cap to truncate any bucket')
+})
+
+// thread_1789598100140 (owner ruling 2026-09-16): the exact live shape. A wardrobe where most
+// gate-eligible pieces are reusable across several slots (so the old tripReuseScore ranking put them
+// first) and one piece is only ever useful for a single narrow use case (a hot-weather hiking bottom,
+// reuse score 1) -- confirmed live, real hiking-appropriate shorts and technical pants existed in the
+// wardrobe and never reached the old 60-piece bench because 60+ cross-slot-reusable pieces
+// outranked them before the round-robin's bucket-processing order (itself reuse-score-driven) ever
+// gave the hiking-only bucket an early turn. With no cap and no reuse ranking, the single-use piece
+// must survive alongside every reusable one, not despite them.
+test('a single-use-case-only piece survives the bench even when 60+ cross-slot-reusable pieces would have out-scored it under the old reuse ranking', async () => {
+  const slots = [
+    { id: 'winery', label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking' },
+    { id: 'hiking', label: 'Hiking', occasion: 'casual', activity: 'hiking', environment: 'outdoor' },
+    { id: 'dinner', label: 'Dinner Out', occasion: 'evening' },
+  ]
+  // Each reusable piece is gate-eligible for winery AND dinner (occasions: outdoor_daytime_social +
+  // evening) -- reuse score 2, same shape as a cross-slot-versatile dress or blouse. 70 of them, well
+  // past the old 60-piece cap, so under the old ranking none of them would ever have been at risk of
+  // truncation -- the single-use hiking piece, scoring only 1, would have been pushed out first.
+  const reusablePieces = Array.from({ length: 70 }, (_, i) =>
+    piece(2000 + i, i % 2 === 0 ? 'top' : 'bottom', { name: `reusable ${i}`, occasions: ['outdoor_daytime_social', 'evening'] }))
+  const hotWeatherHikingShorts = piece(9999, 'bottom', { name: 'lightweight technical hiking shorts', occasions: ['casual', 'outdoor'] })
+  const shoes = piece(3, 'shoes', { occasions: ['outdoor_daytime_social', 'evening', 'casual', 'outdoor'], heel_height: 'flat', walk_support: 'high' })
+  const pool = [...reusablePieces, hotWeatherHikingShorts, shoes]
+
+  const result = await selectTripRosterViaModel({ pool, slots, chooseRoster: null })
+  const benchIds = new Set(result.bench.map(p => Number(p.id)))
+  assert.equal(result.bench.length, pool.length, 'sanity: nothing was excluded from the gate-eligible pool')
+  assert.ok(benchIds.has(9999), 'the single-use-case hiking piece must survive alongside every cross-slot-reusable one')
+  assert.ok(reusablePieces.every(p => benchIds.has(Number(p.id))), 'sanity: the reusable pieces are still present too')
 })
 
 // ─── SEASON ELIGIBILITY (docs/trip-roster-season-eligibility-spec.md, ratified) ─────────────────
@@ -853,7 +883,7 @@ test('the trip roster user text lists use cases and candidates with no budget/pa
   const text = tripRosterSelectionUserText({ bench, slots })
   assert.match(text, /USE CASES THIS TRIP MUST COVER/)
   assert.match(text, /sightseeing around town/)
-  assert.match(text, /^ID 1: /m)
+  assert.match(text, /^#1 city top \| top \| /m)
   assert.doesNotMatch(text, /CAPSULE SIZE/)
 })
 
@@ -902,67 +932,49 @@ test('the trip roster system prompt distinguishes making a use case wearable onc
   assert.match(brief, /without repeating the same core piece-for-piece/)
 })
 
-// Same reasoning as plan_outfit_set.test.js's capsule equivalent: the repair call must reuse the
-// initial call's cache prefix (images included) instead of re-paying for every thumbnail, since the
-// repair is the only point in a single run where a prompt-cache read is possible.
-test('the trip roster repair call reuses the initial call cache prefix instead of re-paying for every thumbnail', () => {
+// thread_1789598100140 (owner ruling 2026-09-16): roster selection is now text-only (no thumbnails),
+// so there is only ever one text block to cache -- the repair call must still reuse it verbatim
+// (byte-identical) rather than rebuilding it, so the repair round reads the cache the initial call
+// wrote instead of re-paying for the whole catalog.
+test('the trip roster repair call reuses the initial call cache prefix instead of rebuilding the catalog', () => {
   const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
-  const imageParts = bench.flatMap(piece => ([
-    { type: 'text', text: `ID ${piece.id}: ${piece.name}` },
-    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: `fake-${piece.id}` } }
-  ]))
   const failures = [{ code: 'use_case_uncoverable', message: 'City Walking has 0 eligible top(s)' }]
 
-  const initial = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 1, failures: [], previousRosterIds: [] })
-  const repair = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 2, failures, previousRosterIds: [1] })
+  const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, failures: [], previousRosterIds: [] })
+  const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures, previousRosterIds: [1] })
 
-  const lastBreakpoint = content => content.reduce((last, part, index) => (part?.cache_control ? index : last), -1)
-  const initialBreak = lastBreakpoint(initial)
-  const repairBreak = lastBreakpoint(repair)
-  assert.ok(initialBreak > 0)
-  assert.equal(initialBreak, repairBreak)
-  assert.deepEqual(repair.slice(0, repairBreak + 1), initial.slice(0, repairBreak + 1))
-  assert.match(repair[repair.length - 1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.equal(initial.length, 1, 'sanity: text-only content has exactly one part with nothing to attach images to')
+  assert.equal(initial[0].cache_control?.type, 'ephemeral')
+  assert.deepEqual(repair[0], initial[0], 'the cached catalog block must be byte-identical between the initial call and the repair')
+  assert.equal(repair.length, 2, 'the repair appends exactly one additional block, not more')
+  assert.match(repair[1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
 })
 
-// ─── VISUAL-ROLE EVIDENCE SPLIT (thread_1788518048013 arc) ──────────────────────────────────────
+// ─── VISUAL-ROLE EVIDENCE (thread_1788518048013 arc, superseded by thread_1789598100140) ────────
 // hero_piece/color_accent/sharpener_piece are a capsule-era STYLING-ROLE judgment (which garment
 // should carry an outfit's visual weight for that planning objective), not a garment fact with any
-// trip-specific meaning. Both channels that could shape trip roster selection through it -- image
-// fidelity (pieceVisualDetailPolicy) and catalog text (buildPieceText/tripRosterSelectionUserText)
-// -- must stop granting it special treatment there, while a capsule caller (or any other default
-// caller) keeps the original behavior unchanged.
+// trip-specific meaning. This arc originally gave pieceVisualDetailPolicy a useVisualRoles:false
+// opt-out so trip roster selection's (then image-based) fidelity allocation would not grant a
+// capsule-era role special treatment. Roster selection is now text-only (no thumbnails at all,
+// thread_1789598100140), so that opt-out's only caller is gone -- removed along with it, restoring
+// pieceVisualDetailPolicy to one behavior for every caller. The sparse catalog format
+// (tripRosterSelectionUserText now uses) never carried visual roles in the first place.
 const COLOR_ACCENT_PLAIN = piece(40, 'top', {
   pattern_complexity: 'solid', fabric_category: 'cotton',
   style_profile_json: { visual_roles: ['color_accent'] },
 })
-const LOUD_PATTERN_PIECE = piece(41, 'top', { pattern_complexity: 'loud' })
 
-test('pieceVisualDetailPolicy: color_accent alone earns 800px by default (capsule-unchanged), but not with useVisualRoles:false', () => {
-  const withRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN)
-  assert.deepEqual(withRoles, { maxPx: 800, detail: 'auto' }, 'default behavior (capsule roster selection) must be unchanged')
-
-  const withoutRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN, { useVisualRoles: false })
-  assert.deepEqual(withoutRoles, { maxPx: 448, detail: 'low' }, 'a styling-role tag with no trip-specific meaning must not earn higher fidelity when disabled')
+test('pieceVisualDetailPolicy: color_accent alone earns 800px, one behavior for every caller', () => {
+  const result = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN)
+  assert.deepEqual(result, { maxPx: 800, detail: 'auto' })
 })
 
-test('pieceVisualDetailPolicy: genuine garment-intrinsic signals (pattern, texture) still earn 800px with useVisualRoles:false', () => {
-  const result = pieceVisualDetailPolicy(LOUD_PATTERN_PIECE, { useVisualRoles: false })
-  assert.deepEqual(result, { maxPx: 800, detail: 'auto' }, 'a genuinely hard-to-read garment must still get higher fidelity regardless of the visual-roles flag')
-})
-
-test('tripRosterSelectionUserText excludes visual roles from candidate text even when the piece carries them', () => {
+test('tripRosterSelectionUserText carries no visual-role prose -- the sparse catalog format never did', () => {
   const bench = [COLOR_ACCENT_PLAIN]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
   const text = tripRosterSelectionUserText({ bench, slots })
-  assert.doesNotMatch(text, /visual roles/i, 'hero_piece/color_accent must not shape the trip roster model through text either')
-})
-
-test('buildPieceText keeps surfacing visual roles by default -- only the trip roster path opts out', async () => {
-  const { buildPieceText } = await import('../styling-engine/rules.js')
-  const text = buildPieceText(COLOR_ACCENT_PLAIN)
-  assert.match(text, /visual roles: color_accent/, 'every other caller (capsule roster selection included) must be unaffected')
+  assert.doesNotMatch(text, /visual roles/i, 'hero_piece/color_accent must not shape the trip roster model through text')
 })
 
 test('tripRosterSelectionUserText includes destination, date, and forecast weather when available', () => {
@@ -1027,8 +1039,9 @@ test('tripRosterFailures flags an outdoor cool/cold slot when the only candidate
   assert.ok(gap, 'a sun hoodie that is positively inadequate for cool/cold outdoor weather cannot satisfy the cold floor')
 })
 
-test('buildTripBench round-robins across distinct shoe construction buckets', async () => {
-  // Create candidate shoes with lower IDs for sneakers and higher IDs for boots/loafers
+test('buildTripBench includes every distinct shoe construction, with no cap to round-robin against', async () => {
+  // Lower IDs for sneakers, higher IDs for boots/loafers -- previously the exact shape a bench cap's
+  // ascending-id tiebreak would have silently narrowed down to sneakers alone.
   const sneaker1 = piece(10, 'shoes', { shoe_type: 'sneaker', name: 'white sneaker' })
   const sneaker2 = piece(11, 'shoes', { shoe_type: 'sneaker', name: 'black sneaker' })
   const sneaker3 = piece(12, 'shoes', { shoe_type: 'sneaker', name: 'grey sneaker' })
@@ -1048,14 +1061,13 @@ test('buildTripBench round-robins across distinct shoe construction buckets', as
   const { bench } = await selectTripRosterViaModel({
     pool,
     slots: [slot],
-    benchSize: 5, // Truncate tightly to ensure diversity interleaving matters
     chooseRoster: null
   })
 
   const shoeBenchTypes = bench.filter(p => p.category === 'shoes').map(p => p.shoe_type)
   assert.ok(shoeBenchTypes.includes('boot'), 'boots must not be crowded out by lower-ID sneakers')
   assert.ok(shoeBenchTypes.includes('loafer'), 'loafers must not be crowded out by lower-ID sneakers')
-  assert.ok(shoeBenchTypes.includes('sneaker'), 'sneakers must also be present')
+  assert.equal(shoeBenchTypes.filter(t => t === 'sneaker').length, 3, 'all three sneakers must also survive -- nothing truncates the bench')
 })
 
 test('tripRosterSelectionSystemPrompt includes footwear occasion register guidance', () => {

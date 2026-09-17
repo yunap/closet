@@ -1176,22 +1176,20 @@ export function visuallyPrioritizedPieces(pieces = [], limit = Infinity) {
     .map(entry => entry.piece)
 }
 
-// thread_1788518048013 arc: `useVisualRoles` (default true, unchanged for every existing caller —
-// capsule roster selection included) lets a caller opt OUT of the hero_piece/color_accent/
-// sharpener_piece heuristic below. Those three values are a capsule-era STYLING-ROLE judgment
-// (which garment should carry the outfit's visual weight) — a real question for capsule palette
-// construction, not evidence that a garment is harder to understand from a small image. Pattern
-// complexity and textured fabric stay on regardless: those genuinely predict "this garment needs a
-// bigger, higher-detail image to be read correctly," the actual question this function answers.
-// Trip roster selection passes useVisualRoles:false (chooseTripRosterWithProvider, routes/ai.js) so
-// image-fidelity allocation there depends only on the garment-intrinsic signals, not a role field
-// carried over from a different planning objective with no trip-specific meaning.
-export function pieceVisualDetailPolicy(p, { allowLow = true, useVisualRoles = true } = {}) {
+// thread_1788518048013 arc: hero_piece/color_accent/sharpener_piece are a capsule-era STYLING-ROLE
+// judgment (which garment should carry the outfit's visual weight) — a real question for capsule
+// palette construction, not evidence that a garment is harder to understand from a small image.
+// Pattern complexity and textured fabric are the genuine signals this function answers on: "does
+// this garment need a bigger, higher-detail image to be read correctly." This arc originally added a
+// `useVisualRoles:false` opt-out for chooseTripRosterWithProvider (routes/ai.js), the one caller with
+// no trip-specific meaning for a visual role — removed along with that caller (thread_1789598100140:
+// trip roster selection is text-only now, with no thumbnails to allocate fidelity for at all).
+export function pieceVisualDetailPolicy(p, { allowLow = true } = {}) {
   if (!p) return { maxPx: 448, detail: 'low' }
   if (!allowLow) return { maxPx: 768, detail: 'auto' }
   const pattern = String(p.pattern_complexity || '').toLowerCase().trim()
   const hasComplexPattern = pattern === 'loud' || pattern === 'medium'
-  const visualRoles = useVisualRoles && Array.isArray(p.style_profile_json?.visual_roles) ? p.style_profile_json.visual_roles : []
+  const visualRoles = Array.isArray(p.style_profile_json?.visual_roles) ? p.style_profile_json.visual_roles : []
   const isExpressiveRole = visualRoles.some(r => r === 'hero_piece' || r === 'color_accent' || r === 'sharpener_piece')
   const fabric = String(p.fabric_category || p.fabric_weight || '').toLowerCase().trim()
   const isTexturedFabric = /\b(tweed|jacquard|crochet|knit|lace|embroidery|sequin)\b/i.test(fabric)

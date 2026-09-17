@@ -3702,114 +3702,43 @@ export async function selectCapsuleRosterViaModel({
 // up (docs/search-propose-signal-inventory.md).
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-const TRIP_BENCH_SIZE = 60
+// thread_1789598100140 (owner ruling 2026-09-16): the bench used to be capped at 60 and its
+// survivors ranked by cross-slot reuse (tripReuseScore), round-robinned across construction buckets
+// only to soften truncation, not remove it. That ranking starved genuinely single-use-case-essential
+// pieces — a hiking-only pair of shorts (reuse score 1) — which got crowded out by cross-slot-
+// reusable pieces from OTHER slots before either the roster-selection model or the composer ever saw
+// them. Confirmed live: real hot-weather hiking shorts and technical outdoor layers existed in the
+// wardrobe and never reached the bench. The cap existed only because chooseTripRosterWithProvider
+// (routes/ai.js) attached a base64 photo thumbnail per bench candidate — expensive at 60 images, and
+// the reason the pruning heuristic existed at all. Roster selection is now text-only (the same
+// sparse catalog format /ask's single_outfit uses for its own whole-wardrobe candidate list), so
+// there is no cost reason to withhold any season-eligible candidate, and no reuse-worthiness taste
+// judgment needs to happen in code before the model ever sees a piece — that judgment (already
+// reworded, per the Hill Hiking fix, to state that reuse is a strength but never outranks suitability)
+// belongs entirely to the model now. tripReuseScore, tripBenchBucketKey and
+// diversityInterleavedByBucket are removed with the cap they existed to soften; nothing else called
+// them.
 
-// Ranks by how many of the trip's own requested use cases a piece could serve — "prefer pieces that
-// serve multiple jobs" as a real ranking term, not prose alone. A piece gate-eligible for 3 of 4
-// slots outranks one eligible for 1, before any per-piece taste judgment. Ties break by id for a
-// stable, arguable order (never a hidden verdict — see docs/search-propose-signal-inventory.md).
-function tripReuseScore(piece, slots, gateSlots) {
-  let count = 0
-  for (const { gateAllowedIds } of gateSlots) {
-    if (gateAllowedIds.has(Number(piece.id))) count += 1
-  }
-  return count
-}
-
-// A bench candidate's construction bucket — the same already-tagged attribute
-// (wardrobeCategoryGroup + garmentKind / shoe_type / bottomKind) outerLayerSevereColdAdequacy,
-// pieceFidelityChecklist and the rest of this file already use to distinguish real construction
-// differences, not an invented diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different
-// buckets; 'shoes:boot' and 'shoes:sneaker' are different buckets; two cardigans are the same bucket
-// regardless of color/pattern.
-function tripBenchBucketKey(piece) {
-  const group = wardrobeCategoryGroup(piece)
-  if (group === 'shoes') {
-    const shoeType = String(piece?.shoe_type || '').toLowerCase().trim()
-    return `shoes:${shoeType || garmentKind(piece) || 'other'}`
-  }
-  if (group === 'bottom') {
-    return `bottom:${bottomKind(piece) || 'other'}`
-  }
-  return `${group}:${garmentKind(piece) || 'other'}`
-}
-
-// thread_1788504927533: buildCoveredCandidateSet (candidateSet.js) truncates its RANKED INPUT ORDER
-// at capacity once the structural coverage requirements below are satisfied — a flat sort by
-// (tripReuseScore desc, id asc) means that whenever many pieces tie on reuse score (the common case:
-// most pieces are gate-eligible for exactly one slot), ascending id alone decides who survives
-// truncation. Measured live: a wardrobe with 16 real jackets/coats/trenches and 6 cardigans put
-// EVERY cardigan in the bench and NONE of the 16 structured pieces in it, purely because the
-// cardigans' ids happened to be lower — the roster model was never shown a real jacket to weigh
-// against a cardigan, on a category or trip-relevance basis it had no way to know was missing. This
-// is a general property of the ranking this function feeds into buildCoveredCandidateSet, not
-// something specific to outerwear: the same truncation would silently narrow tops, bottoms, shoes or
-// dresses down to whichever construction bucket happens to have the most low-id members.
-//
-// Round-robins the already-ranked list across construction buckets (one pick per bucket per round,
-// each bucket internally keeping its own tripReuseScore/id ordering) so every construction bucket
-// gate-eligible for this trip gets an early turn instead of one bucket exhausting the whole capacity
-// before any other bucket is represented. This does not favor outerwear, or any other category —
-// every bucket, including six near-identical cardigans collapsing into one bucket, gets the same one
-// turn per round. It also does not change WHICH pieces are eligible or their relative rank within
-// their own bucket, only how eligible pieces from DIFFERENT buckets interleave before truncation.
-function diversityInterleavedByBucket(rankedPieces) {
-  const buckets = new Map()
-  for (const piece of rankedPieces) {
-    const key = tripBenchBucketKey(piece)
-    if (!buckets.has(key)) buckets.set(key, [])
-    buckets.get(key).push(piece)
-  }
-  const queues = [...buckets.values()]
-  const interleaved = []
-  let remaining = true
-  while (remaining) {
-    remaining = false
-    for (const queue of queues) {
-      if (!queue.length) continue
-      interleaved.push(queue.shift())
-      remaining = true
-    }
-  }
-  return interleaved
-}
-
-// The bench: every piece gate-eligible for at least one requested use case, capped for token
-// budget. No deterministic-roster seed (there is no deterministic trip selector to seed from, by
-// design — the model owns this set-level choice) and no capsule quotas/proportional-category
-// targets (those encode "recombination breadth," a capsule objective). The one guarantee carried
-// over is coverage: buildCoveredCandidateSet ensures every requested use case keeps at least one
-// complete gate-valid core (top+bottom-or-dress, plus a shoe) within the bench, the same mechanism
-// selectCapsuleRoster's own bench uses, because "can this use case be covered at all" is structural,
-// not a taste question either abstraction should re-derive separately.
-function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE, calendarSeason = '' } = {}) {
+// The bench: every active, season-eligible, composable-group piece gate-eligible for at least one
+// requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
+// trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
+// rather than a hidden reason it was never shown a piece at all.
+function buildTripBench(pool = [], { slots = [], calendarSeason = '' } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
   const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason)
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
-  const gateSlots = normalizedSlots.map((slot, index) => {
-    const slotEligible = slotGateEligiblePieces(eligible, slot, {})
+  const slotLabelsById = new Map()
+  normalizedSlots.forEach((slot, index) => {
     const slotLabel = slot.slot || slot.label || `slot_${index}`
-    return {
-      slotLabel,
-      slotEligible,
-      gateAllowedIds: idSetForPieces(slotEligible),
-      requirement: restrictSupplyRequirement(
-        completeOutfitSupplyRequirement({ id: `trip_slot:${slotLabel}` }),
-        idSetForPieces(slotEligible),
-      ),
+    for (const piece of slotGateEligiblePieces(eligible, slot, {})) {
+      const id = Number(piece.id)
+      if (!slotLabelsById.has(id)) slotLabelsById.set(id, [])
+      slotLabelsById.get(id).push(slotLabel)
     }
   })
-  const ranked = [...eligible].sort((a, b) =>
-    (tripReuseScore(b, normalizedSlots, gateSlots) - tripReuseScore(a, normalizedSlots, gateSlots)) ||
-    (Number(a.id) - Number(b.id)))
-  const diversityOrdered = diversityInterleavedByBucket(ranked)
-  return buildCoveredCandidateSet({
-    rankedPieces: diversityOrdered,
-    initialSelection: [],
-    capacity: benchSize,
-    requirements: gateSlots.map(g => g.requirement),
-  }).pieces
+  const bench = [...eligible].sort((a, b) => Number(a.id) - Number(b.id))
+  return { bench, slotLabelsById }
 }
 
 // Structural failures only — see the header comment above for why. Every check here answers a
@@ -4025,14 +3954,13 @@ export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) 
 export async function selectTripRosterViaModel({
   pool = [],
   slots = [],
-  benchSize = TRIP_BENCH_SIZE,
   calendarSeason = '',
   dateRange = {},
   chooseRoster = null,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
-  const bench = buildTripBench(pool, { slots, benchSize, calendarSeason })
+  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason })
   const benchById = pieceMapForPieces(bench)
 
   if (typeof chooseRoster !== 'function') {
@@ -4060,7 +3988,7 @@ export async function selectTripRosterViaModel({
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [] })
+  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
   let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
   if (!failures.length) {
     return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
@@ -4068,7 +3996,7 @@ export async function selectTripRosterViaModel({
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench, slots, dateRange, attempt: 2, failures,
+    bench, slots, dateRange, attempt: 2, failures, slotLabelsById,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
   const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures

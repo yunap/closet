@@ -4802,3 +4802,59 @@ Regression: `test/trip_roster_fallback_rejection.test.js` pins the error status,
 outfit/roster state, that composition never runs, that the two `bench_fallback` situations are
 distinguished, and that a genuinely model-chosen roster is unaffected.
 
+### Amendment (2026-09-16) — trip roster selection: removed the 60-piece bench cap and its reuse ranking entirely (thread_1789598100140)
+
+**Root cause, traced precisely.** `buildTripBench` ranked every gate-eligible piece by
+`tripReuseScore` (how many of the trip's slots it passes), round-robinned the ranked list across
+construction buckets (`diversityInterleavedByBucket`, a real 2026 fix for a different defect — see
+the amendment above it in this file), then truncated to 60 via `buildCoveredCandidateSet`. The
+round-robin softened truncation but did not remove it: bucket *processing order* was still driven by
+each bucket's best member's reuse score, so a bucket whose only members are single-slot-eligible (a
+hiking-only pair of shorts, reuse score 1) got its first turn very late — after every 2-or-3-slot-
+reusable bucket's first pick — and could be pushed past the cap entirely before either the roster-
+selection model or the composer ever saw it. Confirmed live: real hot-weather hiking shorts (247) and
+technical outdoor layers (990441, 996764, 990358) existed in the 273-piece wardrobe and never reached
+the 60-piece bench.
+
+**Why the cap existed, and why it no longer needs to.** `chooseTripRosterWithProvider`
+(routes/ai.js) attached a base64 photo thumbnail per bench candidate — expensive at 60 images, and
+the entire reason the pruning heuristic existed. Meanwhile `composeTripPlanOnce` (the composition
+stage) already attaches full photos unconditionally for the much smaller *chosen* roster, when actual
+outfits are being judged for drape/volume/layering — roster selection never needed images to do its
+job of choosing what to pack.
+
+**The fix.** Roster selection is now text-only, using the same sparse fact-line format `/ask`'s
+`single_outfit` uses for its own whole-wardrobe candidate list (`stylistCatalogLine`/
+`sparseGarmentCatalogRow`), at a fraction of the token cost of even the old 60-image bench (~10-12k
+tokens for the wardrobe's full season-eligible pool, vs 60 images). `buildTripBench` no longer ranks,
+buckets, or caps at all — every active, season-eligible, composable-group piece gate-eligible for at
+least one requested slot goes into the bench, annotated with exactly which of the trip's own slots it
+is gate-eligible for (`slots: Winery Days, Hiking`), a recorded fact instead of a hidden reason a
+piece was never shown at all. `tripReuseScore`, `tripBenchBucketKey`, `diversityInterleavedByBucket`
+and `TRIP_BENCH_SIZE` are removed — nothing else called them. The model's own judgment (already
+reworded, per the Hill Hiking fix, to state that reuse is a strength but never outranks suitability)
+now operates on the true candidate pool instead of one code had already pre-filtered by a taste
+proxy.
+
+**Two things the format switch had to preserve, not silently drop:**
+- **Occasions**, the same reasoning as `tripPlanTruthCatalog`'s addition for the composition catalog
+  (docs' evidence-parity migration): the sparse format omits occasion tags on the premise that "every
+  row already survived this request's occasion gate," true for a single-occasion request, false for a
+  trip roster spanning multiple slot occasions. `TRIP_ROSTER_CATALOG_CONVENTIONS` states the addendum.
+- **Owner rules/rejections**: `buildPieceText` (the old format) folded `RULES (authoritative)`/
+  `REJECTED` inline; the sparse fact line carries no notes channel at all (that's deliberately
+  separate — docs/garment-evidence-parity-2026-09-15.md). `garmentNotesBlock` (the same function trip
+  composition already uses) is now appended to the roster-selection text, so an owner's stored rule
+  keeps its authority over roster selection, not just over composition.
+
+**Also removed as dead code**: `pieceVisualDetailPolicy`'s `useVisualRoles:false` opt-out
+(styling-engine/attributes.js), added originally so image-fidelity allocation for the old
+thumbnail-based roster bench wouldn't grant a capsule-era styling-role special treatment. Its only
+caller was `chooseTripRosterWithProvider`, which no longer loads any images; the function now has one
+behavior for every caller again.
+
+Regression: `test/tripPackingRoster.test.js`'s bench-construction tests were rewritten from "survives
+truncation" to "nothing is truncated at all," including a new test reproducing the exact live shape —
+70 cross-slot-reusable pieces (reuse score 2, the old ranking's favorite) alongside one single-use-
+case hiking piece (reuse score 1, the old ranking's first casualty) — and asserting all 71 survive.
+

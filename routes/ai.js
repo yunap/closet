@@ -151,7 +151,7 @@ import {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
 import { categoryOutfitStructurePromptRule, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateWearableOutfit, isInabilityToJudgeCode, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, correctTuckInstruction } from '../styling-engine/outfitValidation.js'
-import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, GARMENT_FACT_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
+import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, GARMENT_FACT_CONVENTIONS, SPARSE_CATALOG_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
 import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { storedGarmentRules } from '../styling-engine/ruleProvenance.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
@@ -5645,13 +5645,30 @@ ${(failures || []).map(entry => `- ${entry.message}`).join('\n')}
 The replacements you bring in are held to the same standard as the original picks: cover the use case(s) that need it, prefer a piece that also works for other use cases already in the roster, and give it a distinct job. Whatever you drop to make room should be the piece doing the least work across the trip, not simply the easiest one to remove.`
 }
 
+// thread_1789598100140 (owner ruling 2026-09-16): the roster-selection catalog previously used
+// buildPieceText's dense format, including unverified tagger prose (best_use/style_risk/AI auto-use
+// trust/best outfit role) that docs/garment-evidence-parity-2026-09-15.md's shared-evidence
+// architecture already excludes from every other model path -- trip roster selection was simply
+// never migrated. Now uses the same sparse fact-line format /ask's single_outfit whole-wardrobe
+// catalog uses (stylistCatalogLine), which carries no tagger prose at all. Two additions, same
+// reasoning as tripPlanTruthCatalog/TRIP_GARMENT_FACT_CONVENTIONS below: occasions are stated per
+// piece (the sparse format's own stated rationale for omitting them -- "every row already survived
+// this request's occasion gate" -- does not hold for a trip roster spanning multiple slot
+// occasions), and each piece states which of the trip's own use cases it is gate-eligible for
+// (slots:), a recorded fact replacing the reuse-ranked bench cap that used to decide, in code,
+// which pieces the model was even allowed to see (see buildTripBench's header comment).
+const TRIP_ROSTER_CATALOG_CONVENTIONS = `${SPARSE_CATALOG_CONVENTIONS} Unlike other paths' fact line, occasions are stated per piece here (a trip roster spans multiple slot occasions, not one already-filtered request occasion), and each row also states \`slots\`: the trip's own use-case label(s) this piece is gate-eligible for, structurally computed, not a suitability verdict for any of them.`
+
+function tripRosterCandidateLine(piece = {}, slotLabelsById = null) {
+  const labels = slotLabelsById?.get?.(Number(piece?.id)) || []
+  const slotsSuffix = ` | slots: ${labels.length ? labels.join(', ') : 'none'}`
+  return `${stylistCatalogLine(piece)}${tripPieceOccasionsFact(piece)}${slotsSuffix}`
+}
+
 export function tripRosterSelectionUserText({
-  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
+  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = '', slotLabelsById = null
 } = {}) {
-  // includeVisualRoles:false (thread_1788518048013): hero_piece/color_accent/etc. are a capsule-era
-  // styling-role judgment, not an authoritative garment fact for trip packing -- surfacing them in
-  // text would shape the roster model the same way the now-disabled image-fidelity boost did.
-  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece, { includeVisualRoles: false })}`)
+  const truthCatalog = bench.map(piece => tripRosterCandidateLine(piece, slotLabelsById))
   const destination = slots[0]?.location || slots[0]?.stylingContext?.location || ''
   const startDate = dateRange?.start || slots[0]?.date || slots[0]?.stylingContext?.date || ''
   const endDate = dateRange?.end || ''
@@ -5691,33 +5708,42 @@ export function tripRosterSelectionUserText({
     ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
     : ''
   const headerBlock = contextHeader ? `TRIP CONTEXT: ${contextHeader}\n\n` : ''
+  // The sparse fact line carries no owner rules/rejections (that's a separate, source-labelled
+  // channel — docs/garment-evidence-parity-2026-09-15.md) — buildPieceText used to fold "RULES
+  // (authoritative)"/"REJECTED" inline, so switching formats without this would have silently
+  // dropped the owner's authority over roster selection specifically. garmentNotesBlock is the same
+  // function trip composition already uses for this.
+  const notesBlock = garmentNotesBlock(bench)
   return `${headerBlock}USE CASES THIS TRIP MUST COVER:
 ${slotLines.join('\n')}${ownerRulesBlock}${acceptedLessonsBlock}
 
+${TRIP_ROSTER_CATALOG_CONVENTIONS}
+
 CANDIDATES:
-${truthCatalog.join('\n')}${repairBlock}`
+${truthCatalog.join('\n')}${repairBlock}${notesBlock ? `\n\n${notesBlock}` : ''}`
 }
 
 // Same cache-prefix invariant as capsuleRosterSelectionContent: everything through the last
 // cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
-// the initial call wrote instead of re-paying for every thumbnail.
+// the initial call wrote instead of re-paying for the whole catalog.
+//
+// thread_1789598100140 (owner ruling 2026-09-16): text-only, no images. Roster selection previously
+// attached a base64 photo thumbnail per bench candidate, which is what made a large bench
+// prohibitively expensive and forced the reuse-ranked 60-piece cap that starved single-use-case
+// pieces (see buildTripBench). The candidate catalog is now the same sparse text format /ask's
+// single_outfit whole-wardrobe catalog uses for its own full candidate list, at a fraction of the
+// token cost of even the old 60-image bench. composeTripPlanOnce still attaches real photos, for the
+// much smaller chosen roster, when actual outfits are being judged for drape/volume/layering.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null
 } = {}) {
   const content = [{
     type: 'text',
     text: tripRosterSelectionUserText({
-      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: []
+      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: [], slotLabelsById
     }),
     cache_control: { type: 'ephemeral' }
   }]
-  content.push(...imageParts)
-  if (content.length > 1) {
-    content[content.length - 1] = {
-      ...content[content.length - 1],
-      cache_control: { type: 'ephemeral' }
-    }
-  }
   if (attempt > 1) {
     content.push({ type: 'text', text: tripRosterRepairText({ failures, previousRosterIds }) })
   }
@@ -5731,27 +5757,7 @@ export function tripRosterSelectionContent({
 // production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
 // plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
 // output, because this function did not exist to be wired in.
-export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds }, toolContext) {
-  const imageParts = []
-  for (const piece of bench) {
-    const photoFile = piece.worn_photo || piece.photo || ''
-    if (!photoFile) continue
-    const filePath = path.join(userUploadsDir(), photoFile)
-    if (!fs.existsSync(filePath)) continue
-    try {
-      // useVisualRoles:false (thread_1788518048013): hero_piece/color_accent/sharpener_piece are a
-      // capsule-era styling-role judgment with no trip-specific evidentiary meaning -- image
-      // fidelity here should track only whether the garment itself is hard to read (pattern,
-      // texture), not which piece a different planning objective would cast as the "hero."
-      const { maxPx, detail } = pieceVisualDetailPolicy(piece, { useVisualRoles: false })
-      const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
-      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
-      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
-    } catch (err) {
-      console.error(`Error loading trip roster thumbnail for piece ${piece.id}:`, err)
-    }
-  }
-
+export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById }, toolContext) {
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
     contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
@@ -5765,7 +5771,7 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
   })
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
-    attempt, failures, previousRosterIds, imageParts
+    attempt, failures, previousRosterIds, slotLabelsById
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
