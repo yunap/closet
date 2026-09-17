@@ -335,6 +335,41 @@ test('tripRosterFailures does not flag missing removable coverage when no slot a
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'an all-indoor or already-cold trip is never required to carry outerwear just because it is a trip')
 })
 
+// thread_1789598100140 (owner ruling 2026-09-16): the exact live shape. A 52°F/94°F trip day's
+// removable-cool-layer flag was set from the raw 24-hour minimum (52°F, an overnight trough) — the
+// "Vienna failure" exposure.js's own header documents. The waking-window estimate
+// (52 + (94-52)*0.35 = 66.7°F) is well above COOL_LOW_F (64°F), so a genuinely hot hiking/winery day
+// must not fail roster selection over a layer it was never really going to need during actual outing
+// hours, even though the legacy needsRemovableCoolLayer/isCold flags (still set the old way on this
+// same weatherProfile) say otherwise.
+test('tripRosterFailures does not flag missing removable coverage when the waking-window estimate clears the cool threshold, even though the raw daily low would not have', () => {
+  const hotDaySlot = layerRequiredSlot({
+    id: 's_hot', label: 'Hiking', activity: 'hiking', environment: 'outdoor',
+    stylingContext: {
+      occasion: 'casual', activity: 'hiking',
+      weatherProfile: { needsRemovableCoolLayer: true, isCold: false, isHot: true, highF: 94, lowF: 52 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [hotDaySlot] })
+  assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'the waking-window estimate (66.7°F) clears COOL_LOW_F -- no cool layer is genuinely needed for this slot\'s actual outing hours')
+  assert.ok(!result.failures.some(f => f.code === 'cold_floor_infeasible'))
+})
+
+// Sanity check the other direction: a genuinely cool day (waking-window estimate still under
+// COOL_LOW_F) must keep failing exactly as before -- this fix narrows a false positive, it does not
+// weaken the real check.
+test('tripRosterFailures still flags missing removable coverage when the waking-window estimate itself is genuinely cool', () => {
+  const coolDaySlot = layerRequiredSlot({
+    id: 's_cool', label: 'Coastal Walk', activity: 'walking', environment: 'outdoor',
+    stylingContext: {
+      occasion: 'casual', activity: 'walking',
+      weatherProfile: { needsRemovableCoolLayer: true, isCold: false, highF: 63, lowF: 46 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [coolDaySlot] })
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'waking-window estimate here (46 + (63-46)*0.35 = 51.95°F) is still well under COOL_LOW_F -- the check must still fire')
+})
+
 test('tripRosterFailures does not flag a roster that already has an outerwear piece, whatever its job', () => {
   const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES, JACKET], { slots: [layerRequiredSlot()] })
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'))

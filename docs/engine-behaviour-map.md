@@ -4858,3 +4858,47 @@ truncation" to "nothing is truncated at all," including a new test reproducing t
 70 cross-slot-reusable pieces (reuse score 2, the old ranking's favorite) alongside one single-use-
 case hiking piece (reuse score 1, the old ranking's first casualty) — and asserting all 71 survive.
 
+### Amendment (2026-09-16) — the roster-level cold-layer gate now reads the same waking-window estimate composition already does (thread_1789598100140, issue 4)
+
+**Root cause.** `tripRosterFailures`' `missing_removable_cool_layer` and `cold_floor_infeasible`
+checks read `weatherProfile.needsRemovableCoolLayer`/`weatherProfile.isCold` directly —
+`needsRemovableCoolLayer` is set in `weather.js` from the raw 24-hour daily **minimum**, the exact
+"Vienna failure" `exposure.js`'s own header documents ("a 5am trough nobody is dressed for"). By the
+time composition runs, `exposure.js`'s `estimateWakingWindow` already corrects this — a waking-hours
+estimate, not the pre-dawn low — for the `exposure_conditions` text and thermal-demand calculation
+the model actually sees. The roster-level gate never adopted that correction. For the live incident's
+52°F/94°F trip day, the raw minimum (52°F) crosses `COOL_LOW_F` (64°F) and looks cold; the
+waking-window estimate (52 + (94−52)×0.35 = 66.7°F) does not. The roster-selection model reasonably
+packed no cold layer for a hot hiking day, and the roster-level check rejected it twice — over a
+requirement that was never real once the pre-dawn trough is excluded from actual outing hours,
+triggering the bench-fallback this session's earlier amendment (above) now also refuses to compose
+from silently.
+
+**One thing verified before implementing, not assumed:** the diagnosis this fix started from
+attributed the correct composition-stage behavior to `weatherProfile.coldPresenceRequirement`
+(`environmentalRequirements.js`'s `resolveColdLayerPresenceRequirement`), citing `stylingContext.js`
+as the place it gets computed. Traced directly: `resolveColdLayerPresenceRequirement` is imported
+into `outfitSetPlanner.js` but **never invoked there** — `resolveSlotWeather` (the function that
+actually builds a trip slot's `weatherProfile`) never computes or attaches it. That field is real and
+correctly wired for the general/freeform `stylingContext.js` path, but trip slots never carry it. The
+new helper below does not branch on it for that reason — a check against a field this pipeline never
+populates would silently never fire, which is worse than not writing it, per this map's own "new
+structure must earn its keep" discipline (AGENTS.md principle 7, the silence test). If trip slots
+start carrying it, `slotNeedsRemovableCoolLayer` is where that check belongs.
+
+**The fix.** `slotNeedsRemovableCoolLayer(slot)` calls `resolveExposureContext` and reads
+`conditions.wakingLowF`; when a numeric waking-window estimate exists, that decides the check instead
+of the raw flag. A hand-built fixture with no `highF`/`lowF` (several existing unit tests) falls back
+to the flag exactly as before. The two call sites keep their own, different relationship to `isCold`:
+`missing_removable_cool_layer` (roster has no layer at all) still excludes an already-`isCold` slot —
+that is the more severe, separate failure `cold_floor_infeasible` exists to catch — while
+`cold_floor_infeasible` itself must keep firing for an `isCold` slot exactly as readily as a merely-
+cool one, which is the original shape of the bug it was built for (thread_1788516198449); folding
+`!isCold` into the shared helper unconditionally would have silently stopped that check from ever
+firing for a genuinely cold slot, a regression caught by a real test failure before it shipped.
+
+Regression: `test/tripPackingRoster.test.js` pins both directions — the 52°F/94°F live shape no
+longer flags `missing_removable_cool_layer`/`cold_floor_infeasible`, and a genuinely cool day (waking
+estimate still under `COOL_LOW_F`) keeps flagging exactly as before, so this narrows a false positive
+without weakening the real check.
+

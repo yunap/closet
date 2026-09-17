@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -3753,6 +3753,44 @@ function rosterHasQualifyingWarmLayer(pieces = []) {
   return pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
 }
 
+// thread_1789598100140 (owner ruling 2026-09-16): both roster-level layer checks below used to read
+// weatherProfile.needsRemovableCoolLayer directly — set in weather.js from the raw 24-hour daily
+// MINIMUM, the exact "Vienna failure" exposure.js's own header documents ("a 5am trough nobody is
+// dressed for"). By the time composition runs, exposure.js's estimateWakingWindow already corrects
+// this (a waking-hours estimate, not the pre-dawn low) for the exposure_conditions text and demand
+// calculation the model actually sees — but the roster-level gate never adopted that correction, so
+// it could reject a roster (and, after one repair, fall back to the whole bench) over a "cold layer"
+// need that was never real once the pre-dawn trough is excluded from the day's actual outing hours.
+// This is the one seam where that correction reaches the roster-level check too.
+//
+// Note: weatherProfile.coldPresenceRequirement (the OTHER canonical exposure-aware authority,
+// environmentalRequirements.js) is never populated for trip slots — resolveSlotWeather (this file)
+// does not compute it; only the general/freeform stylingContext.js path does. This function does not
+// branch on it for that reason: a check against a field this pipeline never sets would silently never
+// fire, which is worse than not writing it. If trip slots start carrying it, this is the place to add
+// that check back.
+//
+// Deliberately does NOT fold in `!weatherProfile.isCold` here — the two call sites need it applied
+// differently. missing_removable_cool_layer (roster has no layer AT ALL) only concerns the non-cold
+// "cool" case; an already-isCold slot is a different, more severe failure the roster-wide check
+// should not also claim. cold_floor_infeasible (this specific slot has no viable warm-enough piece)
+// must fire for an isCold slot exactly as readily as a merely-cool one — that was always the shape
+// of the original bug this check exists for (thread_1788516198449), and gating it on !isCold here
+// would have silently stopped it from ever firing for a genuinely cold slot.
+function slotNeedsRemovableCoolLayer(slot = {}) {
+  const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+  const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
+  if (isIndoor) return false
+  const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, weatherProfile)
+  const wakingLow = exposure?.conditions?.wakingLowF
+  if (Number.isFinite(wakingLow)) {
+    return wakingLow < COOL_LOW_F
+  }
+  // No numeric range to resolve a waking window from (e.g. a hand-built test fixture stating only
+  // the flag) — fall back to the flag as recorded, unchanged from before this fix.
+  return Boolean(weatherProfile.needsRemovableCoolLayer)
+}
+
 function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   const normalizedRoster = Array.isArray(roster) ? roster : []
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
@@ -3833,8 +3871,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   if (!hasRosterLayer) {
     const layerRequiredSlots = gateSlots.filter(({ slot }) => {
       const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
-      const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
-      return weatherProfile.needsRemovableCoolLayer && !weatherProfile.isCold && !isIndoor
+      return slotNeedsRemovableCoolLayer(slot) && !weatherProfile.isCold
     })
     if (layerRequiredSlots.length) {
       const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
@@ -3861,7 +3898,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
     const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
     if (isIndoor) continue
     const isRequired = weatherProfile.coldPresenceRequirement?.state === 'required'
-    const needsCool = Boolean(weatherProfile.needsRemovableCoolLayer)
+    const needsCool = slotNeedsRemovableCoolLayer(slot)
     if (!isRequired && !needsCool) continue
     const hasViableLayer = slotEligible.some(piece =>
       hasMinimumWarmLayer([piece]) ||
