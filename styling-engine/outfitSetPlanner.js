@@ -1065,15 +1065,42 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // prefers the model's own descriptive season text over the coarse hot/cold/
 // mild bucket when one was given. Every other source is fully structured,
 // so there is nothing to echo.
+// thread_1789585467294: `temperature.{highF,lowF}` here is the trip-wide worst-case envelope
+// (weather.js's classify() max-of-highs/min-of-lows) when a slot has no date of its own to resolve
+// against — a legitimate gate input, but NOT one specific day's forecast. Stamping every slot in a
+// 4-day trip with that same flat "93.8°F high / 51.9°F low — live forecast" implied each of Winery
+// Days/Hill Hiking/Dinner Out individually saw both the trip's hottest high AND its coldest low,
+// when the real days ran 92.0/87.1/86.7/93.8°F. `dailySeries` (weather.js, preserved rather than
+// discarded by classify()) is what lets this be said honestly instead: when the days actually
+// varied, disclose the true range across the trip rather than a single number presented as fact.
+// Binding a slot to which specific day it covers is a separate, not-yet-solved problem (there is no
+// day-to-slot mapping to resolve against here) — this only fixes what gets SAID about an envelope
+// that already spans more than one calendar day.
+function tripEnvelopeRangeText(temperature) {
+  const series = Array.isArray(temperature.dailySeries) ? temperature.dailySeries : []
+  if (series.length < 2) return null
+  const highs = series.map(day => day.highF).filter(Number.isFinite)
+  const lows = series.map(day => day.lowF).filter(Number.isFinite)
+  if (!highs.length || !lows.length) return null
+  const maxHigh = Math.max(...highs)
+  const minLow = Math.min(...lows)
+  // Every day landed on the identical high and low: a flat single-number reading is still honest.
+  if (maxHigh === Math.min(...highs) && minLow === Math.max(...lows)) return null
+  return `${Math.round(minLow)}–${Math.round(maxHigh)}°F across the trip`
+}
+
 export function truthfulWeatherLabel(temperature, { location = '', heuristicText = '' } = {}) {
   const where = location ? `, ${location}` : ''
-  const range = Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
-    ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
-    : temperature.band
-      ? temperature.band
-      : describeWeatherProfile(temperature)
+  const tripRange = temperature.source === 'live' ? tripEnvelopeRangeText(temperature) : null
+  const range = tripRange
+    || (Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
+      ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
+      : temperature.band
+        ? temperature.band
+        : describeWeatherProfile(temperature))
+  const provenanceTag = temperature.source === 'live' && temperature.provider ? ` (${temperature.provider})` : ''
   switch (temperature.source) {
-    case 'live': return `${range} — live forecast${where}`
+    case 'live': return `${range} — live forecast${where}${provenanceTag}`
     case 'live_hourly': return `${range} — live hourly forecast, sliced to this activity's actual time window${where}`
     case 'stated_user': return `${range} — you said so`
     case 'model_estimate': return `${range} — seasonal estimate, not a live forecast`

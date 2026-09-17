@@ -7,7 +7,7 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { selectTripRosterViaModel, tripSeasonEligiblePool, buildTripPackingLines } from '../styling-engine/outfitSetPlanner.js'
+import { selectTripRosterViaModel, tripSeasonEligiblePool, buildTripPackingLines, truthfulWeatherLabel } from '../styling-engine/outfitSetPlanner.js'
 import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
 import { resolveWeatherContext, validateUserWeather } from '../styling-engine/weather.js'
 
@@ -1198,4 +1198,55 @@ test('TRIP SLOT: slot.activity reaches the evaluator — same weather, same garm
   const hikingFlags = (hiking.accepted[0]?.systemFlags || []).map(flag => flag.message)
   assert.ok(!hikingFlags.includes(SEVERE_CAPACITY_MESSAGE) && !hikingFlags.includes(COLD_END_SHORTFALL_MESSAGE),
     `and with no thermal note either: ${JSON.stringify(hikingFlags)}`)
+})
+
+// thread_1789585467294: a trip-wide envelope (weather.js's classify() max-of-highs/min-of-lows,
+// inherited by any slot with no date of its own to resolve against) is a real, useful gate input,
+// but it is NOT one specific day's forecast — every slot in a 4-day trip previously got stamped with
+// the identical flat "X°F high / Y°F low — live forecast" even though the real days varied by 7°F+.
+// This pins truthfulWeatherLabel's honest-range behavior directly, with synthetic numbers (the
+// incident's own 94°F figure is incidental to the bug, not its subject).
+test('truthfulWeatherLabel discloses an honest range across the trip when the days actually varied', () => {
+  const varyingTemperature = {
+    source: 'live', highF: 72, lowF: 38, provider: 'Open-Meteo',
+    dailySeries: [
+      { date: '2026-09-19', highF: 72, lowF: 50 },
+      { date: '2026-09-20', highF: 58, lowF: 38 },
+      { date: '2026-09-21', highF: 65, lowF: 44 },
+    ],
+  }
+  const label = truthfulWeatherLabel(varyingTemperature, { location: 'Paso Robles, CA' })
+  assert.equal(label, '38–72°F across the trip — live forecast, Paso Robles, CA (Open-Meteo)')
+  // It must not read as one day's own reading: the flat single-number phrasing is gone entirely.
+  assert.ok(!label.includes('72°F high / 38°F low'))
+})
+
+test('truthfulWeatherLabel keeps the plain single-number phrasing when every day in the series agrees', () => {
+  const flatTemperature = {
+    source: 'live', highF: 70, lowF: 50, provider: 'Open-Meteo',
+    dailySeries: [
+      { date: '2026-09-19', highF: 70, lowF: 50 },
+      { date: '2026-09-20', highF: 70, lowF: 50 },
+    ],
+  }
+  assert.equal(
+    truthfulWeatherLabel(flatTemperature, { location: 'Paso Robles, CA' }),
+    '70°F high / 50°F low — live forecast, Paso Robles, CA (Open-Meteo)'
+  )
+})
+
+test('truthfulWeatherLabel keeps the plain single-number phrasing for a single-day slot (no series variation possible)', () => {
+  const singleDayTemperature = { source: 'live', highF: 72, lowF: 50, provider: 'Open-Meteo', dailySeries: [{ date: '2026-09-19', highF: 72, lowF: 50 }] }
+  assert.equal(
+    truthfulWeatherLabel(singleDayTemperature, { location: 'Paso Robles, CA' }),
+    '72°F high / 50°F low — live forecast, Paso Robles, CA (Open-Meteo)'
+  )
+})
+
+test('truthfulWeatherLabel is unaffected by dailySeries variation for non-live sources', () => {
+  const statedUser = { source: 'stated_user', highF: 60, lowF: 48, band: null, dailySeries: [
+    { date: '2026-09-19', highF: 72, lowF: 50 },
+    { date: '2026-09-20', highF: 58, lowF: 38 },
+  ] }
+  assert.equal(truthfulWeatherLabel(statedUser, { location: 'Paso Robles, CA' }), '60°F high / 48°F low — you said so')
 })

@@ -42,14 +42,14 @@ beforeEach(() => {
   _clearWeatherCachesForTests()
 })
 
-function makeMockFetch({ geocodeResults = [{ latitude: 45.52, longitude: -122.68 }], highs = [85], lows = [60] } = {}) {
+function makeMockFetch({ geocodeResults = [{ latitude: 45.52, longitude: -122.68 }], highs = [85], lows = [60], dates = [] } = {}) {
   let calls = 0
   const fetchImpl = async (url) => {
     calls += 1
     if (url.includes('geocoding-api')) {
       return { ok: true, json: async () => ({ results: geocodeResults }) }
     }
-    return { ok: true, json: async () => ({ daily: { temperature_2m_max: highs, temperature_2m_min: lows } }) }
+    return { ok: true, json: async () => ({ daily: { time: dates, temperature_2m_max: highs, temperature_2m_min: lows } }) }
   }
   fetchImpl.callCount = () => calls
   return fetchImpl
@@ -281,6 +281,44 @@ test('getWeatherProfileForPlan falls back to the heuristic without a start date'
   const fetchImpl = makeMockFetch()
   const profile = await getWeatherProfileForPlan({ dateRange: {}, location: 'Denver, CO', season: 'cold', fetchImpl })
   assert.equal(profile.weatherSource, 'heuristic')
+})
+
+// thread_1789585467294: a multi-day range's collapsed max-of-highs/min-of-lows envelope is a
+// legitimate gate input, but the per-day series it was collapsed from must survive alongside it —
+// not be discarded — so a caller can tell "the trip's worst case" apart from "any single day's
+// actual forecast". Provider/retrieval time ride along for the same reason: two forecast sources can
+// disagree, and that needs to be traceable to wherever the number is used.
+test('getWeatherProfileForPlan preserves the daily series and fetch provenance behind the collapsed envelope', async () => {
+  const fetchImpl = makeMockFetch({
+    dates: ['2026-03-01', '2026-03-02', '2026-03-03'],
+    highs: [70, 55, 62],
+    lows: [40, 28, 35],
+  })
+  const profile = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-03') },
+    location: 'Denver, CO',
+    fetchImpl
+  })
+  assert.equal(profile.highF, 70, 'the collapsed envelope high is unchanged')
+  assert.equal(profile.lowF, 28, 'the collapsed envelope low is unchanged')
+  assert.equal(profile.provider, 'Open-Meteo')
+  assert.equal(typeof profile.retrievedAt, 'string')
+  assert.ok(!Number.isNaN(Date.parse(profile.retrievedAt)))
+  assert.deepEqual(profile.dailySeries, [
+    { date: '2026-03-01', highF: 70, lowF: 40 },
+    { date: '2026-03-02', highF: 55, lowF: 28 },
+    { date: '2026-03-03', highF: 62, lowF: 35 },
+  ])
+})
+
+test('a cached forecast reports the real original fetch time, not the time of the cache hit', async () => {
+  const fetchImpl = makeMockFetch({ dates: ['2026-03-01'], highs: [70], lows: [40] })
+  const date = new Date('2026-03-01')
+  const first = await getCurrentWeatherProfile({ date, location: 'Denver, CO', fetchImpl })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const second = await getCurrentWeatherProfile({ date, location: 'Denver, CO', fetchImpl })
+  assert.equal(fetchImpl.callCount(), 2, 'the second call must be a cache hit (geocode + forecast fetched once each)')
+  assert.equal(second.retrievedAt, first.retrievedAt, 'a cache hit must report the original fetch time')
 })
 
 // ============================================================================
@@ -549,6 +587,40 @@ test('resolveWeatherContext round-trips through serialize/restore', () => {
   const stored = serializeResolvedWeatherContext(context)
   const restored = restoreResolvedWeatherContext(stored)
   assert.deepEqual(restored, context)
+})
+
+test('resolveWeatherForRequest: a varying multi-day live forecast carries its daily series and provenance into the resolved context, and round-trips through serialize/restore', async () => {
+  const fetchImpl = makeMockFetch({
+    dates: ['2026-09-19', '2026-09-20', '2026-09-21'],
+    highs: [72, 58, 65],
+    lows: [50, 38, 44],
+  })
+  const context = await resolveWeatherForRequest({
+    location: 'Paso Robles, CA',
+    dateRange: { start: '2026-09-19', end: '2026-09-21' },
+    fetchImpl,
+  })
+  assert.equal(context.temperature.source, 'live')
+  assert.equal(context.temperature.highF, 72, 'the flat envelope is unchanged')
+  assert.equal(context.temperature.lowF, 38, 'the flat envelope is unchanged')
+  assert.equal(context.temperature.provider, 'Open-Meteo')
+  assert.equal(typeof context.temperature.retrievedAt, 'string')
+  assert.deepEqual(context.temperature.dailySeries, [
+    { date: '2026-09-19', highF: 72, lowF: 50 },
+    { date: '2026-09-20', highF: 58, lowF: 38 },
+    { date: '2026-09-21', highF: 65, lowF: 44 },
+  ])
+
+  const stored = serializeResolvedWeatherContext(context)
+  assert.equal(stored.temperature.provider, 'Open-Meteo')
+  assert.equal(stored.temperature.retrieved_at, context.temperature.retrievedAt)
+  assert.deepEqual(stored.temperature.daily_series, [
+    { date: '2026-09-19', high_f: 72, low_f: 50 },
+    { date: '2026-09-20', high_f: 58, low_f: 38 },
+    { date: '2026-09-21', high_f: 65, low_f: 44 },
+  ])
+  const restored = restoreResolvedWeatherContext(stored)
+  assert.deepEqual(restored, context, 'provenance and the daily series must survive a full serialize/restore round trip')
 })
 
 test('resolveWeatherForRequest: plan weather inherits only to matching-location/date slots (binding lives in the caller, this proves the primitive)', async () => {

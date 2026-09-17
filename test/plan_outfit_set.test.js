@@ -2016,7 +2016,10 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
   const wordedWorkbench = await buildPlanSlotWorkbench(wordedSlots, { allPieces, question: 'a desert day' })
   assert.equal(wordedWorkbench.slots[0].weather_used, 'hot, highs 100-105F, sunny (estimated)', 'model-guessed weather text must also be marked as an estimate')
 
-  // A real live forecast still gets its own distinct marker, not "(estimated)".
+  // A real live forecast still gets its own distinct marker, not "(estimated)". thread_1789585467294:
+  // it now also carries a trailing "(Open-Meteo)" provenance tag — which provider a number came
+  // from must survive to wherever it's displayed, not just live in memory for the turn that fetched
+  // it.
   const liveSlots = normalizePlanSlots([{ label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1, location: 'Cambria, CA' }])
   const liveWorkbench = await buildPlanSlotWorkbench(liveSlots, {
     allPieces,
@@ -2024,7 +2027,7 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
     dateRange: { start: '2026-08-01', end: '2026-08-01' },
     fetchImpl: makePlanFetch()
   })
-  assert.match(liveWorkbench.slots[0].weather_used, /— live forecast, Cambria, CA$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
+  assert.match(liveWorkbench.slots[0].weather_used, /— live forecast, Cambria, CA \(Open-Meteo\)$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
   assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
 })
 

@@ -155,8 +155,12 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const data = await res.json()
   const highs = data?.daily?.temperature_2m_max || []
   const lows = data?.daily?.temperature_2m_min || []
+  const dates = data?.daily?.time || []
   if (!highs.length || !lows.length) return null
-  const result = { highs, lows }
+  // `fetchedAt` is captured once, at the real network call, and rides along with the cached data —
+  // a cache hit must report when the underlying forecast was actually retrieved, not "now", or
+  // provenance silently lies about freshness for up to CACHE_TTL_MS.
+  const result = { highs, lows, dates, fetchedAt: new Date().toISOString() }
   weatherCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
   return result
 }
@@ -295,7 +299,15 @@ export async function resolveDaypartHourlyEvidence({ location = '', date = '', f
 // `exclusive`: a single day is rarely legitimately both hot and cold, so isHot/isCold are mutually
 // exclusive (matching weatherProfileFromContext's contract). A multi-day trip range genuinely can
 // span both — non-exclusive lets a packing plan flag both extremes instead of suppressing one.
-function classify(highs, lows, { exclusive = true } = {}) {
+//
+// thread_1789585467294: `observedRange` (the max-of-highs/min-of-lows pair) is a legitimate WORST-
+// CASE ENVELOPE for a multi-day range — useful for "does this trip need a layer at all" gating — but
+// it was also the ONLY thing that survived past this function, so a 4-day trip's four distinct daily
+// forecasts (92/87.1/86.7/93.8°F) got collapsed into one flat 93.8°F/51.9°F pair that every slot in
+// the plan then inherited as if it were that slot's own day's forecast. `dailySeries` preserves the
+// per-day numbers this function already has in hand, purely additively — `observedRange` and every
+// existing isHot/isCold/needsRemovableCoolLayer consumer is unchanged.
+function classify(highs, lows, { exclusive = true, dates = [] } = {}) {
   const maxHigh = Math.max(...highs)
   const minLow = Math.min(...lows)
   const isHot = maxHigh >= HOT_F
@@ -303,8 +315,11 @@ function classify(highs, lows, { exclusive = true } = {}) {
   const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
   const needsRemovableCoolLayer = minLow <= COOL_LOW_F && !isCold
-  if (!exclusive) return { isHot, isCold, needsRemovableCoolLayer, ...extreme, ...observedRange }
-  return { isHot: isHot && !isCold, isCold: isCold && !isHot, needsRemovableCoolLayer, ...extreme, ...observedRange }
+  const dailySeries = dates.length === highs.length && dates.length === lows.length
+    ? dates.map((date, i) => ({ date, highF: highs[i], lowF: lows[i] }))
+    : []
+  if (!exclusive) return { isHot, isCold, needsRemovableCoolLayer, ...extreme, ...observedRange, dailySeries }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot, needsRemovableCoolLayer, ...extreme, ...observedRange, dailySeries }
 }
 
 async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive }) {
@@ -312,7 +327,12 @@ async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive 
   if (!coords) return null
   const range = await fetchDailyRange(coords, startDate, endDate, fetchImpl)
   if (!range) return null
-  return { ...classify(range.highs, range.lows, { exclusive }), weatherSource: 'live' }
+  return {
+    ...classify(range.highs, range.lows, { exclusive, dates: range.dates }),
+    weatherSource: 'live',
+    provider: 'Open-Meteo',
+    retrievedAt: range.fetchedAt,
+  }
 }
 
 function heuristic({ mood, season, currentDate, seasonIsCalendarOnly }) {
@@ -571,6 +591,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
         ...BAND_FLAGS[userTemperature.band],
         isExtremeHeat: false,
         source: 'stated_user',
+        provider: null, retrievedAt: null, dailySeries: [],
       }
     }
     const classified = classifyTemperatureRange(userTemperature, { exclusive: false })
@@ -585,6 +606,7 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
       // 'exposure_window' (default) keeps the prior, verbatim-certain treatment; 'daily_forecast'
       // means these are real numbers that are NOT a claim about the stated outing specifically.
       scope: userTemperature.scope || 'exposure_window',
+      provider: null, retrievedAt: null, dailySeries: [],
     }
   }
   if (liveTemperature && Number.isFinite(liveTemperature.highF) && Number.isFinite(liveTemperature.lowF)) {
@@ -595,6 +617,15 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
       needsRemovableCoolLayer: needsRemovableCoolLayerForRange(liveTemperature),
       isExtremeHeat: Boolean(liveTemperature.isExtremeHeat),
       source: 'live',
+      // thread_1789585467294: provenance for a live fetch that materially disagreed with another
+      // forecast source on the same trip — which provider, and when it was actually retrieved (not
+      // "now": a cache hit must report the real fetch time). dailySeries is the per-day series this
+      // classification was collapsed from, kept alongside the flat envelope rather than instead of
+      // it, so a caller CAN disclose "varies 87-94°F across the trip" instead of presenting the
+      // collapsed max/min pair as one day's own reading.
+      provider: liveTemperature.provider || null,
+      retrievedAt: liveTemperature.retrievedAt || null,
+      dailySeries: Array.isArray(liveTemperature.dailySeries) ? liveTemperature.dailySeries : [],
     }
   }
   if (estimateTemperature) {
@@ -606,9 +637,14 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
       needsRemovableCoolLayer: needsRemovableCoolLayerForRange(estimateTemperature),
       isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'model_estimate',
+      provider: null, retrievedAt: null, dailySeries: [],
     }
   }
-  return { highF: null, lowF: null, band: null, isHot: false, isCold: false, isColdSevere: false, needsRemovableCoolLayer: false, isExtremeHeat: false, source: 'unavailable' }
+  return {
+    highF: null, lowF: null, band: null, isHot: false, isCold: false, isColdSevere: false,
+    needsRemovableCoolLayer: false, isExtremeHeat: false, source: 'unavailable',
+    provider: null, retrievedAt: null, dailySeries: [],
+  }
 }
 
 function resolveConditionField(fieldName, { userWeather, liveValue, modelEstimate }) {
@@ -655,7 +691,10 @@ function preferResolvedField(freshField, cachedField) {
 // it supplies previously resolved fields that this update did not replace.
 export function resolveWeatherContext({ userWeather = null, liveWeather = null, modelEstimate = null, fallbackContext = null, location = '', dateRange = null } = {}) {
   const liveTemperature = liveWeather && liveWeather.weatherSource === 'live'
-    ? { highF: liveWeather.highF, lowF: liveWeather.lowF, isHot: liveWeather.isHot, isCold: liveWeather.isCold, isExtremeHeat: liveWeather.isExtremeHeat }
+    ? {
+        highF: liveWeather.highF, lowF: liveWeather.lowF, isHot: liveWeather.isHot, isCold: liveWeather.isCold, isExtremeHeat: liveWeather.isExtremeHeat,
+        provider: liveWeather.provider, retrievedAt: liveWeather.retrievedAt, dailySeries: liveWeather.dailySeries,
+      }
     : null
 
   const resolvedTemperature = resolveTemperatureField({
@@ -732,6 +771,7 @@ export async function resolveWeatherForRequest({
         isCold: Boolean(heuristicProfile.isCold),
         isExtremeHeat: Boolean(heuristicProfile.isExtremeHeat),
         source: 'heuristic',
+        provider: null, retrievedAt: null, dailySeries: [],
       },
       precipitation: { value: heuristicProfile.isRainy ? 'rain' : 'unknown', source: heuristicProfile.isRainy ? 'heuristic' : 'unavailable' },
       wind: { value: 'unknown', source: 'unavailable' },
@@ -772,6 +812,15 @@ export function serializeResolvedWeatherContext(context = null) {
       needs_removable_cool_layer: Boolean(context.temperature?.needsRemovableCoolLayer),
       is_extreme_heat: Boolean(context.temperature?.isExtremeHeat),
       source: context.temperature?.source || 'unavailable',
+      // thread_1789585467294: provenance must survive to wherever the number is displayed or
+      // reasoned about, not just live in the in-memory context for the turn that fetched it — this
+      // app's only weather source (Open-Meteo) and the owner's own separate source materially
+      // disagreed on this same trip's numbers, so which provider and when it was fetched matters.
+      provider: context.temperature?.provider || null,
+      retrieved_at: context.temperature?.retrievedAt || null,
+      daily_series: Array.isArray(context.temperature?.dailySeries)
+        ? context.temperature.dailySeries.map(day => ({ date: day.date, high_f: day.highF, low_f: day.lowF }))
+        : [],
     },
     precipitation: { value: context.precipitation?.value || 'unknown', source: context.precipitation?.source || 'unavailable' },
     wind: { value: context.wind?.value || 'unknown', source: context.wind?.source || 'unavailable' },
@@ -796,6 +845,11 @@ export function restoreResolvedWeatherContext(stored = null) {
       needsRemovableCoolLayer: Boolean(t.needs_removable_cool_layer),
       isExtremeHeat: Boolean(t.is_extreme_heat),
       source: t.source || 'unavailable',
+      provider: t.provider || null,
+      retrievedAt: t.retrieved_at || null,
+      dailySeries: Array.isArray(t.daily_series)
+        ? t.daily_series.map(day => ({ date: day.date, highF: day.high_f, lowF: day.low_f }))
+        : [],
     },
     precipitation: { value: stored.precipitation?.value || 'unknown', source: stored.precipitation?.source || 'unavailable' },
     wind: { value: stored.wind?.value || 'unknown', source: stored.wind?.source || 'unavailable' },
