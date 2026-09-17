@@ -35,7 +35,12 @@ const {
   tripRosterRepairText,
   tripRosterSelectionUserText,
   tripRosterSelectionContent,
+  tripPlanCompositionSystemPrompt,
 } = await import('../routes/ai.js')
+const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const registerFieldDescription = STYLIST_TOOLS
+  .find(tool => tool.name === 'plan_outfit_set')
+  .input_schema.properties.slots.items.properties.register.description
 
 const piece = (id, category, extra = {}) => ({ id, name: `piece ${id}`, category, status: 'active', occasions: ['city'], ...extra })
 
@@ -349,9 +354,12 @@ test('tripRosterFailures flags a roster with zero outerwear against a slot that 
   assert.doesNotMatch(gap.message, /stylish|cardigan|fashionable|cute/i)
 })
 
-test('tripRosterFailures does not flag missing removable coverage when no slot actually needs it (indoor, or already isCold)', () => {
+test('tripRosterFailures does not flag missing removable coverage when no slot actually needs it (indoor with no recorded transit need, or already isCold)', () => {
   const indoorSlot = layerRequiredSlot({
     id: 's_indoor', label: 'Museum', environment: 'indoor',
+    // No transitNeedsRemovableCoolLayer recorded -- an indoor slot with no evidence its own
+    // transit is genuinely cool must not fabricate a requirement (see the next test for the case
+    // where that evidence IS recorded).
     stylingContext: { weatherProfile: { needsRemovableCoolLayer: true, isCold: false } },
   })
   const alreadyColdSlot = layerRequiredSlot({
@@ -360,6 +368,26 @@ test('tripRosterFailures does not flag missing removable coverage when no slot a
   })
   const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [indoorSlot, alreadyColdSlot] })
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'an all-indoor or already-cold trip is never required to carry outerwear just because it is a trip')
+})
+
+// thread_1789633862650: a live Paso Robles evening dinner slot (indoor, 52-53°F transit low) packed
+// zero layers because slotNeedsRemovableCoolLayer returned false outright for every indoor slot,
+// never consulting resolveSlotWeather's own transitNeedsRemovableCoolLayer field -- already computed,
+// unconditionally, for every indoor slot (see outfitSetPlanner.js's resolveSlotWeather header
+// comment: "the outside temperature that governs arrival/departure... is preserved under transit*,
+// never discarded"). An indoor destination still excuses the BASE outfit -- this does not reopen
+// that -- it only stops ignoring evidence the engine already has about the walk there and back.
+test('tripRosterFailures flags missing removable coverage for an indoor slot whose own recorded transit is genuinely cool', () => {
+  const coldTransitDinnerSlot = layerRequiredSlot({
+    id: 's_dinner', label: 'Nice Dinners', environment: 'indoor',
+    stylingContext: {
+      occasion: 'evening', activity: 'none',
+      weatherProfile: { isIndoor: true, isCold: false, transitNeedsRemovableCoolLayer: true, transitLowF: 53, transitHighF: 95 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [coldTransitDinnerSlot] })
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'),
+    'a recorded cold transit need must not be excused just because the destination itself is indoor')
 })
 
 // thread_1789598100140 (owner ruling 2026-09-16): the exact live shape. A 52°F/94°F trip day's
@@ -1071,6 +1099,29 @@ test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion r
 test('tripRosterSelectionSystemPrompt clarifies that a button-up/popover blouse is a base top, not a layering substitute', () => {
   const prompt = tripRosterSelectionSystemPrompt()
   assert.match(prompt, /button-up, popover, or collared woven blouse is a base top, not a layering garment/)
+})
+
+// thread_1789633862650: Run 1442 packed 10 of 13 suitcase slots on shoes and bottoms -- 0 hike
+// tops, 0 layers, 5 pairs of shoes. Advisory judgment guidance, not a fixed quota (this codebase's
+// long-standing "not a formula" principle, tested above and in outfit_structure.test.js) -- a hard
+// numeric ceiling was proposed and rejected for exactly that reason.
+test('tripRosterSelectionSystemPrompt guides tops coverage for active/outdoor slots and footwear-pair discipline, without a fixed numeric quota', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /TOPS VARIETY & FUNCTIONAL COVERAGE/)
+  assert.match(prompt, /active or outdoor use case.*needs a top that is actually suited to it/)
+  assert.match(prompt, /weigh each additional pair against whether its job is truly distinct/)
+  assert.doesNotMatch(prompt, /\b[2-9]-[2-9] (tops|bottoms|shoes|layers)\b/, 'guidance stays judgment-based, not a numeric allocation formula')
+})
+
+test('register field description reserves dressy/formal for genuine escalation events, not standard vacation dining', () => {
+  assert.match(registerFieldDescription, /ordinary vacation dinner\/wine bar\/nice restaurant.*'elevated'/)
+  assert.match(registerFieldDescription, /Reserve 'dressy'\/'formal' for genuine escalation events/)
+  assert.doesNotMatch(registerFieldDescription, /rehearsal dinner 'dressy'/, 'the old example that nudged ordinary dining toward the dressy floor must be gone')
+})
+
+test('tripPlanCompositionSystemPrompt reinforces that every separates outfit needs a top', () => {
+  const prompt = tripPlanCompositionSystemPrompt()
+  assert.match(prompt, /Every separates outfit needs a top/)
 })
 
 test('buildTripPackingLines recognizes assignedLayerIds as shown in the travel system', () => {

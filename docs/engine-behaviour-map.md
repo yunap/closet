@@ -5120,3 +5120,101 @@ plan, and IS still excluded from a slot whose own occasion genuinely is `'travel
 tests pinning the opposite (injection) behavior are removed, not left disabled, since they pinned the
 now-reversed understanding directly.
 
+### Amendment (2026-09-17) — the hourly resolver was dead for every multi-day trip slot, indoor slots were blanket-exempted from their own transit exposure, and 'evening' timing is read from a slot's own declared occasion/label (thread_1789633862650, Run 1442)
+
+**Incident.** A live 4-day Paso Robles run (Winery Days / Hill Hike / Nice Dinners) inherited the
+identical flat 53-95°F trip envelope on every slot, including Nice Dinners (`occasion: 'evening'`,
+`environment: 'indoor'`), which needed its actual ~55-65°F evening transit temperature. The roster
+also spent 10 of 13 suitcase slots on 5 shoes and 5 bottoms against 2 tops and 0 layers, Stage 2
+composed a hiking card with no top (nothing else was packed), the dinner looks got no outer layer for
+a genuinely cold 52-53°F transit, and "Nice Dinners" was assigned `register: 'dressy'` — a floor this
+codebase reserves for cocktail/black-tie/formal — rejecting both dinner cards outright.
+
+**Root cause #1, the most severe: the entire Activity Time Windows mechanism (the amendment two
+above) was silently dead for every realistic multi-day trip slot.** The `plan_outfit_set` schema's
+own `date` field description tells the model to "omit to inherit the plan date_range" — the normal
+shape for a recurring trip activity slot (Winery Days, Nice Dinners describe a use case repeated
+across the trip, not one calendar day). `normalizePlanSlots` never actually performed that
+inheritance for the value `resolveSlotWeather`/`resolveSlotTimeSensitivity` key hourly resolution
+off: an omitted `slot.date` produced `date: ''` on the normalized slot, so both functions'
+`if (!day...)` guards fired unconditionally for every trip slot that followed the schema's own
+guidance. Fixed with a `resolvedSlotDate = slotDate || dateRange?.start` fallback — the trip's first
+day standing in as one representative day, the identical simplification `tripSeasonEligiblePool`'s
+own header comment already documents making for calendar season. The weather-INHERITANCE compat
+check (`planSlotDateCompatibleWithRange`) is untouched — it still treats an omitted slot date as
+compatible with everything, which is a different, already-correct question.
+
+**Root cause #2: two functions (three, counting this session's own earlier work) repeated the exact
+same "indoor excuses everything" mistake, each independently.** An indoor destination's BASE outfit
+is genuinely climate-controlled, but the walk to and from it is not — `resolveSlotWeather` already
+computes this correctly and unconditionally for every indoor slot (`transitHighF`/`transitLowF`/
+`transitNeedsRemovableCoolLayer`, sourced from the ordinary daily/waking-window resolution, per its
+own header comment: "the outside temperature that governs arrival/departure... is preserved under
+transit*, never discarded"). Three call sites never read that distinction:
+1. `slotNeedsRemovableCoolLayer` (the Issue-4 amendment, several sections above) returned `false`
+   outright for any indoor slot, never consulting the `transitNeedsRemovableCoolLayer` field that was
+   sitting right there on the same `weatherProfile`. Fixed: `if (isIndoor) return
+   Boolean(weatherProfile.transitNeedsRemovableCoolLayer)`.
+2. `resolveSlotTimeSensitivity` (this session's own earlier work, two amendments above) returned
+   `{status: 'not_material'}` outright for any indoor slot ("outdoor swings affect only transit,
+   already handled by the existing transit layer rules" — a claim that was false; no such handling
+   existed anywhere). Fixed: for an indoor slot, each daypart's comparison level now comes from
+   `requiredThermalBand(exposure).transit?.level` (already computed by `thermalDemand.js`,
+   specifically for this split) instead of `requiredThermalEndpointBands`' cold/warm pair, which
+   never distinguished the base from the transit at all.
+3. `resolveSlotWeather`'s own hourly-resolution branch explicitly skipped indoor slots
+   (`slot.statedWeather !== 'indoor'`), so even a slot with time_window correctly set still had its
+   transit numbers resolved from the flat daily/waking-window path, not the sliced hourly evidence —
+   the actual, most direct cause of Nice Dinners inheriting the 95°F/53°F envelope. Fixed: the hourly
+   branch now runs for indoor slots too, and on success builds the same indoor+transit profile shape
+   the daily path already returns, sourced from the hourly numbers instead.
+
+**Root cause #3, addressed by owner correction rather than diagnosis: `occasion: 'evening'` and an
+evening-shaped label are declared facts, not prose to infer from.** The Activity Time Windows spec's
+"never inferred or defaulted by code" rule (`tools.js`'s `time_window` field) was written to stop
+code from GUESSING an unstated fact — it was never meant to require re-asking the user something a
+slot had already told the engine through a different, already-structured field. `normalizePlanSlots`
+now defaults `timeWindow` to `{period: 'evening'}` when no explicit `time_window` was given and
+either the slot's occasion resolved to `'evening'` or its own label/best_for text matches the
+existing `textLooksLikeEveningPlanSlot` helper (already used, and already precedented, for the
+occasion-upgrade immediately above this in the same function) — deliberately keyed on the LABEL, not
+the slot's *final* resolved occasion: the occasion field's own 2026-07-30 ratified rule reserves
+`'evening'` occasion for genuinely dressier night-out cases, and an ORDINARY vacation dinner
+correctly resolves to `'smart casual'`/`'city'` instead. Keying the time_window default off occasion
+would have silently missed exactly the ordinary-dinner case this fix exists for — occasion (register)
+and time_window (timing) are different axes, and conflating them was the near-miss caught before
+shipping. No other period is inferred from any other field; an explicit `time_window` always wins.
+
+**Root cause #4: the register-floor and tool-schema wording actively nudged the model the wrong
+way, independent of any evidence gap.** The `register` field's own description example — "escalation
+across an event weekend... (rehearsal dinner 'dressy', wedding ceremony 'formal')" — associated
+`'dressy'` with "dinner," and the model applied that association to an ordinary vacation dinner.
+Reworded to state standard vacation dining ("dinner/wine bar/nice restaurant") is `'elevated'`, and
+`'dressy'`/`'formal'` are reserved for genuine escalation events (a rehearsal dinner, a cocktail
+party, a wedding). No code-side register logic changed — this is a wording-only fix; `'dressy'`'s
+hard dressy-or-better floor is unchanged and correct for what it's actually reserved for now. Also
+noted, not fixed here (a separate, pre-existing gap): `tripRosterSelectionSystemPrompt`'s composition
+sibling and the main stylist system prompt (`test/prompt_equivalence.test.js`) already tell the model
+to prefer `'smart casual'`/`'city'` over `'evening'` for ordinary dining, yet `normalizePlanSlotOccasion`'s
+label-based upgrade silently forces `'casual'`/`'city'` back to `'evening'` whenever a label mentions
+"dinner" — a real, adjacent tension this incident did not require resolving.
+
+**What did not need a code change.** The cold-layer composition guidance
+(`tripPlanCompositionSystemPrompt`'s `assigned_packed_layer` mode, keyed on `needs_removable_cool_layer`)
+was already thorough — it simply never received a correct signal for Nice Dinners until root cause #2
+was fixed. Two lower-risk additions round out the fix: a new `TOPS VARIETY & FUNCTIONAL COVERAGE`
+section in `tripRosterSelectionSystemPrompt` (an active/outdoor slot needs a genuinely suited top, not
+just a bottom and shoes — worded as judgment guidance, not a numeric quota, per this codebase's
+long-standing "not a formula" principle; a fixed-quota version of this same request was considered
+and rejected for exactly that reason), and one reinforcing sentence in
+`tripPlanCompositionSystemPrompt` that every separates outfit needs a top (hard validation for this
+already existed; the addition only reduces wasted composition attempts).
+
+Regression: `test/activityTimeWindows.test.js` (date inheritance from `date_range`, the evening
+default from both occasion and label — including the ordinary-dinner/`smart casual` crux case, an
+indoor slot's hourly path now resolving its transit numbers, an indoor slot's materiality check now
+firing on a genuine transit swing while a modest one still correctly stays `not_material`, and the
+full live-incident shape end to end), `test/tripPackingRoster.test.js` (the transit-aware
+`missing_removable_cool_layer` check, the new roster-prompt section with an explicit non-quota
+assertion, the corrected register field description, and the separates reinforcement sentence).
+

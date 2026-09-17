@@ -1132,14 +1132,21 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   const day = slot.date || undefined
   const targetLocation = slot.location || location || ''
   // Activity time windows spec (2026-09-17): a stated or inferred time_window only means something
-  // for a SPECIFIC calendar day (slicing "which hours" requires knowing "which day") and an outdoor
-  // slot (an indoor destination's base is climate-controlled regardless of arrival time — transit
-  // still uses the ordinary daily/waking-window path below, unchanged). When both hold, try the
-  // hourly path first; resolveExposureWindowHourly itself returns null for anything ungeocodable, out
-  // of the live horizon, or lacking hourly coverage, and this falls through to the existing
-  // daily/waking-window resolution unchanged on null — no behavior changes for any slot without a
-  // time_window, or one whose day/location can't be resolved to hourly data.
-  if (slot.timeWindow && day && targetLocation && slot.statedWeather !== 'indoor') {
+  // for a SPECIFIC calendar day (slicing "which hours" requires knowing "which day"). When both
+  // hold, try the hourly path first; resolveExposureWindowHourly itself returns null for anything
+  // ungeocodable, out of the live horizon, or lacking hourly coverage, and this falls through to the
+  // existing daily/waking-window resolution unchanged on null — no behavior changes for any slot
+  // without a time_window, or one whose day/location can't be resolved to hourly data.
+  //
+  // thread_1789633862650: this used to skip indoor slots outright ("an indoor destination's base is
+  // climate-controlled regardless of arrival time — transit still uses the ordinary daily/waking-
+  // window path"), the same isIndoor-blanket-exemption mistake fixed elsewhere in this file
+  // (slotNeedsRemovableCoolLayer, resolveSlotTimeSensitivity) — an indoor destination's BASE is
+  // climate-controlled, but its TRANSIT is exactly the outdoor exposure hourly slicing exists for. A
+  // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
+  // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
+  const isIndoorSlot = slot.statedWeather === 'indoor'
+  if (slot.timeWindow && day && targetLocation) {
     const hourly = await resolveExposureWindowHourly({
       location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
     })
@@ -1150,13 +1157,32 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         dateRange: { start: day, end: day },
         temperature: {
           highF: hourly.highF, lowF: hourly.lowF, band: null,
-          isHot: hourly.isHot, isCold: hourly.isCold, isColdSevere: false,
+          isHot: hourly.isHot, isCold: isIndoorSlot ? false : hourly.isCold, isColdSevere: false,
           needsRemovableCoolLayer: hourly.needsRemovableCoolLayer, isExtremeHeat: Boolean(hourly.isExtremeHeat),
           source: hourly.weatherSource,
         },
         precipitation: { value: hourly.precipitation, source: hourly.weatherSource },
         wind: { value: 'unknown', source: 'unavailable' },
         overallSource: hourly.weatherSource,
+      }
+      const hourlyLabel = truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+      if (isIndoorSlot) {
+        // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
+        // instead of the flat day envelope — base stays climate-controlled/permissive, transit*
+        // carries the real, time-sliced outdoor numbers.
+        return {
+          profile: {
+            isHot: hourly.isHot, isCold: false, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+            isIndoor: true,
+            transitIsHot: hourly.isHot, transitIsCold: hourly.isCold, transitIsColdSevere: false,
+            transitNeedsRemovableCoolLayer: hourly.needsRemovableCoolLayer,
+            transitHighF: hourly.highF, transitLowF: hourly.lowF,
+            ...wetExposureFromPrecipitation(hourly.precipitation),
+            weatherSource: hourly.weatherSource,
+            resolvedWeatherContext,
+          },
+          label: `indoor; transit: ${hourlyLabel}`
+        }
       }
       return {
         profile: {
@@ -1167,7 +1193,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
           weatherSource: hourly.weatherSource,
           resolvedWeatherContext,
         },
-        label: truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+        label: hourlyLabel
       }
     }
   }
@@ -1271,9 +1297,6 @@ function daypartWeatherProfile(evidence = {}) {
 
 export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fetchImpl } = {}) {
   const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
-  // §8.1: an indoor destination excuses time sensitivity entirely -- outdoor swings affect only
-  // transit, already handled by the existing transit layer rules, never the indoor base.
-  if (isIndoor) return { status: 'not_material' }
   // A slot that already states or infers its own time_window has nothing left to disambiguate --
   // resolveSlotWeather already resolves it to the actual exposure window.
   if (slot.timeWindow) return { status: 'not_material' }
@@ -1289,6 +1312,22 @@ export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fet
     if (!e) continue
     const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, daypartWeatherProfile(e))
     exposureByPeriod[period] = exposure
+    if (isIndoor) {
+      // thread_1789633862650: an indoor destination excuses the BASE, never the TRANSIT -- the walk
+      // to and from a restaurant is genuine outdoor exposure, and it's the transit's own demand that
+      // can vary by daypart even though the destination itself never does. requiredThermalBand
+      // already separates the two (`.transit.level`, sized from `exposure.transit.conditions`,
+      // distinct from the indoor-base `.level`) -- reused here rather than inventing a second
+      // transit-demand calculation. A dinner slot with no genuine transit swing (`transit` inapplicable
+      // for a non-indoor exposureMode, or a mild climate) correctly falls through to `not_material`
+      // exactly as before; a 52-95°F swing like the live incident does not.
+      const transitLevel = requiredThermalBand(exposure)?.transit?.level || null
+      bands[period] = {
+        highF: e.highF, lowF: e.lowF, precipitation: e.precipitation,
+        demand: transitLevel, coldEndLevel: transitLevel, warmEndLevel: transitLevel,
+      }
+      continue
+    }
     // requiredThermalBand's single `.level` is deliberately COLD-END based (§9.1: "the cold end of
     // the exposure window sets the requirement... a removable layer is how the warm end is
     // handled") — comparing it alone across dayparts would miss exactly the case this spec's own
@@ -4014,7 +4053,16 @@ function rosterHasQualifyingWarmLayer(pieces = []) {
 function slotNeedsRemovableCoolLayer(slot = {}) {
   const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
   const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
-  if (isIndoor) return false
+  // thread_1789633862650: an indoor destination excuses the BASE outfit, never the trip -- the walk
+  // to and from the restaurant is genuine outdoor exposure. `resolveSlotWeather` already computes
+  // exactly this, unconditionally, for every indoor slot (`transitNeedsRemovableCoolLayer`, set from
+  // the transit temperature — see its own header comment: "an indoor base may stay light/permissive,
+  // but the outside temperature that governs arrival/departure... is preserved under transit*, never
+  // discarded"). This function simply never read that field and returned `false` outright instead —
+  // a live Paso Robles evening dinner slot (52-53°F transit low) packed zero layers as a direct
+  // result. Reusing the recorded field rather than recomputing it also keeps this in step with
+  // `outfitEnvironmentalAdequacy.js`'s identical card-level check (`weather.transitNeedsRemovableCoolLayer`).
+  if (isIndoor) return Boolean(weatherProfile.transitNeedsRemovableCoolLayer)
   const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, weatherProfile)
   const wakingLow = exposure?.conditions?.wakingLowF
   if (Number.isFinite(wakingLow)) {
@@ -5939,6 +5987,21 @@ export function normalizePlanSlots(rawSlots = [], {
         normalizedWeatherLocationIdentity(location) === normalizedWeatherLocationIdentity(fallbackLocation)
       const dateCompatibleWithPlan = planSlotDateCompatibleWithRange(slotDate, dateRange)
       const inheritsPlanWeather = locationMatchesPlan && dateCompatibleWithPlan
+      // thread_1789633862650: the schema's own `date` field description tells the model to "omit
+      // to inherit the plan date_range" -- the normal, expected shape for a multi-day trip's
+      // activity slots (Winery Days, Nice Dinners) -- but nothing ever actually performed that
+      // inheritance for the value resolveSlotWeather/resolveSlotTimeSensitivity key hourly
+      // resolution off. An omitted slot.date produced date: '' on the normalized slot, so both
+      // functions' `if (!day...) return` guard fired immediately and unconditionally for every
+      // trip activity slot that followed the schema's own guidance -- the hourly resolver, and the
+      // materiality check that pauses for a genuinely time-sensitive slot, were both silently dead
+      // for exactly the shape a real multi-day trip takes. dateRange.start is a single representative
+      // day for the whole range, the same simplification tripSeasonEligiblePool's own header comment
+      // already documents making for calendar season ("the first slot's resolved calendarSeason
+      // stands in for the whole trip... a documented simplification, not solved here, for the rare
+      // trip whose slots span a season boundary") -- a real day's forecast to resolve against, not a
+      // fabricated one.
+      const resolvedSlotDate = slotDate || String(dateRange?.start || '').trim()
       const slotUserWeather = validateUserWeather(slot?.user_weather)
       const userWeather = slotUserWeather || (inheritsPlanWeather ? validPlanUserWeather : null)
       const slotWeatherEstimate = validateWeatherEstimate(slot?.weather_estimate)
@@ -5965,8 +6028,23 @@ export function normalizePlanSlots(rawSlots = [], {
           : '',
         location,
         environment,
-        date: slotDate,
-        timeWindow: normalizePlanSlotTimeWindow(slot?.time_window),
+        date: resolvedSlotDate,
+        // thread_1789633862650 (owner correction, 2026-09-17, narrowing the Activity Time Windows
+        // spec's "never inferred or defaulted by code" rule): a slot typed occasion:'evening', or
+        // whose own label/best_for names a dinner/wine bar/evening use case, has already declared
+        // when it happens — reading that as evidence for its own daypart is reading a fact already
+        // given, not guessing one. Deliberately keyed on textLooksLikeEveningPlanSlot rather than the
+        // slot's FINAL resolved `occasion`: occasion is a REGISTER axis, not a timing one, and the
+        // occasion field's own 2026-07-30 ratified description reserves 'evening' occasion for
+        // genuinely dressier night-out cases while an ORDINARY restaurant dinner correctly resolves
+        // to 'smart casual'/'city' — keying off occasion would silently miss exactly the ordinary-
+        // dinner case this fix exists for. No other period is inferred from any other occasion/
+        // activity/label, and an explicit time_window (any period, or an explicit clock range)
+        // always wins outright.
+        timeWindow: normalizePlanSlotTimeWindow(slot?.time_window)
+          || (occasion === 'evening' || textLooksLikeEveningPlanSlot([label, bestFor, coverage, planNote].filter(Boolean).join(' '))
+            ? { period: 'evening' }
+            : null),
         bestFor,
         coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),

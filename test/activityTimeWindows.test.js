@@ -92,6 +92,109 @@ function insertPiece(overrides = {}) {
 
 test.beforeEach(() => { _clearWeatherCachesForTests() })
 
+// ─── normalizePlanSlots: date inherits from the plan's date_range, and 'evening' occasion defaults
+// its own time_window (thread_1789633862650) ────────────────────────────────────────────────────
+
+// The plan_outfit_set schema's own `date` field description tells the model to "omit to inherit the
+// plan date_range" -- the normal shape for a multi-day trip's activity slots, which describe a
+// recurring use case (Winery Days, Nice Dinners) rather than one specific calendar day. Nothing
+// actually performed that inheritance for the value resolveSlotWeather/resolveSlotTimeSensitivity
+// key hourly resolution off: an omitted slot.date produced date: '' on the normalized slot, so both
+// functions' `if (!day...)` guard fired unconditionally for every trip slot that followed the
+// schema's own guidance -- hourly resolution and the materiality-driven clarification pause were
+// both silently dead for exactly the shape a real multi-day trip takes.
+test('normalizePlanSlots backfills date from the plan\'s date_range when a slot omits its own date', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor', count: 2,
+  }], {
+    dateRange: { start: '2026-09-19', end: '2026-09-22' },
+    fallbackLocation: 'Paso Robles, CA',
+  })
+  assert.equal(slot.date, '2026-09-19', 'the trip\'s first day stands in, the same representative-day simplification tripSeasonEligiblePool already documents for calendar season')
+})
+
+test('normalizePlanSlots does not override a slot\'s own explicit date with the plan range', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor', count: 2, date: '2026-09-21',
+  }], {
+    dateRange: { start: '2026-09-19', end: '2026-09-22' },
+  })
+  assert.equal(slot.date, '2026-09-21')
+})
+
+// occasion: 'evening' is a structured field the model (or the label-based evening upgrade just above
+// it in normalizePlanSlotOccasion) already declared -- reading it as evidence for the slot's own
+// daypart is not the kind of prose inference the Activity Time Windows spec's "never inferred or
+// defaulted by code" rule was written to forbid (owner correction, 2026-09-17). Deliberately narrow:
+// only the literal 'evening' occasion defaults the literal 'evening' period; nothing else is inferred.
+test('normalizePlanSlots defaults time_window to evening when the slot\'s own resolved occasion is evening', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor', count: 2,
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.deepEqual(slot.timeWindow, { period: 'evening' })
+})
+
+test('normalizePlanSlots\' evening default also fires when the label alone upgrades occasion to evening (e.g. "casual" + "dinner")', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Wine Country Dinners', occasion: 'casual', activity: 'none', environment: 'indoor', count: 2,
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.equal(slot.occasion, 'evening')
+  assert.deepEqual(slot.timeWindow, { period: 'evening' })
+})
+
+// The crux case: the plan_outfit_set schema's own occasion field carries a 2026-07-30 ratified
+// rule -- "An ordinary restaurant dinner... is 'smart casual'... reserve 'evening' for genuinely
+// dressier night-out use cases." normalizePlanSlotOccasion's upgrade only checks 'casual'/'city',
+// never 'smart casual', so an ordinary Nice Dinners slot correctly following that ratified rule
+// keeps occasion:'smart casual' -- and the evening default here is deliberately keyed on the
+// slot's own label text (textLooksLikeEveningPlanSlot), not on its final resolved occasion, or this
+// exact real-world case (an ordinary, correctly-occasioned vacation dinner) would be missed.
+test('normalizePlanSlots\' evening default fires for an ordinary dinner correctly occasioned "smart casual" per the ratified occasion rule, independent of occasion', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'smart casual', activity: 'none', environment: 'indoor', count: 2,
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.equal(slot.occasion, 'smart casual', 'occasion must NOT be silently escalated to evening -- that is a separate, ratified register decision')
+  assert.deepEqual(slot.timeWindow, { period: 'evening' }, 'but timing still defaults from the label, since occasion and timing are different axes')
+})
+
+test('normalizePlanSlots never overrides an explicit time_window with the evening default', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor', count: 2,
+    time_window: { period: 'midday' },
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.deepEqual(slot.timeWindow, { period: 'midday' })
+})
+
+test('normalizePlanSlots does not default a time_window for a non-evening occasion', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Museum', occasion: 'city', activity: 'none', environment: 'indoor', count: 1,
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.equal(slot.timeWindow, null)
+})
+
+// End-to-end: the exact live incident's own shape, both fixes together -- date inherited from the
+// plan range, occasion:'evening' defaulting its own time_window, and the hourly path now resolving
+// an indoor slot's TRANSIT numbers instead of skipping straight to the flat daily envelope.
+test('the live Paso Robles Nice Dinners slot resolves its own evening transit temperature end to end, with no explicit slot date and no stated time_window', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 65, 9: 68, 10: 70, 11: 72, 12: 88, 13: 91, 14: 93, 15: 95, 16: 92, 17: 65, 18: 60, 19: 57, 20: 55 },
+  })
+  const [slot] = normalizePlanSlots([{
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor', count: 2,
+  }], {
+    dateRange: { start: '2026-09-19', end: '2026-09-22' },
+    fallbackLocation: 'Paso Robles, CA',
+  })
+  const { profile, label } = await resolveSlotWeather(slot, { location: 'Paso Robles, CA', fetchImpl })
+  assert.equal(profile.isIndoor, true)
+  assert.equal(profile.weatherSource, 'live_hourly')
+  assert.equal(profile.transitHighF, 65, 'the evening window\'s own high, not the day\'s 95°F afternoon peak')
+  assert.equal(profile.transitLowF, 55)
+  assert.equal(profile.transitNeedsRemovableCoolLayer, true)
+  assert.match(label, /indoor; transit:.*live hourly forecast/)
+})
+
 // ─── resolveSlotWeather: explicit time_window resolves hourly (spec Test 1) ────────────────────
 
 test('resolveSlotWeather resolves an explicit time_window against sliced hourly data, not the day\'s full envelope', async () => {
@@ -121,14 +224,31 @@ test('resolveSlotWeather falls back to the ordinary daily/waking-window path whe
   assert.notEqual(profile.weatherSource, 'live_hourly', 'no time_window means no hourly slicing -- this must be a pure no-op for every slot that doesn\'t opt in')
 })
 
-test('resolveSlotWeather does not use the hourly path for an indoor slot even with a stated time_window', async () => {
-  const fetchImpl = makeMockHourlyFetch({ date: '2026-09-19', hours: { 12: 90 } })
+// thread_1789633862650: an earlier version of this test asserted indoor slots never use the hourly
+// path at all, on the reasoning "an indoor destination's base is climate-controlled -- time_window
+// only ever concerns actual outdoor exposure." That reasoning conflated the BASE (genuinely climate-
+// controlled) with the TRANSIT (genuinely outdoor, and exactly what hourly slicing exists to
+// resolve) -- a live Nice Dinners slot inherited the day's full 95°F/55°F envelope as its transit
+// temperature instead of the real ~55-65°F evening window as a direct result. The corrected
+// contract: an indoor slot's BASE still reads permissive/climate-controlled (isCold: false), while
+// its transit* fields now use the real hourly-sliced numbers, same as any outdoor slot's base would.
+test('resolveSlotWeather uses the hourly path for an indoor slot\'s TRANSIT numbers when a time_window is stated', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 65, 9: 68, 10: 70, 11: 72, 14: 95, 15: 93, 18: 60, 19: 57, 20: 55 },
+  })
   const [slot] = normalizePlanSlots([{
-    label: 'Museum', occasion: 'city', activity: 'none', environment: 'indoor',
-    date: '2026-09-19', location: 'Denver, CO', time_window: { period: 'midday' },
+    label: 'Nice Dinners', occasion: 'evening', activity: 'none', environment: 'indoor',
+    date: '2026-09-19', location: 'Paso Robles, CA', time_window: { period: 'evening' },
   }])
-  const { profile } = await resolveSlotWeather(slot, { location: 'Denver, CO', fetchImpl })
-  assert.notEqual(profile.weatherSource, 'live_hourly', 'an indoor destination\'s base is climate-controlled -- time_window only ever concerns actual outdoor exposure')
+  const { profile, label } = await resolveSlotWeather(slot, { location: 'Paso Robles, CA', fetchImpl })
+  assert.equal(profile.isIndoor, true)
+  assert.equal(profile.isCold, false, 'the base stays climate-controlled/permissive regardless of the transit temperature')
+  assert.equal(profile.weatherSource, 'live_hourly')
+  assert.equal(profile.transitHighF, 60, 'the evening window\'s own high, not the day\'s 95°F afternoon spike')
+  assert.equal(profile.transitLowF, 55)
+  assert.equal(profile.transitNeedsRemovableCoolLayer, true)
+  assert.match(label, /indoor; transit:.*live hourly forecast/)
 })
 
 // ─── resolveSlotTimeSensitivity: the materiality verdict (spec §6, Tests 2-5) ──────────────────
@@ -164,7 +284,14 @@ test('resolveSlotTimeSensitivity: a 70°F/60°F swing is not material (normal cl
   assert.equal(result.status, 'not_material')
 })
 
-test('resolveSlotTimeSensitivity: an indoor slot is never material regardless of the outdoor swing', async () => {
+// thread_1789633862650: an indoor destination excuses the BASE, never the TRANSIT -- an earlier
+// version of this test asserted indoor slots are "never material regardless of the outdoor swing",
+// which is what let a real Nice Dinners slot (53°F evening transit vs a 95°F daytime peak) inherit
+// the flat trip envelope silently instead of asking the user roughly when the outing happens. This
+// modest swing genuinely does NOT clear the 2-level transit threshold -- that guarantee is real and
+// worth keeping -- but it is a property of THESE numbers, not of "indoor" as a category. See the
+// next test for the same slot shape with a genuinely material transit swing.
+test('resolveSlotTimeSensitivity: an indoor slot with only a modest outdoor swing stays not_material', async () => {
   const fetchImpl = makeMockHourlyFetch({
     date: '2026-09-19',
     hours: { 9: 50, 14: 88 },
@@ -175,6 +302,26 @@ test('resolveSlotTimeSensitivity: an indoor slot is never material regardless of
   }])
   const result = await resolveSlotTimeSensitivity(slot, { location: 'Denver, CO', fetchImpl })
   assert.equal(result.status, 'not_material')
+})
+
+// occasion: 'city' rather than 'evening' -- an 'evening' occasion now defaults its own time_window
+// (see normalizePlanSlots' amendment below), which would make this slot ineligible for the
+// materiality check in the first place (nothing left to disambiguate once time_window is set). This
+// isolates the isIndoor-aware materiality logic itself, independent of that separate default.
+test('resolveSlotTimeSensitivity: an indoor slot IS material when its genuine transit swing crosses the threshold (the live incident\'s own shape)', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    // Morning 65-72°F, afternoon 88-95°F, evening 55-65°F -- the reported Paso Robles shape. The
+    // destination (a restaurant) is climate-controlled either way; the walk there and back is not.
+    hours: { 8: 65, 9: 68, 10: 70, 11: 72, 12: 88, 13: 91, 14: 93, 15: 95, 16: 92, 17: 65, 18: 60, 19: 57, 20: 55 },
+  })
+  const [slot] = normalizePlanSlots([{
+    label: 'Gallery Visit', occasion: 'city', activity: 'none', environment: 'indoor',
+    date: '2026-09-19', location: 'Paso Robles, CA',
+  }])
+  const result = await resolveSlotTimeSensitivity(slot, { location: 'Paso Robles, CA', fetchImpl })
+  assert.equal(result.status, 'material')
+  assert.match(result.divergenceReason, /thermal demand spans/)
 })
 
 test('resolveSlotTimeSensitivity: a slot that already states its own time_window has nothing left to disambiguate', async () => {

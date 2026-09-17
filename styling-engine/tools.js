@@ -1339,7 +1339,7 @@ export const STYLIST_TOOLS = [
                   start_local: { type: "string", description: "Explicit 24h local start time (e.g. '09:00'), only when the user stated or clearly implied one (e.g. 'dinner around 7' -> '19:00')." },
                   end_local: { type: "string", description: "Explicit 24h local end time (e.g. '13:00')." }
                 },
-                description: "When the user stated or clearly implied when this outdoor slot happens. Omit entirely if the user gave no timing cue — do not guess a default."
+                description: "When the user stated or clearly implied when this slot happens — outdoor or indoor: an indoor destination's own base is climate-controlled, but the walk to and from it is not, so timing still matters for a slot like dinner or a museum visit. Omit entirely if the user gave no timing cue — do not guess a default."
               },
               // Live thread_1785380251549: the plan's lifestyle answer listed
               // three distinct contexts — days at home, errands, weekends out —
@@ -1356,7 +1356,7 @@ export const STYLIST_TOOLS = [
               // raises the ceiling and demands nothing — permission, not
               // obligation — while 'dressy'/'formal' additionally require a
               // dressy-or-better main piece in every look of that slot.
-              register: { type: "string", enum: ["everyday", "elevated", "dressy", "formal"], description: "How dressed-up this slot should read, when that differs from what its occasion implies. Set it whenever one slot in the plan reads dressier than its neighbours — a going-out version of an otherwise casual week ('elevated'), or escalation across an event weekend so the marquee slot is dressiest (rehearsal dinner 'dressy', wedding ceremony 'formal'). 'elevated' only widens what the slot may use and requires nothing; 'dressy'/'formal' additionally require every look in the slot to carry a dressy-or-better main piece, and push away denim, casual jackets, tees and sneakers toward tailored separates or a dress with heels. Omit only when the slot's occasion already describes how dressed-up it is." },
+              register: { type: "string", enum: ["everyday", "elevated", "dressy", "formal"], description: "How dressed-up this slot should read, when that differs from what its occasion implies. Set it whenever one slot in the plan reads dressier than its neighbours — a going-out version of an otherwise casual week, or an ordinary vacation dinner/wine bar/nice restaurant (both 'elevated'). Reserve 'dressy'/'formal' for genuine escalation events — a rehearsal dinner, a cocktail party, a wedding ceremony — never for standard trip dining. 'elevated' only widens what the slot may use and requires nothing; 'dressy'/'formal' additionally require every look in the slot to carry a dressy-or-better main piece, and push away denim, casual jackets, tees and sneakers toward tailored separates or a dress with heels — a real requirement a normal trip dinner should not be held to. Omit only when the slot's occasion already describes how dressed-up it is." },
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
