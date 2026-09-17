@@ -3775,6 +3775,37 @@ async function executeToolInternal(name, args, toolContext = {}) {
           typeof toolContext.composeTripPlanOnce === 'function' &&
           !isPartialReplan
         if (useAtomicTripComposition) {
+          // thread_1789598100140 (owner ruling 2026-09-16): a trip roster that fell back to the raw
+          // coverage-guaranteed bench (both model attempts failed structural validation) is not a
+          // packing list — it is the entire eligible candidate pool, offered with no curation at
+          // all. The prior behavior proceeded to compose real-looking outfit cards from it and
+          // returned status:'success', relying on a plan_lines disclosure sentence to convey this —
+          // and a live run proved that sentence can be silently dropped from the model's own final
+          // answer. This stops before any card is composed: no outfits, no roster, nothing that
+          // could be displayed as if it were a valid result. The model already saw the exact
+          // structural rejection reasons in its own prior roster-selection turn (the repair prompt
+          // named them), so this message does not repeat them.
+          //
+          // Scoped to the ATOMIC path only: selectTripRosterViaModel uses the identical
+          // source:'bench_fallback' for two different situations — no chooseTripRoster was ever
+          // wired for this turn at all (failures: [], a deliberate no-op that falls through to the
+          // ordinary whole-wardrobe pool), and a chooser that genuinely failed structural validation
+          // twice (failures: non-empty). Checking tripRosterFailureCodes' length distinguishes them.
+          // The ordinary (non-atomic) tool-loop trip path already has its own, different honest-gap
+          // disclosure via submit_plan_outfits' resubmission loop — this must not preempt it.
+          const tripRosterGenuinelyFailed =
+            workbench?.pendingPlan?.tripRosterSource === 'bench_fallback' &&
+            Array.isArray(workbench?.pendingPlan?.tripRosterFailureCodes) &&
+            workbench.pendingPlan.tripRosterFailureCodes.length > 0
+          if (tripRosterGenuinelyFailed) {
+            toolContext.generatedOutfits = []
+            toolContext.pendingPlan = null
+            bumpFreeformDiagnostic(toolContext, 'tripRosterFallbackRejected')
+            return {
+              status: 'error',
+              message: "The trip packing roster could not be chosen: your own roster selection failed structural validation twice, so there is no honestly curated packing list to offer. Do not build a plan manually, do not call other styling tools this turn, and do not present the full eligible candidate bench as if it were a packing list. Tell the user plainly that packing selection failed for this trip -- name the specific structural problem(s) you were told about during roster selection (e.g. a missing removable layer for particular use cases) -- and suggest a concrete next step: retry, simplify the trip (fewer use cases or a shorter stay), or add more wardrobe pieces for the underserved use case."
+            }
+          }
           toolContext.tripAtomicAttempted = true
           const pendingPlan = {
             ...workbench.pendingPlan,

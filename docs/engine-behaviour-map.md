@@ -4765,3 +4765,40 @@ slot's weather; an activity with no assigned date within the trip must not be tr
 the trip maximum. Not implemented, fixed, or resolved by this Hill Hiking change — see the dedicated
 weather-resolution workstream for design and status.
 
+### Amendment (2026-09-16) — a genuinely failed trip roster no longer proceeds to composition as a success (thread_1789598100140)
+
+**Incident.** A live Paso Robles re-run hit a real (not simulated) roster-selection failure:
+`selectTripRosterViaModel`'s model attempt, and its one repair, both failed structural validation
+(`missing_removable_cool_layer`/`cold_floor_infeasible` for Winery Days and Hiking), so the roster
+fell back to the raw 60-piece coverage-guaranteed bench (`source: 'bench_fallback'`). The atomic
+composer then composed real cards from that bench and the tool returned `status: 'success'`, with
+the fallback disclosed only as a `[trip roster: ...]` line inside `plan_lines`. The model's own final
+answer dropped that line, and the Hiking slot's own `[coverage gap: ...]` line, from its prose
+entirely — the user saw 3 real-looking cards and a "Complete Packed Roster (60 pieces)" with no
+signal any of it was a fallback, and the Hiking activity the trip was explicitly about got nothing.
+
+**Fix, scoped to exactly this.** `tools.js`'s atomic trip branch now checks, before composing
+anything: `tripRosterSource === 'bench_fallback'` **and** a non-empty `tripRosterFailureCodes` (the
+second field distinguishes a genuine two-strikes structural failure from the same `bench_fallback`
+source string used when no `chooseTripRoster` was wired at all — a deliberate no-op with
+`failures: []`, not a failure). When both hold, the tool returns `status: 'error'` immediately: no
+cards, no roster, `pendingPlan` cleared — nothing structurally exists that could be displayed as if
+it were a valid result, regardless of what the model's own prose says. Scoped to the atomic path
+only; the ordinary (non-atomic) tool-loop trip path keeps its own, different honest-gap disclosure
+through `submit_plan_outfits`' resubmission loop, which several existing tests exercise deliberately
+with a fallback-triggering roster and must keep working.
+
+**The general "does a disclosure survive the model's own prose" concern was investigated and found
+already handled** — not new work. `StylistChat.jsx`'s `getTripPlanNotes`/`planNotesMissingFromProse`
+already read `structuredOutfits[0].tripPlanLines` directly (not the model's text) and render a
+"Stylist's notes" panel of exactly the bracket-prefixed lines (`[coverage gap: ...]`,
+`[trip roster: ...]`, `[missing wardrobe gap: ...]`, `[plan trimmed: ...]`) missing from the model's
+own prose — this predates the current session and is already pinned by
+`test/aiEndpointContracts.test.js`. It would have surfaced both dropped lines in this incident had
+any cards existed to attach `tripPlanLines` to; the actual gap was that the bench-fallback case
+produced cards (and therefore a `plan_lines` disclosure) at all, which this fix now prevents.
+
+Regression: `test/trip_roster_fallback_rejection.test.js` pins the error status, the empty
+outfit/roster state, that composition never runs, that the two `bench_fallback` situations are
+distinguished, and that a genuinely model-chosen roster is unaffected.
+
