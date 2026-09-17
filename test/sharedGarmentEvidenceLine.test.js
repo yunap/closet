@@ -124,7 +124,11 @@ test('SHARED EVIDENCE: Whole Wardrobe, /ask and trip give the same facts, and tr
     const row = singleOutfitStylistCatalogLine(piece)
     assert.equal(row, sparseGarmentCatalogRow(piece), '/ask catalog uses the sparse rendering')
     assert.deepEqual(decodeSparseCatalogFacts(row.slice(`#${piece.id} ${piece.name} | `.length)), decodeGarmentFactLine(facts), '/ask catalog row reconstructs the full fact line')
-    assert.equal(tripPlanTruthCatalog([piece])[0], sharedGarmentEvidenceLine(piece), 'trip carries the same facts')
+    // thread_1789585467294: trip's catalog line is the shared fact line plus each piece's recorded
+    // occasions -- the one addition trip needs, since its roster spans multiple slot occasions rather
+    // than one already-filtered request occasion (see docs/garment-evidence-parity-2026-09-15.md's
+    // stated occasion-omission rationale, which does not hold for a multi-occasion trip roster).
+    assert.equal(tripPlanTruthCatalog([piece])[0], `${sharedGarmentEvidenceLine(piece)} | occasions: unknown`, 'trip carries the same facts, plus its own recorded occasions')
   }
   assert.deepEqual(tripPlanPieceNotes([withMemory, TOP137]), [garmentNotesEntry(withMemory)], 'trip notes are the shared entries, only for roster pieces with saved records')
   assert.match(tripPlanPieceNotes([withMemory])[0], /RULES \(authoritative\): Wear with a solid bottom; REJECTED: with the floral skirt/)

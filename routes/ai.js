@@ -34,6 +34,7 @@ import {
   describeAiError,
   extractPieceIdsFromProse
 } from '../styling-engine/provider.js'
+import { composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
 
 import {
   applyComfortFootwearRepair,
@@ -46,11 +47,12 @@ import {
   STYLE_SELECTED_ITEM_FEW_SHOTS,
   OUTFIT_MISSIONS,
   TAG_PIECE_SYSTEM,
-  EXTRACT_PIECES_SYSTEM
+  EXTRACT_PIECES_SYSTEM,
+  STYLIST_COMPETENCE_CONTRACT
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan } from '../styling-engine/outfitSetPlanner.js'
 
-import { OCCASION_PROFILES } from '../styling-engine/occasions.js'
+import { OCCASION_PROFILES, stripSoftRankingRules } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -64,6 +66,7 @@ import {
 import {
   extractWeatherContext,
   extractStatedTripDateRange,
+  extractStructuredUserWeather,
   isTravelOrPackingRequest,
   normalizeActivity,
   normalizeOccasion
@@ -74,7 +77,7 @@ import { projectStylingApplicabilityContext, resolveStylingContext } from '../st
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 
 import {
   isStyleSelectedQuestion,
@@ -139,21 +142,29 @@ import {
   hasGenericWholeWardrobeText,
   sortByStylisticStrength,
   pieceGarmentIntelligence,
-  wholeWardrobeOutfitVisualReviewFindings
+  wholeWardrobeOutfitVisualReviewFindings,
+  deriveWholeWardrobeRoles,
 } from '../styling-engine/rules.js'
 import {
   evaluateAutomaticUsePiecePool,
   evaluateVisualComposerPiecePool,
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
-import { categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { categoryOutfitStructurePromptRule, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateWearableOutfit, isInabilityToJudgeCode, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, correctTuckInstruction } from '../styling-engine/outfitValidation.js'
+import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, GARMENT_FACT_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
+import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
+import { storedGarmentRules } from '../styling-engine/ruleProvenance.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
-import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction, insulatingLayerMaterials } from '../styling-engine/fiberTaxonomy.js'
+import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction, insulatingLayerMaterials, interiorConstruction } from '../styling-engine/fiberTaxonomy.js'
 import { resolveExposureContext } from '../styling-engine/exposure.js'
-import { requiredThermalBand } from '../styling-engine/thermalDemand.js'
-import { garmentWarmthLevel } from '../styling-engine/garmentWarmth.js'
+import { requiredThermalBand, compareThermalFit, thermalRankingFit } from '../styling-engine/thermalDemand.js'
+import { evaluateOutfitEnvironmentalAdequacy, ENVIRONMENTAL_ADEQUACY_CODES, primaryUserFacingFinding } from '../styling-engine/outfitEnvironmentalAdequacy.js'
+// Weather findings only: a repair is judged on what it does to the WEATHER picture, never on
+// unrelated advisories a card may carry for its own reasons.
+const ENVIRONMENTAL_CODE_SET = new Set(Object.values(ENVIRONMENTAL_ADEQUACY_CODES))
+import { garmentWarmthLevel, garmentWarmthScore } from '../styling-engine/garmentWarmth.js'
 
 import {
   rankSelectedPieceCandidatesWithVision,
@@ -201,7 +212,7 @@ import {
   anchorFidelityInstructions,
   createPhotoPreservingCollageImage,
   ownedInventorySummaryForEditorial,
-  reviewComposedWholeWardrobeOutfitsForClash
+  reviewComposedWholeWardrobeOutfitsForClash,
 } from '../styling-engine/core.js'
 
 const router = express.Router()
@@ -935,11 +946,28 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
 
 export function compactFreeformAnswerSystem(profile = 'general_advice') {
   const profileContract = profile === 'existing_card_explanation'
-    ? 'Explain or compare only the supplied verified outfit cards. Do not change pieces, invent alternatives, or claim to see photographs.'
+    // thread_1789536455443 (2026-09-16): this profile is asked, among other things, whether an
+    // already-composed card actually suits stated conditions. It used to forbid claiming to see
+    // photographs (none were ever supplied) and its only framing was "explain the supplied verified
+    // outfit cards" — inviting the model to treat the card's own stored reason/weatherUsed label as
+    // the answer rather than an independent judgment. Photographs are now supplied (see
+    // compactGarmentVisualEvidence's call site).
+    // Revised again 2026-09-16 (owner review, second pass): `reason`/`weatherUsed`/system flags are
+    // now removed from the card projection entirely (sanitizeOutfitForExplanation below) rather than
+    // sent-with-a-caveat, so a sentence naming those fields specifically is stale — they are never
+    // in the payload to repeat. The live risk moved to conversation HISTORY, which is intentionally
+    // preserved (the user must be able to ask "what did you mean?", challenge a prior answer, or
+    // request more outfits for the same outing) and can still carry an earlier assistant claim in
+    // its own prose. This framing is deliberately general — not a weather-specific instruction — and
+    // covers any prior claim history might carry, not only a temperature one. A card's
+    // `untrusted_display_label` is composer-written display text kept only so the model can tell
+    // multiple cards apart; the key itself says what it is, not evidence, so a conclusion-bearing
+    // label (e.g. one composer titled a card "50° to 40°F") is not read as a verified fact.
+    ? 'Explain or compare the supplied outfit cards. Do not change pieces or invent alternatives. A card\'s `untrusted_display_label` is the composer\'s own untrusted display text, used only to tell multiple cards apart, not evidence — identify the card you mean by its index, piece IDs, or piece names, and never repeat that label\'s wording as if it were a settled fact. Conversation history is provided to preserve continuity and resolve references. Previous assistant statements are fallible prior claims, not authoritative garment evidence. Reassess them against the structured garment facts and photographs, and correct them plainly when they conflict. When asked whether a card suits stated conditions, weather, or comfort, judge it fresh from the supplied garment construction facts and photographs — insulation, lining, coverage, weather protection, fit — and say plainly when the garment evidence is incomplete or the outcome is uncertain.'
     : profile === 'garment_fact'
-      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another and a "Layering evidence (computed)" block is supplied, that verdict is authoritative for sleeve/construction compatibility — do not re-derive it from the raw fields yourself, and do not contradict it; translate it into ordinary styling language and explain the reason it gives. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
+      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another: Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
       : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
-  return `You are a concise personal stylist answering one bounded text question. ${profileContract}
+  return `${STYLIST_COMPETENCE_CONTRACT} You are answering one bounded text question, concisely. ${profileContract}
 
 RATIFIED STYLE CONSTITUTION:
 ${prompts.BODY_CONTRACT}
@@ -949,6 +977,14 @@ ${prompts.LANE_NEUTRALITY}
 ${prompts.WORKING_STYLE}`
 }
 
+// thread_1789536455443: audited against garmentEvidenceLine.js's garmentEvidenceFields — the
+// canonical shared fact set every OTHER chat surface (Whole Wardrobe, trip, /ask view_pieces)
+// already sends. Weather-relevant fields that set carries and this one was missing:
+// insulating_layer_materials, interior_construction, weather_protection (added first), and
+// fiber_content and season (added here). `stretch` is also on the shared line but is a fit/comfort
+// fact, not a weather-relevant one, and is deliberately left out — this is not "declare parity from
+// three fields," it is a field-by-field comparison against the one list this app treats as
+// authoritative for garment evidence.
 export function compactFreeformPieceFacts(piece = {}) {
   return {
     id: Number(piece.id),
@@ -957,6 +993,11 @@ export function compactFreeformPieceFacts(piece = {}) {
     colors: piece.colors,
     fabric_category: piece.fabric_category,
     fabric_weight: piece.fabric_weight,
+    fiber_content: piece.fiber_content,
+    insulating_layer_materials: piece.insulating_layer_materials,
+    interior_construction: piece.interior_construction,
+    weather_protection: piece.weather_protection,
+    season: piece.season,
     opacity: piece.opacity,
     needs_base: piece.needs_base,
     tuck_behavior: piece.tuck_behavior,
@@ -971,7 +1012,8 @@ export function compactFreeformPieceFacts(piece = {}) {
     walk_support: piece.walk_support,
     occasions: piece.occasions,
     reads_as: piece.reads_as,
-    styling_rules_learned: piece.styling_rules_learned,
+    // The owner's stored rules, minus receipts, retired reaction copies and saved chat replies (ruleProvenance.js).
+    styling_rules_learned: storedGarmentRules(piece),
     field_confidence: piece.style_profile_json?._confidence || {},
   }
 }
@@ -1151,6 +1193,7 @@ export function formatWardrobeInventoryAnswer(counts = {}) {
 // re-deriving sleeve/fabric compatibility from raw fields itself (routes/ai.js:evaluateLayerPairConstruction
 // is the single owner propose_outfit/plan/capsule validation also consumes). Most garment_fact
 // questions are single-garment and produce no pair here; that is expected, not a gap.
+// LOG-ONLY since 2026-09-14: this verdict is diagnostic evidence and is no longer sent to the garment_fact model.
 export function compactGarmentFactLayeringEvidence(pieces = []) {
   const candidates = (Array.isArray(pieces) ? pieces : [])
     .filter(piece => ['top', 'dress'].includes(wardrobeCategoryGroup(piece)))
@@ -1168,45 +1211,159 @@ export function compactGarmentFactLayeringEvidence(pieces = []) {
   return lines
 }
 
+// thread_1789536455443 (revised again 2026-09-16, owner review): a local keyword classifier
+// deciding WHEN a prior conclusion is dangerous to show was itself the wrong mechanism — it is a
+// second guess about which questions are "about weather", brittle by construction, and the
+// underlying problem (the model repeating a conclusion placed in front of it) is not limited to
+// questions that happen to contain a weather word. `existing_card_explanation` now ALWAYS projects
+// a card as structural membership only: `reason`, `weather_used`/`weatherUsed`,
+// `resolved_weather_context`/`resolvedWeatherContext`, `needs_removable_cool_layer`/
+// `needsRemovableCoolLayer`, and `system_flags`/`systemFlags` are removed unconditionally, on
+// every question, not detected per-question. Outfit membership (piece_ids, pieces,
+// styling_instructions, roles) is kept: it is a fact about what the card contains, not a conclusion
+// about it. The answer model explains or assesses the outfit afresh from its pieces, the full
+// garment facts, and the photographs — including for an ordinary "why did you choose this?"
+// question, which gets a fresh explanation rather than a repetition of the stored reason. The
+// user's own original wording (including any stated weather) is never deleted — it survives in
+// recent conversation history, the turn that actually asked for the outfit.
+//
+// Revised again 2026-09-16 (owner review, second pass): a real capture (thread_1789543565383) showed
+// a composer-written `label` of "Polished Urban Walk at 50° to 40°F" reaching the model verbatim —
+// exactly the conclusion-bearing text the reason/weatherUsed stripping above was meant to keep out,
+// just carried through a field that survived because it is genuinely needed to tell multiple cards
+// in a bundle apart. Deleting it outright would break that legitimate case. Renamed instead of
+// caveated: the key itself now says what it is (an untrusted composer-written display string, not
+// evidence) rather than depending on the model reading and honoring a nearby prompt sentence — once
+// a card is resolved, its index/piece_ids/pieces are the neutral way to refer back to it.
+function sanitizeOutfitForExplanation(outfit = {}) {
+  const {
+    reason, weather_used, weatherUsed,
+    resolved_weather_context, resolvedWeatherContext,
+    needs_removable_cool_layer, needsRemovableCoolLayer,
+    system_flags, systemFlags,
+    label, title,
+    ...membership
+  } = outfit
+  const composerLabel = label || title
+  return composerLabel ? { ...membership, untrusted_display_label: composerLabel } : membership
+}
+
 export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {}, history = [] } = {}) {
   const recentHistory = (profile === 'existing_card_explanation' || profile === 'garment_fact') ? compactRecentHistory(history) : ''
-  const layeringEvidence = profile === 'garment_fact' ? compactGarmentFactLayeringEvidence(pieces) : []
+  const sanitizedOutfits = (context.outfits || []).map(outfit =>
+    profile === 'existing_card_explanation' ? sanitizeOutfitForExplanation(outfit) : outfit)
   return [
     `Question: ${question}`,
+    // The user's ORIGINAL wording (including any stated weather) survives here, in the turn that
+    // asked for the outfit — never deleted, only kept out of the technical-conclusion fields above.
     recentHistory ? `Recent conversation (most recent last):\n${recentHistory}` : '',
-    profile === 'existing_card_explanation' && context.outfits?.length ? `Verified current cards:\n${JSON.stringify(context.outfits)}` : '',
+    profile === 'existing_card_explanation' && sanitizedOutfits.length
+      ? `Card membership as composed (garment IDs and names only — the composer's own reason and weather/warmth conclusions are withheld here; any untrusted_display_label is composer-written display text, not evidence; explain or judge the outfit afresh from the garment facts and photographs below, and from the user's own words above):\n${JSON.stringify(sanitizedOutfits)}`
+      : '',
     profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
-    layeringEvidence.length ? `Layering evidence (computed):\n${layeringEvidence.join('\n')}` : '',
     profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
   ].filter(Boolean).join('\n\n')
 }
 
-export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = userUploadsDir(), maxImages = 4 } = {}) {
+// 2026-09-16 (owner review): a real capture (thread_1789543565383, session
+// 20260916T072500260Z-p33193-328b5958) stored a sentence fragment cut off mid-word by
+// stopReason: max_tokens and presented it as a finished answer. Raising the caller's maxTokens
+// (its own comment has the full diagnosis: Gemini bills thinking tokens out of the same cap) fixes
+// the common case; this is the simple defensive backstop for the rest — one retry asking for a
+// shorter, complete answer (the same shape as the full tool loop's own providerTruncation retry in
+// styling-engine/provider.js), and an honest disclosure if it is STILL truncated, rather than ever
+// storing/serving a fragment as a completed answer. `ask` is injectable so this can be unit-tested
+// directly — askStylistWithUsage's own test-mode shortcut cannot simulate a provider stopReason
+// (see test/bounded_multi_context_continuity_e2e.test.js's documented harness limitation), so a
+// route-level HTTP mock could never reach the truncated branch at all.
+export async function compactAnswerWithTruncationGuard({
+  system, messages, maxTokens = 1500, providerOverride = null, ask = askStylistWithUsage, onAttempt = null
+} = {}) {
+  const usages = []
+  let lastText = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (onAttempt) onAttempt({ isRetry: attempt > 0 })
+    const call = await ask({
+      system,
+      messages: attempt === 0
+        ? messages
+        : [...messages,
+            { role: 'assistant', content: lastText },
+            { role: 'user', content: 'That reply was cut off by the token limit before it finished, so it may be incomplete — give a shorter, complete answer this time.' }
+          ],
+      maxTokens,
+      providerOverride
+    })
+    usages.push(call.usage)
+    lastText = call.text
+    if (call.usage?.stopReason !== 'max_tokens') return { text: call.text, usages, truncated: false }
+  }
+  return {
+    text: "I ran out of room to finish that answer completely — ask me again and I'll give a shorter, complete one.",
+    usages,
+    truncated: true
+  }
+}
+
+// A card's own role invariant (outfitValidation.js: "at most one primary_top, primary_bottom,
+// dress, and shoes role" plus "at most one MIDDLE layer... and at most one OUTER layer") caps a
+// valid outfit at five distinct pieces — top-or-dress, bottom, shoes, one middle layer, one outer
+// layer. Accessories are styled separately and never shown here. A lower image ceiling can still
+// starve a valid five-piece card of its outerwear or shoes in pass one, below.
+const MAX_STRUCTURAL_OUTFIT_PIECES = 5
+
+export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = userUploadsDir(), maxImages = MAX_STRUCTURAL_OUTFIT_PIECES } = {}) {
+  const list = Array.isArray(pieces) ? pieces : []
   const blocks = []
   const seenFiles = new Set()
-  const boundedLimit = Math.max(0, Math.min(4, Number(maxImages) || 0))
-  for (const piece of Array.isArray(pieces) ? pieces : []) {
-    for (const [label, photoFile] of [['worn photo', piece?.worn_photo], ['hanger photo', piece?.photo]]) {
-      if (blocks.filter(block => block.type === 'image').length >= boundedLimit) return blocks
-      if (!photoFile || seenFiles.has(photoFile)) continue
-      if (path.basename(photoFile) !== photoFile) continue
-      const filePath = path.join(uploadsDir, photoFile)
-      if (!fs.existsSync(filePath)) continue
-      try {
-        const thumb = await prepareWardrobeThumb(
-          filePath,
-          `compact-garment-fact:${piece.id}:${label}:${photoFile}`,
-          { maxPx: 640 }
-        )
-        blocks.push(
-          { type: 'text', text: `Saved ${label} for ${piece.name || `piece ${piece.id}`}:` },
-          { type: 'image', detail: 'low', source: { type: 'base64', ...thumb } }
-        )
-        seenFiles.add(photoFile)
-      } catch (err) {
-        console.warn(`Failed to prepare compact garment evidence for piece ${piece?.id}:`, err.message)
-      }
+  // 2026-09-16 (owner review): a hard-coded 4 was a stale ceiling from when 4 pieces was the
+  // largest card seen in practice — it could still truncate pass one below the outfit's own
+  // structural maximum and lose a valid fifth garment (typically the outer layer) entirely. The
+  // ceiling is now the actual structural maximum, so pass one always has room for one image per
+  // unique garment on any valid card before pass two spends anything on a second photo.
+  const boundedLimit = Math.max(0, Math.min(MAX_STRUCTURAL_OUTFIT_PIECES, Number(maxImages) || 0))
+  const imageCount = () => blocks.filter(block => block.type === 'image').length
+
+  const tryAdd = async (piece, label, photoFile) => {
+    if (imageCount() >= boundedLimit) return false
+    if (!photoFile || seenFiles.has(photoFile)) return false
+    if (path.basename(photoFile) !== photoFile) return false
+    const filePath = path.join(uploadsDir, photoFile)
+    if (!fs.existsSync(filePath)) return false
+    try {
+      const thumb = await prepareWardrobeThumb(
+        filePath,
+        `compact-garment-fact:${piece.id}:${label}:${photoFile}`,
+        { maxPx: 640 }
+      )
+      blocks.push(
+        { type: 'text', text: `Saved ${label} for ${piece.name || `piece ${piece.id}`}:` },
+        { type: 'image', detail: 'low', source: { type: 'base64', ...thumb } }
+      )
+      seenFiles.add(photoFile)
+      return true
+    } catch (err) {
+      console.warn(`Failed to prepare compact garment evidence for piece ${piece?.id}:`, err.message)
+      return false
     }
+  }
+
+  // thread_1789536455443 (2026-09-16): the previous loop was piece-major, photo-type-minor — worn
+  // AND hanger photo for piece 1, then piece 2, and so on — so a 4-image budget silently spent
+  // itself on the outfit's first two pieces and left later ones (on a 4-piece outfit: the
+  // outerwear) with no visual evidence at all. Pass 1 gives every garment ONE useful image (worn
+  // photo preferred, hanger as fallback) before any single garment gets a second; pass 2 only then
+  // spends remaining capacity on each garment's other photo, same order.
+  for (const piece of list) {
+    if (imageCount() >= boundedLimit) break
+    const gotWorn = await tryAdd(piece, 'worn photo', piece?.worn_photo)
+    if (!gotWorn) await tryAdd(piece, 'hanger photo', piece?.photo)
+  }
+  for (const piece of list) {
+    if (imageCount() >= boundedLimit) break
+    await tryAdd(piece, 'worn photo', piece?.worn_photo)
+    if (imageCount() >= boundedLimit) break
+    await tryAdd(piece, 'hanger photo', piece?.photo)
   }
   return blocks
 }
@@ -1224,28 +1381,111 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
-export const composerPieceLineSuffix = piece => {
-  const doNotPairRules = pieceGarmentIntelligence(piece).doNotPairRules
-  const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
-  const warmth = garmentWarmthLevel(piece)
-  const insulation = insulatingLayerMaterials(piece)
-  const weight = (group === 'shoes' || group === 'accessory') ? piece.visual_weight : piece.fabric_weight
-  const insulationStr = Array.isArray(insulation) && insulation.length ? insulation.join('+') : ''
-  const protectStr = Array.isArray(piece.weather_protection) && piece.weather_protection.length ? piece.weather_protection.filter(Boolean).join('/') : ''
 
-  return `${warmth && !['shoes', 'accessory'].includes(group) ? `; warmth: ${warmth}` : ''}` +
-    `${weight ? `; weight: ${weight}` : ''}` +
-    `${insulationStr ? `; insulation: ${insulationStr}` : ''}` +
-    `${protectStr ? `; protect: ${protectStr}` : ''}` +
-    `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}` +
-    `${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}` +
-    `${piece.opacity ? `; opacity: ${piece.opacity}` : ''}` +
-    `${piece.fit_on_body ? `; fit_on_body: ${piece.fit_on_body}` : ''}` +
-    `${piece.tuck_behavior ? `; tuck_behavior: ${piece.tuck_behavior}` : ''}` +
-    `${piece.hem_finish ? `; hem_finish: ${piece.hem_finish}` : ''}` +
-    `${piece.waistband_type ? `; waistband_type: ${piece.waistband_type}` : ''}` +
-    `${piece.needs_base ? `; needs_base: ${piece.needs_base}` : ''}` +
-    `${doNotPairRules.length ? `; do not pair: ${doNotPairRules.join(', ')}` : ''}`
+// EXPERIMENT INSTRUMENTATION, default off (docs/engine-behaviour-map.md, 2026-09-13 A/B plan).
+// Removes collapsed verdict words the engine adds to model-facing text — ordering headings and the
+// "acceptable" adjacency label — so a production-path comparison sees raw evidence only. Read at call
+// time; unset leaves every payload byte-identical.
+export function experimentNeutralVerdicts() {
+  return process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS === 'true'
+}
+
+// The old composer line builder (derived warmth, tagger reads_as, tagger do-not-pair) was removed 2026-09-15: every composer
+// garment line is now the shared fact line (styling-engine/garmentEvidenceLine.js).
+
+// COMPOSER-ONLY EXPERIMENT, garment line B1 (owner ruling 2026-09-14): the production composer line is kept
+// byte-for-byte and the structured facts the one-outfit catalog carries, but this line lacks, are APPENDED in
+// the composer's own `; field: value` vocabulary. Nothing is dropped or reinterpreted, no sparse convention
+// is assumed (defaults such as everyday formality are stated), and no role vocabulary is introduced — the
+// composer names roles through its slots, not through `layer_top` / `primary_top` labels.
+export const composerCompleteFactsSuffix = piece => {
+  const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
+  const facts = []
+  const add = (field, value) => {
+    const text = Array.isArray(value) ? value.filter(Boolean).join('/') : String(value ?? '').trim()
+    if (text) facts.push(`; ${field}: ${text}`)
+  }
+  add('colors', piece.colors)
+  add('pattern_type', piece.pattern_type)
+  add('pattern_scale', piece.pattern_scale)
+  add('pattern_complexity', piece.pattern_complexity)
+  add('silhouette', piece.silhouette)
+  add('formality', piece.formality)
+  add('season', piece.season)
+  if (['top', 'dress', 'outerwear'].includes(group)) {
+    add('length_hits_at', piece.length_hits_at)
+    add('neckline', piece.neckline)
+    add('sleeve_length', piece.sleeve_length)
+    add('sleeve_shape', piece.sleeve_shape)
+    add('stretch', piece.stretch)
+  } else if (group === 'bottom') {
+    add('bottom_shape', piece.bottom_shape)
+    add('leg_opening', piece.leg_opening)
+    add('length_hits_at', piece.length_hits_at)
+  } else if (group === 'shoes') {
+    add('shoe_type', piece.shoe_type)
+    add('toe_shape', piece.toe_shape)
+    add('walk_support', piece.walk_support)
+    add('heel_height', piece.heel_height)
+  } else if (group === 'accessory') {
+    add('accessory_subtype', piece.accessory_subtype)
+    add('jewelry_type', piece.jewelry_type)
+    add('necklace_length', piece.necklace_length)
+  }
+  if (group === 'outerwear') add('interior_construction', interiorConstruction(piece))
+  if (piece.tag_state === 'provisional') add('tag_state', 'provisional')
+  return facts.join('')
+}
+
+export const composerExperimentGarmentLine = (piece, garmentLine = 'production') => {
+  // The experiment baseline is the production garment line — the shared fact line (2026-09-15) — so a manifest run stays comparable.
+  const b0 = sharedGarmentEvidenceLine(piece)
+  return garmentLine === 'complete' ? `${b0}${composerCompleteFactsSuffix(piece)}` : b0
+}
+
+// Order a set of layers by how well each answers the resolved thermal demand, best first.
+// Exported for the contract test: ordering is the part of this that decides something, and an
+// inline closure inside a 400-line route function cannot be checked without a full HTTP round trip.
+//
+// Ranking, not gating — every piece stays. It reads `thermalRankingFit`, the shared ranking
+// primitive the roster builder itself uses, rather than `compareThermalFit`: fit membership alone
+// flattens a puffer and a cardigan into the same bucket on a coarse forecast, which is exactly the
+// ordering this exists to produce.
+export function orderLayersByThermalFit(pieces = [], demand = null) {
+  const list = Array.isArray(pieces) ? pieces : []
+  if (!demand?.level) return list
+  const rank = piece => {
+    const fit = thermalRankingFit(garmentWarmthLevel(piece), garmentWarmthScore(piece), demand)
+    // `unknown` keeps its incoming relevance position rather than being pushed to the back: an
+    // untagged layer is not evidence of a bad layer, and demoting it would make missing metadata
+    // behave like inadequacy — the criterion-8 error this arc keeps paying for.
+    if (fit.fit === 'unknown') return null
+    // DISTANCE IN LEVELS, NOT `offset`. `offset` is overshoot-WEIGHTED — it exists to express
+    // "prefer the garment that is not too hot", which is the right preference when ranking a
+    // garment for wear and the wrong one for a list whose whole job is "which of these covers the
+    // cool end". Live run thread_1789247972106: the navy quilted puffer was the ONLY layer whose
+    // fit was adequate, and its |offset| of 1.125 (0.75 above the level's centre, weighted) sorted
+    // it FIFTH, below four undershooting cardigans at 0.5-0.75 — in a section headed "ordered for
+    // these conditions". The owner picked that occasion expecting exactly that coat.
+    //
+    // Level distance is symmetric and is what this list means: at the demand level first, then one
+    // step away, then two. The signed offset still breaks ties, so a piece slightly above the level
+    // leads a piece the same distance below it — on a cool day that is the right way to lean.
+    const levels = Math.abs(fit.distance ?? 0)
+    return levels - (Number(fit.offset) > 0 ? 0.25 : 0)
+  }
+  // Keeping an unmeasured layer "in place" is a SLOT reservation, not a comparator special case: a
+  // comparator that falls back to index whenever one side is unknown is non-transitive, and sort
+  // then produces an order that depends on which pairs it happened to compare (it put a `light`
+  // vest ahead of a `warm` coat in exactly this fixture). Measured layers are ranked among
+  // themselves and poured back into the slots measured layers already occupied.
+  const scored = list.map((piece, index) => ({ piece, index, score: rank(piece) }))
+  const measured = scored.filter(entry => entry.score !== null)
+    .sort((a, b) => (a.score !== b.score ? a.score - b.score : a.index - b.index))
+  const measuredSlots = scored.filter(entry => entry.score !== null).map(entry => entry.index)
+  const result = list.slice()
+  measuredSlots.forEach((slot, i) => { result[slot] = measured[i].piece })
+  return result
 }
 
 async function composeSelectedPieceVisualWardrobeOutfits({
@@ -1377,32 +1617,21 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     ].filter(Boolean).join('\n')
   }
   if (activityProfile) {
-    const preferred = [
-      ...(activityProfile.rules?.preferred_materials || []),
-      ...(activityProfile.rules?.preferred_footwear || []),
-      ...(activityProfile.rules?.preferred_pieces || [])
-    ].join(', ')
-    const isWarmOrHot = Boolean(weatherProfile?.isHot)
-    const isSummer = season === 'summer'
-    const discouraged = [
-      ...(activityProfile.rules?.discouraged_materials || []),
-      ...(isWarmOrHot ? (activityProfile.rules?.discouraged_materials_warm || []) : []),
-      ...(activityProfile.rules?.discouraged_footwear || []),
-      ...(isSummer ? (activityProfile.rules?.discouraged_footwear_summer || []) : []),
-      ...(isWarmOrHot ? (activityProfile.rules?.discouraged_footwear_warm || []) : []),
-      ...(activityProfile.rules?.discouraged_pieces || [])
-    ].join(', ')
+    // 2026-09-15: the activity taste lists (preferred/discouraged) are ratified SOFT scoring and no
+    // longer rendered as instructions — see the matching note in the whole-wardrobe composer below.
     const activityGuidance = [
-      activityProfile.vibe ? `Activity vibe: ${activityProfile.vibe}` : '',
-      preferred ? `For this activity, lean toward: ${preferred}` : '',
-      discouraged ? `For this activity, use sparingly and justify in watchFor: ${discouraged}` : ''
+      activityProfile.vibe ? `Activity vibe: ${activityProfile.vibe}` : ''
     ].filter(Boolean).join('\n')
     occasionProfileGuidance = [occasionProfileGuidance, activityGuidance].filter(Boolean).join('\n\n')
   }
   if (comfortConstraint) {
     const walkingGuidance = comfortConstraint.reason === 'all-day walking comfort'
-      ? 'All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots; prefer low block heels, loafers, flats, sneakers.'
-      : 'Hiking/Outdoor active: avoid heels, wedges, dress shoes, delicate sandals, mules, and sandals; require sneakers, athletic shoes, or flat rugged boots.'
+      // 2026-09-15: this sentence now states only what the footwear gate actually enforces.
+      // Warm-weather boots (walking) and mules/sandals (hiking) are ratified SOFT — score penalty,
+      // never suppression (docs/occasion_profiles_ratification.md) — so naming them here turned a
+      // ranking preference into a prohibition the engine never held.
+      ? 'All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers.'
+      : 'Hiking/Outdoor active: avoid heels, wedges, dress shoes, and flip-flops; require sneakers, athletic shoes, or flat rugged boots.'
     occasionProfileGuidance = [occasionProfileGuidance, walkingGuidance].filter(Boolean).join('\n')
   }
 
@@ -1420,11 +1649,12 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     occasionProfileGuidance ? `Occasion/activity guidance:\n${occasionProfileGuidance}` : '',
     memoryText ? `Taste and selected-garment memory:\n${memoryText.slice(0, 7000)}` : '',
     '',
-    'Compose 3-4 complete outfits using only shown saved wardrobe pieces.',
+    `Compose ${SELECTED_PIECE_OUTFIT_COUNT.minOutfits}-${SELECTED_PIECE_OUTFIT_COUNT.maxOutfits} complete outfits using only shown saved wardrobe pieces.`,
     `Every outfit must include selected anchor id ${selectedPiece.id}. Do not replace it with another ${wardrobeCategoryGroup(selectedPiece) || selectedPiece.category}.`,
     'Use the selected garment as the visual/thematic anchor; choose support pieces around its actual role, risks, and confidence-aware garment truth.',
     'Reference pieces only by exact IDs shown in labels. Do not invent missing pieces in this wardrobe mode.',
     '',
+    GARMENT_FACT_CONVENTIONS,
     'Below are photos of the selected anchor and candidate support pieces, grouped by category.'
   ].filter(Boolean).join('\n') })
 
@@ -1436,7 +1666,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) return
     const thumb = await prepareWardrobeThumb(filePath, `${piece.id}:${photoFile}`, { maxPx: composerThumbPx })
-    content.push({ type: 'text', text: `${labelPrefix} ID ${piece.id}: ${piece.name}${composerPieceLineSuffix(piece)}` })
+    content.push({ type: 'text', text: `${labelPrefix} ${sharedGarmentEvidenceLine(piece)}` })
     content.push({ type: 'image', detail: detailOverride || composerImageDetail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
     shownPieceCount++
     shownPieces.push(piece)
@@ -1462,77 +1692,61 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let parsed = {}
   let composerError = null
   let composerErrorIsTruncation = false
+  let composerErrorIsTimeout = false
   let composerUsage = null
   const composerMaxTokens = structuredResponseMaxTokens(4)
   try {
     const composerStartedAt = Date.now()
-    const composerResult = await withTimeout(askStylistWithUsage({
+    const composerResult = await withTimeout(signal => askStylistStructuredWithUsage({
       system: selectedItemVisualComposerSystemPrompt(),
       maxTokens: composerMaxTokens,
       messages: [{ role: 'user', content }],
-      providerOverride
+      providerOverride,
+      // The user message asks for this same range of outfits; the schema carries it too.
+      schema: composerOutfitSlotsSchema(SELECTED_PIECE_OUTFIT_COUNT),
+      name: 'wardrobe_outfits',
+      description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
+      subflow: 'selected_piece_visual_composer',
+      signal,
     }), 120000, 'Selected-piece visual composer')
     timings.composerMs = Date.now() - composerStartedAt
     composerUsage = composerResult.usage || null
-    parsed = parseModelJson(composerResult.text, { context: 'selected-piece visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })
+    parsed = composerResult.value || {}
   } catch (err) {
     timings.composerMs = Date.now() - routeStartedAt - timings.thumbPrepMs
     composerError = err.message
     composerErrorIsTruncation = Boolean(err.isTruncation)
+    composerErrorIsTimeout = Boolean(err.isTimeout)
   }
 
+  // Slot resolution (composerSlots.js). The anchor used to be unshifted into any card that omitted
+  // it, and cards that still lacked it were dropped — both made the model's answer look like
+  // something it was not. A card without the anchor is now a Needs review card saying so.
   const unresolvedReferences = []
-  const resolved = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-    const incomingPieces = Array.isArray(outfit.pieces) 
-      ? outfit.pieces 
-      : (Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(id => ({ id })) : [])
-    
-    const hasAnchor = incomingPieces.some(p => Number(p.id) === selectedId)
-    if (!hasAnchor) {
-      const anchorPiece = poolById.get(selectedId) || candidatePieces.find(p => Number(p.id) === selectedId)
-      if (anchorPiece) {
-        incomingPieces.unshift({ id: selectedId, name: anchorPiece.name })
-      }
+  const slotFindingsByOutfit = new Map()
+  const selectedModelOutfits = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+    const slots = resolveComposerSlotOutfit(outfit, candidatePieces, { requiredPieceId: selectedId })
+    for (const finding of slots.slotFindings.filter(item => item.code === 'unknown_piece_id')) {
+      unresolvedReferences.push({ id: finding.evidence.pieceId, name: null, slot: finding.evidence.slot, outfitLabel: outfit?.label || 'unlabeled' })
     }
-
-    const resolvedPieces = []
-    for (const p of incomingPieces) {
-      const id = p?.id
-      const name = p?.name
-      let match = candidatePieces.find(item => Number(item.id) === Number(id))
-      if (!match && name) {
-        match = candidatePieces.find(item => normalizeForMatch(item.name) === normalizeForMatch(name))
-      }
-      if (!match) {
-        unresolvedReferences.push({
-          id,
-          name,
-          outfitLabel: outfit.title || outfit.direction || outfit.label || 'unlabeled'
-        })
-      } else {
-        resolvedPieces.push(match)
-      }
+    const normalized = normalizeWholeWardrobeOutfitObject({ ...outfit, pieceIds: slots.pieceIds, pieces: slots.pieces }, candidatePieces, { deriveMissingRoles: false })
+    // Required-footwear repair swaps a shoe on a complete card; an incomplete card is shown exactly
+    // as the model answered it.
+    const card = {
+      ...(slots.slotFindings.length
+        ? normalized
+        : repairWholeWardrobeOutfit(normalized, candidatePieces, occasion, mood, { season, weatherProfile, activity })),
+      modelSlots: slots.modelSlots,
     }
-    const uniqueResolved = []
-    const seenIds = new Set()
-    for (const p of resolvedPieces) {
-      if (p && !seenIds.has(Number(p.id))) {
-        seenIds.add(Number(p.id))
-        uniqueResolved.push(p)
-      }
-    }
-    return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
-  }).filter(o => o.pieces.some(p => Number(p.id) === selectedId) && o.pieces.length >= 2)
-
-  const selectedModelOutfits = resolved.map(o =>
-    repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood, { season, weatherProfile, activity }))
-    .filter(o => (o.pieceIds || []).map(Number).includes(selectedId))
+    slotFindingsByOutfit.set(card, slots.slotFindings)
+    return card
+  })
   const selectedValidation = new Map(selectedModelOutfits.map(outfit => [
     outfit,
-    evaluateWearableOutfit(outfit.pieces, {
+    withSlotFindings(evaluateWearableOutfit(outfit.pieces, {
       requireShoes: true,
       seenPieceIds: new Set(shownPieces.map(piece => Number(piece.id))),
-    }),
+    }), slotFindingsByOutfit.get(outfit)),
   ]))
   const needsReviewOutfits = selectedModelOutfits
     .filter(outfit => !selectedValidation.get(outfit).hardValid)
@@ -1541,7 +1755,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       broken: true,
       diagnosticOnly: true,
       strength: 'needs review',
-      rejectionReason: selectedValidation.get(outfit).primaryFinding?.message || 'Hard outfit validation failed.',
+      // One primary explanation for the owner; `findings` below keeps every typed finding.
+      rejectionReason: primaryUserFacingFinding(selectedValidation.get(outfit).hardFindings)?.message || 'Hard outfit validation failed.',
     }, {
       disposition: 'rejected',
       findings: selectedValidation.get(outfit).hardFindings,
@@ -1618,6 +1833,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
       composerError,
       composerErrorIsTruncation,
+      composerErrorIsTimeout,
       composerMaxTokens,
       composerUsage: composerUsage ? {
         ...composerUsage,
@@ -1629,7 +1845,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       walkable: rosterDebug.walkable,
       rosterCounts: rosterDebug.categoryCounts,
       unresolvedReferences,
-      unresolvedReferencesCount: unresolvedReferences.length
+      unresolvedReferencesCount: unresolvedReferences.length,
+      outfitCountCheck: composerOutfitCountCheck(parsed, SELECTED_PIECE_OUTFIT_COUNT),
     }
   }
 }
@@ -2097,7 +2314,7 @@ export async function generateOutfitsForPieceInternal({
     visualCriticDebug = composed.debug || null
   } else {
     try {
-      const visualReview = await withTimeout(rankSelectedPieceCandidatesWithVision({
+      const visualReview = await withTimeout(signal => rankSelectedPieceCandidatesWithVision({
         selectedPiece: parsedPiece,
         rankedCandidates,
         occasion,
@@ -2106,7 +2323,8 @@ export async function generateOutfitsForPieceInternal({
         mood,
         question,
         memoryText,
-        providerOverride
+        providerOverride,
+        signal
       }), 20000, 'Selected-piece visual critic')
       if (visualReview?.rankedCandidates?.length) {
         rankedCandidates = visualReview.rankedCandidates
@@ -2218,7 +2436,17 @@ export async function generateOutfitsForPieceInternal({
       recoveryShortfall: composed.recoveryShortfall || null,
       compositionSkipped: composed.compositionSkipped || null,
       weatherProfile,
-      stylingContext: stylingContext.debug
+      stylingContext: stylingContext.debug,
+      // 2026-09-16 (owner review, thread_1789546295700): tools.js's generate_outfits handler reads
+      // aiReturnedCount/composerError/composerErrorIsTimeout at the TOP of `result.debug` (matching
+      // generateWholeWardrobeOutfitsVisualInternal's shape) to tell a genuine zero-model-card
+      // technical failure apart from ordinary success — composeSelectedPieceVisualWardrobeOutfits
+      // already tracks these on ITS OWN debug object (visualCriticDebug above), just nested one
+      // level down. Falls back to structuredOutfits.length (the prior behavior) for the idealMode/
+      // idealOnlyMode branches, which do not go through that composer and so never populate this.
+      aiReturnedCount: visualCriticDebug?.aiReturnedCount ?? structuredOutfits.length,
+      composerError: visualCriticDebug?.composerError ?? null,
+      composerErrorIsTimeout: visualCriticDebug?.composerErrorIsTimeout ?? false,
     }
   }
 }
@@ -2295,6 +2523,77 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
 // roster manifest. A follow-up on the generated outfits routes through /ai/ask
 // (message-lifecycle.md Stage 1, dispatch branches 11-12), which decides its own conversational
 // cache disposition against a different stable prefix, so there is nothing here to preserve.
+// COMPOSER-ONLY EXPERIMENT (docs/stage1-cause-matrix-2026-09-14.md §4–7). Off unless
+// WARDROBE_EXPERIMENT_COMPOSER_MANIFEST names a manifest file, read at call time. Everything upstream of
+// the composer call — context resolution, eligibility, ranking, caps, roster order, photographs, prompt
+// assembly — runs exactly as in production; only the substitutions the manifest declares are applied,
+// and the function returns immediately after the composer response (no slot repair, gate, backfill,
+// critic or repair). A named manifest that is missing or invalid throws: an experiment never silently
+// runs as production.
+// Production now uses the same neutral sentence everywhere (2026-09-14); kept under the experiment name for the
+// sealed Stage 2 harness and its tests.
+export const EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE = NEUTRAL_SLEEVE_LAYERING_STATEMENT
+
+// DAY-WEAR EXPLANATION EXPERIMENT (docs/day-wear-explanation-experiment-2026-09-15.md). Experiment-only until the owner-rated
+// comparison demonstrates an improvement. It asks the stylist to state its own intention and the coverage it leaves at each end
+// of the stated conditions. It carries no engine verdict, no layer requirement and names no garment category.
+export const DAY_WEAR_EXPLANATION_INSTRUCTION = 'WEARING IT THROUGH THE STATED CONDITIONS: for each outfit, fill `wear_through_day` with how you intend it to be worn across the stated conditions. Describe the warmest part and the coolest part separately; when the conditions do not change, describe the whole period once. For each, name which of the outfit\'s pieces are worn and how (for example open, closed, zipped or carried), and what that leaves covered or uncovered: arms, neck, torso and legs. Say what changes between the two, or that nothing changes. This describes your intention; say where the photographs and facts do not show something, and do not present warmth as certain.'
+
+export function withDayWearExplanation(systemPrompt) {
+  return `${String(systemPrompt)}\n\n${DAY_WEAR_EXPLANATION_INSTRUCTION}`
+}
+
+export function composerExperimentManifest() {
+  const file = process.env.WARDROBE_EXPERIMENT_COMPOSER_MANIFEST
+  if (!file) return null
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'))
+  const fail = reason => { throw new Error(`Invalid composer experiment manifest (${file}): ${reason}`) }
+  if (!String(manifest?.experiment || '').trim()) fail('experiment name is required')
+  if (manifest.stopAfterComposer !== true) fail('stopAfterComposer must be true')
+  if (!['production', 'complete'].includes(manifest.garmentLine)) fail('garmentLine must be production or complete')
+  if (!['production', 'neutral'].includes(manifest.sleeveGuidance)) fail('sleeveGuidance must be production or neutral')
+  if (typeof manifest.holdOutComparisonSet !== 'boolean') fail('holdOutComparisonSet must be boolean')
+  if (manifest.maxTokensForCount !== null && !(Number.isInteger(manifest.maxTokensForCount) && manifest.maxTokensForCount >= 1 && manifest.maxTokensForCount <= 5)) fail('maxTokensForCount must be null or 1–5')
+  const dayWearGuidance = manifest.dayWearGuidance ?? 'production'
+  if (!['production', 'explain'].includes(dayWearGuidance)) fail('dayWearGuidance must be production or explain')
+  const requireSealedRequest = manifest.requireSealedRequest ?? false
+  const expectedRequestIdentitySha256 = manifest.expectedRequestIdentitySha256 ?? null
+  if (typeof requireSealedRequest !== 'boolean') fail('requireSealedRequest must be boolean')
+  if (expectedRequestIdentitySha256 !== null && !/^[0-9a-f]{64}$/.test(String(expectedRequestIdentitySha256))) fail('expectedRequestIdentitySha256 must be null or a sha256')
+  if (requireSealedRequest && !expectedRequestIdentitySha256) fail('a sealed request needs expectedRequestIdentitySha256')
+  return Object.freeze({
+    experiment: String(manifest.experiment), arm: String(manifest.arm || ''), stopAfterComposer: true,
+    garmentLine: manifest.garmentLine, sleeveGuidance: manifest.sleeveGuidance,
+    holdOutComparisonSet: manifest.holdOutComparisonSet, maxTokensForCount: manifest.maxTokensForCount, dayWearGuidance,
+    requireSealedRequest, expectedRequestIdentitySha256,
+    manifestSha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+  })
+}
+
+// The complete identity of one provider request: system text, every user text part in order, every image's
+// bytes (with its media type and detail) in order, the schema, the resolved model and the token budget. A
+// sealed experiment call compares this immediately before the provider call and refuses on any mismatch.
+export function composerRequestIdentity({ system, content = [], schema = null, model = '', maxTokens = 0 }) {
+  const sha = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
+  const parts = {
+    systemSha256: sha(String(system ?? '')),
+    textPartsSha256: sha((Array.isArray(content) ? content : []).filter(part => part?.type === 'text').map(part => part.text)),
+    imagesSha256: sha((Array.isArray(content) ? content : []).filter(part => part?.type === 'image').map(part => ({ detail: part.detail || null, mediaType: part.source?.media_type || null, bytesSha256: sha(String(part.source?.data || '')) }))),
+    schemaSha256: sha(schema ?? null),
+    model: String(model || ''),
+    maxTokens: Number(maxTokens) || 0,
+  }
+  return { ...parts, sha256: sha(parts) }
+}
+
+// Exactly one occurrence of the categorical sleeve rule is replaced; anything else is a contract error.
+export function withNeutralSleeveGuidance(systemPrompt) {
+  const rule = layerConstructionPromptRule()
+  const count = String(systemPrompt).split(rule).length - 1
+  if (count !== 1) throw new Error(`Expected the sleeve layering rule exactly once in the composer system prompt, found ${count}`)
+  return String(systemPrompt).replace(rule, `- ${EXPERIMENT_NEUTRAL_SLEEVE_SENTENCE}`)
+}
+
 export function wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance = '') {
   return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}${savedVariantGuidance ? `\n\n${savedVariantGuidance}` : ''}`
 }
@@ -2302,8 +2601,10 @@ export function wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance = '
 // Same one-shot disposition as wholeWardrobeVisualComposerSystemPrompt above — this call site
 // never carried PROMPT_CACHE_BREAKPOINT; named here so that stays a verifiable fact rather than an
 // inline string nobody checks.
+const SELECTED_PIECE_OUTFIT_COUNT = Object.freeze({ minOutfits: 3, maxOutfits: 4 })
+
 export function selectedItemVisualComposerSystemPrompt() {
-  return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`
+  return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES), null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(ACTIVITY_PROFILES), null, 2)}`
 }
 
 export async function generateWholeWardrobeOutfitsVisualInternal({
@@ -2341,6 +2642,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const composerExperiment = composerExperimentManifest()
+    const experimentImageManifest = []
     const stylingContext = await resolveStylingContext({
       explicitRequest: {
         occasion,
@@ -2372,65 +2675,23 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     } = stylingContext
     let occasionProfileGuidance = ''
     if (occasionProfile) {
-      const preferred = [
-        ...(occasionProfile.rules?.preferred_materials || []),
-        ...(occasionProfile.rules?.preferred_footwear || [])
-      ].join(', ')
-      const discouraged = [
-        ...(occasionProfile.rules?.discouraged_materials || []),
-        ...(occasionProfile.rules?.discouraged_materials_warm || []),
-        ...(occasionProfile.rules?.discouraged_footwear || []),
-        ...(occasionProfile.rules?.discouraged_footwear_summer || []),
-        ...(occasionProfile.rules?.discouraged_pieces || [])
-      ].join(', ')
-      
       const parts = []
       parts.push(`Occasion Vibe: ${occasionProfile.vibe}`)
-      if (preferred || discouraged) {
-        let rulesLine = 'For this occasion, '
-        if (preferred) {
-          rulesLine += `lean toward: ${preferred}`
-        }
-        if (discouraged) {
-          if (preferred) rulesLine += '; '
-          rulesLine += `use sparingly and justify in watchFor: ${discouraged}`
-        }
-        rulesLine += '.'
-        parts.push(rulesLine)
-      }
+      // 2026-09-15: the occasion taste lists no longer reach the model as instructions. They are
+      // ratified as SOFT SCORING (docs/occasion_profiles_ratification.md: "SOFT = score penalty,
+      // never suppression"; the preferred lists as "soft bonuses"), and rules.js still applies
+      // them to roster ranking. Rendering them here restated a ranking preference as a styling
+      // requirement — and, being weather-blind, told the model to lean toward cardigans, light
+      // outerwear and low heels for a 50/40°F walking day (thread_1789508440573).
       occasionProfileGuidance = parts.join('\n')
     }
 
     if (activityProfile) {
-      const preferred = [
-        ...(activityProfile.rules?.preferred_materials || []),
-        ...(activityProfile.rules?.preferred_footwear || [])
-      ].join(', ')
-      const isWarmOrHot = Boolean(weatherProfile?.isHot)
-      const isSummer = season === 'summer'
-      const discouraged = [
-        ...(activityProfile.rules?.discouraged_materials || []),
-        ...(isWarmOrHot ? (activityProfile.rules?.discouraged_materials_warm || []) : []),
-        ...(activityProfile.rules?.discouraged_footwear || []),
-        ...(isSummer ? (activityProfile.rules?.discouraged_footwear_summer || []) : []),
-        ...(isWarmOrHot ? (activityProfile.rules?.discouraged_footwear_warm || []) : []),
-        ...(activityProfile.rules?.discouraged_pieces || [])
-      ].join(', ')
-      
       const parts = []
       parts.push(`Activity Vibe: ${activityProfile.vibe || 'movement-focused'}`)
-      if (preferred || discouraged) {
-        let rulesLine = 'For this activity, '
-        if (preferred) {
-          rulesLine += `lean toward: ${preferred}`
-        }
-        if (discouraged) {
-          if (preferred) rulesLine += '; '
-          rulesLine += `use sparingly and justify in watchFor: ${discouraged}`
-        }
-        rulesLine += '.'
-        parts.push(rulesLine)
-      }
+      // 2026-09-15: same as the occasion block above. The activity lists carry the categorical
+      // walk/season bans the owner flagged (silk/dresses/skirts/blouses on a walk, boots when warm)
+      // — all ratified SOFT. They stay in scoring; they are no longer model instructions.
       const activityGuidance = parts.join('\n')
       occasionProfileGuidance = occasionProfileGuidance
         ? `${occasionProfileGuidance}\n\n${activityGuidance}`
@@ -2439,8 +2700,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     if (comfortConstraint) {
       const walkingGuidance = comfortConstraint.reason === 'all-day walking comfort'
-        ? "All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots; prefer low block heels, loafers, flats, sneakers."
-        : "Hiking/Outdoor active: avoid heels, wedges, dress shoes, delicate sandals, mules, and sandals; require sneakers, athletic shoes, or flat rugged boots."
+        // 2026-09-15: same correction as the selected-piece composer above — the sentence states
+        // only the gate-enforced exclusions; the SOFT lists stay in scoring, not in instructions.
+        ? "All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers."
+        : "Hiking/Outdoor active: avoid heels, wedges, dress shoes, and flip-flops; require sneakers, athletic shoes, or flat rugged boots."
       occasionProfileGuidance = occasionProfileGuidance
         ? `${occasionProfileGuidance}\n${walkingGuidance}`
         : walkingGuidance
@@ -2522,7 +2785,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Compute weather profile and filter the visual composer roster
     const poolEvaluation = evaluateVisualComposerPiecePool({
       pieces: allowedPieces,
-      context: { occasion, weatherProfile, mood, activity, requestText: stylingRequest, question, occasionProfile, activityProfile },
+      context: { occasion, weatherProfile, mood, activity, requestText: stylingRequest, question, occasionProfile, activityProfile, calendarSeason: stylingContext.calendarSeason },
       policy: { selectedPieceId: savedMainPieceId, sessionInfluence, maxImages: 90 },
     })
     let { eligiblePieces: roster, excludedPieces: excluded, debug: rosterDebug } = poolEvaluation
@@ -2563,6 +2826,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
           shownPieceCount: 0,
           suppressedCount: suppressedPieces.length,
           suppressedReasonCounts,
+          // Debug-only supply boundary, per piece: which garments automatic-use suppression removed and why.
+          suppressedPieces: suppressedPieces.map(piece => ({ id: Number(piece.id), reasons: piece.reasons || [] })),
           weatherProfile,
           stylingContext: stylingContext.debug,
           savedMainBypassedSuppression,
@@ -2645,13 +2910,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const enforced = rosterDebug.activityTagEnforcedGroups || []
       const gaps = rosterDebug.activityCoverageGaps || []
       if (!activityProfile?.rules?.required_occasion_tags?.length) return ''
-      if (enforced.length && !gaps.length) return `All roster pieces are rated for ${activityProfile.label}; compose freely.`
+      if (enforced.length && !gaps.length) return `All roster pieces carry a ${activityProfile.label} rating; that rating covers this activity's footwear and register checks only, not whether a piece or a completed outfit suits these conditions.`
       if (gaps.length) return `Note: limited ${activityProfile.label}-rated coverage for ${gaps.join(', ')}; closest suitable pieces included.`
       return ''
     })()
 
     const composerThumbPx = 768
     const composerImageDetail = visualComposerImageDetailForRoster(roster.length)
+
+    // Hoisted above the catalog loop (it used to live with the volatile tail) because the demand is
+    // now used AT THE POINT OF CHOICE — see the outerwear heading and ordering below. Nothing about
+    // its value changed; it reads the resolved profile and nothing else.
+    const composerExposure = resolveExposureContext({}, weatherProfile)
+    const weatherDemand = requiredThermalBand(composerExposure)
 
     // Build the multimodal content array.
     // STABLE PREFIX FIRST: candidate thumbnails & catalog text (cached across requests within 5 minutes)
@@ -2669,8 +2940,18 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let shownPieceCount = 0
     const shownPieces = []
     const imageSizeCounts = {}
+    // THE DEMAND BELONGS WHERE THE CHOICE IS MADE. Live runs 2077 and 3 both stated it in the
+    // volatile tail — first as a requirement, then as evidence — and both times the model picked its
+    // layer by looks and narrated warmth afterwards (run 3 called a `warmth: very light` vest "for
+    // warmth"). Two thousand characters separated the number from the labels it had to be compared
+    // against. Here it sits on the heading of the section the layer is chosen from, and the section
+    // leads with the pieces that actually answer it.
+    //
+    // Outerwear ONLY. Every other category's order is the roster's own relevance ranking (occasion,
+    // history, recency, weather), and re-sorting tops or shoes by warmth would let one axis quietly
+    // outrank all of it. The layer is the garment this question is actually about.
     for (const group of grouped.keys()) {
-      const pieces = grouped.get(group)
+      const pieces = group === 'outerwear' ? orderLayersByThermalFit(grouped.get(group), weatherDemand) : grouped.get(group)
       if (!pieces?.length) continue
       const categoryHeading = {
         top: 'TOPS',
@@ -2680,6 +2961,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         outerwear: 'OUTERWEAR',
         accessory: 'ACCESSORIES'
       }[group] || `${group.toUpperCase()}S`
+      // NO TARGET LEVEL IN THE HEADING (owner ruling 2026-09-12). Naming the level the outfit "needs
+      // to read" turned a styling task into arithmetic against a published scale: on a wardrobe
+      // whose bases are all `moderate`, one `moderate` layer visibly does not reach `warm`, so the
+      // arithmetic route to the stated target is a second layer — and cards started arriving with
+      // two coats. The ordering still carries the same information without inviting a sum.
+      // No heading verdict either (2026-09-15): "(ordered for these conditions)" told the model a derived thermal ordering was a
+      // judgment about the conditions. Garment lines state recorded facts; the model judges fit against the stated range.
       content.push({ type: 'text', text: `=== ${categoryHeading} ===` })
       for (const p of pieces) {
         const photoFile = p.worn_photo || p.photo || ''
@@ -2689,11 +2977,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: adaptiveVisualDetail })
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${maxPx}:${photoFile}`, { maxPx })
         imageSizeCounts[maxPx] = (imageSizeCounts[maxPx] || 0) + 1
-        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
+        content.push({ type: 'text', text: composerExperiment ? composerExperimentGarmentLine(p, composerExperiment.garmentLine) : sharedGarmentEvidenceLine(p) })
         content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+        if (composerExperiment) {
+          experimentImageManifest.push({ id: Number(p.id), photoFile, photoKind: photoFile === p.worn_photo ? 'worn' : 'hanger', maxPx, detail, sentSha256: createHash('sha256').update(String(thumb.data)).digest('hex') })
+        }
         shownPieceCount++
         shownPieces.push(p)
       }
+    }
+
+    // Shared garment evidence: the fact-line conventions once, then saved-record notes (owner rules, rejections) for shown pieces only.
+    if (shownPieces.length) {
+      content.push({ type: 'text', text: [GARMENT_FACT_CONVENTIONS, garmentNotesBlock(shownPieces)].filter(Boolean).join('\n\n') })
     }
 
     // No cache_control on the candidate manifest (removed 2026-08-26 — docs/deferred-conversational-
@@ -2714,35 +3010,117 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Narrower than §8.1's pin suggested: this line was named there as the last hidden binary, but
     // the real one was tools.js's search-evidence gate (§22.1). This is a disclosure, not the
     // evidence itself.
-    const weatherDemand = requiredThermalBand(resolveExposureContext({}, weatherProfile))
     const isWeatherFiltered = Boolean(weatherProfile.isHot || weatherDemand.level)
+    // 2026-09-16 (thread_1789526496845, reopened): a prior version of this line hedged EVERY
+    // numeric range as "timing within the day unknown", which directly contradicted the ratified
+    // contract this same number carries end to end (docs/app-surface-map.md, 2026-09-12 ruling):
+    // `weatherProfile.highF/lowF` IS taken verbatim as the range the wearer will actually be
+    // outside in, by `exposure.js`'s `stated_user` branch — never a daily envelope requiring a
+    // waking-window estimate the way a live/model-estimated forecast does. Hedging that meaning
+    // here, while the exposure/ranking engine still treats the same number as certain, produced a
+    // self-contradiction rather than a fix. The actual defect — a daily FORECAST statement
+    // ("the forecast is 50°F high and 40°F low") getting set as this certain field in the first
+    // place, decoupled from a narrower stated activity window — is fixed upstream, at the point
+    // where the model decides whether to populate `user_weather.high_f/low_f` at all
+    // (`USER_WEATHER_SCHEMA`, styling-engine/tools.js). By the time a number reaches here, it is
+    // supposed to mean what the ratified contract says it means, so this line states it plainly.
     const tempText = Number.isFinite(Number(weatherProfile?.highF))
       ? `${Math.round(Number(weatherProfile.highF))}°F high${Number.isFinite(Number(weatherProfile?.lowF)) ? ` / ${Math.round(Number(weatherProfile.lowF))}°F low` : ''}`
       : ''
+    // EVIDENCE, NOT AN INSTRUCTION (principle 3: code constrains, the model judges). The first
+    // version of this block told the model a layer was REQUIRED and named the warmth it had to
+    // reach — an imperative that then had to contradict itself ("a midweight knit counts") and was
+    // resolved by the model in the wrong direction: live run 2077 put a `moderate` or `very light`
+    // layer on four of five cards and every one drew an undershoot note. The engine's job here is
+    // to state what the conditions ask for in the SAME vocabulary the piece labels already carry,
+    // and what the shown wardrobe can answer it with. Choosing the layer stays the model's.
+    //
+    // Same shape the trip flow already ships (outfitSetPlanner's slotThermalDemandLabel /
+    // slotExposureConditions), which replaced a computed `thermal_demand` target for exactly this
+    // reason; the composer never got it.
+    const demandLabel = slotThermalDemandLabel(composerExposure)
+    const shownLayers = shownPieces.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+    // THE LAYER BAND, not the base band — the same correction the roster reserve carries. A
+    // removable layer answers `weatherDemand.layer` (light..warm on a 65/46 day), which spans the
+    // day because the layer comes off; the base band is what the whole outfit must reach at the
+    // cold end. An earlier version of this list read the base band and admitted anything that was
+    // not an undershoot, so `very warm` winter coats were advertised to the model as adequate and
+    // three of five live cards shipped one on a 65°F afternoon.
+    //
+    // An untagged layer (`unknown`) is counted neither way — the sentence below claims only what
+    // labels actually say, and calling an unmeasured piece inadequate is the criterion-8 error this
+    // arc keeps paying for.
+    //
+    // The sentence in the prompt states how many there are; the pieces themselves order the
+    // outerwear block. One derivation, so the count and the ordering cannot disagree.
+    const layerDemand = weatherDemand.layer || weatherDemand
+    const layerAnswersDemand = piece => compareThermalFit(garmentWarmthLevel(piece), layerDemand).fit === 'adequate'
+    const qualifyingLayers = weatherDemand.level
+      ? shownLayers.filter(layerAnswersDemand)
+      : []
+
+    // THE REPAIR'S OWN BENCH, not the composer's presentation cap (owner ruling 2026-09-13).
+    //
+    // `shownLayers` is what fits in ONE call's image budget after the roster cap — a presentation
+    // limit, not an eligibility boundary. Sourcing repair candidates from it inherited that limit as
+    // validity: on live thread_1789288270913 the wardrobe held 25 weather-qualifying hard-eligible
+    // layers and the repair could only ever see 7, with the navy puffer, the cream trench and the
+    // lavender fleece invisible to it for no reason but cap position.
+    //
+    // `recoveryEligiblePieces` is the existing authority for exactly this distinction — pieces
+    // omitted only for presentation or capacity, never one rejected by a weather, register,
+    // activity, footwear or metadata validity gate — and the comfort-footwear repair already
+    // sources from it. This follows the same precedent as PR 315's trip bench and PR 316's complete
+    // sparse catalog: a later stage gets the full eligible set, not the first stage's shortlist.
+    const repairLayerBench = weatherDemand.level
+      ? (poolEvaluation.recoveryEligiblePieces || [])
+          .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+          .filter(layerAnswersDemand)
+      : []
+    const qualifyingLayerCount = qualifyingLayers.length
+    // The claim this replaces said "everything shown is weather-optimized" whenever a demand
+    // existed — on run 2077 nothing whatsoever had been excluded for weather, so the model was told
+    // the roster had already settled a question it had not. Ordering is not removal; say which one
+    // happened.
+    // BOTH removal stages, or the count lies. A hot-weather wool dress is dropped by automatic-use
+    // suppression BEFORE the roster is built (suppressedPieces, `reasons[]`), while the cool/cold
+    // and outerwear-cap drops happen inside the pool evaluation (excluded, `reason`). Counting only
+    // the second reported "nothing was removed" on a run that had just removed a piece.
+    const weatherReason = value => /weather|insulat|season/i.test(String(value || ''))
+    const weatherExcludedCount =
+      (excluded || []).filter(entry => weatherReason(entry?.reason)).length +
+      (suppressedPieces || []).filter(piece => (piece?.reasons || []).some(weatherReason)).length
     content.push({ type: 'text', text: [
       location ? `Location: ${location}` : '',
       `Occasion: ${occasion}`,
       `Season: ${season}`,
-      tempText ? `Temperature: ${tempText}` : '',
+      tempText ? `Temperature: ${tempText}${demandLabel ? ' — judge the outfit against the range, not against a number' : ''}` : '',
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',
       activityFactLine,
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
-      isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
-      'Garment wear facts in the image labels are constraints. Obey them silently. Opacity and needs_base are authoritative: do not call an opaque, independently wearable garment sheer or invent an underlayer for it. Do not repeat a fixed fact the owner already knows merely to fill styling_instructions; use that field only for an actual, useful action or chosen relationship between pieces.',
-      'CARD WEAR MECHANICS & RENDERER CONTRACT: styling_instructions is the authoritative placement guidance for the image renderer and persists on the card. If the user requested a specific wear mechanic (untucked, belted, sleeves pushed, worn open) or if two pieces have a physical placement relationship (such as a top over a waistband, or an open cardigan over a dress), state it concisely in styling_instructions.',
-      'TIME-OF-DAY WEATHER: Judge the part of the forecast range relevant to the request, not only the daily high. For an evening or early-morning outing near a cooler low, include a plausible removable transition layer when the shown wardrobe supports one. An indoor destination may shape the base outfit, but it does not erase arrival and departure weather. This also runs the other direction: the BASE outfit — what carries the main part of the day — should track the day\'s HIGH, not a cooler morning/evening low. Do not choose a heavy or insulating-fiber top or bottom (a chunky knit, wool, a mock neck) alongside bare warm-weather footwear (sandals, open-toe shoes) just because the low dipped cool; bare feet already say the day reads warm enough for that, so the rest of the base outfit should match — cover the cooler edges of the day with a removable layer instead of a heavier base garment.',
-      (weatherProfile?.needsRemovableCoolLayer || weatherProfile?.isCold)
-        ? 'COOL/COLD WEATHER GUIDANCE: The conditions indicate cool or cold temperatures where a removable layer or protective outerwear provides practical comfort. When the shown pieces support it, pair the outfit with an appropriate outerwear layer or midweight knit.'
+      isWeatherFiltered
+        ? (weatherExcludedCount
+            ? `${weatherExcludedCount} piece${weatherExcludedCount === 1 ? '' : 's'} plainly unsuited to these conditions ${weatherExcludedCount === 1 ? 'was' : 'were'} removed from this roster; that removal does not certify the rest as warm enough — the rest are ordered by overall relevance, which counts weather fit alongside occasion and wear history, so position is a hint, not a verdict, and each piece is judged by its own stated facts.`
+            : 'No piece was removed for weather; the roster is ordered by overall relevance, which counts weather fit alongside occasion and wear history — so position is a hint, not a verdict, and each piece is judged by its own stated facts.')
         : '',
+      'Garment wear facts in the image labels are constraints. Obey them silently. Opacity and base-layer facts are authoritative: do not call an opaque garment sheer. Do not infer a required base layer from lace, armhole, neckline or sleeve shape; layer underneath only when it serves a stated styling or practical purpose. Do not repeat a fixed fact the owner already knows merely to fill styling_instructions; use that field only for an actual, useful action or chosen relationship between pieces.',
+      'CARD WEAR MECHANICS & RENDERER CONTRACT: styling_instructions is the authoritative placement guidance for the image renderer and persists on the card. If the user requested a specific wear mechanic (untucked, belted, sleeves pushed, worn open) or if two pieces have a physical placement relationship (such as a top over a waistband, or an open cardigan over a dress), state it concisely in styling_instructions.',
+      // TIME-OF-DAY WEATHER removed (owner ruling 2026-09-15): the stated range and the request text, including outing hours, carry
+      // the conditions; its garment and layer prescriptions were not neutral facts.
+      // COOL-END LAYER removed (2026-09-15): an engine-derived requirement that also quoted the old `opacity: sheer` label format.
       `Compose ${requestedLimit} outfits.`,
-      comparisonSetGuidance && requestedLimit > 1
-        ? 'COMPARISON SET CONTRACT: These options will be compared side by side. When the eligible pieces shown support it, use meaningfully different outfit formulas or clearly different silhouettes/proportion logic. Changing only the color, print, or individual garments while repeating the same top + bottom + shoe shape does not create a useful alternative. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.\nTHERMAL & SEASONAL COHERENCE: All proposed options in this comparison batch are for the same single occasion and must share a consistent thermal and seasonal weight suitable for the event. Do not mix extreme warm-weather pieces (such as lightweight linen, bare open sandals, or breezy summer tops) in one look with cool-weather pieces (such as heavy wool knits or outerwear jackets) in another look.'
+      // 2026-09-15 (owner ruling): both paragraphs previously pushed toward variety and thermal
+      // uniformity as ends in themselves — forcing a weaker alternative merely to look different,
+      // and banning mixed thermal weight across cards regardless of what each outfit actually needs
+      // for the stated conditions. Replaced with judgment of each card on its own merits.
+      comparisonSetGuidance && requestedLimit > 1 && !composerExperiment?.holdOutComparisonSet
+        ? 'COMPARISON SET CONTRACT: These options will be compared side by side. Each card should be worthwhile on its own; meaningful alternatives are welcome, but do not choose a weaker outfit merely to avoid repeating a sound formula. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.\nOUTFIT CONDITIONS FIT: Judge each complete outfit for the user\'s stated conditions and exposure; alternatives need not carry uniform thermal weight. Count a removable layer only when it is actually included in the outfit and realistically wearable in it. Do not invent indoor stops or timing to justify a lighter or heavier look.'
         : '',
       savedVariantGuidance,
       rotationWarningsText,
-      wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
+      wholeWardrobeFeedbackText ? `Feedback memory (exact reactions — each applies to its own combination only):\n${wholeWardrobeFeedbackText}` : '',
       provisionalCorrectionsText ? `PROVISIONAL OWNER CORRECTIONS FOR GARMENTS SHOWN ABOVE:\n${provisionalCorrectionsText}` : '',
       exactOutfitReactionText ? `EXACT PRIOR OUTFIT REACTIONS — narrow combination-level evidence only:\n${exactOutfitReactionText}` : '',
       acceptedSynthesisText ? `OWNER-ACCEPTED PERSONAL OR CONTEXTUAL LESSONS:\n${acceptedSynthesisText}` : ''
@@ -2763,67 +3141,99 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let parsed = {}
     let composerError = null
     let composerErrorIsTruncation = false
+    let composerErrorIsTimeout = false
     let composerUsage = null
     const composerStartedAt = Date.now()
-    const composerMaxTokens = structuredResponseMaxTokens(requestedLimit)
-    const systemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
+    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit)
+    const productionSystemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
+    const sleeveSystemPrompt = composerExperiment?.sleeveGuidance === 'neutral' ? withNeutralSleeveGuidance(productionSystemPrompt) : productionSystemPrompt
+    const explainDayWear = composerExperiment?.dayWearGuidance === 'explain'
+    const systemPrompt = explainDayWear ? withDayWearExplanation(sleeveSystemPrompt) : sleeveSystemPrompt
+    const composerSchema = composerOutfitSlotsSchema({ minOutfits: requestedLimit, wearThroughDay: explainDayWear })
+    const composerRequestIdentityRecord = composerExperiment
+      ? composerRequestIdentity({ system: systemPrompt, content, schema: composerSchema, model: resolveAiTarget(providerOverride).model, maxTokens: composerMaxTokens })
+      : null
+    // SEALED EXPERIMENT REQUEST: compared immediately before the provider call. A mismatch refuses here, so a
+    // changed prompt, garment fact, photograph, schema, model or budget can never reach a paid call.
+    if (composerExperiment?.requireSealedRequest && composerRequestIdentityRecord.sha256 !== composerExperiment.expectedRequestIdentitySha256) {
+      throw new Error(`Sealed composer request identity mismatch (expected ${composerExperiment.expectedRequestIdentitySha256}, got ${composerRequestIdentityRecord.sha256}); no provider call was made`)
+    }
     try {
-      const composerResult = await withTimeout(askStylistWithUsage({
+      const composerResult = await withTimeout(signal => askStylistStructuredWithUsage({
         system: systemPrompt,
         maxTokens: composerMaxTokens,
         messages: [{ role: 'user', content }],
-        providerOverride
+        providerOverride,
+        schema: composerSchema,
+        name: 'wardrobe_outfits',
+        description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
+        subflow: 'whole_wardrobe_visual_composer',
+        signal,
       }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
       composerUsage = composerResult.usage
-      parsed = parseModelJson(composerResult.text, { context: 'whole-wardrobe visual composer', maxTokens: composerMaxTokens, stopReason: composerUsage?.stopReason })
+      parsed = composerResult.value || {}
     } catch (err) {
       composerError = err.message
       composerErrorIsTruncation = Boolean(err.isTruncation)
+      composerErrorIsTimeout = Boolean(err.isTimeout)
       timings.composerMs = timings.composerMs || null
     }
 
-    // Resolve and validate — IDs must exist; reuse existing normalize/repair/gate
-    const unresolvedReferences = []
-    const resolved = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-      const incomingPieces = Array.isArray(outfit.pieces) 
-        ? outfit.pieces 
-        : (Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(id => ({ id })) : [])
-      const resolvedPieces = []
-      for (const p of incomingPieces) {
-        const id = p?.id
-        const name = p?.name
-        let match = allowedPieces.find(item => Number(item.id) === Number(id))
-        if (!match && name) {
-          match = allowedPieces.find(item => normalizeForMatch(item.name) === normalizeForMatch(name))
-        }
-        if (!match) {
-          unresolvedReferences.push({
-            id,
-            name,
-            outfitLabel: outfit.title || outfit.direction || outfit.label || 'unlabeled'
-          })
-        } else {
-          resolvedPieces.push(match)
-        }
+    // COMPOSER-ONLY EXPERIMENT BOUNDARY: stop here. The raw composer result and the exact request are
+    // returned; no post-composition stage runs.
+    if (composerExperiment) {
+      return {
+        experimentComposerOnly: {
+          manifest: composerExperiment,
+          requestedLimit,
+          request: {
+            system: systemPrompt,
+            systemSha256: createHash('sha256').update(systemPrompt).digest('hex'),
+            maxTokens: composerMaxTokens,
+            schema: composerSchema,
+            textParts: content.filter(part => part.type === 'text').map(part => part.text),
+            imageCount: content.filter(part => part.type === 'image').length,
+          },
+          requestIdentity: composerRequestIdentityRecord,
+          imageManifest: experimentImageManifest,
+          roster: shownPieces.map(piece => Number(piece.id)),
+          resolvedContext: {
+            occasion, season, activity, mission, mood,
+            highF: weatherProfile?.highF ?? null, lowF: weatherProfile?.lowF ?? null,
+            weatherSource: weatherProfile?.weatherSource || null,
+            location: weatherProfile?.resolvedWeatherContext?.location || location || '',
+          },
+          raw: parsed,
+          composerUsage,
+          composerError,
+          composerErrorIsTruncation,
+          timings,
+        },
       }
-      const uniqueResolved = []
-      const seenIds = new Set()
-      for (const p of resolvedPieces) {
-        if (p && !seenIds.has(Number(p.id))) {
-          seenIds.add(Number(p.id))
-          uniqueResolved.push(p)
-        }
-      }
-      return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
-    }).filter(o => o.pieces.length >= 2)
+    }
 
-    const normalizedModelOutfits = resolved.map(o =>
-      sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject(o, allowedPieces))
-    )
+    // Resolve slots (composerSlots.js): IDs only, names from the wardrobe, every stated role kept and
+    // none derived. Every card is kept — one the slots or the shared evaluator reject becomes a
+    // diagnostic card carrying the model's own fields and all of its findings.
+    const unresolvedReferences = []
+    const slotFindingsByOutfit = new Map()
+    const normalizedModelOutfits = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+      const slots = resolveComposerSlotOutfit(outfit, allowedPieces)
+      for (const finding of slots.slotFindings.filter(item => item.code === 'unknown_piece_id')) {
+        unresolvedReferences.push({ id: finding.evidence.pieceId, name: null, slot: finding.evidence.slot, outfitLabel: outfit?.label || 'unlabeled' })
+      }
+      const card = {
+        ...sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject({ ...outfit, pieceIds: slots.pieceIds, pieces: slots.pieces }, allowedPieces, { deriveMissingRoles: false })),
+        modelSlots: slots.modelSlots,
+      }
+      slotFindingsByOutfit.set(card, slots.slotFindings)
+      return card
+    })
+    const resolved = normalizedModelOutfits.filter(outfit => !slotFindingsByOutfit.get(outfit).some(finding => finding.code === 'unknown_piece_id'))
     const validationByOutfit = new Map(normalizedModelOutfits.map(outfit => [
       outfit,
-      evaluateWearableOutfit(outfit.pieces, { requireShoes: true }),
+      withSlotFindings(evaluateWearableOutfit(outfit.pieces, { requireShoes: true }), slotFindingsByOutfit.get(outfit)),
     ]))
     const structuralRejectionReason = (validation) => ({
       multiple_shoes: 'structural: more than one shoe',
@@ -2834,12 +3244,32 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       missing_top_or_dress: 'structural: missing top',
       multiple_tops_without_bottom: 'structural: missing bottom',
       missing_bottom: 'structural: missing bottom',
+      unknown_piece_id: 'structural: a slot names an ID that is not in the roster',
+      slot_category_mismatch: 'structural: a garment is in the wrong slot for its category',
+      duplicate_slot_piece: 'structural: one garment fills two slots',
+      invalid_slot_value: 'structural: a slot does not hold a garment ID',
       required_base_missing: 'dependency: required base layer is missing',
       required_base_incompatible: 'dependency: required base layer is incompatible',
     }[validation?.primaryFinding?.code] || validation?.primaryFinding?.message || 'structural: not a complete wardrobe outfit')
+    // EVERY structural finding, not only the first. thread_1789346300319's spliced card was recorded
+    // as "more than one bottom" while the evaluator had ALSO found `missing_top_or_dress`. The card
+    // stays visible during development with the model's own fields untouched — its malformed prose is
+    // the evidence of how the composer failed — and now carries the complete finding list beside it.
     const structurallyRejectedModelOutfits = normalizedModelOutfits
       .filter(outfit => !validationByOutfit.get(outfit).hardValid)
-      .map(outfit => ({ outfit, reason: structuralRejectionReason(validationByOutfit.get(outfit)) }))
+      .map(outfit => {
+        const validation = validationByOutfit.get(outfit)
+        const structuralFindings = (validation.hardFindings || []).map(finding => ({
+          code: finding.code,
+          message: finding.message,
+        }))
+        return {
+          outfit: { ...outfit, structuralFindings },
+          reason: structuralFindings.length > 1
+            ? structuralFindings.map(finding => structuralRejectionReason({ primaryFinding: finding })).join('; ')
+            : structuralRejectionReason(validation),
+        }
+      })
 
     // The composer above proposes from ISOLATED per-garment photos and never sees two pieces
     // together — its own written "reason" can rationalize a pairing that the actual photos, side
@@ -2850,6 +3280,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // opinion nobody asked for. Non-fatal: a critic failure must never block the whole turn.
     let visualClashDebug = null
     let clashFlaggedByOutfit = new Map()
+    // A note annotates; only a reject removes a card (conservative critic threshold, 2026-09-13).
+    let clashNotedByOutfit = new Map()
     const structurallyValidForClashReview = normalizedModelOutfits.filter(outfit => validationByOutfit.get(outfit).hardValid)
     // normalizeWholeWardrobeOutfitObject trims outfit.pieces to {id, name, category, photo,
     // worn_photo} — pattern_complexity and style_profile_json are gone by here, so the
@@ -2858,8 +3290,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const allowedPieceById = new Map(allowedPieces.map(piece => [Number(piece.id), piece]))
     const visualReviewCandidates = structurallyValidForClashReview.map(outfit => ({
       outfit,
+      // Keep each card's own role (same rehydration `debug.sleeveGeometryShadow` below uses) so the
+      // sleeve-construction half of this check can identify layering pairs correctly.
       findings: wholeWardrobeOutfitVisualReviewFindings({
-        pieces: (outfit.pieces || []).map(piece => allowedPieceById.get(Number(piece.id)) || piece)
+        pieces: (outfit.pieces || []).map(piece => ({ ...(allowedPieceById.get(Number(piece.id)) || piece), role: piece?.role }))
       }),
     })).filter(candidate => candidate.findings.length)
     const questionableForClashReview = visualReviewCandidates.map(candidate => candidate.outfit)
@@ -2871,16 +3305,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }, {})
     if (questionableForClashReview.length) {
       try {
-        const clashReview = await withTimeout(reviewComposedWholeWardrobeOutfitsForClash({
+        const clashReview = await withTimeout(signal => reviewComposedWholeWardrobeOutfitsForClash({
           outfits: questionableForClashReview,
           occasion,
           season,
           mood,
           memoryText: wholeWardrobeFeedbackText,
-          providerOverride
+          providerOverride,
+          signal
         }), 20000, 'Whole-wardrobe clash critic')
         if (clashReview?.flaggedByOutfit?.size) {
           clashFlaggedByOutfit = clashReview.flaggedByOutfit
+        }
+        if (clashReview?.notedByOutfit?.size) {
+          clashNotedByOutfit = clashReview.notedByOutfit
         }
         // The critic's own spend was previously invisible to the turn's cost total — folded into
         // composerUsage (below, before the final estimateAiUsageCost call) so the parent figure is
@@ -2898,6 +3336,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         visualClashDebug = {
           reviewedCount: clashReview?.reviewedCount || 0,
           flaggedCount: clashFlaggedByOutfit.size,
+          notedCount: clashNotedByOutfit.size,
           skippedNotQuestionable: structurallyValidForClashReview.length - questionableForClashReview.length,
           findingCounts: visualReviewFindingCounts,
           usage: clashReview?.usage || null,
@@ -2932,12 +3371,30 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       .filter(outfit => validationByOutfit.get(outfit).hardValid)
       .filter(o => !clashFlaggedByOutfit.has(o))
       .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
-      .map(outfit => ({
+      .map(outfit => {
+        // Garment-fact integrity (thread_1789508440573): styling_instructions may not tuck a base top recorded wear_over_only.
+        // The trimmed card pieces lose tuck_behavior, so rehydrate by id and keep each card piece's role.
+        const tuck = correctTuckInstruction({
+          pieces: (outfit.pieces || []).map(piece => ({ ...(allowedPieceById.get(Number(piece.id)) || {}), ...piece, tuck_behavior: allowedPieceById.get(Number(piece.id))?.tuck_behavior ?? piece.tuck_behavior })),
+          stylingInstructions: outfit.stylingInstructions || outfit.styling_instructions || '',
+        })
+        const tuckConflict = tuck.conflict
+        const systemFlags = [
+          ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
+          ...(clashNotedByOutfit.has(outfit) ? [{ type: 'Visual note', message: clashNotedByOutfit.get(outfit) }] : []),
+          ...(tuckConflict ? [{ type: 'Fit note', code: tuckConflict.code, message: tuckConflict.message }] : []),
+        ]
+        return {
         ...outfit,
+        // The recorded fact wins: the contradicted clause does not ship as authoritative placement guidance (the renderer is told to
+        // follow styling_instructions exactly). The card keeps what the model wrote, marked as corrected, so nothing is hidden.
+        ...(tuckConflict ? { stylingInstructions: tuck.corrected, stylingInstructionsOriginal: tuck.original, stylingInstructionsCorrection: tuckConflict.message } : {}),
+        ...(systemFlags.length ? { systemFlags } : {}),
         savedOutfitVariantMode: savedVariantMode,
         sourceFormulaFamily: savedSeedFormula,
         systemSuggestion: comfortFootwearSuggestionForOutfit(outfit, allowedPieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
-      }))
+      }
+      })
 
     let localBackfillOutfits = []
     let localBackfillRecoveryReport = null
@@ -3052,6 +3509,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const visualDebugLog = {
       requestedLimit,
       aiReturnedRaw: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
+      outfitCountCheck: composerOutfitCountCheck(parsed, { minOutfits: requestedLimit }),
       aiResolvedWithOwnedPieces: resolved.length,
       aiStructurallyValid: modelOutfits.length,
       proseIntegritySanitizedCount: normalizedModelOutfits.filter(outfit => outfit.proseIntegrityIssues?.length).length,
@@ -3065,6 +3523,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
     )
     let structuredOutfits = (gatedModel.outfits || []).slice(0, requestedLimit)
+
     let softBackfillCount = 0
     let diagnosticBrokenCount = 0
     let gatedLocal = { outfits: [], rejected: [] }
@@ -3108,22 +3567,31 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
             .filter(item => item?.outfit)
             .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' }))
         ]
-        for (const candidate of rejectedModelDiagnostics) {
-          const key = outfitKey(candidate.outfit)
-          if (!key || seenKeys.has(key)) continue
+        // Diagnostics are the model's own answers, de-duplicated by what it returned — the slot
+        // signature, or the card's index — never by garment set: a malformed slot assignment of a ready
+        // card's garments is exactly the evidence a diagnostic exists to show. Ready cards keep their
+        // garment-set de-duplication, and garment keys are still recorded for the local-fill loop.
+        const seenDiagnosticKeys = new Set()
+        for (const [index, candidate] of rejectedModelDiagnostics.entries()) {
+          const key = candidate.outfit?.modelSlots
+            ? `slots:${JSON.stringify(candidate.outfit.modelSlots)}`
+            : `model-card:${index}`
+          if (seenDiagnosticKeys.has(key)) continue
           
           const label = candidate.outfit.title || candidate.outfit.direction || candidate.outfit.label || 'unlabeled'
           const specificUnresolved = unresolvedReferences.filter(ref => ref.outfitLabel === label)
           let resolutionNote = null
           if (specificUnresolved.length > 0) {
-            const details = specificUnresolved.map(ref => `model referenced "${ref.name || 'unknown name'}" (id ${ref.id || 'unknown id'}) — not found in roster, no name match`).join('; ')
+            const details = specificUnresolved.map(ref => `model put id ${ref.id ?? 'unknown id'} in ${ref.slot || 'a slot'} — not found in the roster`).join('; ')
             resolutionNote = `${details}. Piece may have been excluded by a gate after the model saw it, or the ID was invalid.`
           }
           
           const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason, resolutionNote)
           if (!diagnostic) continue
           diagnostics.push(diagnostic)
-          seenKeys.add(key)
+          seenDiagnosticKeys.add(key)
+          const garmentKey = outfitKey(candidate.outfit)
+          if (garmentKey) seenKeys.add(garmentKey)
           if (diagnostics.length >= requestedLimit - structuredOutfits.length) break
         }
         if (diagnostics.length < requestedLimit - structuredOutfits.length) {
@@ -3141,6 +3609,531 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         structuredOutfits = [...structuredOutfits, ...diagnostics]
       }
     }
+    // ── ONE bounded missing-layer repair pass (owner ruling 2026-09-13) ────────────────────────
+    //
+    // Live thread_1789274358263: five cards at 65/50, four of them carrying
+    // NO_REMOVABLE_COOL_LAYER. The evaluator detected every one, `advisorFlaggedCount` counted
+    // them, and nothing consumed that number — detection with no return path, so the set shipped
+    // knowing four of its five cards lacked the configuration the conditions require.
+    //
+    // This is NOT the retired revision pass. That one mutated piece lists field-wise: it dropped
+    // every outerwear-category garment and appended one replacement, which destroyed legitimate
+    // `layer_top` + `outerwear` compositions. This one asks for ONE layer to be added to a card
+    // whose other garments are preserved verbatim, rebuilds the card from the ORIGINAL pieces plus
+    // that layer (the model's own id list is checked for tampering, never trusted as the card), and
+    // validates the whole resulting card through the complete evaluator.
+    //
+    // Bounded: one batched call, never recursive, and only when both halves are real — at least one
+    // deficient card AND at least one shown layer that suits the conditions. A wardrobe with no
+    // adequate layer pays nothing and keeps its honest disclosure.
+    const outfitEnvironmentFindings = outfit => {
+      // Same rehydration the gate does: full garment facts, the card's own role preserved, because
+      // the role is the only record of which piece is worn over which.
+      const owned = (outfit.pieces || []).map(piece => {
+        const match = allowedPieceById.get(Number(piece.id))
+        if (!match) return piece
+        return piece?.role ? { ...match, role: piece.role } : match
+      })
+      // ROLE-AWARE EVALUATION NEEDS ROLES. A composer card states a role only where it matters to
+      // the model, so bottoms and shoes routinely arrive without one; feeding those straight into a
+      // roleAware evaluation produces `invalid_role` for every card, which would make the
+      // before/after comparison below meaningless. The same derivation the gate uses fills the gaps
+      // and never overrides a role the card actually stated.
+      const derivedRoles = deriveWholeWardrobeRoles(owned)
+      const rehydrated = owned.map(piece => (piece?.role ? piece : { ...piece, role: derivedRoles.get(Number(piece.id)) || piece.role }))
+      const validation = evaluateWearableOutfit(rehydrated, {
+        roleAware: true,
+        includeLayerDirections: true,
+        weatherContext: weatherProfile ? { weatherProfile, activity } : null,
+      })
+      return {
+        rehydrated,
+        hard: (validation.hardFindings || []).map(finding => finding.code),
+        advisory: (validation.advisoryFindings || []).map(finding => finding.code),
+        // Kept whole so the repair call can quote the triggering finding verbatim rather than a
+        // restatement of it.
+        all: [...(validation.hardFindings || []), ...(validation.advisoryFindings || [])],
+        // The endpoint evaluator's own verdict for the COMPLETED system. Already computed for every
+        // candidate by the viability screen and previously discarded.
+        endpointFit: validation.stages?.find(stage => stage.stage === 'environment')?.result?.evidence?.endpointFit || null,
+      }
+    }
+    const missesCoolLayer = codes => codes.includes(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER)
+    // Building one repaired card is pure and cheap, so per-card feasibility is decided BEFORE the
+    // paid call rather than after it.
+    const repairedCardFor = (entry, layer) => sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject({
+      ...entry.outfit,
+      pieceIds: [...entry.findings.rehydrated.map(piece => Number(piece.id)), Number(layer.id)],
+      pieces: [...entry.findings.rehydrated, { ...layer, role: 'outerwear' }],
+    }, allowedPieces))
+    // The three typed acceptance conditions, in one place so the pre-call viability screen and the
+    // post-call acceptance cannot drift apart.
+    const repairVerdict = (entry, layer) => {
+      const after = outfitEnvironmentFindings(repairedCardFor(entry, layer))
+      const endpointFit = after.endpointFit
+      // WHAT THIS CANDIDATE LEAVES BEHIND. The triggering finding is not the only weather note a
+      // card can carry: live thread_1789341140366 repaired "Graphic Tee Utility" with an adjacent
+      // light jacket, cleared NO_REMOVABLE_COOL_LAYER, and shipped a card still reading "a warm or
+      // midweight layer is recommended" — which eleven on-target candidates would have cleared.
+      // The residual set is computed here anyway; it was simply thrown away.
+      const residualWeather = (after.all || [])
+        .filter(finding => ENVIRONMENTAL_CODE_SET.has(finding.code) && !missesCoolLayer([finding.code]))
+        .map(finding => ({ code: finding.code, message: finding.message }))
+      if (missesCoolLayer(after.advisory) || missesCoolLayer(after.hard)) return { ok: false, why: 'finding_remains', endpointFit, residualWeather }
+      const beforeHard = new Set(entry.findings.hard)
+      const newHard = after.hard.filter(code => !beforeHard.has(code))
+      if (newHard.length) return { ok: false, why: 'new_deficiency', detail: newHard, endpointFit, residualWeather }
+      const before = new Set([...entry.findings.advisory, ...entry.findings.hard])
+      const introduced = after.advisory.filter(code => !before.has(code) && !isInabilityToJudgeCode(code))
+      if (introduced.length) return { ok: false, why: 'new_deficiency', detail: introduced, endpointFit, residualWeather }
+      return { ok: true, endpointFit, residualWeather }
+    }
+    // THE EVALUATOR'S EXISTING VERDICT, IN WORDS. Not a new authority and not a threshold: this
+    // renders `endpointFit` — the same fits/adjacent/direction result the engine already uses for
+    // ranking — so the model can see which candidate puts the COMPLETED system on target and which
+    // is merely an acceptable neighbour. Adjacency stays acceptable; it is now visible.
+    // THE LAYER-ON CONFIGURATION SPECIFICALLY. `endpointFit.cold` summarises the BEST configuration
+    // the wearer can reach, which for a repaired card may be a state with the new layer taken off —
+    // so rendering it under a line that says "with that layer on" would describe something else.
+    // The per-configuration evidence the evaluator already records carries the as-composed state as
+    // `removedPieceId: null`; this reads that entry. Nothing about the evaluator or adjacency
+    // acceptance changes — only which existing row the sentence quotes.
+    const describeLayerOn = fit => {
+      const asComposed = (fit?.configurations || []).find(entry => entry.removedPieceId === null)
+      if (!asComposed || asComposed.unknown || asComposed.coldDelta == null) return 'unknown from saved facts'
+      const delta = asComposed.coldDelta
+      if (delta === 0) return 'on target'
+      const adjacentSuffix = experimentNeutralVerdicts() ? '' : ' (acceptable)'
+      if (Math.abs(delta) === 1) return delta > 0 ? `one level over target${adjacentSuffix}` : `one level under target${adjacentSuffix}`
+      return delta > 0 ? 'substantially over target' : 'substantially under target'
+    }
+    const describeEndpoint = end => {
+      if (!end || !end.verdict || end.verdict === 'no_target') return 'unknown'
+      if (end.verdict === 'cannot_judge') return 'unknown from saved facts'
+      if (end.verdict === 'fits') {
+        if (!end.adjacent) return 'on target'
+        const adjacentSuffix = experimentNeutralVerdicts() ? '' : ' (acceptable)'
+        return end.direction === 'over' ? `one level over target${adjacentSuffix}` : `one level under target${adjacentSuffix}`
+      }
+      if (end.verdict === 'substantial_shortfall') return 'substantially under target'
+      if (end.verdict === 'substantial_excess') return 'substantially over target'
+      return 'unknown'
+    }
+    const warmEndVaries = entry => new Set((entry.viableLayers || [])
+      .map(candidate => describeEndpoint(candidate.endpointFit?.warm))).size > 1
+    let layerRepairDebug = { attempted: false, deficientCount: 0, qualifyingLayerIds: [] }
+    const repairedPairsForReview = []
+    // DELIVERABLE CARDS ONLY. Diagnostic cards are broken by construction and exist to be looked at;
+    // repairing one would be repairing an exhibit. Local backfill has already run at this point, so
+    // a layerless card added by the fill is repaired and counted like any other.
+    const deficientBefore = structuredOutfits
+      .map((outfit, index) => ({ outfit, index }))
+      .filter(entry => !entry.outfit?.diagnosticOnly && !entry.outfit?.broken)
+      .map(entry => ({ ...entry, findings: outfitEnvironmentFindings(entry.outfit) }))
+      .filter(entry => missesCoolLayer(entry.findings.advisory) || missesCoolLayer(entry.findings.hard))
+      .map(entry => ({
+        ...entry,
+        // PER-CARD MECHANICAL VIABILITY. A layer that suits the weather in isolation is not a
+        // candidate for THIS card: it has to survive the complete evaluator on this base — roles,
+        // structural caps, wear order, sleeve construction and warmth across configurations. Cards
+        // with no viable candidate are excluded from the call entirely rather than being offered
+        // options that could only be rejected afterwards, at cost.
+        viableLayers: repairLayerBench
+          .map(layer => ({ layer, verdict: repairVerdict(entry, layer) }))
+          .filter(candidate => candidate.verdict.ok)
+          .map(candidate => ({
+            layer: candidate.layer,
+            endpointFit: candidate.verdict.endpointFit,
+            residualWeather: candidate.verdict.residualWeather || [],
+          })),
+      }))
+    layerRepairDebug.deficientCount = deficientBefore.length
+    layerRepairDebug.qualifyingLayerIds = repairLayerBench.map(piece => Number(piece.id))
+    layerRepairDebug.benchSource = 'recovery_eligible_layers'
+    layerRepairDebug.shownLayerCount = qualifyingLayers.length
+    layerRepairDebug.viableLayerIdsByCard = deficientBefore.map(entry => ({
+      label: entry.outfit.label || null,
+      viableLayerIds: entry.viableLayers.map(candidate => Number(candidate.layer.id)),
+      // The completed-system verdict per candidate, so a live capture shows what the model was told
+      // rather than only which garment it picked.
+      candidateEndpointFit: entry.viableLayers.map(candidate => ({
+        layerId: Number(candidate.layer.id),
+        cold: describeLayerOn(candidate.endpointFit),
+        warm: describeEndpoint(candidate.endpointFit?.warm),
+      })),
+    }))
+    const repairable = deficientBefore.filter(entry => entry.viableLayers.length)
+    layerRepairDebug.repairableCount = repairable.length
+
+    // 2026-09-16 (owner review, thread_1789546295700): an add-one-layer repair edits a card the
+    // composer already styled — it cannot invent styling for a set the composer never produced at
+    // all. When the composer returned zero outfits (timeout, provider error, or any other reason
+    // `parsed.outfits` came back empty), every deliverable card at this point came from local-fill
+    // alone, and every "deficient" entry above is a deterministic assembly, not a model composition
+    // with one missing piece. Running the repair pass against it just pays for a second call (this
+    // incident's repair took 77s against a 60s budget) to "improve" something no model ever styled.
+    // This is deliberately scoped to a genuinely EMPTY composer result, not to "the composer
+    // returned outfits but some failed validation" — that is a different, legitimate case (item 4
+    // below keeps those as visible diagnostic cards) and still allows repair on whatever the model
+    // DID validly compose.
+    const composerReturnedNoOutfits = !(Array.isArray(parsed?.outfits) && parsed.outfits.length > 0)
+    if (composerReturnedNoOutfits) {
+      layerRepairDebug.reason = 'skipped: composer returned zero model-composed outfits this turn'
+    } else if (repairable.length) {
+      const repairStartedAt = Date.now()
+      try {
+        // THE SAME EVIDENCE THE COMPOSER HAD: every garment arrives as its photograph plus its
+        // structured line, for the card's own pieces and for the candidates. Sleeve construction is
+        // added for upper-body garments because that is what decides whether a layer can actually be
+        // worn over this base — the evaluator enforces it either way, and asking the model to judge
+        // it blind would guarantee rejected repairs.
+        const pieceBlock = async piece => {
+          const photoFile = piece.worn_photo || piece.photo || ''
+          // The shared fact line states sleeve length (unknown when unrecorded) and shape, so no separate sleeve suffix is needed.
+          const parts = [{ type: 'text', text: sharedGarmentEvidenceLine(piece) }]
+          if (!photoFile) return parts
+          const filePath = path.join(userUploadsDir(), photoFile)
+          if (!fs.existsSync(filePath)) return parts
+          const { maxPx, detail } = pieceVisualDetailPolicy(piece, { allowLow: true })
+          const thumb = await prepareWardrobeThumb(filePath, `${piece.id}:${maxPx}:${photoFile}`, { maxPx })
+          parts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+          return parts
+        }
+        // ONE PHOTOGRAPH PER GARMENT. A shared candidate appears in several cards' lists, and an
+        // earlier version re-sent its image inside every card block — the same bytes billed once per
+        // card. The manifest is emitted once and the cards reference IDs.
+        const manifestPieces = new Map()
+        for (const entry of repairable) {
+          for (const piece of entry.findings.rehydrated) manifestPieces.set(Number(piece.id), piece)
+          for (const candidate of entry.viableLayers) manifestPieces.set(Number(candidate.layer.id), candidate.layer)
+        }
+        const repairContent = [{ type: 'text', text: [
+          `Conditions: ${tempText}`,
+          `Occasion: ${occasion}`,
+          activity && activity !== 'none' ? `Activity: ${activity}` : '',
+          mood ? `Mood: ${mood}` : '',
+          // The turn's own words. A card's idea cannot be preserved against a request the repair
+          // cannot see — this run's request explicitly asked for looks that do not all follow the
+          // same layering formula, which is exactly the tension a repair has to respect.
+          stylingRequest ? `The request these cards answer: ${stylingRequest}` : '',
+          question ? `The wearer asked: ${question}` : '',
+          '',
+          GARMENT_FACT_CONVENTIONS,
+          'GARMENTS (each photograph appears once; cards below reference these IDs):',
+        ].filter(Boolean).join('\n') }]
+        for (const piece of manifestPieces.values()) repairContent.push(...await pieceBlock(piece))
+
+        for (const [position, entry] of repairable.entries()) {
+          const coolLayerFinding = (entry.findings.all || [])
+            .find(finding => finding.code === ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER)
+          repairContent.push({ type: 'text', text: [
+            '',
+            `=== CARD ${position}: "${entry.outfit.label || 'untitled'}" ===`,
+            `Its garments (keep all of these): ${entry.findings.rehydrated.map(piece => `ID ${piece.id}`).join(', ')}`,
+            // THE CARD'S OWN WORDS. "Preserve the card's idea" is unactionable when the idea itself
+            // was never sent — the repair saw a label and a piece list and nothing else.
+            entry.outfit.reason ? `Why it works (its own words): ${entry.outfit.reason}` : '',
+            entry.outfit.stylingInstructions ? `Styling instructions: ${entry.outfit.stylingInstructions}` : '',
+            entry.outfit.watchFor ? `Watch for: ${entry.outfit.watchFor}` : '',
+            // The finding verbatim, not a paraphrase of it.
+            coolLayerFinding ? `Engine finding: ${coolLayerFinding.message}` : '',
+            ...(experimentNeutralVerdicts()
+              ? ['Layer candidates for THIS card, each with what the COMPLETED outfit reads as with that', 'layer on, stated as its level relative to the target:']
+              : ['Layer candidates for THIS card, each with what the COMPLETED outfit reads as with that',
+                'layer on — the engine\'s own ranking evidence, not a rule. An acceptable neighbour is a',
+                'legitimate choice; pick it knowing what it costs:']),
+            ...entry.viableLayers.map(candidate => {
+              const cold = describeLayerOn(candidate.endpointFit)
+              const warm = describeEndpoint(candidate.endpointFit?.warm)
+              // The warm end only when it distinguishes anything — repeating an identical warm-end
+              // line under every candidate is noise the model has to read past.
+              const warmSuffix = warmEndVaries(entry) ? `; with it off, warm end: ${warm}` : ''
+              // WHAT REMAINS ON THE CARD with that layer on. Without this the model could see that a
+              // candidate was "acceptable" but not that choosing it leaves a second weather note
+              // standing which other candidates remove.
+              const residual = (candidate.residualWeather || []).length
+                ? `; the card would still say: "${candidate.residualWeather.map(item => item.message).join('; ')}"`
+                : '; clears every weather note on this card'
+              return `  ID ${candidate.layer.id} — with this layer ON, the completed outfit reads ${cold} for the cold end${warmSuffix}${residual}`
+            }),
+            ...(entry.viableLayers.some(candidate => !(candidate.residualWeather || []).length)
+              ? ['  Prefer a candidate that clears every weather note. If you choose one that leaves a note standing, put the visual reason in `tradeoff` — what that layer does for this outfit that the clearing ones do not.']
+              : []),
+          ].filter(Boolean).join('\n') })
+        }
+
+        const repairResult = await withTimeout(signal => askStylistWithUsage({
+          system: prompts.WHOLE_WARDROBE_MISSING_LAYER_REPAIR_SYSTEM,
+          maxTokens: structuredResponseMaxTokens(repairable.length),
+          messages: [{ role: 'user', content: repairContent }],
+          providerOverride,
+          signal,
+        }), 60000, 'Whole-wardrobe missing-layer repair')
+        const repairParsed = parseModelJson(repairResult.text, { context: 'whole-wardrobe missing-layer repair' })
+
+        // A BLANKET DECLINE MUST SHOW ITS WORK (owner ruling 2026-09-13). Live
+        // thread_1789341140366 dismissed 22 mechanically screened candidates for a sleeveless dress
+        // with "thick straps and a waist sash" — the straps and sash are visible, but nothing
+        // supported the claim that they defeat EVERY candidate. A decline is still always available;
+        // it just has to say which candidates it weighed, and naming one arbitrary id does not
+        // license dismissing the rest, so the strongest group has to be among them.
+        const strongestFor = entry => {
+          const clean = entry.viableLayers.filter(candidate => !(candidate.residualWeather || []).length)
+          const pool = clean.length ? clean : entry.viableLayers
+          return new Set(pool.map(candidate => Number(candidate.layer.id)))
+        }
+        const declines = (Array.isArray(repairParsed?.declines) ? repairParsed.declines : []).map(decline => {
+          const entry = repairable[Number(decline?.cardIndex)]
+          const considered = (Array.isArray(decline?.consideredLayerIds) ? decline.consideredLayerIds : []).map(Number).filter(Boolean)
+          const reason = String(decline?.reason || '').trim()
+          const strongest = entry ? strongestFor(entry) : new Set()
+          const namesStrongest = considered.some(id => strongest.has(id))
+          const unsupportedReason = !entry ? 'unknown card'
+            : !considered.length ? 'named no candidate it considered'
+            : !namesStrongest ? 'did not weigh any of the strongest candidates for this card'
+            : reason.length < 20 ? 'no specific visual relationship given'
+            : null
+          return {
+            cardIndex: Number(decline?.cardIndex),
+            consideredLayerIds: considered,
+            reason: reason.slice(0, 300),
+            supported: !unsupportedReason,
+            unsupportedReason,
+          }
+        })
+
+        const rejections = { unknown_layer: 0, not_a_layer_repair: 0, gate_rejected: 0, finding_remains: 0, new_deficiency: 0, unexplained_tradeoff: 0 }
+        const rejectionDetail = []
+        let repairedCount = 0
+        let repairedCleanCount = 0
+        const repairsRetainingAdvice = []
+        for (const repair of (Array.isArray(repairParsed?.repairs) ? repairParsed.repairs : [])) {
+          const entry = repairable[Number(repair?.cardIndex)]
+          if (!entry) { rejections.not_a_layer_repair++; continue }
+          // Only a layer that was offered for THIS card counts — the viability screen above is the
+          // candidate list, not a suggestion.
+          const layer = entry.viableLayers.find(candidate => Number(candidate.layer.id) === Number(repair?.layerId))?.layer
+          if (!layer) { rejections.unknown_layer++; continue }
+
+          // TAMPER CHECK, not a piece list to trust. The card is rebuilt from its ORIGINAL pieces
+          // plus the one layer; the model's `pieceIds` only has to agree with that, or this was a
+          // recomposition rather than the missing-layer repair that was asked for.
+          const originalIds = entry.findings.rehydrated.map(piece => Number(piece.id))
+          const proposedIds = (Array.isArray(repair?.pieceIds) ? repair.pieceIds : []).map(Number)
+          const expected = new Set([...originalIds, Number(layer.id)])
+          if (proposedIds.length && (proposedIds.length !== expected.size || proposedIds.some(id => !expected.has(id)))) {
+            rejections.not_a_layer_repair++
+            continue
+          }
+          const repairedPieces = [...entry.findings.rehydrated, { ...layer, role: 'outerwear' }]
+          const candidate = sanitizeWholeWardrobeOutfitProse(normalizeWholeWardrobeOutfitObject({
+            ...entry.outfit,
+            reason: String(repair?.reason || '').trim() || entry.outfit.reason,
+            styling_instructions: String(repair?.stylingInstructions || '').trim() || entry.outfit.stylingInstructions,
+            pieceIds: repairedPieces.map(piece => Number(piece.id)),
+            pieces: repairedPieces,
+          }, allowedPieces))
+
+          const regated = locallyGateWholeWardrobeOutfits(
+            [candidate],
+            1,
+            { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
+          )
+          const accepted = regated.outfits?.[0]
+          if (!accepted) { rejections.gate_rejected++; continue }
+
+          // TYPED ACCEPTANCE, re-checked on the card the gate actually returned (the gate may repair
+          // or annotate it), using the same three conditions the viability screen used.
+          const verdict = repairVerdict({ ...entry, findings: entry.findings }, layer)
+          if (!verdict.ok) {
+            rejections[verdict.why]++
+            if (verdict.detail) rejectionDetail.push({ cardIndex: Number(repair?.cardIndex), layerId: Number(layer.id), introduced: verdict.detail })
+            continue
+          }
+          // A REPAIR THAT LEAVES WEATHER ADVICE MUST SAY WHY. Not a gate on adjacency — the model may
+          // still take a candidate that keeps a note standing — but when a clearing candidate was on
+          // the same list, the visual reason for passing it over has to be stated. An unexplained
+          // one is not accepted, and the original card ships with its advisory rather than being
+          // quietly swapped for another card that still carries one.
+          const chosen = entry.viableLayers.find(candidate => Number(candidate.layer.id) === Number(layer.id))
+          const residual = chosen?.residualWeather || []
+          const cleanAlternativeExists = entry.viableLayers.some(candidate => !(candidate.residualWeather || []).length)
+          const tradeoff = String(repair?.tradeoff || '').trim()
+          if (residual.length && cleanAlternativeExists && tradeoff.length < 12) {
+            rejections.unexplained_tradeoff++
+            rejectionDetail.push({
+              cardIndex: Number(repair?.cardIndex),
+              layerId: Number(layer.id),
+              retains: residual.map(item => item.code),
+            })
+            continue
+          }
+          structuredOutfits = structuredOutfits.map(outfit => (outfit === entry.outfit ? accepted : outfit))
+          repairedPairsForReview.push({ original: entry.outfit, repaired: accepted, clean: !residual.length })
+          repairedCount++
+          if (residual.length) {
+            repairsRetainingAdvice.push({
+              label: entry.outfit.label || null,
+              layerId: Number(layer.id),
+              retains: residual.map(item => item.code),
+              tradeoff,
+            })
+          } else {
+            repairedCleanCount++
+          }
+        }
+
+        if (repairResult?.usage && composerUsage) {
+          composerUsage = {
+            ...composerUsage,
+            inputTokens: (composerUsage.inputTokens || 0) + (repairResult.usage.inputTokens || 0),
+            outputTokens: (composerUsage.outputTokens || 0) + (repairResult.usage.outputTokens || 0),
+            totalTokens: (composerUsage.totalTokens || 0) + (repairResult.usage.totalTokens || 0),
+          }
+        }
+        layerRepairDebug = {
+          ...layerRepairDebug,
+          attempted: true,
+          repairedCount,
+          // SPLIT, so a capture cannot read five-for-five when some cards still carry weather advice.
+          repairedCleanCount,
+          repairsRetainingAdvice,
+          declinedCount: declines.length,
+          declines: declines.map(decline => ({
+            cardIndex: decline.cardIndex,
+            consideredLayerIds: decline.consideredLayerIds,
+            supported: decline.supported,
+            unsupportedReason: decline.unsupportedReason,
+            reason: decline.reason,
+          })),
+          rejections,
+          rejectionDetail,
+          ms: Date.now() - repairStartedAt,
+          usage: repairResult?.usage || null,
+        }
+      } catch (err) {
+        // Non-fatal, like every other optional pass: the composer's own cards ship with their notes.
+        console.warn('Whole-wardrobe missing-layer repair fallback:', err.message)
+        layerRepairDebug = { ...layerRepairDebug, attempted: true, error: err.message }
+      }
+    } else if (deficientBefore.length) {
+      // Both no-call reasons are real and distinct: nothing in the wardrobe suits the conditions at
+      // all, versus layers that suit the weather but none that works on any deficient card.
+      layerRepairDebug.reason = repairLayerBench.length
+        ? 'no weather-suitable layer is mechanically viable on any deficient card'
+        : 'no hard-eligible layer suits these conditions'
+    }
+
+    // ── visual review of the REPAIRED combinations only ────────────────────────────────────────
+    //
+    // The clash critic runs before this pass, on the composer's own cards, so combinations the
+    // repair creates were never seen by it: live thread_1789341140366 shipped four repaired cards
+    // with `visualClashReview.reviewedCount: 0`. Scoped to the repaired subset — the originals were
+    // already reviewed — and never recursive: a rejected repair RESTORES the original card with its
+    // weather advisory and rejoins the set disclosure. No silent drops, no second repair attempt.
+    if (repairedPairsForReview.length) {
+      try {
+        const repairedReview = await withTimeout(signal => reviewComposedWholeWardrobeOutfitsForClash({
+          outfits: repairedPairsForReview.map(pair => pair.repaired),
+          occasion,
+          season,
+          mood,
+          memoryText: wholeWardrobeFeedbackText,
+          providerOverride,
+          signal
+        }), 20000, 'Repaired-card clash critic')
+        const flagged = repairedReview?.flaggedByOutfit || new Map()
+        const noted = repairedReview?.notedByOutfit || new Map()
+        const restored = []
+        const annotated = []
+        for (const pair of repairedPairsForReview) {
+          if (flagged.has(pair.repaired)) {
+            // A clear, photograph-grounded failure: restore the original with its weather advisory.
+            structuredOutfits = structuredOutfits.map(outfit => (outfit === pair.repaired ? pair.original : outfit))
+            restored.push({ label: pair.original.label || null, clean: pair.clean, reason: String(flagged.get(pair.repaired) || '').slice(0, 200) })
+          } else if (noted.has(pair.repaired)) {
+            // Debatable or uncertain: the repair ships, with the critic's observation attached.
+            const message = String(noted.get(pair.repaired) || '').slice(0, 200)
+            structuredOutfits = structuredOutfits.map(outfit => (outfit === pair.repaired
+              ? { ...outfit, systemFlags: [...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []), { type: 'Visual note', message }] }
+              : outfit))
+            annotated.push({ label: pair.repaired.label || null, reason: message })
+          }
+        }
+        if (repairedReview?.usage && composerUsage) {
+          composerUsage = {
+            ...composerUsage,
+            inputTokens: (composerUsage.inputTokens || 0) + (repairedReview.usage.inputTokens || 0),
+            outputTokens: (composerUsage.outputTokens || 0) + (repairedReview.usage.outputTokens || 0),
+            totalTokens: (composerUsage.totalTokens || 0) + (repairedReview.usage.totalTokens || 0),
+          }
+        }
+        layerRepairDebug.repairedCardReview = {
+          reviewedCount: repairedReview?.reviewedCount || repairedPairsForReview.length,
+          restoredCount: restored.length,
+          restored,
+          annotatedCount: annotated.length,
+          annotated,
+        }
+      } catch (err) {
+        console.warn('Repaired-card clash critic fallback:', err.message)
+        layerRepairDebug.repairedCardReview = { error: err.message }
+      }
+    }
+
+    // ACCOUNTING DESCRIBES WHAT SHIPS (owner ruling 2026-09-13). Accepted counts are fixed when the
+    // repair model's answer passes validation; delivered counts are recomputed here, after the
+    // repaired-card critic may have restored some originals. thread_1789346300319 accepted three,
+    // restored one, and still reported repairedCount/repairedCleanCount 3/3.
+    if (layerRepairDebug.attempted && !layerRepairDebug.error) {
+      const restoredEntries = layerRepairDebug.repairedCardReview?.restored || []
+      layerRepairDebug.acceptedRepairCount = layerRepairDebug.repairedCount || 0
+      layerRepairDebug.acceptedCleanCount = layerRepairDebug.repairedCleanCount || 0
+      layerRepairDebug.deliveredRepairCount = Math.max(0, layerRepairDebug.acceptedRepairCount - restoredEntries.length)
+      layerRepairDebug.deliveredCleanCount = Math.max(0,
+        layerRepairDebug.acceptedCleanCount - restoredEntries.filter(entry => entry.clean).length)
+    }
+
+    // SET-LEVEL DISCLOSURE (owner ruling 2026-09-13, Tier 2(a)). Cards that still lack a layer keep
+    // their advisory and are NOT mutated, dropped, or completed by the engine — but the set says so
+    // once, plainly, instead of leaving the reader to notice four identical per-card notes.
+    // READY OUTFITS ONLY. A diagnostic card is shown on purpose during development, but it is not a
+    // ready outfit: it counts toward neither side of this sentence. thread_1789346300319 said "1 of
+    // these 5 outfits" with four ready cards and one broken diagnostic.
+    const readyOutfitsForDisclosure = structuredOutfits.filter(outfit => !outfit?.broken && !outfit?.diagnosticOnly)
+    // 2026-09-16 (owner review, thread_1789546295700): "The bases suit the high" used to be a flat
+    // clause appended for every deficient card regardless of what the SAME evaluator run already
+    // said about that card's own warm end — a card independently carrying THERMAL_OVERSHOOT (its
+    // base already runs too warm at the high) got told, in the same breath, that its base "suits
+    // the high." Both statements come from evidence already computed once per card
+    // (outfitEnvironmentFindings' own endpointFit.warm); this reads that evidence per card instead
+    // of asserting one blanket claim for the whole set.
+    const deficientAfter = readyOutfitsForDisclosure
+      .map(outfit => ({ outfit, findings: outfitEnvironmentFindings(outfit) }))
+      .filter(({ findings }) => missesCoolLayer(findings.advisory) || missesCoolLayer(findings.hard))
+      .map(({ outfit, findings }) => ({
+        outfit,
+        // A card whose own warm-end verdict already says its base overshoots cannot also be told
+        // its base "suits the high" — that card fails to span the day's range at either end, not
+        // merely at the low.
+        oversteps: findings.endpointFit?.warm?.verdict === 'substantial_excess',
+      }))
+    const spansHighOnly = deficientAfter.filter(entry => !entry.oversteps)
+    const overstepsHigh = deficientAfter.filter(entry => entry.oversteps)
+    const labelList = entries => entries.map(entry => `"${entry.outfit.label}"`).join(', ')
+    const coolLayerSetDisclosure = deficientAfter.length
+      ? [
+          `${deficientAfter.length} of the ${readyOutfitsForDisclosure.length} ready outfit${readyOutfitsForDisclosure.length === 1 ? '' : 's'} ${deficientAfter.length === 1 ? 'has' : 'have'} nothing removable to put on for the cool end of the day (${labelList(deficientAfter)}).`,
+          spansHighOnly.length
+            ? `${spansHighOnly.length === deficientAfter.length ? 'The bases suit' : `${labelList(spansHighOnly)}: the base suits`} the high; a layer from the wardrobe would cover the low.`
+            : '',
+          overstepsHigh.length
+            ? `${labelList(overstepsHigh)} already run${overstepsHigh.length === 1 ? 's' : ''} too warm at the high and still lack${overstepsHigh.length === 1 ? 's' : ''} a layer for the low — ${overstepsHigh.length === 1 ? 'it fails' : 'they fail'} to span the day's range, not just its cool end.`
+            : '',
+        ].filter(Boolean).join(' ')
+      : ''
+    layerRepairDebug.deficientAfterCount = deficientAfter.length
+
     // A paid composition attempt remains visible even when enough sibling looks passed.
     // Validation controls disposition, not visibility: hard findings become Needs review
     // cards with the actual reason and never consume the requested valid-card count.
@@ -3179,6 +4172,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     visualDebugLog.structurallyRejectedCount = structurallyRejectedModelOutfits.length
     visualDebugLog.structurallyRejectedReasons = rejectionSummary(structurallyRejectedModelOutfits)
     visualDebugLog.visualClashReview = visualClashDebug
+    // The exposure the evaluator actually used, in RUN debug rather than stamped on every card: no
+    // card renderer consumes it, and a per-card copy would be a second persisted representation of
+    // something the run already knows. This is what lets a capture show whether `sedentary` or
+    // `hiking` reached evaluation.
+    visualDebugLog.resolvedExposure = {
+      activity: activity || null,
+      weatherSource: weatherProfile?.weatherSource || weatherProfile?.source || null,
+      highF: weatherProfile?.highF ?? null,
+      lowF: weatherProfile?.lowF ?? null,
+      coldPresenceRequirement: weatherProfile?.coldPresenceRequirement?.state || null,
+    }
+    visualDebugLog.layerRepair = layerRepairDebug
+    visualDebugLog.coolLayerSetDisclosure = coolLayerSetDisclosure
     visualDebugLog.visuallyRejectedCount = visuallyRejectedModelOutfits.length
     visualDebugLog.visuallyRejectedReasons = rejectionSummary(visuallyRejectedModelOutfits)
     visualDebugLog.localFillGateOutfits = gatedLocal.outfits.length
@@ -3257,6 +4263,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       : ''
     const responseCoverageNote = [shortfallNote, coverageNote].filter(Boolean).join('\n')
     if (responseCoverageNote) feedback = feedback + '\n\n' + responseCoverageNote
+    // THE SET-LEVEL DISCLOSURE, IN THE PROSE (owner ruling 2026-09-13). It existed in `debug` and on
+    // the response object, and nothing rendered it: no UI reads the field, and the stored assistant
+    // message never contained it, so on the direct Whole Wardrobe path the Tier 2(a) ruling —
+    // disclose rather than mutate — reached nobody. Appending it here makes it stored, visible and
+    // quotable without a new UI component. The nested /ask path does not read `feedback`; it gets
+    // the same sentence through the tool result instead, so this cannot double up.
+    if (coolLayerSetDisclosure) feedback = feedback + '\n\n' + coolLayerSetDisclosure
 
     persistGenerationRun({
       flow: 'whole_wardrobe_visual',
@@ -3274,6 +4287,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     return {
       feedback,
       structuredOutfits,
+      // Tier 2(a): said once at the SET level. Cards keep their own advisory and are never mutated,
+      // dropped, or completed by the engine — this only stops the set from shipping a known
+      // deficiency silently. Empty string when nothing is deficient.
+      coolLayerSetDisclosure,
       provider: resolveAiTarget(providerOverride).provider,
       model: resolveAiTarget(providerOverride).model,
       mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
@@ -3289,6 +4306,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         shownPieceCount,
         suppressedCount: suppressedPieces.length,
         suppressedReasonCounts,
+        // Debug-only supply boundary, per piece: which garments automatic-use suppression removed and why.
+        suppressedPieces: suppressedPieces.map(piece => ({ id: Number(piece.id), reasons: piece.reasons || [] })),
         weatherProfile,
         stylingContext: stylingContext.debug,
         savedMainBypassedSuppression,
@@ -3300,6 +4319,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         deliveredCount,
         brokenCardCount: structuredOutfits.filter(outfit => outfit.broken).length,
         advisorFlaggedCount: structuredOutfits.filter(outfit => Array.isArray(outfit.systemFlags) && outfit.systemFlags.length).length,
+      // Log-only sleeve-geometry evidence per composer card (never a finding, never model-facing).
+      // Computed directly from the construction evaluator: this route's own card validation does not run the layering stages.
+      sleeveGeometryShadow: normalizedModelOutfits.map(outfit => {
+        // Cards carry trimmed piece records here; rehydrate the full garment facts by id, keeping each card's own role.
+        const rosterById = new Map((allowedPieces || []).map(piece => [Number(piece.id), piece]))
+        const pieces = (outfit.pieces || []).map(piece => ({ ...(rosterById.get(Number(piece?.id)) || piece), role: piece?.role }))
+        return { label: outfit.label || '', pieceIds: outfit.pieceIds || [], findings: evaluateLayerPairConstruction(pieces, { roleAware: true }).findings }
+      }).filter(entry => entry.findings.length),
         localFillAddedCount: softBackfillCount,
         imageDetail: composerImageDetail,
         thumbPx: adaptiveVisualDetail ? null : composerThumbPx,
@@ -3318,6 +4345,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         },
         composerError,
         composerErrorIsTruncation,
+        composerErrorIsTimeout,
         composerMaxTokens,
         timings,
         rosterCount: roster.length,
@@ -4140,7 +5168,13 @@ export function tripPlanCompositionSchema(targetOutfits = 1) {
     properties: {
       outfits: {
         type: 'array',
-        minItems: exactCount,
+        // thread_1789585467294 (owner ruling 2026-09-16): the schema previously required EXACTLY
+        // targetOutfits cards, so a specific outfit the composer could not credibly fill still had to
+        // produce a card -- there was no honest way to decline. minItems relaxed to 1 (the total trip
+        // must still produce something; a full-trip zero stays a genuine composition failure, handled
+        // by the atomic branch's existing error path) so a specific outfit can be omitted here and
+        // named instead in slot_gaps, below.
+        minItems: 1,
         maxItems: exactCount,
         items: {
           type: 'object',
@@ -4155,9 +5189,30 @@ export function tripPlanCompositionSchema(targetOutfits = 1) {
           },
           required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions', 'cold_layer_decision']
         }
+      },
+      // thread_1789585467294 (owner ruling 2026-09-16): a genuine slot-level DECLINE, distinct from
+      // any card you do submit. Requiring every submitted card to also grade and explain its own
+      // suitability risked producing exactly the kind of confident post-hoc self-justification that
+      // caused the original incident (see the day-wear explanation experiment) -- this is not that.
+      // Suitability stays entirely your judgment; structural_capacity (on the slot payload) stays a
+      // factual diagnostic only, never a suitability verdict. Every card you DO submit in `outfits`
+      // stands on its own reason text, with no separate confidence rating attached.
+      slot_gaps: {
+        type: 'array',
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            gap_reason: { type: 'string', description: "The concrete reason you could not compose a credible outfit for this specific outfit within this slot from its allowed_piece_ids -- e.g. no genuinely hot-weather-suited top or bottom was available for a hike. Name the missing garment kind or capability if you can identify it. This is a decline: do not use it to hedge or caveat a card you ARE submitting in `outfits` -- a submitted card carries no separate rating." }
+          },
+          required: ['slot_id', 'gap_reason']
+        },
+        description: "One entry per specific outfit within a slot you chose not to fill because the allowed roster had no credible combination for it. Omit entirely, or leave empty, when every requested outfit was composed. Do not manufacture a placeholder outfit to avoid using this."
       }
     },
-    required: ['outfits']
+    required: ['outfits', 'slot_gaps']
   }
 }
 
@@ -4540,7 +5595,7 @@ Cover every stated use case. A roster that leaves one use case without a complet
 
 Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster where one use case's need for 3 distinct outfits can only actually produce 1 before every remaining option is a piece-for-piece repeat has not covered that use case, even though every individual outfit in isolation would pass its gates.
 
-REUSE ACROSS USE CASES IS THE POINT, NOT A COMPROMISE. This is a suitcase, not a capsule wardrobe: a top or a layer that works for both sightseeing and a nature walk earns its place twice over, and should be preferred over two narrower pieces that each cover only one use case, all else equal. Judge each candidate by how many of the stated use cases it can genuinely serve, not just whether it is eligible for one.
+REUSE ACROSS USE CASES IS A STRENGTH, NOT AN AUTOMATIC WIN. This is a suitcase, not a capsule wardrobe: a top or a layer that is genuinely well-suited to both sightseeing and a nature walk earns its place twice over. But reuse only counts when the shared piece actually suits each use case on its own merits, not merely because it is eligible for it — a piece that reads as elevated city wear does not become a good hike just by also being packed for dinner. Never prefer a cross-use-case piece over a narrower, purpose-suited candidate for a specific use case; each use case still needs its own strongest fit first. Judge each candidate by how well it serves every use case it is meant to cover, not by how many it can technically be worn for.
 
 CROSS-REGISTER VERSATILITY & SUITCASE EFFICIENCY:
 Versatile pieces that transition naturally between daytime exploration and evening dining are valuable for travel. Select footwear that comfortably covers the itinerary's walking and dining needs without packing redundant pairs or separate entire wardrobes for each use case.
@@ -4772,7 +5827,7 @@ export function tripPlanCompositionSystemPrompt() {
 
 Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. CRITICAL CROSS-SLOT DEDUPLICATION: Submitting the identical complete set of piece_ids in two looks — even across different slots (e.g. a city museum look and a nature walk look) — is rejected by the engine and creates a coverage gap. Every look must be distinct in its full piece set; vary at least one garment (such as the top, bottom, outer layer, or footwear). Reuse across different looks is the foundation of a packed suitcase (a top or layer that earns its place across multiple use cases is a strength, not a compromise), but each outfit card must represent a distinct wearable combination. (Note: in enforced capsule mode, core combinations of top+bottom or dress must also be unique across looks; for standard trips, complete outfit uniqueness is enforced.) Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
-This is a suitcase you are packing against a real itinerary and its weather and activities: judge each combination on whether it genuinely suits the stated use case, while aiming for the representative rotation to showcase the core versatile pieces from the packed roster. While not every piece must appear in every look, avoid leaving large portions of the packed suitcase untouched. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. OCCASION REALISM & ACTIVITY SEPARATION: Align pieces with their appropriate use-case contexts: wear practical, durable garments and supportive shoes for active outdoor slots, and tailored or elevated pieces for evening dining or cultural visits when distinct options exist in the packed roster. Avoid pairing high-maintenance or delicate layers with active outdoor trails when practical alternatives exist in the suitcase. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). When no cold-weather layering requirement applies, mode 'not_required' with assigned_layer_piece_id null is standard, but if a slot indicates cool temperatures or breezy exposure (needs_removable_cool_layer), including an outerwear piece in piece_ids (mode 'core_is_warm_enough') or naming a packed outer layer via mode 'assigned_packed_layer' is fully permitted and encouraged if needed for warmth.
+This is a suitcase you are packing against a real itinerary and its weather and activities: slot quality outranks showcasing the packed roster. Judge each combination on whether it genuinely suits its stated use case and conditions first; only once a slot has its strongest available combination does using more of the packed suitcase become a secondary, tie-breaking preference. An unused packed piece is a better outcome than a worse-fitting outfit chosen just to give that piece a look. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. If the allowed roster for a specific outfit within a slot does not contain a genuinely credible combination for its use case, DECLINE it: omit that outfit from 'outfits' and add an entry to 'slot_gaps' naming the slot and the concrete reason, rather than submitting a weak combination described as if it were a good one. This is a real option, not a last resort — an honest decline is a correct answer. A card you do submit stands on its own reason text; it does not carry or need a separate confidence rating. OCCASION REALISM & ACTIVITY SEPARATION: Align pieces with their appropriate use-case contexts: wear practical, durable garments and supportive shoes for active outdoor slots, and tailored or elevated pieces for evening dining or cultural visits when distinct options exist in the packed roster. Avoid pairing high-maintenance or delicate layers with active outdoor trails when practical alternatives exist in the suitcase. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). When no cold-weather layering requirement applies, mode 'not_required' with assigned_layer_piece_id null is standard, but if a slot indicates cool temperatures or breezy exposure (needs_removable_cool_layer), including an outerwear piece in piece_ids (mode 'core_is_warm_enough') or naming a packed outer layer via mode 'assigned_packed_layer' is fully permitted and encouraged if needed for warmth.
 
 ${PHYSICAL_WEARABILITY_REALISM_RULES}
 
@@ -4900,6 +5955,33 @@ export function atomicTripCompositionInstructions(instructions) {
   return String(instructions || '').replace(ATOMIC_TRIP_TOOL_LOOP_ONLY_INSTRUCTION, ATOMIC_TRIP_COMPOSITION_INSTRUCTION)
 }
 
+// thread_1789585467294 (2026-09-16): the shared fact line omits occasion tags on the stated
+// rationale that "every row already survived this request's occasion gate" (garmentEvidenceLine.js's
+// SPARSE_CATALOG_CONVENTIONS) — true for a single-occasion request, false for a trip roster, which
+// is deliberately a multi-occasion capsule serving distinct slots (a daytime walk, a hike, an evening
+// dinner) in one call. Trip is the one path where that omission's premise does not hold, so trip's
+// catalog line states each piece's recorded occasions explicitly, appended to the otherwise-identical
+// shared fact line. This is a structured recorded field, not tagger prose — it is not covered by
+// docs/garment-evidence-parity-2026-09-15.md's decision to omit tagger best_use/style_risk from every
+// model path (owner ruling 2026-09-16: keep that decision as-is; do not reintroduce tagger prose here).
+function tripPieceOccasionsFact(piece = {}) {
+  const tags = Array.isArray(piece?.occasions) ? piece.occasions.map(o => String(o || '').trim()).filter(Boolean) : []
+  return ` | occasions: ${tags.length ? tags.join(', ') : 'unknown'}`
+}
+
+// TRIP TRUTH CATALOG: the shared garment fact line (docs/garment-evidence-parity-2026-09-15.md), identical to every other chat path,
+// plus each piece's recorded occasions (see tripPieceOccasionsFact above), with saved-record notes
+// (owner rules, rejections) for roster pieces delivered separately by tripPlanPieceNotes.
+export function tripPlanTruthCatalog(rosterPieces = []) {
+  return rosterPieces.map(piece => `${sharedGarmentEvidenceLine(piece)}${tripPieceOccasionsFact(piece)}`)
+}
+export function tripPlanPieceNotes(rosterPieces = []) {
+  return rosterPieces.map(piece => garmentNotesEntry(piece)).filter(Boolean)
+}
+// Trip's piece_catalog_conventions text: the shared conventions plus the one addendum trip needs,
+// since occasions are stated per piece here unlike every other fact-line consumer.
+export const TRIP_GARMENT_FACT_CONVENTIONS = `${GARMENT_FACT_CONVENTIONS} Occasions are stated per piece here (unlike other paths' fact line) because a trip roster spans multiple slot occasions rather than one already-filtered request occasion; a piece's occasions are its recorded tags, not a suitability verdict for any specific slot — read them alongside formality and the slot's own best_for text.`
+
 async function composeTripPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -4912,15 +5994,15 @@ async function composeTripPlanOnce(workbench, toolContext) {
       .all(...rosterIds)
       .map(parsePiece)
     : []
-  // Full garment truth (buildPieceText), not planWorkbenchPieceLine's compact line — the same
-  // pairing-requirements/do-not-pair evidence capsule composition already gets, per the ratified
-  // spec's §3.2 finding.
-  const truthCatalog = rosterPieces.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  // The shared garment fact line and saved-record notes — the same evidence Whole Wardrobe and /ask receive.
+  const truthCatalog = tripPlanTruthCatalog(rosterPieces)
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
     slots: workbench.slots,
-    piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog
+    piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog,
+    piece_catalog_conventions: TRIP_GARMENT_FACT_CONVENTIONS,
+    piece_notes: tripPlanPieceNotes(rosterPieces)
   }
   const content = [{
     type: 'text',
@@ -4971,6 +6053,25 @@ async function composeTripPlanOnce(workbench, toolContext) {
   })
   recordToolLoopUsage(toolContext, usage)
   toolContext.freeformDiagnostics.atomicTripVisualPieces = visuallySeenIds.length
+  // thread_1789585467294 (owner ruling 2026-09-16): the relaxed outfits.minItems only stays honest
+  // if every requested slot is provably accounted for in the model's own raw response — reject an
+  // unknown slot_id, a duplicate decline, a slot both delivered and declined, or a slot silently
+  // present in neither array, before this ever reaches domain validation. Thrown here (no repair
+  // round exists on this one-shot path) so it surfaces through the same compositionError handling
+  // tools.js already applies to any other composition-call failure.
+  const partialPlanCheck = validateTripCompositionPartialPlan(
+    (workbench.slots || []).map(slot => slot.id),
+    value?.outfits,
+    value?.slot_gaps
+  )
+  if (!partialPlanCheck.valid) {
+    throw new Error(`Trip composition response violates the partial-plan contract: ${partialPlanCheck.errors.join('; ')}`)
+  }
+  // thread_1789585467294: stashed on toolContext, not on the returned array, so this function keeps
+  // its existing "returns the outfits array" contract (mocks in tests still work unchanged). The
+  // atomic branch in tools.js reads this right after calling composeTripPlanOnce and folds each
+  // declined outfit's reason into the same coverageGaps list the model-undercount path already uses.
+  toolContext.tripCompositionSlotGaps = Array.isArray(value?.slot_gaps) ? value.slot_gaps : []
   return Array.isArray(value?.outfits) ? value.outfits : []
 }
 
@@ -5610,11 +6711,28 @@ router.post('/ask', async (req, res) => {
         // roster. Occasion remains overridable by an explicit tool argument. Activity is locked to
         // the router's request-level interpretation so a later model tool call cannot invent walking
         // and turn it into a footwear gate.
+        //
+        // 2026-09-16 (owner review, thread_1789546295700): season gets the SAME lock, for the same
+        // reason. This run's router correctly resolved `early fall`; the model's own later
+        // generate_outfits call restated season as `warm` (a temperature descriptor, answering the
+        // generate_outfits schema's own "e.g. warm, cool, year-round" wording), and
+        // resolveCalendarSeason (lib/seasonContext.js) maps `warm -> summer` — silently discarding
+        // the correct calendar season and, with it, changing which season-eligibility exclusions
+        // applied (OUT_OF_SEASON['fall']:'warm' vs ['summer']:'cool' exclude opposite tag sets).
+        // Weather already has its own field (`user_weather`/`resolvedWeather`) for describing
+        // temperature — generate_outfits's own resolvedSeason prompt text already appends a
+        // `physicalWeather` phrase derived from the resolved weather profile, not from this string
+        // — so locking season to the router's calendar classification loses no descriptive
+        // information, it only stops a later temperature-vibe word from overwriting the calendar
+        // fact used for season-based eligibility.
         if (freshExecutionRequest) {
           toolContext.occasion = normalizeOccasion(routed.value?.occasion)
           toolContext.activity = normalizeActivity(routed.value?.activity)
           toolContext.executionRouterActivity = toolContext.activity
           toolContext.executionRouterActivityLocked = true
+          toolContext.season = routed.value?.season || toolContext.season
+          toolContext.executionRouterSeason = toolContext.season
+          toolContext.executionRouterSeasonLocked = true
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
@@ -5698,18 +6816,25 @@ router.post('/ask', async (req, res) => {
               const visualPieces = preferredVisualIds
                 ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
                 : compactPieces
-              const visualEvidence = compactProfile === 'garment_fact'
+              // thread_1789536455443: existing_card_explanation used to get zero photos (and its
+              // system prompt forbade even claiming to see any) — a suitability/warmth question
+              // about an already-composed card had no visual evidence of construction at all,
+              // only the sparse structured facts. Both compact profiles now get the same visual
+              // evidence a garment_fact question already received.
+              const visualEvidence = (compactProfile === 'garment_fact' || compactProfile === 'existing_card_explanation')
                 ? await compactGarmentVisualEvidence(visualPieces)
                 : []
-              updateAiTelemetryContext({
-                freeformTurnToken,
-                subflow: 'compact_profile',
-                iterationIndex: nextFreeformCallIndex(toolContext),
-                isRetry: false,
-                retryReason: '',
-                isNested: false,
-              })
-              const answerCall = await askStylistWithUsage({
+              // 2026-09-16 (owner review): thread_1789543565383 (capture session
+              // 20260916T072500260Z-p33193-328b5958) shows a real existing_card_explanation call
+              // hit stopReason: max_tokens with maxTokens: 700, storing and presenting a sentence
+              // fragment ("...this outfit can be trusted for an outdoor temperature range of 40°F
+              // to") as a complete answer. Same root cause already diagnosed for the router
+              // (routeFreeformExecutionProfile above, 350->900): Gemini bills thinking tokens out of
+              // this same cap and thinking_level 'low' still lets that vary a lot per request, so a
+              // ceiling sized only for the visible prose can be exhausted by reasoning before any
+              // answer text is written. Raised with headroom, matching the full-turn free-text
+              // ceiling used for a prose answer of comparable length elsewhere in this file.
+              const guarded = await compactAnswerWithTruncationGuard({
                 system: compactFreeformAnswerSystem(compactProfile),
                 messages: [{
                   role: 'user',
@@ -5717,10 +6842,27 @@ router.post('/ask', async (req, res) => {
                     ? [{ type: 'text', text: answerText }, ...visualEvidence]
                     : answerText
                 }],
-                maxTokens: 700,
-                providerOverride: toolContext.providerOverride
+                maxTokens: 1500,
+                providerOverride: toolContext.providerOverride,
+                onAttempt: ({ isRetry }) => updateAiTelemetryContext({
+                  freeformTurnToken,
+                  subflow: 'compact_profile',
+                  iterationIndex: nextFreeformCallIndex(toolContext),
+                  isRetry,
+                  retryReason: isRetry ? 'providerTruncation' : '',
+                  isNested: false,
+                })
               })
-              recordToolLoopUsage(toolContext, answerCall.usage)
+              for (const usage of guarded.usages) recordToolLoopUsage(toolContext, usage)
+              bumpFreeformDiagnostic(toolContext, 'compactAnswerCalls')
+              if (guarded.usages.length > 1) bumpFreeformDiagnostic(toolContext, 'compactAnswerRetries')
+              // A response the provider itself flags as cut off at the token cap is not a completed
+              // answer, however fluent the fragment reads — see callOutcomeFromUsage's identical
+              // reasoning for ai_call_log. compactAnswerWithTruncationGuard already retried once
+              // with a "give a shorter, complete answer" nudge; if it is STILL truncated, its own
+              // returned text is an honest disclosure, not a stored/served sentence fragment.
+              if (guarded.truncated) bumpFreeformDiagnostic(toolContext, 'compactAnswerTruncatedUnrecovered')
+              const answerCall = { text: guarded.text, usage: guarded.usages.at(-1) }
               recordFreeformToolIteration(toolContext, [`compact_${compactProfile}`])
               toolContext.freeformDiagnostics ||= {}
               toolContext.freeformDiagnostics.executionProfile = compactProfile
@@ -5749,6 +6891,41 @@ router.post('/ask', async (req, res) => {
           toolContext.freeformDiagnostics ||= {}
           toolContext.freeformDiagnostics.executionProfile = 'bounded_multi'
           recordFreeformToolIteration(toolContext, ['generate_outfits'])
+          // 2026-09-16 (owner review): confirmed via /tmp/wardrobe-dev-unified.log — this exact
+          // shortcut called generate_outfits with no weather at all, was rejected
+          // (weather_context_required), and only succeeded after a second, model-issued call
+          // restated the temperature it had already read in the user's own words. That restatement
+          // is unnecessary: extractStructuredUserWeather (styling-engine/stylingIntent.js) already
+          // extracts literal stated Fahrenheit facts deterministically, and buildSingleOutfitConversationPayload
+          // already uses it for the identical purpose. Only the fields it actually returns are
+          // passed through — no `scope` or any other field is manufactured for either source below.
+          //
+          // This tool call always states `season` explicitly (a required field on generate_outfits),
+          // and resolveWeather (stylingContext.js) deliberately refuses its established-state
+          // weather-profile fallback whenever season provenance is 'explicit_request' — "a current
+          // explicit seasonal brief is a new instruction... must not silently inherit a derived
+          // snapshot from an older card or thread" — so a persisted-weather fallback must be passed
+          // as an explicit `user_weather` arg (which resolveWeather checks first, regardless of
+          // season provenance) to be reachable at all through this call shape.
+          //
+          // Current-turn literal weather always wins. The persisted weather_profile is consulted
+          // ONLY as a continuation fallback — "three more for the same outing" with no fresh number
+          // restated — gated on `!freshExecutionRequest`, the same structural continuation-vs-fresh-
+          // pivot signal already computed above for the router-eligibility decision (not a new
+          // keyword/weather-specific rule). A genuine fresh pivot ("actually, three hiking outfits
+          // tomorrow", no current outfit set) has freshExecutionRequest === true and never inherits a
+          // stale profile.
+          const currentTurnUserWeather = extractStructuredUserWeather(currentQuestion)
+          const continuationHighF = Number(compactState.weather_profile?.high_f)
+          const continuationLowF = Number(compactState.weather_profile?.low_f)
+          const continuationUserWeather = (Number.isFinite(continuationHighF) || Number.isFinite(continuationLowF))
+            ? {
+                ...(Number.isFinite(continuationHighF) ? { high_f: continuationHighF } : {}),
+                ...(Number.isFinite(continuationLowF) ? { low_f: continuationLowF } : {}),
+              }
+            : null
+          const shortcutUserWeather = currentTurnUserWeather
+            || (!freshExecutionRequest ? continuationUserWeather : null)
           await executeTool('generate_outfits', {
             occasion: routed.value.occasion,
             activity: routed.value.activity,
@@ -5757,7 +6934,8 @@ router.post('/ask', async (req, res) => {
             mission: routed.value.mission,
             limit: routedLimit,
             location: routed.value.location,
-            date: routed.value.date
+            date: routed.value.date,
+            ...(shortcutUserWeather ? { user_weather: shortcutUserWeather } : {})
           }, toolContext)
           if (toolContext.atomicMultiLookCompleted) {
             const freeformDiagnostics = toolContext.freeformDiagnostics || {}

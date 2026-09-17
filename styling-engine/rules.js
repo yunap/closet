@@ -5,6 +5,7 @@
 // missing gate is a bug, and amend it in the same commit as any change. See AGENTS.md.
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
+import { storedGarmentRules } from './ruleProvenance.js'
 export { parsePiece }
 import { autoStylingTrustDecision, buildWardrobePieceTruthText, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
@@ -20,15 +21,15 @@ import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { evaluateAutomaticUsePiecePoolCore } from './automaticUsePool.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
-import { evaluateWearableOutfit } from './outfitValidation.js'
-import { ENVIRONMENTAL_ADEQUACY_CODES } from './outfitEnvironmentalAdequacy.js'
+import { evaluateWearableOutfit, evaluateLayerPairConstruction } from './outfitValidation.js'
+import { advisoryFindingsToSystemFlags, primaryUserFacingFinding } from './outfitEnvironmentalAdequacy.js'
 import { validatedSubstitute } from './recovery.js'
 import {
   ownerGuidanceApplicabilityForFeedback,
   ownerGuidanceApplicabilityFromSynthesis,
   ownerGuidanceApplies,
 } from '../lib/ownerGuidance.js'
-import { resolveCalendarSeason } from '../lib/seasonContext.js'
+import { resolveCalendarSeason, seasonFitPieceAdvisory, seasonEligibleForCalendar } from '../lib/seasonContext.js'
 
 import {
   fabricWeight,
@@ -223,7 +224,6 @@ export function thermalFactsForPieceLine(piece = {}) {
   const facts = thermalFactsForPiece(piece)
   const bits = []
   if (facts) {
-    bits.push(`warmth:${facts.warmth || 'not established'}`)
     bits.push(`insulating layer:${facts.insulatingLayer}`)
     if (facts.insulatingFaceMaterial) bits.push('insulating face material:yes')
     if (facts.interior) bits.push(`interior:${facts.interior}`)
@@ -368,13 +368,34 @@ export function resolveFormalityIntent(options = {}) {
   let target = null
   const has = pattern => pattern.test(text) // ratchet-allow: user-intent parsing, not garment text matching
 
-  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?dressy\b/) || has(/\bnot\s+formal\b/)) avoid.add('dressy')
-  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?elevated\b/)) avoid.add('elevated')
-  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?(?:lounge|loungey|loungy|sloppy|athletic)\b/)) avoid.add('lounge')
+  // NEGATION VOCABULARY, COMPLETED (2026-09-13). "nothing dressy" matched none of these patterns,
+  // so the negation was dropped and the stripping below left the word standing — the positive
+  // matcher then read it as a dressy TARGET and raised the ceiling to dressy, admitting exactly what
+  // the wearer excluded. `nothing`/`none`/`never` belong in the same alternation as `not`/`no`.
+  const NEG = '(?:not|no|nothing|none|never|avoid|less)'
+  if (has(new RegExp(`\\b${NEG}\\s+(?:too\\s+)?dressy\\b`)) || has(/\bnot\s+formal\b/)) avoid.add('dressy')
+  if (has(new RegExp(`\\b${NEG}\\s+(?:too\\s+)?elevated\\b`))) avoid.add('elevated')
+  if (has(new RegExp(`\\b${NEG}\\s+(?:too\\s+)?(?:lounge|loungey|loungy|sloppy|athletic)\\b`))) avoid.add('lounge')
   if (has(/\bnot\s+(?:too\s+)?casual\b/)) avoid.add('lounge')
 
+  // AN EXPLICIT MAXIMUM: "nothing above casual", "no higher than everyday". A maximum is the one
+  // phrasing that is a hard constraint rather than a target, so it is recognised in its own right
+  // and expressed through `avoid` — the rank ABOVE the named register is what the wearer excluded.
+  // Stated generically over the rank ladder; no register is special-cased.
+  const ABOVE = new RegExp(`\\b${NEG}\\s+(?:more\\s+)?(?:above|over|dressier than|fancier than|higher than|beyond)\\s+(casual|everyday|elevated|dressy|lounge)\\b`)
+  const aboveMatch = text.match(ABOVE)
+  if (aboveMatch) {
+    const named = aboveMatch[1] === 'casual' ? 'everyday' : aboveMatch[1]
+    const namedRank = formalityRank(named)
+    for (const level of ['lounge', 'everyday', 'elevated', 'dressy']) {
+      const rank = formalityRank(level)
+      if (rank !== null && namedRank !== null && rank > namedRank) avoid.add(level)
+    }
+  }
+
   const positiveText = text
-    .replace(/\b(?:not|no|avoid|less)\s+(?:too\s+)?(?:dressy|formal|elevated|lounge|loungey|loungy|sloppy|athletic|casual)\b/g, ' ')
+    .replace(new RegExp(`\\b${NEG}\\s+(?:too\\s+)?(?:dressy|formal|elevated|lounge|loungey|loungy|sloppy|athletic|casual)\\b`, 'g'), ' ')
+    .replace(ABOVE, ' ')
 
   if (/\b(more|make it|make this|feel|keep it|same outfit,?)\s+(?:more\s+)?everyday\b/.test(positiveText) || /\beveryday\b/.test(positiveText)) target = 'everyday'
   if (/\b(more|make it|make this|feel|keep it|same outfit,?)\s+(?:more\s+)?elevated\b/.test(positiveText) || /\belevated\b/.test(positiveText)) target = 'elevated'
@@ -395,6 +416,67 @@ export function resolveFormalityIntent(options = {}) {
     walkable,
     active: Boolean(target || avoid.size || walkable)
   }
+}
+
+// IS THE CEILING A DRESS CODE, OR A DEFAULT? (owner ruling 2026-09-13)
+//
+// A ceiling the WEARER stated — "something dressy", "nothing elevated" — is a constraint on the
+// request. A ceiling that comes from an occasion or activity profile is this app's own default for
+// what that occasion usually asks for. The two were indistinguishable downstream, so an ordinary
+// "casual outfits" request enforced a wardrobe-wide everyday ceiling as hard invalidity.
+// The register RANKING advisory, shared so every flow sinks an above-request piece the same way.
+// Same shape and weight as `seasonFitPieceAdvisory`: a preference, deliberately smaller than the
+// thermal band's ±10, and never a gate. Returns `{ score, reason }` with score 0 when the piece
+// matches the request's register or when the ceiling is a stated maximum (in which case the gate,
+// not the ranking, is the right owner).
+export const REGISTER_ADVISORY_PER_RANK = -6
+
+// REGISTER IS STRICTLY SUBORDINATE TO WEATHER ADEQUACY (owner ruling 2026-09-13).
+//
+// The thermal band's smallest adjustment magnitude is 10 (well-matched +10, one-step miss -10), so
+// capping the register advisory just below that makes the ordering an INVARIANT rather than an
+// arithmetic coincidence: a weather-appropriate candidate can never be displaced by a
+// weather-inadequate one on register distance alone, at any distance and whatever the ceiling.
+//
+// Measured before the cap existed: at one rank the weather-adequate piece won by 14 and at two ranks
+// by 8 — but a three-rank distance (-18) would have inverted it. Three ranks is unreachable from
+// today's occasion ceilings (the lowest is `everyday`), which is exactly the kind of incidental
+// safety this cap replaces with a structural one.
+const THERMAL_BAND_MIN_MAGNITUDE = 10
+export const REGISTER_ADVISORY_FLOOR = -(THERMAL_BAND_MIN_MAGNITUDE - 1)
+
+export function registerFitPieceAdvisory(piece = {}, { registerCeiling = null, occasion = '', explicitCeiling = false } = {}) {
+  if (!registerCeiling || explicitCeiling) return { score: 0, reason: '' }
+  const verdict = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion, explicitCeiling: false })
+  if (verdict.verdict !== 'above_request') return { score: 0, reason: '' }
+  // PER RANK, so distance is expressed in the ranking rather than by a cutoff: one step above sits
+  // just below a comparable match, two steps sinks further — but the total is floored so register
+  // never reaches the thermal band's own magnitude. Farther from the request always ranks worse;
+  // it never outranks being wrong for the weather.
+  const ranks = Math.max(1, Number(verdict.ranksAbove) || 1)
+  const score = Math.max(REGISTER_ADVISORY_FLOOR, REGISTER_ADVISORY_PER_RANK * ranks)
+  return {
+    score,
+    reason: `register: ${verdict.formality} is ${ranks === 1 ? 'one rank' : `${ranks} ranks`} above this request's usual ${registerCeiling}`,
+  }
+}
+
+export function registerCeilingIsExplicit(options = {}) {
+  const intent = options.formalityIntent || resolveFormalityIntent(options)
+  // A TARGET IS NOT A MAXIMUM (owner ruling 2026-09-13). "casual outfit" and "something dressy" both
+  // say what the wearer is going FOR; neither says what they will not wear. An occasion-derived
+  // ceiling says even less — it is this app's own default for what the occasion usually asks. Only a
+  // stated maximum ("nothing above casual", "nothing dressy") is a constraint, and only that makes
+  // the ceiling hard. Everything else admits one rank up as a ranked-down preference.
+  if (intent.avoid && intent.avoid.size) return true
+
+  // AN ACTIVITY'S REGISTER CEILING IS NOT A CAPABILITY CLAIM (owner ruling 2026-09-13). Formality
+  // does not establish whether a garment can physically serve an activity — movement allowance,
+  // footwear support, maintenance/delicacy, construction and weather protection do, and each of
+  // those has its own gate that stays hard. An elevated fleece is the case that settles it: nothing
+  // about its register stops it working on a trail. So an activity ceiling ranks like any other
+  // inferred ceiling, and only a stated maximum is a constraint.
+  return false
 }
 
 export function resolveRegisterCeiling(options = {}) {
@@ -1846,7 +1928,13 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
     }
 
     const parts = []
-    if (negatives.length) parts.push(`Whole-wardrobe outfit feedback to suppress. Avoid repeating these exact combinations, piece roles, formulas, or occasion mismatches:\n${negatives.slice(0, 12).join('\n')}`)
+    // NARROW EVIDENCE AUTHORITY (owner ruling 2026-09-13). This header used to say "avoid repeating
+    // these exact combinations, piece roles, formulas, or occasion mismatches" — generalising each
+    // reaction to its roles, its formula family and its occasion, while the exact-reaction lines
+    // elsewhere in the same prompt say "Do not infer dislike of its formula, silhouette, colors, or
+    // individual garments." A reaction to one outfit is evidence about that outfit. The listed
+    // formula and occasion stay as context for recognising the combination, not as rules.
+    if (negatives.length) parts.push(`Whole-wardrobe outfit feedback. Each line is a reaction to one exact combination: do not reproduce that exact combination unchanged. Do not infer dislike of its formula, piece roles, occasion, colors, or individual garments — those details identify the combination, they are not rules:\n${negatives.slice(0, 12).join('\n')}`)
     return parts.join('\n\n')
   } catch {
     return ''
@@ -1926,8 +2014,10 @@ export function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCuto
   }
 }
 
-export function buildPieceText(p, options) {
-  return buildWardrobePieceTruthText(p, options)
+// Every buildPieceText reader (capsule, trip, get_garment_details, selected-piece flows) gets the owner's stored rules as
+// authoritative, minus receipts, retired reaction copies and saved chat replies (ruleProvenance.js).
+export function buildPieceText(p, options = {}) {
+  return buildWardrobePieceTruthText(p, { ...options, storedRules: storedGarmentRules(p) })
 }
 
 export function pieceStyleProfile(piece = {}) {
@@ -1967,6 +2057,7 @@ export function pieceGarmentIntelligence(piece = {}) {
 // must never activate a paid review or rejection path.
 export function wholeWardrobeOutfitVisualReviewFindings(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const findings = []
   const patternedPieceIds = pieces.filter(piece => {
     const complexity = String(piece.pattern_complexity || '').toLowerCase().trim()
     if (complexity === 'loud' || complexity === 'medium') return true
@@ -1974,13 +2065,34 @@ export function wholeWardrobeOutfitVisualReviewFindings(outfit = {}) {
     const patternType = String(piece.pattern_type || '').toLowerCase().trim()
     return Boolean(patternType && !['solid', 'none', 'unknown'].includes(patternType))
   }).map(piece => Number(piece.id)).filter(Number.isFinite)
-  if (patternedPieceIds.length < 2) return []
-  return [{
-    code: 'multiple_patterned_pieces',
-    reason: 'two or more pieces carry a concrete pattern signal',
-    pieceIds: patternedPieceIds,
-    source: 'structured_piece_facts',
-  }]
+  if (patternedPieceIds.length >= 2) {
+    findings.push({
+      code: 'multiple_patterned_pieces',
+      reason: 'two or more pieces carry a concrete pattern signal',
+      pieceIds: patternedPieceIds,
+      source: 'structured_piece_facts',
+    })
+  }
+  // thread_1789526496845: a shape-only sleeve-construction conflict (log-only everywhere else —
+  // never a gate, never model-facing, see docs/engine-behaviour-map.md) had no route to an actual
+  // photo-based check at all, because this was the ONLY signal deciding whether a card reached the
+  // visual critic, and it only ever looks at pattern count. The shadow finding is used here purely
+  // to REQUEST a look — never as a verdict. The critic prompt (`WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM`)
+  // judges what it can actually see and states uncertainty when it cannot tell; this never becomes
+  // a second deterministic veto.
+  const sleeveConflictIds = evaluateLayerPairConstruction(pieces, { roleAware: true }).findings
+    .filter(finding => finding.code === 'layer_construction_sleeve_conflict')
+    .flatMap(finding => [finding.evidence?.addedId, finding.evidence?.baseId])
+    .filter(Number.isFinite)
+  if (sleeveConflictIds.length) {
+    findings.push({
+      code: 'layer_construction_sleeve_conflict',
+      reason: 'a shape-only heuristic flags a possible sleeve/layer fit conflict — request a photo-based look, not a verdict',
+      pieceIds: [...new Set(sleeveConflictIds)],
+      source: 'structured_piece_facts',
+    })
+  }
+  return findings
 }
 
 export function wholeWardrobeOutfitLooksQuestionable(outfit = {}) {
@@ -2448,7 +2560,21 @@ export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedS
 // two `dressy` ones (a gold print blouse, a silk floral ruffle midi) read as
 // tagging noise rather than genuine casual wear. Elevated is admitted, dressy
 // is not.
-export function registerCeilingVerdict(piece = {}, registerCeilingRank = null, { occasion = '' } = {}) {
+// ONE RANK ABOVE AN UNSTATED CEILING IS A PREFERENCE, NOT INVALIDITY (owner ruling 2026-09-13).
+//
+// Live thread_1789288270913: an ordinary "five casual outfits" request excluded 80 of the owner's
+// pieces — 27 tops, 18 dresses, 13 bottoms, 11 outerwear, 11 shoes — as `prohibited`, while four
+// `elevated` BASE garments were delivered in the same set. There was never a category rule; the
+// survivors simply carried an explicit `casual` occasion tag and the excluded pieces did not. The
+// effective rule was "elevated is invalid for casual unless you already typed casual onto this
+// piece" — tagging completeness standing in for occasion invalidity.
+//
+// The exemption below is the proof it was a preference all along: if one rank up were genuinely
+// invalid, an owner tag could not make it valid. So when the ceiling is the app's own default, one
+// rank up now returns `above_request` — eligible, ranked down, visible for comparison. Two ranks up
+// (dressy at a casual request) still excludes, and an explicitly stated dress code still excludes at
+// one rank: "nothing dressy" means nothing dressy.
+export function registerCeilingVerdict(piece = {}, registerCeilingRank = null, { occasion = '', explicitCeiling = true } = {}) {
   if (registerCeilingRank === null || registerCeilingRank === undefined || isAccessory(piece)) return { verdict: 'pass' }
   const formality = pieceFormality(piece)
   const rank = formalityRank(formality)
@@ -2460,11 +2586,23 @@ export function registerCeilingVerdict(piece = {}, registerCeilingRank = null, {
       rank <= registerCeilingRank + 1) {
     return { verdict: 'pass', exemptedByExplicitTag: true, formality }
   }
+  // NO ORDINAL CUTOFF WITHOUT A STATED MAXIMUM (owner ruling 2026-09-13, final). The one-step bound
+  // came from the 2026-07-30 amendment that capped the explicit-tag exemption, and the record is
+  // explicit that it was a preference "marked for revisit during testing" — not an independently
+  // provable incompatibility. Under the architecture this arc settled, a preference ranks. A dressy
+  // garment for a casual request can rank very poorly without being declared invalid; what makes it
+  // invalid is the wearer saying so, or an independent physical gate.
+  if (!explicitCeiling) {
+    return { verdict: 'above_request', formality, ranksAbove: rank - registerCeilingRank }
+  }
   return { verdict: 'exclude', formality }
 }
 
-export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null, activityProfile = null, registerCeiling = null } = {}) {
+export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null, activityProfile = null, registerCeiling = null, registerCeilingExplicit = true } = {}) {
   const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
+  // Held rather than returned immediately: a genuine prohibition found later (material, footwear)
+  // must still win over a register preference.
+  let registerAboveRequest = null
 
   const sourceFor = (key, value, warmKey = '') => {
     const occasionRules = occasionProfile?.rules || {}
@@ -2501,9 +2639,19 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
   }
   if (registerCeiling) {
-    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion: occasionProfile?.id })
+    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), {
+      occasion: occasionProfile?.id,
+      explicitCeiling: registerCeilingExplicit,
+    })
     if (rv.verdict === 'exclude') {
       return { tier: 'prohibited', label: `${rv.formality} exceeds ${registerCeiling} ceiling`, reason: `register: ${rv.formality} exceeds ${registerCeiling} ceiling` }
+    }
+    // THE PROHIBITED TIER HOLDS ACTUAL PROHIBITIONS. `search_wardrobe` drops prohibited pieces in
+    // compose mode and explains them in `intent: 'explain'`, so a preference living in that tier is
+    // both a silent supply cut and a false explanation to the wearer. One rank above an unstated
+    // ceiling is `discouraged`: returned, ranked below the matching register, and legitimate to pick.
+    if (rv.verdict === 'above_request') {
+      registerAboveRequest = { tier: 'discouraged', label: `${rv.formality} above a ${occasionProfile?.id || 'default'} request`, reason: `register: ${rv.formality} is one rank above this request's usual ${registerCeiling} register` }
     }
     if (rv.verdict === 'unknown' && !unknownLabel) unknownLabel = 'formality not tagged'
   }
@@ -2585,6 +2733,10 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     }
   }
 
+  // A register one rank above the request outranks "preferred material": the piece is returned and
+  // usable, but it should not be ranked as a preferred answer to a request it sits above.
+  if (registerAboveRequest) return registerAboveRequest
+
   for (const mat of (mergedRules.preferred_materials || [])) {
     if (pieceMatchesMaterial(piece, mat)) return { tier: 'preferred', label: 'preferred material' }
   }
@@ -2660,17 +2812,28 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
   const exclusions = (piece.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
-  const ownerExclusionOccasion = String(options.ownerExclusionOccasion || reqOccasion).toLowerCase().replace(/[-_]+/g, ' ').trim()
-  if (exclusions.includes(ownerExclusionOccasion)) {
+  // thread_1789585467294: a trip slot occurs both in its own occasion ("outdoor_daytime_social",
+  // "evening") AND inside the enclosing trip's own context ("travel"). A piece the owner excluded
+  // from travel (occasion_exclusions: ["travel"]) must stay excluded from every slot of a trip plan
+  // even though no individual slot is itself literally occasioned "travel" — passing only the slot's
+  // own occasion here silently dropped that exclusion for every trip slot. Callers with more than one
+  // occasion to check (a slot occasion plus its enclosing trip context) pass an array; existing single-
+  // occasion callers are unaffected.
+  const ownerExclusionOccasions = (Array.isArray(options.ownerExclusionOccasion) ? options.ownerExclusionOccasion : [options.ownerExclusionOccasion || reqOccasion])
+    .map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+    .filter(Boolean)
+  const matchedExclusion = ownerExclusionOccasions.find(o => exclusions.includes(o))
+  if (matchedExclusion) {
     const role = String(piece.role_permission || 'auto')
     const intelligence = pieceGarmentIntelligence(piece)
     const profileTrust = String(intelligence.autoUseTrust || '').toLowerCase()
     return {
       allowed: false,
       supportOnly: role === 'support_only' || profileTrust === 'support_only',
-      reasons: [`user-excluded for ${ownerExclusionOccasion}`]
+      reasons: [`user-excluded for ${matchedExclusion}`]
     }
   }
+  const ownerExclusionOccasion = ownerExclusionOccasions[0] || reqOccasion
 
   let ownerConstraints = options.ownerConstraints
   if (!Array.isArray(ownerConstraints)) {
@@ -2793,18 +2956,25 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   // registerCeiling-only opt-in, and activityProfile was never passed at all) — that left every
   // caller of this function exposed to the exact gate-parity bug class specs 5/7 kept finding one
   // call site at a time. See spec 8 for the full caller inventory and the register-ceiling rollout.
+  const registerIntentOptions = {
+    occasion,
+    activity: options.activity,
+    mood: options.mood || '',
+    request: options.request || options.question || '',
+    occasionProfile,
+    activityProfile
+  }
   const registerCeiling = options.registerCeiling !== undefined
     ? options.registerCeiling
-    : resolveRegisterCeiling({
-        occasion,
-        activity: options.activity,
-        mood: options.mood || '',
-        request: options.request || options.question || '',
-        occasionProfile,
-        activityProfile
-      })
+    : resolveRegisterCeiling(registerIntentOptions)
+  // EXPLICITNESS TRAVELS WITH THE CEILING. This gate runs UPSTREAM of the composer roster and of
+  // `recoveryEligiblePieces`, so whatever it suppresses is unavailable to composition AND to repair
+  // — it is the last place that should be silently inheriting `profileRuleFit`'s hard default.
+  const registerCeilingExplicit = options.registerCeilingExplicit !== undefined
+    ? options.registerCeilingExplicit
+    : registerCeilingIsExplicit(registerIntentOptions)
 
-  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile, activityProfile, registerCeiling })
+  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile, activityProfile, registerCeiling, registerCeilingExplicit })
   if (profileFit.tier === 'prohibited') {
     reasons.push(profileFit.reason)
   }
@@ -2823,6 +2993,7 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
 export function buildVisualComposerRoster(allowedPieces = [], {
   occasion = 'casual',
   weatherProfile = {},          // from weatherProfileFromContext({ mood, season })
+  calendarSeason = '',          // resolved calendar season; '' disables season handling entirely
   sessionInfluence = null,      // existing recency map, optional
   maxImages = 90,                // hard ceiling, below Claude's 100-image limit
   selectedPieceId = null,
@@ -2937,10 +3108,24 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     return null
   }
 
+  // The roster already resolved the wearer's formality intent above; reuse it rather than
+  // re-deriving from prose a second time.
+  const registerCeilingExplicit = registerCeilingIsExplicit({
+    formalityIntent,
+    occasionProfile: resolvedOccasionProfile,
+    activityProfile: resolvedActivityProfile,
+  })
+  const registerAboveRequestIds = new Set()
   const registerGateReason = (piece) => {
-    const rv = registerCeilingVerdict(piece, registerCeilingRank, { occasion: resolvedOccasionProfile?.id })
+    const rv = registerCeilingVerdict(piece, registerCeilingRank, {
+      occasion: resolvedOccasionProfile?.id,
+      explicitCeiling: registerCeilingExplicit,
+    })
     if (rv.verdict === 'unknown') return 'metadata missing: formality (register gate active)'
     if (rv.verdict === 'exclude') return `register: ${rv.formality} exceeds ${registerCeiling} ceiling`
+    // Eligible, and ranked below the matching register by getRelevanceScore. Recorded here so the
+    // ranking penalty and the gate read the same verdict rather than re-deriving it.
+    if (rv.verdict === 'above_request') registerAboveRequestIds.add(Number(piece.id))
     return null
   }
   const explicitTargetRank = formalityIntent.targetRank
@@ -3114,6 +3299,41 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     }
   }
 
+  // Step 2.5 — Calendar-season eligibility on a cool day
+  //
+  // THE COMPOSER HAD NO SEASON HANDLING AT ALL. Measured on thread_1789247972106 (65/50, fall,
+  // casual): 18 of its 60 base pieces were tagged `warm`, ZERO exclusions mentioned season, and the
+  // cards came back built on a white graphic tee, an ivory graphic crew and cropped utility pants —
+  // after which the engine told the model that "every piece under it is tagged as warm-season
+  // clothing". The only cool-side content gates (shorts, lightweight linen, bare/sleeveless) sit
+  // behind `isCold`, which needs lowF <= 45; at a 50F low none of them run, so the whole
+  // needsRemovableCoolLayer tier shaped FINDINGS and never SUPPLY.
+  //
+  // The rule itself is the trip planner's ratified one, reused rather than reinvented
+  // (docs/trip-roster-season-eligibility-spec.md): tops are exempt because a warm-season top is a
+  // legitimate base under something warmer, dresses are not, and outerwear is judged on its own tag.
+  // Gated on the cool tier — on a mild or hot day an out-of-season piece is ranked down (below) but
+  // never excluded here.
+  //
+  // DISABLED pending independent justification (owner ruling 2026-09-12). Season is wearer-INTENT
+  // evidence, and one good run is not evidence that every mismatched dress, bottom and layer should
+  // be hard-excluded. The ranking advisory below stays on — an out-of-season piece sinks — but
+  // nothing is removed from supply until this exclusion has its own review and the ranking A/B diff.
+  const SEASON_ELIGIBILITY_GATE_ENABLED = false
+  const coolDay = Boolean(weatherProfile?.needsRemovableCoolLayer || weatherProfile?.isCold)
+  const afterSeasonGate = []
+  for (const p of afterStep2) {
+    if (!SEASON_ELIGIBILITY_GATE_ENABLED || isSelected(p) || !coolDay || !calendarSeason) {
+      afterSeasonGate.push(p)
+      continue
+    }
+    if (seasonEligibleForCalendar(p, calendarSeason, wardrobeCategoryGroup(p))) {
+      afterSeasonGate.push(p)
+    } else {
+      exclude(p, `off-season for ${calendarSeason}: tagged ${String(p?.season || '').toLowerCase().trim()}-season`)
+    }
+  }
+
   // Step 3 — Weather/register validity gate
   const afterStep3 = []
   const isHot = weatherProfile && weatherProfile.isHot
@@ -3121,7 +3341,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
 
   if (isHot) {
     const outerwearCandidates = []
-    for (const p of afterStep2) {
+    for (const p of afterSeasonGate) {
       const missingField = missingWeatherGateField(p)
       const registerReason = registerGateReason(p)
       const footwearReason = footwearGateReason(p)
@@ -3178,7 +3398,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       afterStep3.push(...outerwearCandidates)
     }
   } else if (isCold) {
-    for (const p of afterStep2) {
+    for (const p of afterSeasonGate) {
       const missingField = missingWeatherGateField(p)
       const registerReason = registerGateReason(p)
       const footwearReason = footwearGateReason(p)
@@ -3205,7 +3425,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
   } else {
-    for (const p of afterStep2) {
+    for (const p of afterSeasonGate) {
       const registerReason = registerGateReason(p)
       const footwearReason = footwearGateReason(p)
       if (isSelected(p)) {
@@ -3274,15 +3494,56 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       const pieces = byCategory[cat]
       const limit = ceilings[cat]
 
-      // Sort by relevance score descending, stably by recency and piece ID ascending
+      // Sort by relevance score descending, stably by recency and piece ID ascending. Register is
+      // carried INSIDE that score as a -6 advisory, alongside the thermal band's own +10/-10 — so a
+      // piece one rank above the request sinks against a comparable garment and still outranks a
+      // within-register piece that answers the conditions considerably worse. Register never sorts
+      // ahead of capability here; an earlier version made it an absolute key and that is precisely
+      // the priority inversion this rule exists to avoid.
       pieces.sort((a, b) => comparePieces(a, b))
 
       if (cat === 'outerwear' && isColdDemand && pieces.length > limit) {
         // Partition cold weather outerwear: reserve up to half the limit (at least 2) for insulating coats / cold weather outerwear
-        const isColdCoat = p => pieceOuterwearRole(p) === 'cold_weather_outerwear'
+        //
+        // THE RESERVE USED TO DEFEAT ITSELF (live runs 2077-2080, all five with a `warm` demand on a
+        // 65/46 day). Two independent defects, both fixed here:
+        //
+        //   1. `isColdCoat` matched on ANY insulating evidence, so two `moderate` fleece coats
+        //      counted as cold coats and consumed reserved slots on a day whose demand they do not
+        //      meet. The reserve exists to guarantee the day's warmth is REPRESENTED, so membership
+        //      now requires answering the demand.
+        //   2. The reserve was then filled `coats.slice(0, targetCoats)` — i.e. in RELEVANCE order,
+        //      the same score that had just penalized every genuinely warm coat -10 for overshooting
+        //      a narrow `[warm, warm]` band. The three reserved slots went to the wool coat and two
+        //      moderate fleeces; four `very warm` coats the owner actually owns were cut, and the
+        //      composer was left with exactly one adequate layer for five outfits, every run.
+        //      Inside the reserve, thermal fit is the ordering — relevance only breaks ties.
+        //
+        // Unknown warmth stays eligible for the reserve (a structurally-tagged coat with no warmth
+        // evidence is not evidence of a bad coat) but ranks behind measured ones: absence of
+        // evidence must not outrank a garment that demonstrably answers the conditions.
+        // THE LAYER BAND, not the base band. requiredThermalBand returns both: `range` is what the
+        // whole outfit must reach at the cold end, and `layer.range` is what a REMOVABLE layer may
+        // be — wider, because it spans the day (light at the 65° high through warm at the 46° low)
+        // precisely since you take a layer off. weatherFitForPiece already states this doctrine
+        // ("Outerwear answers to the LAYER demand, not the base's") but gates it on a supplied
+        // exposure, which this roster path never has.
+        //
+        // Reading the base band here is what produced both live failures, one at each end: a trench
+        // or a cardigan counted as UNDERSHOOT and was cut, while `fit !== 'undershoot'` swept
+        // `very warm` winter coats in as adequate and the reserve promoted them onto a 65°F day.
+        // Inside the layer band both are answered: light..warm is a layer for this day, very light
+        // is not enough to bother putting on, very warm is a winter coat.
+        const layerDemand = rosterDemand?.layer || rosterDemand
+        const coatFit = p => thermalRankingFit(garmentWarmthLevel(p), garmentWarmthScore(p), layerDemand)
+        // `unknown` stays eligible — an untagged layer is not evidence of a bad layer (criterion 8).
+        const answersDemand = p => ['adequate', 'unknown'].includes(coatFit(p).fit)
+        const isColdCoat = p => answersDemand(p) && (
+          pieceOuterwearRole(p) === 'cold_weather_outerwear'
           || (Array.isArray(p.insulating_layer_materials) && p.insulating_layer_materials.length > 0)
           || ['warm', 'very warm'].includes(garmentWarmthLevel(p))
           || (pieceHasInsulatingMaterial(p) && pieceOuterwearRole(p) !== 'indoor_layer')
+        )
 
         const coats = pieces.filter(isColdCoat)
         const others = pieces.filter(p => !isColdCoat(p))
@@ -3290,7 +3551,35 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         const targetCoats = Math.min(coats.length, Math.max(2, Math.floor(limit / 2)))
         const targetOthers = limit - targetCoats
 
-        const keptCoats = coats.slice(0, targetCoats)
+        const byThermalFit = coats
+          .map((piece, index) => {
+            const fit = coatFit(piece)
+            return {
+              piece,
+              index,
+              distance: fit.fit === 'unknown' ? Number.POSITIVE_INFINITY : Math.abs(fit.offset ?? fit.distance ?? 0),
+            }
+          })
+          // CAPABILITY FIRST, REGISTER AS THE TIEBREAK (owner ruling 2026-09-13).
+          //
+          // The reserve exists to guarantee the day's warmth is represented, so how well a coat
+          // answers the demand is the primary key and stays that way: an everyday puffer that suits
+          // the conditions is not displaced by an elevated coat that suits them worse, and an
+          // elevated coat that suits them BETTER than anything within register can still take a
+          // slot — which is the case the wearer asked for when within-register supply is weak.
+          // Register decides only between coats of comparable capability, where it is exactly the
+          // preference it should be. Both keys already exist: `distance` is the endpoint
+          // evaluator's own ranking fit, and the register verdict is the gate's.
+          .sort((a, b) => {
+            if (a.distance !== b.distance) return a.distance - b.distance
+            const aAbove = registerAboveRequestIds.has(Number(a.piece.id)) ? 1 : 0
+            const bAbove = registerAboveRequestIds.has(Number(b.piece.id)) ? 1 : 0
+            if (aAbove !== bAbove) return aAbove - bAbove
+            return a.index - b.index
+          })
+          .map(entry => entry.piece)
+
+        const keptCoats = byThermalFit.slice(0, targetCoats)
         const keptOthers = others.slice(0, targetOthers)
         const keptSet = new Set([...keptCoats, ...keptOthers].map(p => p.id))
 
@@ -3349,6 +3638,29 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       ? (sessionInfluence.pieceRecency.get(Number(p.id)) || 0)
       : 0
       
+    // Season as a RANKING advisory, every category and every day — the trip planner's rosterFitScore
+    // has combined these two exactly this way since the trip-roster work, and the visual composer
+    // was simply never given it. On a mild day this is the only season handling that runs (the
+    // eligibility step above is gated on the cool tier), so an out-of-season piece sinks rather than
+    // disappearing: it remains reachable when the model has a real reason for it.
+    const seasonAdvisory = seasonFitPieceAdvisory(p, calendarSeason)
+    if (seasonAdvisory.score) {
+      pushAdjustmentReason(p.id, `season: ${seasonAdvisory.reason} (${seasonAdvisory.score})`)
+    }
+
+    // REGISTER AS A RANKING ADVISORY, the same shape as season above: a piece one rank above an
+    // unstated ceiling sinks below the matching register instead of disappearing, and stays
+    // reachable when the model has a real reason for it — better weather capability, for instance,
+    // which is what the excluded trench had on the 65/50 run. The penalty matches the season
+    // advisory's weight deliberately: it is a preference of the same kind and should not silently
+    // outrank thermal fit (-10) or the occasion's own material preferences (+8).
+    let registerAdvisoryScore = 0
+    if (registerAboveRequestIds.has(Number(p.id))) {
+      const advisory = registerFitPieceAdvisory(p, { registerCeiling, occasion, explicitCeiling: registerCeilingExplicit })
+      registerAdvisoryScore = advisory.score
+      if (advisory.score) pushAdjustmentReason(p.id, `${advisory.reason} (${advisory.score})`)
+    }
+
     let weatherBonus = 0
     if (weatherProfile && weatherProfile.isHot) {
       const isLight = fabricWeight(p) === 'light'
@@ -3494,7 +3806,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       pushAdjustmentReason(p.id, `${adjustment.reason} (${sign}${adjustment.score})`)
     }
 
-    const score = occasionScore + historyBonus - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
+    const score = occasionScore + historyBonus - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score + seasonAdvisory.score + registerAdvisoryScore
     scoreCache.set(cacheKey, score)
     return score
   }
@@ -4615,7 +4927,56 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   })
 }
 
-export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = []) {
+// WEAR ORDER AS DATA (owner ruling 2026-09-12). The engine's three-layer thermal credit
+// (orderedSubstantialUpperStackContribution) reads `piece.role`, and this normalizer used to trim
+// every whole-wardrobe piece to {id, name, category, photo, worn_photo} — so once the composer was
+// finally allowed to build a base + middle + outer stack, the engine could not tell that it had,
+// and flagged the card as too light anyway.
+//
+// The model asserts INTENT; category remains TRUTH. The same split `propose_outfit` already holds:
+// a model-authored role can never manufacture a garment the category does not support. A role that
+// contradicts its piece is dropped, and the derivation below takes over.
+const WHOLE_WARDROBE_ROLES = ['primary_top', 'dress', 'layer_top', 'outerwear', 'primary_bottom', 'shoes']
+
+export function roleMatchesCategory(role, group) {
+  if (role === 'dress') return group === 'dress'
+  if (role === 'primary_top') return group === 'top'
+  // A cardigan worn UNDER a coat is an outerwear-category garment doing the middle-layer job, so
+  // layer_top legitimately spans both — that is the whole shape this ruling exists to allow.
+  if (role === 'layer_top') return group === 'top' || group === 'outerwear'
+  if (role === 'outerwear') return group === 'outerwear'
+  if (role === 'primary_bottom') return group === 'bottom'
+  if (role === 'shoes') return group === 'shoes'
+  return false
+}
+
+// Derivation from the order the composer was asked to list its pieces in (base first, outermost
+// last). Used when a role is absent or was dropped for contradicting its category — never to
+// override a valid stated role. Ambiguity resolves to no role at all, which costs the stack credit:
+// unknown, not inadequacy.
+export function deriveWholeWardrobeRoles(pieces = []) {
+  const roles = new Map()
+  const group = piece => wardrobeCategoryGroup(piece)
+  const dress = pieces.find(piece => group(piece) === 'dress')
+  if (dress) roles.set(Number(dress.id), 'dress')
+  const tops = pieces.filter(piece => group(piece) === 'top')
+  tops.forEach((piece, index) => {
+    if (dress) roles.set(Number(piece.id), 'layer_top')
+    else roles.set(Number(piece.id), index === 0 ? 'primary_top' : 'layer_top')
+  })
+  const outer = pieces.filter(piece => group(piece) === 'outerwear')
+  outer.forEach((piece, index) => {
+    // One outer layer is the coat. Two means the first listed is worn under the second, which is
+    // exactly what "base first, outermost last" asks the composer to express.
+    roles.set(Number(piece.id), outer.length > 1 && index === 0 ? 'layer_top' : 'outerwear')
+  })
+  return roles
+}
+
+// `deriveMissingRoles: false` is for a card whose every role was stated by its structured slot
+// (the visual composers). There a missing or category-contradicting role is a finding for the
+// validator to report, never a gap to fill from list order.
+export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [], { deriveMissingRoles = true } = {}) {
   const candidateById = new Map(candidatePieces.map(p => [Number(p.id), p]))
   const ids = []
   const addId = (value) => {
@@ -4631,6 +4992,17 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
   const activeMission = OUTFIT_MISSIONS.find(m => m.id === missionId)
   const silhouette = String(outfit?.silhouette || '').trim()
   const suppliedStylingInstructions = String(outfit?.styling_instructions || outfit?.stylingInstructions || '').trim()
+  const statedRoles = new Map()
+  for (const piece of (Array.isArray(outfit?.pieces) ? outfit.pieces : [])) {
+    const id = Number(piece?.id)
+    const role = String(piece?.role || '').toLowerCase().trim()
+    const owned = candidateById.get(id)
+    if (!owned || !WHOLE_WARDROBE_ROLES.includes(role)) continue
+    if (!roleMatchesCategory(role, wardrobeCategoryGroup(owned))) continue
+    statedRoles.set(id, role)
+  }
+  const derivedRoles = deriveMissingRoles ? deriveWholeWardrobeRoles(ownedPieces) : new Map()
+  const roleById = new Map([...derivedRoles, ...statedRoles])
   return {
     label,
     strength: ['signature', 'strong', 'usable', 'experimental'].includes(strength) ? strength : 'strong',
@@ -4654,6 +5026,7 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
       name: p.name,
       category: wardrobeCategoryGroup(p),
       bottomKind: bottomKind(p),
+      role: roleById.get(Number(p.id)) || null,
       photo: p.photo || null,
       worn_photo: p.worn_photo || null
     }))
@@ -5350,10 +5723,17 @@ function appendSystemFlag(outfit = {}, type = 'note', message = '') {
   return { ...outfit, systemFlags }
 }
 
+// thread_1789526496845: "Mixing olive and emerald requires confidence in saturated earth tones" —
+// a color-boldness remark, not body-shape framing — tripped this because bare "confidence" matches
+// any use of the word. Unlike flattering/elongating/slimming/draws attention upward/balance the
+// body, "confidence" carries no inherent body reference; dropped rather than special-cased, since
+// the wordlist should describe the offense.
+const BODY_SHAPE_FRAMING_PATTERN = /\b(flattering|elongating|slimming|draws attention upward|balance the body)\b/i
+
 function scrubBodyShapeFraming(text = '') {
   return String(text || '')
     .split(/(?<=[.!?])\s+/)
-    .filter(sentence => !/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/i.test(sentence))
+    .filter(sentence => !BODY_SHAPE_FRAMING_PATTERN.test(sentence))
     .join(' ')
     .trim()
 }
@@ -5382,7 +5762,9 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
   // wholeWardrobePieceTrustDecision and had no register-ceiling/footwear-enum awareness at all — the
   // final gate an outfit passes through in the /ask precompose fallback tier and trip-slot ranking
   // before shipping. Resolved the same way buildVisualComposerRoster resolves it.
-  const registerCeiling = resolveRegisterCeiling({ occasion, activity, mood, request, occasionProfile, activityProfile })
+  const registerIntentForGate = { occasion, activity, mood, request, occasionProfile, activityProfile }
+  const registerCeiling = resolveRegisterCeiling(registerIntentForGate)
+  const gateRegisterCeilingExplicit = registerCeilingIsExplicit(registerIntentForGate)
   const candidatePieceById = new Map((candidatePieces || []).map(piece => [Number(piece.id), piece]))
   const ownedIds = new Set(candidatePieceById.keys())
   // Spec 9: repair defaults to running whenever NOT in advisor mode (original behavior), but a
@@ -5402,7 +5784,15 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     // name-text matching. Rehydrate against candidatePieces by id before any gate runs; this is
     // purely a local computation variable — repaired.pieces (the response shape) is untouched.
     const trimmedPieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
-    const pieces = trimmedPieces.map(piece => candidatePieceById.get(Number(piece?.id)) || piece)
+    // Rehydrate to the full garment record, but KEEP the card's own role. The trimmed projection is
+    // the only place wear order survives (normalizeWholeWardrobeOutfitObject), and the candidate
+    // record has no idea which job a piece does in THIS outfit — dropping it here would leave the
+    // three-layer thermal credit unreachable for the very cards that earn it.
+    const pieces = trimmedPieces.map(piece => {
+      const owned = candidatePieceById.get(Number(piece?.id))
+      if (!owned) return piece
+      return piece?.role ? { ...owned, role: piece.role } : owned
+    })
     const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
@@ -5414,15 +5804,22 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     // authoritative resolved context only, never on a profile invented at the call site.
     const validation = evaluateWearableOutfit(pieces, {
       requireShoes,
-      weatherContext: weatherProfile ? { weatherProfile } : null,
+      // ACTIVITY IS ALREADY STRUCTURED HERE — dropping it made the evaluator grade a hiking card
+      // against sedentary demand. `resolveExposureContext` resolves exertion to `unknown` without
+      // it and applies no shift, and hiking moves demand by two taxonomy levels, so the omission
+      // could manufacture a substantial false shortfall rather than merely reorder candidates.
+      // This passes existing context through; it infers nothing. `environment` stays absent on
+      // purpose: this flow has no typed environment input, and deriving one from occasion or prose
+      // is exactly the prose inference the evaluator must not do.
+      weatherContext: weatherProfile ? { weatherProfile, activity } : null,
     })
     if (!validation.hardValid) {
-      reject(repaired, validation.primaryFinding?.message || 'not a complete wardrobe outfit')
+      // The reason becomes a diagnostic card's owner-facing explanation: one primary, typed findings stay on the validation.
+      reject(repaired, primaryUserFacingFinding(validation.hardFindings)?.message || 'not a complete wardrobe outfit')
       continue
     }
-    for (const finding of validation.advisoryFindings || []) {
-      const flagType = finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note'
-      repaired = appendSystemFlag(repaired, flagType, finding.message)
+    for (const flag of advisoryFindingsToSystemFlags(validation.advisoryFindings || [])) {
+      repaired = appendSystemFlag(repaired, flag.type, flag.message)
     }
     if (ownedIds.size && pieceIds.some(id => !ownedIds.has(id))) {
       reject(repaired, 'contains non-owned piece')
@@ -5444,11 +5841,31 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     if (unexplainedTops.length) {
       repaired = appendSystemFlag(repaired, 'layering', LAYERED_TOP_UNEXPLAINED_FLAG)
     }
-    if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
+    // Detection and scrub now scan the SAME set of fields: the card's own model-authored prose
+    // (label, dominantDirection, silhouette, reason, watchFor). Piece names are deliberately
+    // excluded from both — they are wardrobe data, not the composer's words, and cannot be
+    // "scrubbed" without rewriting a garment's own name. The previous version detected across
+    // reason+watchFor+more (including piece names) but only ever scrubbed `reason`, so a match
+    // landing in `watchFor` alone (thread_1789526496845) left the flag claiming a removal that
+    // never happened. One list drives both halves now.
+    const BODY_SHAPE_PROSE_FIELDS = ['label', 'dominantDirection', 'silhouette', 'reason', 'watchFor']
+    const bodyShapeProseText = BODY_SHAPE_PROSE_FIELDS.map(field => repaired[field] || '').join(' ')
+    if (BODY_SHAPE_FRAMING_PATTERN.test(bodyShapeProseText)) {
       if (advisorMode) {
-        repaired = appendSystemFlag(repaired, 'language', 'Removed body-shape framing from the explanation; review the outfit visually.')
-        const scrubbedReason = scrubBodyShapeFraming(repaired.reason)
-        if (scrubbedReason) repaired.reason = scrubbedReason
+        // Flag only when a sentence was actually dropped from a field the card ships.
+        let removedAny = false
+        for (const field of BODY_SHAPE_PROSE_FIELDS) {
+          const original = String(repaired[field] || '')
+          if (!BODY_SHAPE_FRAMING_PATTERN.test(original)) continue
+          const scrubbed = scrubBodyShapeFraming(original)
+          if (scrubbed !== original.trim()) {
+            repaired[field] = scrubbed
+            removedAny = true
+          }
+        }
+        if (removedAny) {
+          repaired = appendSystemFlag(repaired, 'language', 'Removed body-shape framing from the explanation; review the outfit visually.')
+        }
       } else {
         reject(repaired, 'uses body-shape/flattery framing')
         continue
@@ -5479,7 +5896,7 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
       }
     }
 
-    const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeatherProfile, occasionProfile, activityProfile, registerCeiling }))
+    const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeatherProfile, occasionProfile, activityProfile, registerCeiling, registerCeilingExplicit: gateRegisterCeilingExplicit }))
     const prohibitedFit = profileFits.find(fit => fit.tier === 'prohibited')
     if (prohibitedFit) {
       if (advisorMode) {

@@ -2,10 +2,11 @@
 // DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md (what has already been tried, and why)
 // and docs/engine-behaviour-map.md. A tool schema change must amend the handoff in the same
 // commit: the schema text is what the model actually reads. See AGENTS.md.
+import { sharedGarmentEvidenceFacts, sparseGarmentCatalogRow, garmentNotesText, taggerNotesText, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, thermalFactsForPieceLine, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, thermalFactsForPieceLine, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, registerCeilingIsExplicit, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
 import { requiredThermalBand, requiredThermalEndpointBands } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
@@ -14,8 +15,8 @@ import { resolveOccasionProfile } from './occasions.js'
 import { bottomKind, garmentKind, pieceRequiresBaseLayer, wardrobeCategoryGroup } from './attributes.js'
 import { insulatingLayerMaterials, interiorConstruction } from './fiberTaxonomy.js'
 import { garmentWarmthLevel } from './garmentWarmth.js'
-import { evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule } from './outfitValidation.js'
-import { ENVIRONMENTAL_ADEQUACY_CODES, outerwearPieces } from './outfitEnvironmentalAdequacy.js'
+import { evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule, tuckInstructionConflict } from './outfitValidation.js'
+import { ENVIRONMENTAL_ADEQUACY_CODES, outerwearPieces, collapseWarmthAdvisoryFindings, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -25,7 +26,7 @@ import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
-  TEMPERATURE_BAND_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+  TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -323,83 +324,9 @@ function catalogValue(value) {
 // stretch, bottom shape and thermal construction). No score, fit verdict, outfit path or ordering
 // opinion appears here. The model chooses which IDs deserve photographs via view_pieces.
 export function singleOutfitStylistCatalogLine(piece = {}) {
-  const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
-  const kind = garmentKind(piece)
-  const groupLabel = group === 'outerwear' && (kind === 'cardigan' || kind === 'vest')
-    ? 'outerwear (layer_top)'
-    : group
-  const facts = []
-  const add = (label, value) => {
-    const present = catalogValue(value)
-    if (present) facts.push(`${label}:${present}`)
-  }
-  const list = value => Array.isArray(value) ? value.filter(Boolean).join('/') : ''
-  const fit = catalogValue(piece.fit_on_body)
-  const warmth = garmentWarmthLevel(piece)
-  const insulation = insulatingLayerMaterials(piece)
-  const interior = interiorConstruction(piece)
-
-  // Promote warmth to the very front of facts for immediate visual salience in cold/warm selection
-  if (!['shoes', 'accessory'].includes(group) && warmth) add('warmth', warmth)
-
-  const identityWords = new Set(String(piece.name || '').toLowerCase().match(/[a-z0-9]+/g) || [])
-  const visualRead = piece.reads_as || piece.background_color || ''
-  const novelReadWords = (String(visualRead).toLowerCase().match(/[a-z0-9]+/g) || [])
-    .filter(word => !identityWords.has(word))
-  // The name already supplies identity. Repeat reads_as only when it adds an actual visual idea,
-  // not when it merely rearranges "floral knit cardigan" into "knit floral cardigan."
-  if (novelReadWords.length >= 2) add('read', visualRead)
-  add('clr', list(piece.colors))
-  if (piece.pattern_complexity && piece.pattern_complexity !== 'solid') {
-    add('pat', [piece.pattern_type, piece.pattern_scale, piece.pattern_complexity].filter(catalogValue).join('/'))
-  }
-  add('fab', piece.fabric_category)
-  const weight = (group === 'shoes' || group === 'accessory') ? piece.visual_weight : piece.fabric_weight
-  if (weight) add('weight', weight)
-  add('sil', piece.silhouette)
-  if (fit) add('fit', fit)
-  // Everyday is the dominant register and costs the same repeated token on most rows. Make the
-  // default explicit once while preserving missing data as an explicit unknown, so silence never
-  // masquerades as a known fact.
-  if (catalogValue(piece.formality) === 'everyday') {
-    // represented by sparse_conventions
-  } else if (!catalogValue(piece.formality)) {
-    facts.push('formal:unknown')
-  } else {
-    add('formal', piece.formality)
-  }
-  // Occasion tags are intentionally absent: every catalog row already survived this request's
-  // occasion hard gate, and formality is the decision-useful register fact. Repeating 2–4 occasion
-  // words on every row consumed thousands of characters without distinguishing candidates.
-  if (piece.season && piece.season !== 'year-round') add('season', piece.season)
-  if (piece.opacity && piece.opacity !== 'opaque') add('opacity', piece.opacity)
-  if (pieceRequiresBaseLayer(piece)) facts.push('needs-base')
-
-  if (['top', 'dress', 'outerwear'].includes(group)) {
-    add('len', piece.length_hits_at)
-    add('neck', piece.neckline)
-    add('slv', [piece.sleeve_length, piece.sleeve_shape].filter(catalogValue).join('/'))
-    if (piece.tuck_behavior && piece.tuck_behavior !== 'tucks_anywhere') add('tuck', piece.tuck_behavior)
-    add('stretch', piece.stretch)
-  } else if (group === 'bottom') {
-    add('shape', [piece.bottom_shape, piece.leg_opening].filter(catalogValue).join('/'))
-    add('len', piece.length_hits_at)
-    add('waist', piece.waistband_type)
-  } else if (group === 'shoes') {
-    add('type', piece.shoe_type)
-    add('toe', piece.toe_shape)
-    add('support', piece.walk_support)
-    add('heel', piece.heel_height)
-  } else if (group === 'accessory') {
-    add('type', [piece.accessory_subtype, piece.jewelry_type, piece.necklace_length].filter(catalogValue).join('/'))
-  }
-
-  if (Array.isArray(piece.weather_protection) && piece.weather_protection.length) add('protect', list(piece.weather_protection))
-  if (Array.isArray(insulation) && insulation.length) add('insulation', insulation.join('+'))
-  if (group === 'outerwear' && catalogValue(interior)) add('interior', interior)
-  if (piece.tag_state === 'provisional') facts.push('tags:provisional')
-
-  return `#${Number(piece.id)} ${piece.name || 'unnamed'} | ${groupLabel}${facts.length ? ` | ${facts.join(';')}` : ''}`
+  // The shared garment facts (garmentEvidenceLine.js) in the catalog's sparse, default-aware format: the same facts and unknowns as the
+  // full fact line view_pieces returns, with no derived warmth, tagger read or name-derived role label.
+  return sparseGarmentCatalogRow(piece)
 }
 
 export const stylistCatalogLine = singleOutfitStylistCatalogLine
@@ -429,36 +356,29 @@ export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } 
   }
   const catalog = sections.join('\n\n')
 
-  let thermalGuidance = null
-  let coldRequired = false
-  if (stylingContext?.weatherProfile) {
-    try {
-      const wp = stylingContext.weatherProfile
-      const highF = wp.highF ?? wp.high_f ?? null
-      const lowF = wp.lowF ?? wp.low_f ?? null
-      const exposure = resolveExposureContext(
-        { activity: stylingContext.activity },
-        { ...wp, highF, lowF, weatherSource: wp.weatherSource || wp.source || 'stated_user' }
-      )
-      const bands = requiredThermalEndpointBands(exposure)
-      if (bands?.cold?.level) {
-        thermalGuidance = `Outdoor conditions call for '${bands.cold.level}' total upper-body warmth with outer layer on (e.g. an insulating coat, or a substantial 3-layer system with a middle cardigan/vest). Standalone uninsulated shells (warmth:light) without an insulating mid-layer will carry an advisory note for thermal undershoot.`
-        coldRequired = bands.cold.level === 'warm' || bands.cold.level === 'very warm'
-      }
-    } catch (err) {
-      console.warn('Failed to compute thermal guidance for stylist catalog:', err.message)
-    }
-  }
-
-  const instruction = coldRequired
-    ? 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles. Because conditions call for substantial warmth, pull 2–3 insulating outer coats (warmth:warm or warmth:very warm) OR middle layer knits (e.g. cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench alongside tops, bottoms, and shoes, so you have the visual candidates needed to construct an appropriately warm system. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. After inspecting photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
-    : 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
+  // No engine-derived thermal band target or cold-need instruction (2026-09-15): catalog rows state recorded construction, and the
+  // model judges the completed outfit against the stated conditions itself.
+  // thread_1789536455443: this instruction named silhouette/character criteria for the "visual
+  // leaders" explicitly, and said nothing about environmental capability at all — so a workbench
+  // built by that instruction alone naturally selected the most polished-looking layers (a trench,
+  // a lambskin jacket) and left the wardrobe's actual insulated options (a puffer, a wool coat, a
+  // shearling jacket) unseen and therefore unavailable at propose_outfit, even though their
+  // insulation/interior/protection facts were sitting in this same catalog. The added sentence below
+  // names no piece and sets no threshold — it only makes sure real warmth candidates get a fair
+  // look when conditions call for it, the same way "visual leaders" already gets a fair look for
+  // silhouette.
+  // thread_1789536455443 (reworded 2026-09-16, owner review): the first version said "insulated or
+  // substantial outerwear (read from each row's own insulation/weight facts)", which implied
+  // dedicated insulation or garment weight was the only route to real warmth — a system can also
+  // answer real exposure through wind/weather protection, layering, or other recorded construction
+  // the catalog states. Reworded to name the general property (construction plausibly relevant to
+  // the exposure) rather than the two specific fields.
+  const instruction = 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). When the stated conditions call for real warmth, don\'t let silhouette or hero selection alone decide which layers you even look at — bring enough candidates whose recorded construction is plausibly relevant to the exposure (insulation, substantial weight, weather protection, or other stated construction) onto the workbench to judge them fairly alongside the more polished-looking options. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
 
   return {
     eligible_piece_count: unique.length,
     eligible_by_category: eligibleByCategory,
-    ...(thermalGuidance ? { thermal_guidance: thermalGuidance } : {}),
-    sparse_conventions: 'Omitted pattern means solid; omitted opacity means opaque; omitted season means year-round; omitted needs-base means no; omitted formality means everyday, while missing formality is written as formal:unknown. Occasion tags are omitted because every row already survived this request\'s occasion gate. fab is fabric type; weight is textile weight; warmth is thermal insulation level. Every other omitted fact is not recorded and must not be inferred.',
+    sparse_conventions: SPARSE_CATALOG_CONVENTIONS,
     instruction,
     catalog,
     serialized_character_count: catalog.length,
@@ -755,10 +675,21 @@ export async function resolveToolStylingContext({
   const activityFromAuthority = toolContext.executionRouterActivityLocked === true
     ? toolContext.executionRouterActivity
     : explicitRequest.activity
+  // 2026-09-16 (owner review, thread_1789546295700): same lock, same reason, for season. A later
+  // tool call's own `season` argument is often a temperature descriptor ("warm", "cool") answering
+  // that field's own schema wording, not a calendar correction — and letting it overwrite the
+  // router's already-resolved calendar season silently changed which season-eligibility exclusions
+  // applied (lib/seasonContext.js's OUT_OF_SEASON is asymmetric between calendar seasons). Weather
+  // vibes reach the model through their own field (resolvedWeather/physicalWeather text), never
+  // through this one, once locked.
+  const seasonFromAuthority = toolContext.executionRouterSeasonLocked === true
+    ? toolContext.executionRouterSeason
+    : explicitRequest.season
   const context = await resolver({
     explicitRequest: {
       ...explicitRequest,
       activity: activityFromAuthority,
+      season: seasonFromAuthority,
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
@@ -792,6 +723,17 @@ export async function resolveToolStylingContext({
   // resolver actually ran; falls back to the plain per-field weatherSource for
   // the legacy heuristic/live paths, which never populate resolvedWeatherContext.
   setFreeformWeatherSource(toolContext, context.weatherProfile?.resolvedWeatherContext?.overallSource || context.weatherProfile?.weatherSource || context.provenanceByField.weatherProfile?.source)
+  // Debug-only: the temperatures and location this turn resolved, so a comparison can verify that two
+  // flows given the same request used the same conditions. Never reaches the model.
+  if (toolContext?.freeformDiagnostics) {
+    const resolvedTemperature = context.weatherProfile?.resolvedWeatherContext?.temperature
+    toolContext.freeformDiagnostics.resolvedWeather = {
+      highF: Number.isFinite(context.weatherProfile?.highF) ? context.weatherProfile.highF : (Number.isFinite(resolvedTemperature?.highF) ? resolvedTemperature.highF : null),
+      lowF: Number.isFinite(context.weatherProfile?.lowF) ? context.weatherProfile.lowF : (Number.isFinite(resolvedTemperature?.lowF) ? resolvedTemperature.lowF : null),
+      location: context.weatherProfile?.resolvedWeatherContext?.location || '',
+      source: context.weatherProfile?.weatherSource || null,
+    }
+  }
   return context
 }
 
@@ -1066,11 +1008,16 @@ function pieceHasStructuredColor(piece = {}, requestedColor = '') {
 // physical weather (styling-engine/weather.js owns that validation/resolution).
 const USER_WEATHER_SCHEMA = {
   type: "object",
-  description: "Structured translation of weather the CURRENT user message explicitly stated — include it ONLY when the user actually said it this turn, never your own seasonal knowledge (use weather_estimate for that instead). Carries a numeric range OR a qualitative band, never both. Convert a user-stated Celsius value to Fahrenheit yourself before setting high_f/low_f — never pass Celsius through.",
+  description: "Structured translation of weather the CURRENT user message explicitly stated — include it ONLY when the user actually said it this turn, never your own seasonal knowledge (use weather_estimate for that instead). Carries a numeric range OR a qualitative band, never both. Convert a user-stated Celsius value to Fahrenheit yourself before setting high_f/low_f — never pass Celsius through. Always set `scope` alongside a numeric high_f/low_f (see below) — it is what tells the executor how much certainty the two numbers carry.",
   properties: {
-    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature, set high_f and low_f to the same value." },
-    low_f: { type: "number", description: "The user's stated low, Fahrenheit." },
-    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot', 'mild weather') when the user gave no number. Never set this alongside high_f/low_f." },
+    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature ('it's 46 out'), set high_f and low_f to the same value. When the user stated ONLY a high ('highs near 85'), set high_f alone and leave low_f unset — never invent the endpoint they did not give." },
+    low_f: { type: "number", description: "The user's stated low, Fahrenheit. When the user stated ONLY a low ('down to 40 overnight'), set low_f alone and leave high_f unset." },
+    scope: {
+      type: "string",
+      enum: TEMPERATURE_SCOPE_VALUES,
+      description: "Required whenever high_f or low_f is set. Two different claims use the exact same two numbers, and the executor cannot tell them apart without this field: 'exposure_window' — these ARE the temperatures the wearer will personally be outside in (a temperature given for the stated activity/outing itself, a single point statement like 'it's 46 out', or two distinct timed observations like '60°F when I leave, 48°F after sunset'). 'daily_forecast' — the user gave the day's OVERALL high/low ('the forecast is a high of 50 and a low of 40') separately from a narrower stated activity/outing window (a few hours, a specific errand) — so the two endpoints are NOT a claim about what happens during that narrower window specifically. Do not guess which endpoint applies to the stated window; that would be inventing timing data that does not exist. When in doubt whether a narrower window makes the two claims different, use 'daily_forecast' — it keeps both real numbers without overclaiming certainty. Omit this field only when high_f/low_f are both unset."
+    },
+    temperature_band: { type: "string", enum: TEMPERATURE_BAND_VALUES, description: "A qualitative statement ('it's cold there', 'expect it hot', 'mild weather') when the user gave no number at all. Never set this alongside high_f/low_f — a numeric daily forecast decoupled from the outing is `scope: 'daily_forecast'`, not a band; do not throw away real numbers by converting them to a band yourself." },
     precipitation: { type: "string", enum: PRECIPITATION_VALUES, description: "Only when the user stated it this turn." },
     wind: { type: "string", enum: WIND_VALUES, description: "Only when the user stated it this turn." }
   }
@@ -1131,7 +1078,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, choose 8–12 pieces across roles to assemble a visual workbench, then call view_pieces with those IDs (up to 12 unique IDs total) to inspect their photographs; one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour/read, pattern, silhouette, fit, fabric, construction, formality and footwear; occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
+    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, choose 8–12 pieces across roles to assemble a visual workbench, then call view_pieces with those IDs (up to 12 unique IDs total) to inspect their photographs; one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour, pattern, silhouette, fit, fabric and fibre, construction, formality and footwear (the tagger's visual read is not in the catalog; view_pieces gives it as tagger_notes); occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1150,13 +1097,13 @@ export const STYLIST_TOOLS = [
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical demand of the outing. 'hiking' = trails, nature walks, woods, uneven or unpaved ground — a nature walk IS hiking even when it is gentle. 'walking' = pavement: city days, sightseeing, all-day errands on foot. 'none' = no sustained walking. With occasion, flags pieces by profile-rule fit; pass it whenever known." },
         visual: { type: "boolean", description: "When true, attach low-detail thumbnails for the top ranked matches so you can judge color, texture, print, and proportion by sight. Use before proposing or refining outfits; leave false for quick text lookups." },
-        intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you compose only from wearable pieces (no need to self-reject anything). Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
+        intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you need not re-check those gates; what remains is eligible, which is not a judgment that any piece — or any combination of them — suits the conditions. Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
       }
     }
   },
   {
     name: "view_pieces",
-    description: "Look at specific wardrobe pieces: returns each photo thumbnail plus a compact truth line. In the single-outfit profile, call view_pieces with ids to pull 8–12 candidate pieces onto your visual workbench (2–3 potential visual leaders, several compatible tops/bottoms, plausible shoes and layers; up to 12 unique IDs total). Inspect texture, proportion, volume, and character from the photographs before committing. An optional second targeted call may use ids with up to 4 replacements if the first photographs exposed a concrete problem. Outside that profile, use ids normally. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
+    description: "Look at specific wardrobe pieces: returns each photo thumbnail plus the full recorded fact line, with any saved notes and tagger notes. In the single-outfit profile, call view_pieces with ids to pull 8–12 candidate pieces onto your visual workbench (2–3 potential visual leaders, several compatible tops/bottoms, plausible shoes and layers; up to 12 unique IDs total). Inspect texture, proportion, volume, and character from the photographs before committing. An optional second targeted call may use ids with up to 4 replacements if the first photographs exposed a concrete problem. Outside that profile, use ids normally. A photo may establish visible drape, bulk, texture and whether a configuration is physically possible; it cannot establish exact fiber composition when the truth line is silent. Possibility does not prove that the shown styling looks good, and an unseen alternative cannot be ranked. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
     input_schema: {
       type: "object",
       properties: {
@@ -1781,7 +1728,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             ? explicitlyOccasionCompatible
             : beforeOccasionFilter
           if (!explicitlyOccasionCompatible.length) {
-            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
+            fallbackNote = `No active pieces are explicitly tagged for "${occasion}"; showing flexible active wardrobe pieces instead, with thermal facts for the requested context.`
           }
         }
         const automaticGateFiltered = !searchEligibility ? automaticGatePool : automaticGatePool.filter(p => {
@@ -1819,7 +1766,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               filtered = occasionQueryFiltered
             } else {
               filtered = beforeOccasionQueryFilter
-              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit and thermal facts for the requested context.`
+              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with thermal facts for the requested context.`
             }
           } else {
             filtered = filtered.filter(p =>
@@ -1868,7 +1815,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // Resolve the register ceiling once per call (matching the composer), then let profileRuleFit
           // apply the footwear-enum + register gates per piece. Passing activityProfile/registerCeiling
           // switches profileRuleFit into enum-gate mode for this consumer.
-          const registerCeiling = resolveRegisterCeiling({
+          const registerIntentOptions = {
             occasion: resolvedOccasion,
             activity: resolvedActivity,
             mood: toolContext.mood || '',
@@ -1876,7 +1823,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             question: query || toolContext.question || '',
             occasionProfile,
             activityProfile
-          })
+          }
+          const registerCeiling = resolveRegisterCeiling(registerIntentOptions)
+          // Passed explicitly: `profileRuleFit` defaults to a HARD ceiling, so a consumer that omits
+          // this keeps treating an occasion default as a dress code.
+          const registerCeilingExplicit = registerCeilingIsExplicit(registerIntentOptions)
           const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
           // Within a tier the order used to fall back to id, so nine shoes tied at `preferred`
           // arrived in an order carrying no information — ballet flats indistinguishable from
@@ -1890,7 +1841,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
           results = results
             .map(p => {
-              const fit = profileRuleFit(p, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
+              const fit = profileRuleFit(p, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling, registerCeilingExplicit })
               return { ...p, ruleFit: fit.tier, ruleFitLabel: fit.label, ruleFitReason: fit.reason }
             })
             .sort((a, b) =>
@@ -2032,8 +1983,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
               name: p.name,          // kept: the model cites pieces by name in its prose
               category: p.category,  // kept: cheap, and searches are often cross-category
               thermal: p.thermalFacts || undefined,
-              ruleFit: p.ruleFit,
-              ruleFitLabel: p.ruleFitLabel,
+              // 2026-09-15: only the tiers that carry something the garment's own facts do not.
+              // `prohibited` (explain mode, or the annotated fallback) says a hard gate excluded the
+              // piece and why. `unknown` says a field that gate reads is untagged — a fact about
+              // missing metadata. `preferred`/`discouraged`/`neutral` were soft taste verdicts whose
+              // entire content is the occasion profile's ratified ranking lists; they told the model
+              // nothing about the garment it could not read off the facts, while reading as a verdict.
+              ...(p.ruleFit === 'prohibited' || p.ruleFit === 'unknown' ? { ruleFit: p.ruleFit, ruleFitLabel: p.ruleFitLabel } : {}),
               notes: p.notes ? p.notes.slice(0, 120) : '',
               ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
               ...(image ? { image } : {})
@@ -2075,8 +2031,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             tuck_behavior: p.tuck_behavior,
             thermal: p.thermalFacts || undefined,
             ...(activeSearchRosterIds.size ? { in_packing_roster: activeSearchRosterIds.has(Number(p.id)) } : {}),
-            ruleFit: p.ruleFit,
-            ruleFitLabel: p.ruleFitLabel,
+            // 2026-09-15: hard-gate and missing-metadata tiers only — see the trimmed row above.
+            ...(p.ruleFit === 'prohibited' || p.ruleFit === 'unknown' ? { ruleFit: p.ruleFit, ruleFitLabel: p.ruleFitLabel } : {}),
             notes: p.notes ? p.notes.slice(0, 120) : '',
             ...(image ? { image } : {})
           }
@@ -2091,6 +2047,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           for (const reasons of exclusionReasonsById.values()) {
             for (const reason of reasons) reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1)
           }
+          // Debug-only supply boundary (freeformDiagnostics reaches the response debug, not the model).
+          toolContext.freeformDiagnostics ||= {}
+          toolContext.freeformDiagnostics.singleOutfitCatalogEligibleIds = [...(toolContext.singleOutfitCatalogEligibleIds || [])]
+          toolContext.freeformDiagnostics.singleOutfitCatalogExclusions = Object.fromEntries(
+            [...new Set([...hardGateExcludedIds, ...requestExcludedIds])].map(id => [id, [...(exclusionReasonsById.get(id) || ['request exclusion'])]]))
           singleOutfitCatalog.exclusion_report = {
             excluded_piece_count: new Set([...hardGateExcludedIds, ...requestExcludedIds]).size,
             by_reason: [...reasonCounts.entries()]
@@ -2333,6 +2294,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenPrintPairingBlocks')
           contractIssues.push(printIssue)
         }
+        // Garment-fact integrity (thread_1789508440573): styling_instructions may not tuck a base top recorded wear_over_only.
+        const tuckConflict = tuckInstructionConflict({ pieces: resolved, stylingInstructions: styling_instructions })
+        if (tuckConflict) {
+          bumpFreeformDiagnostic(toolContext, 'proposeTuckContradictionBlocks')
+          contractIssues.push(`${tuckConflict.message} — rewrite styling_instructions to wear it untucked, or choose a base top that tucks, and resubmit`)
+        }
         const wearableValidation = evaluateWearableOutfit(resolved, {
           roleAware: true,
           includeLayerDirections: true,
@@ -2398,6 +2365,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
         })
 
         const isSingleOutfit = toolContext?.executionProfile === 'single_outfit'
+        // Log-only sleeve-geometry evidence: recorded for debug, never returned to the model.
+        outfitDebug.sleeveGeometryShadow = wearableValidation.shadowFindings || []
 
         // Validate role/slot structure and wearability (mechanically enforced).
         const hardFindings = wearableValidation.hardFindings
@@ -2418,7 +2387,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             label: label || 'Outfit',
             broken: true,
             retryPending: true,
-            rejectionReason: issues.join('; '),
+            // User-facing: one primary thermal explanation. The model still receives every typed finding.
+            rejectionReason: collapseThermalErrorFindings(blockingFindings).map(finding => finding.message).join('; '),
             pieceIds: resolved.map(p => Number(p.id)),
             pieces: resolved,
             occasion: resolvedOccasion,
@@ -2550,7 +2520,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
 
         const advisoryNotes = []
-        for (const finding of nonBlockingFindings) {
+        // One shortfall, one note (collapseWarmthAdvisoryFindings' own comment): the cool-layer,
+        // presence and amount findings all fire together on a layerless cool day, and freeform cards
+        // show the same chips the composer does.
+        for (const finding of collapseWarmthAdvisoryFindings(nonBlockingFindings)) {
           let msg = finding.message
           if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
             msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
@@ -2832,7 +2805,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // that same decision-useful projection beside the selected photograph so fit, warmth,
             // sleeve, waist and weather-construction facts do not disappear at the moment of
             // comparison across all flows.
-            truth: singleOutfitStylistCatalogLine(parsed),
+            // The full shared fact line for an inspected garment; the catalog row is its sparse rendering.
+            truth: `#${Number(parsed.id)} ${parsed.name || 'unnamed'} | ${sharedGarmentEvidenceFacts(parsed)}`,
+            // Saved records and the tagger impression arrive where a garment is inspected, never on every catalog row.
+            ...(garmentNotesText(parsed) ? { garment_notes: garmentNotesText(parsed) } : {}),
+            ...(taggerNotesText(parsed) ? { tagger_notes: taggerNotesText(parsed) } : {}),
             evidence_note: 'Photos support visible drape, bulk, texture and behavior—not exact fiber composition. A shown configuration proves feasibility only; judge its visible result separately and do not rank an unseen alternative.',
             ...(image ? { image } : { note: 'no photo on file — tags are the only truth for this piece' })
           })
@@ -2947,7 +2924,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const occasionProfile = stylingContext.occasionProfile
         const activityProfile = stylingContext.activityProfile
         const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
-        const registerCeiling = resolveRegisterCeiling({
+        const swapRegisterIntent = {
           occasion: resolvedOccasion,
           activity: resolvedActivity,
           mood: toolContext.mood || '',
@@ -2955,7 +2932,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
           question: args?.query || toolContext.question || '',
           occasionProfile,
           activityProfile
-        })
+        }
+        const registerCeiling = resolveRegisterCeiling(swapRegisterIntent)
+        const registerCeilingExplicit = registerCeilingIsExplicit(swapRegisterIntent)
         const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
         const swapEligibility = evaluateAutomaticUsePiecePool({
           pieces: candidates,
@@ -2969,7 +2948,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           .map(piece => {
             const trust = swapEligibility.decisionsById.get(Number(piece.id))
             const ruleFit = (occasionProfile || activityProfile)
-              ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
+              ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling, registerCeilingExplicit })
               : { tier: 'neutral', label: '' }
             const occasionScore = pieceOccasionCompatible(piece, resolvedOccasion) ? 12 : 0
             const newnessScore = currentIdSet.has(Number(piece.id)) ? -20 : 0
@@ -3819,6 +3798,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
             compositionError = err
           }
           bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
+          // thread_1789585467294 (owner ruling 2026-09-16): a genuine per-outfit DECLINE
+          // (tripPlanCompositionSchema's slot_gaps), distinct from the generic "the other attempts
+          // failed validation" message describeSlotCoverageGap already produces for an undercount.
+          // Folded into the same coverageGaps list that undercount message uses, so both surface
+          // through the one existing disclosure path — no new UI, no confidence rating on any card.
+          if (!compositionError && Array.isArray(toolContext.tripCompositionSlotGaps) && toolContext.tripCompositionSlotGaps.length) {
+            const slotLabelById = new Map((workbench.slots || []).map(slot => [String(slot.id), slot.label || slot.occasion || 'this use case']))
+            for (const gap of toolContext.tripCompositionSlotGaps) {
+              const label = slotLabelById.get(String(gap?.slot_id || '')) || 'this use case'
+              const reason = String(gap?.gap_reason || '').trim()
+              if (!reason) continue
+              pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), `[coverage gap: "${label}" — ${reason}]`]
+            }
+          }
           if (compositionError || !Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
             bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
             setFreeformTripAtomicCompositionDebug(toolContext, {
@@ -4322,10 +4315,63 @@ async function executeToolInternal(name, args, toolContext = {}) {
         
         if (result && result.structuredOutfits) {
           recordNestedFreeformUsage(toolContext, result?.debug?.composerUsage)
+          // THE NESTED BOUNDARY USED TO DROP THE COMPOSER'S OWN DIAGNOSTICS. Only `composerUsage`
+          // crossed it, so for any composer run reached through /ask — which is how live
+          // thread_1789274358263 ran — `finalSelection` (roster counts, relevance adjustments,
+          // advisorFlaggedCount, the layer-repair record) existed for the length of the call and
+          // was then discarded. A capture could not show what the engine had decided, which is why
+          // that run's four flagged cards could not be explained from its own record.
+          if (result?.debug?.finalSelection) {
+            toolContext.freeformDiagnostics = toolContext.freeformDiagnostics || {}
+            toolContext.freeformDiagnostics.nestedComposer = {
+              ...(result.debug.finalSelection || {}),
+              // PRESERVE, DON'T REPLACE. The route already records the exposure the evaluator used —
+              // activity, weather source, highF/lowF, cold-presence state — and an earlier version of
+              // this propagation rebuilt the object from the tool's own context, silently dropping
+              // the three fields the tool cannot see. Only `environment` is added here, because the
+              // freeform styling context is where it is known.
+              resolvedExposure: {
+                ...(result.debug.finalSelection.resolvedExposure || {}),
+                environment: stylingContext?.environment || null,
+              },
+            }
+          }
           const generatedWeatherFields = weatherCardFields(stylingContext)
           toolContext.generatedOutfits = Object.keys(generatedWeatherFields).length
             ? result.structuredOutfits.map(outfit => ({ ...outfit, ...generatedWeatherFields }))
             : result.structuredOutfits
+
+          // 2026-09-16 (owner review, thread_1789546295700): `aiReturnedCount === 0` means the
+          // composer produced no model-styled output this turn — timed out, errored, or any other
+          // reason `parsed.outfits` came back empty — so every card in `result.structuredOutfits`,
+          // if any, is local-fill's deterministic assembly (`composedBy: 'engine'`, set in
+          // routes/ai.js), never the model's own styling. That is a technical failure of the
+          // styling call, not a completed bounded batch, and reporting it as "Successfully
+          // generated N outfits" is exactly what let a genuinely valid (but late, discarded)
+          // composer result go unnoticed while the app had already told the model the request
+          // succeeded. This is a DIFFERENT case from the composer returning outfits that then
+          // failed validation — those still ship as visible diagnostic cards through the ordinary
+          // success path below, unaffected by this branch.
+          const composerProducedNoModelCards = !(Number(result?.debug?.aiReturnedCount) > 0)
+          if (composerProducedNoModelCards) {
+            bumpFreeformDiagnostic(toolContext, 'composerZeroModelCardsNotReportedAsSuccess')
+            const engineAssembledCount = result.structuredOutfits.filter(outfit => outfit?.composedBy === 'engine').length
+            return {
+              status: "error",
+              message: [
+                `The stylist composer did not produce any model-styled outfits this turn${result.debug?.composerErrorIsTimeout ? ' — it timed out' : (result.debug?.composerError ? ` (${result.debug.composerError})` : '')}.`,
+                engineAssembledCount
+                  ? `${engineAssembledCount} engine-assembled placeholder outfit${engineAssembledCount === 1 ? '' : 's'} ${engineAssembledCount === 1 ? 'is' : 'are'} available below, built only from wardrobe structure rules. Present ${engineAssembledCount === 1 ? 'it' : 'them'} plainly as an unstyled engine placeholder, never as the stylist's own styling, and offer to retry the styling pass.`
+                  : 'No cards at all were produced; say so plainly and offer to retry.'
+              ].join(' '),
+              outfit_summaries: result.structuredOutfits.map(o => ({
+                label: o.label,
+                composedBy: o.composedBy || 'engine',
+                pieceNames: (o.pieces || []).map(p => p.name)
+              }))
+            }
+          }
+
           if (boundedMultiLook) {
             toolContext.atomicMultiLookCompleted = true
             toolContext.atomicMultiLookRequestedCount = requestedCount
@@ -4335,7 +4381,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
           return {
             status: "success",
-            message: `Successfully generated ${result.structuredOutfits.length} outfits.${boundedMultiLook ? ' This bounded batch is the complete card result for the turn; present it and do not search, regenerate, or call propose_outfit.' : ''}`,
+            message: `Successfully generated ${result.structuredOutfits.length} outfits.${boundedMultiLook ? ' This bounded batch is the complete card result for the turn; present it and do not search, regenerate, or call propose_outfit.' : ''}${result.coolLayerSetDisclosure ? ` ${result.coolLayerSetDisclosure} Say so in your note rather than presenting the set as fully weather-ready.` : ''}`,
             outfit_summaries: result.structuredOutfits.map(o => ({
               label: o.label,
               dominantDirection: o.dominantDirection,

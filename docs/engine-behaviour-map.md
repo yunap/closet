@@ -1,6 +1,6 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26; **amended 2026-09-11** for cool layer advisory transition, visual composer temperature prompt disclosure, and whole-wardrobe advisory system flags; **amended 2026-09-11** for database safety guardrails, script isolation, and prohibition of live db bypass under test; **amended 2026-09-11** for trip roster duration context, crossover reusability, and vacation dining defaults; **amended 2026-09-11** for biometeorological weather unification with the Matzarakis PET scale; **amended 2026-09-10** for freeform stylist chat parity with ratified weather physics, catalog salience, and advisory findings; **amended 2026-08-25** for the shared eligibility API retirement
+**Status:** twelfth pass, 2026-07-26; **amended 2026-09-11** for cool layer advisory transition, visual composer temperature prompt disclosure, whole-wardrobe advisory system flags, single-note advisory collapse, and the required cool-layer prompt contract; **amended 2026-09-11** for database safety guardrails, script isolation, and prohibition of live db bypass under test; **amended 2026-09-11** for trip roster duration context, crossover reusability, and vacation dining defaults; **amended 2026-09-11** for biometeorological weather unification with the Matzarakis PET scale; **amended 2026-09-10** for freeform stylist chat parity with ratified weather physics, catalog salience, and advisory findings; **amended 2026-08-25** for the shared eligibility API retirement
 audit and canonical applicability projection; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
 seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
@@ -21,6 +21,423 @@ Investigation of Whole Wardrobe Visual Composer run `thread_1789171122124` (smar
 2. **Whole Wardrobe Visual Composer Advisory Flags**: In `styling-engine/rules.js` (`locallyGateWholeWardrobeOutfits`), non-blocking advisory findings (`validation.advisoryFindings`) are mapped and appended to `repaired.systemFlags` as `{ type: 'Weather note' | 'Fit note', message }`, mirroring `outfitSetPlanner.js`. In `src/components/StylistChat.jsx`, valid cards (`!isBrokenCard`) render these flags cleanly as `.stylist-outfit-flag-chip` chips.
 3. **Visual Composer Temperature & Location Prompt Disclosure**: In `routes/ai.js` (`generateWholeWardrobeOutfitsVisualInternal`), numerical high/low temperatures (`Temperature: ${tempText}`) and resolved location (`Location: ${location}`) are explicitly injected into the prompt tail alongside occasion and season, giving the model clear physical awareness of diurnal temperature drops rather than generic seasonal inference.
 
+4. **One shortfall, one card-face note**: a layerless cool day trips three findings at once — `NO_REMOVABLE_COOL_LAYER` (removability), `WARM_LAYER_RECOMMENDED` (presence) and `THERMAL_UNDERSHOOT` (amount) — and live run `thread_1789174415595` showed all three as near-identical `Weather note` chips. The engine still records all three (each carries its own evidence, and §2.1 keeps the three questions apart deliberately); the **projection** now collapses them. `collapseWarmthAdvisoryFindings()` in `styling-engine/outfitEnvironmentalAdequacy.js` keeps only the most informative member of that family, and `advisoryFindingsToSystemFlags()` is the single shared findings-to-chips projection, replacing the prose-identical copies in `styling-engine/rules.js` (`locallyGateWholeWardrobeOutfits`) and `styling-engine/outfitSetPlanner.js`. Freeform (`styling-engine/tools.js`) collapses the same family before building its advisory notes, keeping its own THERMAL_UNDERSHOOT elaboration. An undershoot on an outfit that HAS a layer, and every non-warmth advisory (rain, overshoot, fit), are untouched.
+5. **Cool-layer prompt stated as a requirement**: the composer's `COOL/COLD WEATHER GUIDANCE` line read *"When the shown pieces support it, pair the outfit with an appropriate outerwear layer"* and was taken as optional — three of five cards in that run carried no layer at all from a roster showing nine outerwear pieces. It now states the layer as required, sized against the measured demand level (`requiredThermalBand`, the same 5-level vocabulary each piece line already carries in its own `warmth:` field), names see-through layers as not counting, and gives one honest way out: say so in that outfit's reason rather than shipping a layerless outfit in silence.
+
+
+**[amended 2026-09-12 — the cool-end layer block becomes evidence, and the roster disclosure stops overclaiming]**
+Live run `2077` (`thread_1789195830570`, same 65°F/46°F Walnut Creek context) tested the previous day's requirement wording and **reversed its own premise**. The composer did layer all five cards — but four used a `moderate` or `very light` layer against a `warm` demand, and every one drew a `THERMAL_UNDERSHOOT` note. The full provider capture (`/tmp/provider-capture`, `WARDROBE_CAPTURE_PROVIDER_INPUT_DIR`) shows why, and the reasons are prompt-authoring defects, not model failure:
+1. **The requirement contradicted itself.** "must include a removable layer … whose stated `warmth:` reads about warm" was followed by "A midweight knit or cardigan counts" — a licence for exactly the layers the demand excludes. The model took the licence.
+2. **The roster disclosure overclaimed.** "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized" fired whenever a demand existed, asserting the roster had settled a question it had only partly settled — weather removal on run 2077 was 12 footwear pieces (`cold weather: open-toe/warm-weather footwear`) and nothing else, while every layer from `very light` to `warm` stayed and was described as "weather-optimized". Note for future readers: the two removal stages are reported in DIFFERENT debug fields — `suppressedReasonCounts` (automatic-use, pre-roster) and `excludedCounts` (pool evaluation). Reading only the second says "nothing was removed for weather" on a run that removed twelve pieces; the first pass of this investigation made exactly that error, and so did the first version of the replacement counter until the hot-weather contract test caught it.
+3. **Three contracts could not all hold.** "different visual thesis" + "consistent thermal weight across the batch" + "every outfit reaches `warm`", with exactly ONE owned piece reading `warm` (996867) and no roster base above `moderate` — so `outfitThermalContribution`'s both-halves-≥-`warm` step-up can never fire in this wardrobe and the coat is the only route to the demand. The model resolved the impossibility by levelling down.
+Per AGENTS.md principle 3 (*code constrains, the model judges*), `generateWholeWardrobeOutfitsVisualInternal` now **discloses evidence instead of issuing an instruction** — the same shape the trip flow already ships via `slotThermalDemandLabel` (reused here, not reimplemented):
+- the `Temperature:` line carries the demand in the **label vocabulary** (`… the whole outfit needs to read about \`warm\`; every piece states its own \`warmth:\``);
+- `COOL-END LAYER` replaces `COOL/COLD WEATHER GUIDANCE`: it states the need for something removable, **counts how many shown outerwear pieces read the demand level or above** (untagged layers counted neither way — criterion 8), notes that sheer/semi-sheer adds no warmth, and says explicitly that repeating one layer over different bases is not a variety failure — the fact that resolves conflict 3 without choosing for the model;
+- the roster disclosure now states **what actually happened**: a count of pieces removed for weather (summed across BOTH stages — automatic-use `suppressedPieces.reasons[]` and the pool's `excluded.reason`), or "No piece was removed for weather". The ordering half of that sentence was corrected in the same pass for the same species of defect: the roster is ordered by `getRelevanceScore`, which blends occasion score, confirmed-outfit history and session recency with the thermal ranking fit — calling that "ordered by weather fit" is an overclaim, and the run's own outerwear order proves it (a `moderate` tweed jacket ahead of the `warm` wool coat, a `very light` vest third).
+**Follow-up the same day, after live run `thread_1789199118192` tested the evidence wording:** the block was delivered verbatim (capture confirms, repetition permission included) and changed nothing material — 5/5 cards layered again, but still exactly ONE layer met the demand; the chip count fell 4→3 only because the model picked the one untagged layer, whose `unknown` fit silences the finding rather than satisfying it. The tell was in its own prose: a `warmth: very light` cashmere vest described as worn "for warmth", contradicting a label it had been handed. The demand was stated ~2,000 characters from the labels it had to be compared against, so `generateWholeWardrobeOutfitsVisualInternal` now puts it **at the point of choice**:
+- the OUTERWEAR section heading carries it — `=== OUTERWEAR (these conditions call for \`warm\`; listed best-fit first) ===` — and no other category heading does, since warmth is the layer's question and re-ranking tops or shoes by it would let one axis outrank the roster's whole relevance ordering;
+- within that section, layers are ordered best-fit-first by `orderLayersByThermalFit()` (exported for its contract test), which reads the shared `thermalRankingFit` primitive rather than `compareThermalFit` — fit membership alone flattens a puffer and a cardigan into one bucket on a coarse forecast, which is the ordering this exists to produce. Ranking, never gating: every layer is still shown, and an **untagged** layer holds its incoming relevance slot instead of being demoted, so missing metadata never behaves like inadequacy. That slot reservation is deliberately not a comparator branch — a comparator that falls back to index whenever one side is `unknown` is non-transitive, and the first version of it put a `light` vest ahead of a `warm` coat for exactly that reason.
+Not in this pass, recorded as open: the tail still carries four separate weather voices (`TIME-OF-DAY WEATHER`, `COOL-END LAYER`, `THERMAL & SEASONAL COHERENCE`, the occasion profile's "light outerwear") with no stated precedence between occasion and weather, the shared system template spends ~11 mentions on accessories and jewelry in a call where accessories are excluded from the roster entirely, and the feedback-memory block ships duplicate and mid-sentence-truncated entries.
+**[amended 2026-09-15 — removed from the default path]** `COOL-END LAYER`, the ordered-outerwear heading and the whole `TIME-OF-DAY WEATHER` paragraph are gone from the Whole Wardrobe composer tail, and `/ask`'s `thermal_guidance` band target with its prompt sentences is gone too. The stated range and request text remain (`docs/garment-evidence-parity-2026-09-15.md` §7).
+
+**[amended 2026-09-15 — the remaining two weather voices in the tail, plus the shared cold-guidance
+formula, are rewritten (owner ruling)]** Three prompt blocks changed, all named in the "four separate
+weather voices" and "coat / three-layer weather formula" open items above:
+- `COMPARISON SET CONTRACT` (`routes/ai.js`, `generateWholeWardrobeOutfitsVisualInternal`) dropped
+  "use meaningfully different outfit formulas or clearly different silhouettes/proportion logic" —
+  forced cross-formula diversity meant a card could be pushed toward a WEAKER alternative merely to
+  look different from its neighbor. Replaced: each card must be worthwhile on its own; a meaningful
+  alternative is welcome, never mandatory over a sound repeat.
+- `THERMAL & SEASONAL COHERENCE` (same block) is renamed `OUTFIT CONDITIONS FIT` and dropped the
+  blanket "must share a consistent thermal and seasonal weight" / "do not mix warm-weather pieces
+  with cool-weather pieces across the batch" rule — the old heading named a BATCH property that no
+  longer exists as a requirement, so it kept implying uniformity across cards even after the rule
+  under it stopped requiring one. Uniform thermal weight across a comparison SET is not itself a
+  correctness criterion; each card is judged individually against the user's stated conditions and
+  exposure. A removable layer now counts only when the card actually includes it and it is
+  realistically wearable in that outfit — the rule no longer permits crediting a layer the model
+  merely gestures at via invented indoor stops or timing.
+- `PHYSICAL_WEARABILITY_REALISM_RULES`'s "Thermal Adequacy" line (`styling-engine/prompts.js`,
+  shared by every composer that interpolates the block — Whole Wardrobe, single-outfit,
+  propose_outfit, saved-variant) dropped the "insulating coat over a top, or an intentional 3-layer
+  system with a middle knit layer" formula and its implicit garment-category prescription. First
+  replaced with a judgment instruction that still named the retired formula to disclaim it
+  ("there is no required insulating-coat-or-three-layer-system prescription"); on a second owner
+  pass that meta-negation was removed too — spelling out the old formula to reject it still gave it
+  presence in the prompt. Final wording states only the positive task: judge the whole worn system's
+  protection against the stated exposure, from each garment's own recorded facts, photographs, and
+  construction, and explain the concrete shortfall if protection looks inadequate. No formula, no
+  named category, no reference to what used to be required. Full before/after text and rationale:
+  `docs/model-flow-prompt-ownership-audit.md` "Carried forward for the categorical-prompt audit."
+
+**[amended 2026-09-16 — thread_1789526496845, four findings, reopened once for a wrong first pass]**
+
+1. **Weather timing — reopened twice.** A request stated "walking around outdoors from 1–6 p.m."
+   alongside "the forecast is 50°F high and 40°F low". **First attempt:** hedged the composer's
+   `Temperature:` line itself ("timing within the day unknown") — contradicted the ratified contract
+   (`docs/app-surface-map.md`, 2026-09-12 ruling, the "Temperatures you'll be out in" UI field this
+   same composer serves) that `weatherProfile.highF/lowF` is taken VERBATIM as the range the wearer
+   will actually be outside in. Reverted. **Second attempt:** fixed the real upstream cause — the
+   model translating a daily-forecast sentence into the certain `user_weather.high_f/low_f` field —
+   by having the schema instruct the model to convert an ambiguous daily-forecast statement into a
+   qualitative `temperature_band` instead of a numeric range. This discarded real numeric evidence:
+   `requiredThermalBand` returns `level: null` for a band-only input (no resolvable `wakingLowF`), so
+   the evaluator went completely silent — no thermal opinion at all, which is not the same thing as a
+   fixed timing defect, and is arguably worse (a genuine 40-50°F day should still inform footwear,
+   layer, and fabric-weight judgment). **Final design:** preserve the exact numbers and add
+   provenance. `validateUserWeather` (`styling-engine/weather.js`) accepts a new `scope` field on a
+   numeric range — `exposure_window` (default, the only prior behavior — a temperature genuinely
+   scoped to the outing, or two timed observations) vs `daily_forecast` (the day's overall high/low,
+   stated separately from a narrower outing window). Carried through `resolveTemperatureField` into
+   `exposure.js`'s `resolveConditions`: `exposure_window` keeps the certain
+   `stated_user_exposure_range` treatment unchanged; `daily_forecast` gets a new
+   `stated_user_daily_forecast` tier that routes the SAME real numbers through the identical
+   waking-window estimate a live/model-estimated daily envelope already receives — `dailyHighF`/
+   `dailyLowF` preserved exactly, `coarse: true`/`certain: false`, and (verified)
+   `requiredThermalBand` WIDENS the acceptable range around the resolved level (`[moderate, very
+   warm]` instead of a certain `[warm, warm]`) rather than manufacturing a false-certain single value
+   or going silent. `USER_WEATHER_SCHEMA` (`styling-engine/tools.js`) now requires `scope` alongside
+   any numeric range and explicitly tells the model NOT to convert real numbers into
+   `temperature_band` itself. No hourly data is invented anywhere; none exists in this codebase
+   (live weather fetches only Open-Meteo's daily max/min). The 2026-09-12 UI ruling is fully
+   preserved — omitting `scope` (every caller that predates this field, including the dedicated
+   "Temperatures you'll be out in" numeric fields) defaults to `exposure_window`, byte-identical to
+   prior behavior.
+
+2. **The five-card weather conclusion was withdrawn.** A prior report called all five raw cards
+   "proportionate" for the outing. That was not established: one card (the knit sheath + light
+   leather jacket) already discloses its own possible shortfall, the cropped unlined jacket and the
+   non-insulating leather jacket are questionable if the outing runs toward the colder end, and the
+   strongest thermal card carries the unresolved sleeve finding below. With the actual outing
+   temperature genuinely unknown (no hourly data), the honest state is "not fully adjudicated" —
+   recorded as such, not re-scored.
+
+3. **Sleeve finding wording, and the critic gate.** `layer_construction_sleeve_conflict`'s message
+   (`styling-engine/outfitValidation.js`, both the pairwise and chain builders) previously read as a
+   confirmed defect ("has no room to accommodate"). Reworded to state plainly what it is: a
+   shape-only heuristic (recorded sleeve length/shape only; fabric compressibility and inner
+   construction are not recorded fields), explicitly disclosing it may be a false positive — matching
+   why this finding has been log-only since 2026-08-26/2026-09-14. Diagnosed why the olive-top/puffer
+   card never reached the existing visual clash critic despite the conflict being real: the ONLY
+   gate deciding whether a card is "questionable" enough for that paid photo review
+   (`wholeWardrobeOutfitVisualReviewFindings`, `styling-engine/rules.js`) checked pattern count
+   alone — a two-solid-piece card had no path into review at all, regardless of any construction
+   concern. Fixed by making a genuine `layer_construction_sleeve_conflict` shadow finding ALSO
+   request that same existing review (reusing the identical critic call, contact sheet and
+   reject/note/omit contract — no new mechanism, no second veto). Extended
+   `WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM` with one added criterion: judge a layered sleeve pair
+   from the photo only (real crowding or distortion, never an assumption from shape or a label), and
+   say plainly when the photo cannot settle it — a "note", never a "reject", when uncertain. The
+   shadow signal is used only to trigger the request; its own verdict is never sent to the critic or
+   otherwise exposed as truth.
+
+4. **Language-flag detection/scrub boundary.** Following the 2026-09-15 fix (dropping "confidence"
+   from the trigger, and scrubbing whichever field actually matched instead of always `reason`), the
+   detection side still scanned `label`+`dominantDirection`+`silhouette`+`reason`+`watchFor`+piece
+   names while the scrub only ever touched `reason`+`watchFor` — the same species of boundary
+   mismatch, one field narrower. Piece names are wardrobe data, not composer prose, and were dropped
+   from BOTH detection and scrub (a piece literally named with a flagged word cannot be "scrubbed"
+   without rewriting the garment's own name). `label`/`dominantDirection`/`silhouette` are real
+   model-authored prose and now both scanned AND scrubbed, consistently — one field list
+   (`BODY_SHAPE_PROSE_FIELDS`) drives both halves.
+
+**[amended 2026-09-16 — direct cause found in the full capture: a standing composition rule conflicted with the ratified comparison-set wording]**
+The complete provider capture for `thread_1789526496845` showed the actual mechanism behind five
+different outerwear choices across five cards: `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`'s
+"Composition rules" (`styling-engine/prompts.js`) carried its OWN standing set-wide diversity
+requirement — *"Each outfit must have a different visual thesis — different grounding strategy,
+proportion logic, or focal/support relationship. Do not return five variations of one formula."* —
+separate from, and in direct conflict with, the per-request `COMPARISON SET CONTRACT` text
+(`routes/ai.js`) already corrected on 2026-09-15 to say the opposite ("do not choose a weaker outfit
+merely to avoid repeating a sound formula"). One prompt told the model diversity was optional-but-
+welcome; the other, standing rule told it every card MUST differ. In this run, varying the outerwear
+was the cheapest way to satisfy the standing rule, even where repeating one of two sound cold-weather
+choices would have produced stronger outfits. Retired outright and replaced: *"Select each outfit on
+its own merits. Repeating a strong garment, outerwear choice, or outfit formula is fully acceptable.
+Prefer a meaningfully different alternative only when it is at least as strong; never weaken an
+outfit to increase variety across the set."* Both texts now agree.
+
+**[amended 2026-09-16 — general weather-advice diagnosis: thread_1789532397982 (5-card), thread_1789532668263 (2-card), thread_1789536455443 (single-outfit)]**
+
+Owner truth for the single-outfit result: a medium knit shirt + heavy trousers + boots + a
+medium-weight, fully-lined, wind-protective cotton trench works to about 55°F — not for an outdoor
+walk declining 50°F→40°F. `propose_outfit` accepted it with zero findings. Six connected causes,
+diagnosed offline against the real capture and replayed against the real evaluator:
+
+1. **Workbench-selection pressure (single-outfit).** `buildSingleOutfitStylistCatalog`'s
+   `instruction` (`styling-engine/tools.js`) told the model to pick "2–3 potential visual
+   leaders/heroes with distinct silhouettes or character" plus generic "layers" — nothing tied
+   layer selection to the stated thermal demand. The catalog itself carried
+   `insulation:polyester`/`insulation:shearling` for the puffer and shearling jacket right there in
+   text, but the model's own `view_pieces` call named only the trench and a lambskin jacket
+   (`insulation:none` both) — the puffer, wool coat and shearling never entered the visual
+   workbench and were structurally unavailable at `propose_outfit`. Fixed: one added sentence,
+   present verbatim regardless of weather (the model still decides whether conditions call for
+   warmth), pointing at the catalog's own insulation/weight fields — no count, no garment category,
+   no computed injection. Kept deliberately different in kind from the 2026-09-10 "pull 2–3
+   insulating coats" mechanism retired 2026-09-15 for being an engine-computed formula; the
+   mild/cold instruction-identity invariant that retirement established is unchanged and still
+   tested. **Reworded 2026-09-16 (owner review):** the first phrasing named "insulation/weight
+   facts" as if those were the only route to real warmth. It now asks the model to preserve
+   candidates with "construction plausibly relevant to the exposure (insulation, substantial
+   weight, weather protection, or other stated construction)" — a non-exhaustive list, so a
+   wind-protective shell or a multi-garment system is not structurally excluded from the workbench
+   just because it lacks a dedicated insulation tag.
+   **Live validation, 2026-09-16 (`thread_1789543565383`, capture session
+   20260916T072500260Z-p33193-328b5958):** for the same stated 50→40°F walking outing, the model's
+   own `view_pieces` call inspected both the insulated puffer and the heavy lined wool coat — the
+   workbench fix's intended effect — and selected 144 (black turtleneck) + 183 (heavy cotton
+   wide-leg pants) + 996867 (heavy, fully lined, wind-protective wool coat) + 996859 (leather ankle
+   boots). Materially more plausible for the stated outing than the earlier light-trench result; the
+   sleeve heuristic remained shadow-only and did not block the wearable turtleneck/coat pairing. This
+   is one live observation, not a bench — recorded as evidence the reworded instruction is working as
+   intended, not as proof the workbench-narrowing defect is closed for every wardrobe/context.
+2. **Evaluator false negative (`propose_outfit` accepted the trench outfit, zero findings) — STILL
+   UNRESOLVED, recorded honestly rather than papered over.** Replayed the exact four pieces through
+   `evaluateWearableOutfit`/`evaluateOutfitEnvironmentalAdequacy` at the real 50/40°F
+   `exposure_window`-scope resolution. Two independent, both DELIBERATE designs compound: (a)
+   `hasMinimumWarmLayer`'s presence/substance floor treats a full lining as legitimate substance
+   evidence (2026-09-13 amendment, above) — the trench clears that low bar on construction alone, so
+   `WARM_LAYER_RECOMMENDED` never fires; (b) the thermal-contribution bucket
+   (`outfitThermalContribution`) reads the whole worn system (medium top + medium lined trench) as
+   `warm` — an EXACT match to the certain `[warm, warm]` cold-end target (`bestDelta: 0`,
+   `verdict: 'fits'`) — so `THERMAL_UNDERSHOOT` never fires either. Owner truth: this exact system is
+   adequate to about 55°F, not for a 50→40°F outdoor walk — the evaluator's aggregated contribution
+   genuinely OVERVALUES it. A dedicated advisory keyed on "no outer layer carries recorded
+   insulation" was tried and **reverted** (2026-09-16 owner review): missing insulation is a
+   per-GARMENT fact, not independently a whole-OUTFIT shortfall — it ignores a system that carries
+   real warmth from a medium insulating base, from multiple garments together, or from wind
+   protection genuinely mattering at the exposure, and it manufactured a second, narrower verdict
+   that competed with the bucket above rather than repairing it. Re-tuning the floor or the bucket
+   itself was ALSO tried (2026-09-13) and reverted for miscalibrating seven other real garments the
+   other direction (inverting verified clo anchors). **No fix has shipped for this false negative.**
+   The mitigation that shipped instead is evidence, not a verdict: giving the model complete
+   construction facts and photographs (item 3 below) so it can judge the system itself, without the
+   engine manufacturing a second deterministic conclusion to disagree with the first.
+3. **Circular explanation ("what weather does this work for?" → repeats 50/40).**
+   `compactFreeformAnswerMessage`/`compactFreeformAnswerSystem` (`routes/ai.js`) handed the
+   explanation model the card's own stored `reason` (already calling the outfit "weather-ready for
+   50/40"), `weatherUsed`, and `needsRemovableCoolLayer` labeled "Verified current cards" — while
+   `compactFreeformPieceFacts` omitted `insulating_layer_materials`, `interior_construction` and
+   `weather_protection` entirely, and `existing_card_explanation` received zero photographs (its own
+   system prompt forbade even claiming to see one). The model had no way to independently
+   distinguish the trench from genuinely warmer outerwear and no reason not to repeat its own prior
+   claim sitting right there in the prompt. First fix (2026-09-16, same date): the three missing
+   construction facts were added, photographs were supplied, and the card block was RELABELED
+   "Cards as composed (the composer's own prior claims... not verified facts)" while still including
+   `reason`/`weatherUsed` verbatim next to that caveat.
+   **Revised 2026-09-16 (owner review): relabeling was not enough.** A prompt telling the model to
+   disregard a conclusion placed immediately in front of it is not reliable — "what weather does
+   this work for?" still repeated 50/40 with the caveat attached. A first correction added a
+   function (named isWeatherSuitabilityQuestion, since removed — see below), a word-boundary regex
+   classifying the CURRENT question (weather/temperature/warm/cold/climate/forecast terms), so
+   `sanitizeOutfitForExplanation()` would strip `reason`/`weather_used`/`resolved_weather_context`/
+   `needs_removable_cool_layer`/`system_flags` only when that classifier fired, leaving them in
+   place for an ordinary "why did you choose this?" question.
+   **Revised again 2026-09-16 (owner review, second pass): the classifier itself was the wrong
+   mechanism.** A local keyword regex deciding WHEN a prior conclusion is dangerous is a second
+   guess, brittle by construction (a rephrased question without a listed word would have sailed the
+   old reason straight through), and the underlying problem — the model repeating a conclusion
+   sitting in the prompt — is not actually specific to questions that happen to contain a weather
+   word. That classifying function is removed entirely. `existing_card_explanation` now
+   projects a card as structural membership only on EVERY question, unconditionally:
+   `sanitizeOutfitForExplanation()` always strips `reason`, `weather_used`/`weatherUsed`,
+   `resolved_weather_context`/`resolvedWeatherContext`, `needs_removable_cool_layer`/
+   `needsRemovableCoolLayer`, and `system_flags`/`systemFlags`. Outfit membership (`label`,
+   `piece_ids`, `pieces`, `styling_instructions`) is kept — it is a fact about what the card
+   contains, not a conclusion about it. An ordinary "why did you choose this?" question now gets a
+   FRESH explanation from the garment facts and photographs too, not a repetition of the stored
+   reason — which is the more honest answer to that question regardless: the composer's own claim is
+   not verified any more than its weather claim was. The user's original stated conditions are never
+   deleted; they survive in `recentHistory`, the turn that actually asked for the outfit, never in
+   the technical-conclusion fields above.
+   `compactFreeformPieceFacts` was also audited field-by-field against
+   `garmentEvidenceLine.js`'s `garmentEvidenceFields` — the shared fact set every other chat surface
+   already sends — rather than declaring parity from the three fields above alone; `fiber_content`
+   and `season` were the remaining weather-relevant gaps and are now included (`stretch` is on that
+   shared line too but is a fit/comfort fact, not a weather one, and is deliberately excluded).
+   Separately, `compactGarmentVisualEvidence`'s allocation was piece-major/photo-type-minor — worn
+   AND hanger photo for the outfit's first two pieces before any later piece got one — so a 4-image
+   budget on a 4-piece outfit could leave the outerwear with no photo at all. It is now two-pass:
+   every garment gets one useful image (worn preferred, hanger fallback) before any garment gets a
+   second (pinned by a production-path HTTP test, `test/bounded_multi_context_continuity_e2e.test.js`).
+   **Revised again 2026-09-16 (owner review, second pass): the ceiling itself was still stale.** The
+   two-pass fix kept the image budget hard-capped at 4 — a number observed on one thread, not the
+   outfit role invariant's own maximum. A card's role invariant (`outfitValidation.js`: at most one
+   `primary_top`/`primary_bottom`/`dress`/`shoes` role, plus at most one middle layer and one outer
+   layer) caps a valid outfit at **five** distinct garments, so a valid 5-piece card (base + middle
+   layer + outer layer) could still lose one of its two layers to the old ceiling. The ceiling is now
+   `MAX_STRUCTURAL_OUTFIT_PIECES = 5`, the real structural maximum, so pass one always has room for
+   one image per unique garment on any valid card before pass two spends anything on a second photo
+   — proven by a second production-path HTTP test covering a base + middle-layer + outer-layer
+   5-piece card.
+   **This item is a payload-honesty fix, not a fix for item 2.** The evaluator still says this
+   outfit fits with zero findings; the model is now given complete facts and photographs to judge
+   the system itself, without the engine manufacturing a second deterministic verdict to compete
+   with (or paper over) the first.
+   **Corrected again 2026-09-16 (owner review, third pass): conversation history and continuation
+   must survive, and a label can leak a conclusion too.** Two further findings from a live capture
+   (`thread_1789543565383`):
+   (a) The user must be able to ask "what did you mean?", challenge a prior answer, or request more
+   outfits for the same outing — so recent conversation history is intentionally preserved for
+   `existing_card_explanation`, never stripped. The live risk this creates (an earlier assistant
+   turn's own prose can still carry a fallible claim) is addressed generally, not with another
+   weather-specific mechanism: the system instruction now states plainly that "Conversation history
+   is provided to preserve continuity and resolve references. Previous assistant statements are
+   fallible prior claims, not authoritative garment evidence. Reassess them against the structured
+   garment facts and photographs, and correct them plainly when they conflict." This covers any
+   prior claim conversation history can carry, not only a temperature one.
+   (b) A composer-written card `label` ("Polished Urban Walk at 50° to 40°F") reached the model
+   verbatim in the same capture — the exact class of conclusion-bearing text item 3's field-stripping
+   was built to keep out, just carried through a field that survives because a bundle of several cards
+   genuinely needs SOME way to tell them apart. Deleting it outright would break that legitimate
+   case, so it is renamed instead of caveated: `sanitizeOutfitForExplanation()` now projects it as
+   `untrusted_display_label`, a key that states what it is rather than depending on the model reading
+   and honoring a nearby prompt sentence. Once a card is resolved, its index/piece_ids/pieces are the
+   neutral way to refer back to it.
+3b. **Provider truncation stored/served as a completed answer.** The same live capture ended with
+   `stopReason: max_tokens` and stored the fragment *"Based on the garment construction and
+   photographs, this outfit can be trusted for an outdoor temperature range of 40°F to"* as if it
+   were a finished reply. Root cause: `maxTokens: 700` on this call was sized for the visible prose
+   alone, but Gemini bills thinking tokens out of the SAME cap and `thinking_level: 'low'` still lets
+   that vary a lot per request — the identical failure class already diagnosed and fixed for the
+   execution router (`routeFreeformExecutionProfile`, 350→900, same date, above). Fixed in two parts:
+   the ceiling is raised to 1500 (matching the ordinary full-turn free-text ceiling used elsewhere in
+   this file for a prose answer of comparable length), and a simple defensive backstop,
+   `compactAnswerWithTruncationGuard()`, retries once with a "give a shorter, complete answer" nudge
+   (the same shape as the full tool loop's own `providerTruncation` retry in
+   `styling-engine/provider.js`) and returns an honest disclosure — never the stored fragment — if
+   still truncated after the retry. No elaborate retry system: one bounded retry, reusing an existing
+   idiom.
+3c. **Continuation silently dropped the established temperature range.** Same capture's follow-on
+   scenario: after an `existing_card_explanation` turn, "give me three more outfits for the same
+   outing" must leave that profile and reach the composer while carrying the same 50/40°F range
+   forward, even though that turn's own words never restate it. The router's `bounded_multi` shortcut
+   (`routes/ai.js`) calls `generate_outfits` with only `occasion`/`activity`/`season`/`mood`/
+   `mission`/`limit`/`location`/`date` — never weather. Setting `toolContext.weatherProfile` before
+   the call (the same carry-forward `resolveToolStylingContext` already performs for the full-stylist
+   path) was tried first and verified, by the regression test below, to be **ineffective**:
+   `generate_outfits` always states `season` explicitly (a required field), and `resolveWeather`
+   (`styling-engine/stylingContext.js`) deliberately refuses its established-state weather-profile
+   fallback whenever season provenance is `explicit_request` — "a current explicit seasonal brief is
+   a new instruction... must not silently inherit a derived snapshot from an older card or thread" —
+   so that fallback is structurally unreachable through this call shape, not merely unset. The actual
+   fix passes the persisted range as an explicit `user_weather` tool argument instead, which
+   `resolveWeather` checks FIRST regardless of season provenance — the same authority a model's own
+   restated `user_weather` would carry. This is gated on `!freshExecutionRequest`, the SAME
+   structural continuation-vs-fresh-pivot signal this function already computes for the router-
+   eligibility decision above (non-empty `current_outfit_set`/history/etc.) — not a new keyword or
+   weather-specific rule. A genuine fresh pivot ("actually, three hiking outfits tomorrow" with no
+   current outfit set) has `freshExecutionRequest === true` and never carries a stale profile
+   forward. Proven by a three-turn production-path HTTP test
+   (`test/bounded_multi_context_continuity_e2e.test.js`): turn 1 seeds an established outing, turn 2
+   (`existing_card_explanation`) is proven to touch only `recently_discussed_piece_ids`, and turn 3
+   is proven — via the real `executeTool` call-site log, not a mock — to send
+   `user_weather:{high_f:50,low_f:40,scope:'exposure_window'}` to `generate_outfits`, with the
+   composer's own resolved-and-persisted `weather_profile` confirming the carried-forward value won.
+4. **Forecast scope (5-card thread).** The daily "50°F high and 40°F low" statement — decoupled from
+   the stated 1–6pm outing — was classified `exposure_window` by the model despite the schema's own
+   worked example naming exactly this phrasing as the `daily_forecast` case (§ the weather-scope
+   work earlier this date). This is a MODEL COMPLIANCE gap, not a missing mechanism — the schema
+   already asks for the right classification. No deterministic override was added (explicitly
+   ruled out); items 2 and 3 above reduce the damage of a wrong classification by no longer letting
+   a resolved "certain" bucket, or a stored claim built on it, go unquestioned downstream.
+5. **Cross-flow evidence contract.** Confirmed both the bundle composer's per-piece line and the
+   single-outfit sparse catalog line already carry insulation/interior/protection facts (verified
+   directly from a live capture: `insulation:polyester;interior:full_lining;protect:wind` on the
+   sparse line, `insulating layer polyester; interior full_lining; protection wind` on the composer's
+   line — same facts, different formatting, both present). The single-outfit flow's own
+   WORKBENCH-NARROWING step (item 1) — which the bundle composer's broader pre-filtered visual
+   roster does not have — was the actual asymmetry, not a missing fact.
+6. **Role/competence framing.** All three surfaces (`WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`,
+   `SINGLE_OUTFIT_STYLIST_SYSTEM`, `compactFreeformAnswerSystem`) opened as a bare "personal
+   stylist" with scattered, sometimes-contradicting per-surface thermal sentences layered on top —
+   no stated competence in judging clothing as a worn system. Added one shared paragraph,
+   `STYLIST_COMPETENCE_CONTRACT` (`styling-engine/prompts.js`), to all three: role framing only — no
+   temperature cutoff, no prescribed garment, no instruction to defer to the evaluator. Explicitly
+   NOT a substitute for items 2–3: a well-framed expert still cannot judge insulation it is never
+   shown, which is why this shipped alongside the payload fixes rather than instead of them.
+
+Not touched: `resolveExposureContext`/`exposure.js`'s scope-based certain/coarse treatment (already
+correct per the earlier same-date work); the 2026-09-13 thermal-contribution/presence-floor
+calibration (re-opening it was explicitly tried before and reverted); any garment ID, Fahrenheit
+threshold, or prescribed formula.
+
+**[amended 2026-09-12 — the visual composer finally gets calendar season]**
+Same run (`thread_1789247972106`, 65/50, fall, casual), second and larger defect: the cards were built on summer clothing — a white octopus graphic tee, an ivory graphic crew, cropped utility pants — and two of them drew the `baseIsWarmSeasonOnly` corroboration *"every piece under it is tagged as warm-season clothing"*. Measured on that exact context: **18 of the roster's 60 base pieces were tagged `season: warm`, and ZERO exclusions mentioned season.** `buildVisualComposerRoster` had no calendar-season handling of any kind. Its only cool-side content gates — `cold weather: shorts`, `cold weather: lightweight linen bottom`, `cold weather: bare/sleeveless` — sit behind `isCold` (lowF <= 45), so at a 50°F low none of them run: the entire `needsRemovableCoolLayer` tier shaped FINDINGS and never SUPPLY.
+The trip planner had solved this and the composer never inherited it, because `rules.js` cannot import `outfitSetPlanner.js` (that module imports rules.js). Both helpers moved to `lib/seasonContext.js` — byte-identical implementations, re-exported from `outfitSetPlanner.js` so every existing caller and test keeps its path:
+- `seasonFitPieceAdvisory()` — ranking only, every category, every day. Now part of the composer's `getRelevanceScore`, with its reason pushed to `debug.relevanceAdjustments` like every other adjustment.
+- `seasonEligibleForCalendar()` (the predicate behind `tripSeasonEligiblePool`, docs/trip-roster-season-eligibility-spec.md) — a new Step 2.5 in the roster, **gated on the cool tier**: tops exempt (a warm-season top is a legitimate base under something warmer), dresses not (outfit-defining, not a layering component), outerwear judged on its own tag (a warm-season blazer is lightweight construction, not insulation).
+Measured on the live wardrobe at that run's context: **warm-season base pieces in the roster 18 → 1** (the survivor is a top), 38 off-season exclusions, roster 81 → 75. Both pieces that actually shipped in those cards — `122` olive utility cropped pants, `129` beige pleated wide-leg — are now cut. Provably additive: with no calendar season resolved, or on a mild day, the roster is unchanged (both pinned by tests).
+
+**[amended 2026-09-12 — "ordered for these conditions" was ordering by the wrong key]**
+Owner ran `thread_1789247972106` at `casual` specifically so the everyday-register pool would include `996866` (navy quilted puffer, `warm`, the one layer in that roster whose fit is `adequate`) — and neither the composer nor the corrective pass used it on any of five cards, every one of which the owner confirmed *"does not clear 59 and below"*. The capture shows why: the puffer was listed **fifth of seven**, below four undershooting `moderate` cardigans and fleeces, in a section headed `=== OUTERWEAR (ordered for these conditions) ===`.
+`orderLayersByThermalFit` sorted by `Math.abs(fit.offset)`. `offset` is **overshoot-weighted by design** — it encodes "prefer the garment that is not too hot", the right preference when ranking a garment for wear and the wrong one for a list whose entire job is "which of these covers the cool end". The puffer sits 0.75 above `warm`'s raw centre, weighted to 1.125; the cardigans sit 0.5-0.75 below, unweighted. The only adequate layer sorted last among the plausible ones.
+Ordering is now by **level distance** (symmetric, `fit.distance`), with the signed offset breaking ties toward the warmer piece — on a cool day that is the right way to lean. Verified against that run's own seven pieces: the puffer leads, the four `moderate` layers follow, the two `light` ones last.
+Recorded because it corrects a wrong reading in the amendment above: the 10-of-10 and 5-of-5 flag rates were NOT evidence that the demand is too strict. The outfits genuinely did not clear the cool end — the engine's verdicts were right, and the defect was in the supply we presented to the model, not in the judging.
+
+**[amended 2026-09-12 — 46°F was never the dressing temperature: a UI ruling, not an engine change]**
+With the target language removed, both composer and corrective pass independently chose mild layers on a stated 65/46 day and the engine flagged **10 of 10 cards** as too light — including runs where the one `warm` coat was an available swap candidate and was declined five times over. Owner: *"46 is the low, so nothing but the nightgown should be there for 46° unless the user is planning a sunrise jog."* The engine agrees with that principle already — `resolveExposureContext` lifts a forecast's low by `WAKING_WINDOW.troughOffsetFraction` (0.35), "the share of the day's range the pre-dawn trough sits below by the time people are ordinarily out" — but exempts `stated_user` ranges, correctly, because a stated range is what the user says they will ENCOUNTER (`thread_1788767789621`: 60°F departure, 48°F return, silently lifted to 52.2°F). The two statements were collapsed by one form: the Create Outfits brief's `high °F` / `low °F` fields, labelled "overrides the forecast", invite a daily envelope and are then read as an encountered range. Measured difference on the same ten cards: verbatim `[warm, warm]` → 10 flagged; as an envelope (`wakingLow` 52.7, band `[moderate, very warm]`) → 3 flagged, and the three that remain are the genuinely light ones.
+**Ruling: no engine change.** Stated numbers stay verbatim as the exposure window; the UI now says that is what they are (see `docs/app-surface-map.md`, same date). Recorded here because a future reader will find the `stated_user` exemption and this evidence together, and should not "fix" the engine to lift a stated low.
+
+**[amended 2026-09-12 — reversal: the target level and the pass's middle-layer move are removed]**
+Live run `thread_1789241567145` shipped a card pairing a structured cropped tweed jacket UNDER a double-breasted wool coat. Owner ruling, and the reasoning behind it, recorded because it governs future work here: *"this is common sense, not something that has to be stated and directed"* — the response to a nonsense output is not another gate, it is to ask what the process did to invite it. The capture answered:
+1. **The corrective pass makes layering decisions on far less evidence than the composer.** Its input is a contact sheet of 150×132px tiles plus `Layers that suit these conditions, by ID: …` — names and IDs only. No `fit_on_body: structured` on the tweed jacket, no `warmth:`, no `fabric`, no `do not pair`. The composer's own call carries all of that per garment. Asked to ADD a garment on that evidence, with a candidate list that was three-quarters coats and a prompt saying a middle layer "is often the better answer", it stacked two coats. The middle-layer move is therefore REMOVED — the pass is swap-only, and composing a layered outfit belongs to the call that has the photos and the labels. Layering itself is unaffected: it lives in the composer's structure rule and roles, which produced a genuine three-layer card in `thread_1789238243751` before this move existed.
+2. **The published target level invited arithmetic.** `Temperature: … — the whole outfit needs to read about \`warm\`` and `=== OUTERWEAR (these conditions call for \`warm\`…)` named a number the outfit had to hit, alongside a per-garment `warmth:` ladder, on a wardrobe whose bases are all `moderate` — where one `moderate` layer visibly does not reach `warm` and the arithmetic route to the target is a second layer. Both are removed. The tail now states the CONDITIONS (`65°F high / 46°F low`), points at the label vocabulary, and says to judge against the range rather than a number; the heading says only `(ordered for these conditions)`, keeping the ordering that carries the same information without inviting a sum. The `N of M suit these conditions` count went with them — once the layer band admitted every ordinary layer it read "7 of 7", which is the `everything shown is weather-optimized` false reassurance in new clothes.
+Kept: the layer band itself (it determines SUPPLY — which layers the roster and the swap candidates draw from — without telling the model to hit a level), the per-direction acceptance floor (now unreachable through the swap-only path by construction, retained as a defensive guard), and role emission.
+Not implemented, and deliberately so: the proposed "soft layer only" structural gate for the inner of two outerwear pieces, and switching `includeLayerDirections` on for this path. Both were offered and set aside under the same ruling — the first is a floor for a situation the pass manufactured, and the second cannot answer this pair anyway (`sleeve_shape` is tagged on 35% of upper-body pieces, so `evaluateLayerPairConstruction` returns `layer_construction_bulk_unknown` here). They stay available if a well-informed composer, given full labels and no target, still produces a jacket under a coat.
+
+**[amended 2026-09-12 — wear order becomes data; the corrective pass can add a middle layer and stops vetoing styling]**
+Live run `thread_1789240498939` (layer band + both-direction pass, clean rotation) removed every winter coat — 0 overshoot flags, down from 3 — and then flagged **4 of 5 cards as too light**, with the corrective pass producing `revisedCount: 0` from `misfitCount: 4`. The pass was working correctly and had nothing to offer: every qualifying layer except the single `warm` wool coat is `light` or `moderate`, the two-piece step-up needs BOTH halves at `warm`, and no base in this wardrobe exceeds `moderate` — so no swap could change any card's verdict. The app was simultaneously telling the model "7 of 7 shown layers suit these conditions" and flagging four cards built from them.
+The one mechanism that resolves it was switched off. `orderedSubstantialUpperStackContribution` credits a genuine three-layer system (base and middle `moderate`+, outer `light`+) with a bounded step — `moderate` top + `moderate` cardigan + `light` jacket → **`warm`**, demand met, no wool coat required — and it reads `piece.role`, which `normalizeWholeWardrobeOutfitObject` trimmed away. Three changes:
+1. **Roles are emitted and preserved.** The composer states `role` per upper piece (`primary_top` / `dress` / `layer_top` / `outerwear`); a cardigan worn under a coat is `layer_top` though its category is outerwear, because the role names the JOB. `roleMatchesCategory()` validates against structured truth — the same split `propose_outfit` already enforces, where a model-authored role cannot manufacture a garment the category does not support — and `deriveWholeWardrobeRoles()` reconstructs the stack from the wear order the prompt already requires when a role is absent or dropped. Both rehydration points (`locallyGateWholeWardrobeOutfits`, the composer's misfit check) now MERGE the card's role onto the full garment record instead of replacing the piece; dropping it there would have left the credit unreachable for exactly the cards that earn it.
+2. **The corrective pass can add a middle layer** (`middleLayerId`), not only swap the outer one, and states the resulting wear order as roles on the revised card. On a wardrobe where no swap can help, "a cardigan under that jacket" is the move that clears the day.
+3. **Acceptance is NOT WORSE, not strictly better, and rejections are itemised.** The strict rule silently discarded re-compositions the stylist preferred whenever they were thermally neutral — the engine settling a styling question by omission, which is the authority it does not have (owner: *"engine is not qualified to decline on styling grounds"*). It keeps the veto it IS qualified for: a revision may not increase the misfit count. `layerRevision.rejections` now separates `unknown_layer` / `missing_reason` / `gate_rejected` / `made_it_worse`, replacing a single counter that covered all four.
+**Immediate correction from the next run (`thread_1789241567145`).** Roles shipped on every card and the pass revised two, but one revision added a middle layer under the single `warm` coat, the three-layer credit stepped the system to `very warm`, and the card traded a shortfall for an OVERSHOOT — which the new "not worse" rule accepted, because it counted findings and a bare count makes too-light and too-warm interchangeable. Acceptance is now per DIRECTION: a revision may not increase the shortfall count OR the overshoot count. Curing a fault by causing its opposite is not neutral.
+
+For the record, since it was raised: the `skipped` entries in that run were the MODEL's own words (its `skipped` array, e.g. *"the lambskin … creates a sleek monochrome look that any available alternative layer would disrupt"*), not an engine refusal. The engine's contribution was the two rejections, on arithmetic alone.
+
+**[amended 2026-09-12 — outerwear answers the LAYER band, and the corrective pass works in both directions]**
+Live run `thread_1789238243751` produced the first three-layer card this composer has ever made (base + open vest + lambskin jacket, with wear order in `styling_instructions`) — and three of five cards carrying `THERMAL_OVERSHOOT`, a shearling twice and a down-lined leather coat once, on a 65°F afternoon. Both halves trace to one line: the qualifying-layer test was `fit !== 'undershoot'` against the BASE band.
+1. **The layer band replaces the base band for outerwear supply.** `requiredThermalBand` returns two ranges: `range` (`[warm, warm]` on a 65/46 day) is what the whole outfit must reach at the cold end, and `layer.range` (`[light, warm]`) is what a REMOVABLE layer may be — wider, because it spans the day since the layer comes off. `weatherFitForPiece` already carries this doctrine ("Outerwear answers to the LAYER demand, not the base's") but gates it on a supplied `exposure`, which the roster path never has. Reading the base band produced a failure at each end: a trench or cardigan counted as undershoot and was cut, while "not undershoot" swept `very warm` winter coats in as adequate. Both the reserve membership (`styling-engine/rules.js`) and the composer's `qualifyingLayers` (`routes/ai.js`, feeding the tail disclosure and the corrective pass) now test `fit === 'adequate'` against `layer`, with `unknown` still eligible in the reserve. Measured on the live wardrobe: the roster's outerwear went from 1 `warm` + 2 `very warm` to **seven layers all inside the band** (`warm` wool coat, three `moderate`, three `light`) — winter coats out at the top, the `very light` vest out at the bottom.
+2. **The corrective pass gained the overshoot direction** and was renamed accordingly (`reviseWholeWardrobeOutfitsForLayerFit`, `WHOLE_WARDROBE_LAYER_REVISION_SYSTEM`, debug key `finalSelection.layerRevision`, `isLayerFitFinding` in `outfitEnvironmentalAdequacy.js`). It previously knew only about shortfall and had nothing to say about those three winter-coat cards. Same single capped pass, same re-gate-and-compare acceptance (a revision is kept only if it strictly reduces the misfit count), same decline-and-explain clause — which in that run produced a genuinely good refusal: *"None of the available warm layers complement the casual denim-and-loafer register…"*, leaving the card honest rather than bolting a shearling onto it.
+**Not fixed here, and visible in that run:** outfit 5's three-layer stack still drew a shortfall note, correctly. The stack credit (`orderedSubstantialUpperStackContribution`) requires the middle layer at `moderate` or above and that vest is `light` even after the vest re-calibration, so no credit is due — and the card carries a `very light`-tier vest plus a `light` jacket over a `moderate` top, which genuinely is not a 46°F system. Roles are still unemitted (see the layering amendment); they remain the follow-up, but they would not have changed this card.
+
+**[amended 2026-09-12 — bounded upper-body layering: the middle-layer ban moves from prose into the validator]**
+Owner observation, and the deeper one of this arc: *"this app's styling advice is chronically missing interesting layering."* Measured on the live DB — of 27 saved outfits, 7 (26%) carry any outerwear and **0 carry a middle layer**. The cause was the visual composer's structure sentence, `categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false })`: *"optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops)"*. Every cardigan in this wardrobe is `category: outerwear` and the tweed vest is `category: top`, so that one sentence forbade both a cardigan under a coat and a vest over a blouse — while the SAME system prompt asked for "an intentional 3-layer system with a middle knit layer (such as a cardigan or vest) beneath an outer jacket" under Thermal Adequacy, and the owner's own Layer 2 constitution says "open shirt or vest over a fitted base is almost always better than the top alone". Three voices in one prompt; the restrictive one won because it reads as mechanical.
+That sentence was **load-bearing**, and the owner is right that it prevented real malformation — but it was load-bearing because nothing else enforced it: `evaluateOutfitStructure` counted tops only when a bottom was missing and never counted outerwear at all, so a card carrying three coats passed structure silently. The guarantee was on the honour system. So the bound moved into code:
+1. **`styling-engine/outfitValidation.js`** — `evaluateOutfitStructure` now bounds upper-body layering: `MAX_UPPER_LAYERS = 3` (one base + one middle + one outer), `MAX_OUTERWEAR_LAYERS = 2`, `MAX_TOP_LAYERS = 2`, emitting hard findings `too_many_upper_layers`, `multiple_outerwear`, `multiple_tops` alongside the existing `multiple_bottoms`/`multiple_shoes` family. This is strictly STRONGER than what shipped before, and it applies to every consumer of `evaluateWearableOutfit` (whole wardrobe, freeform, trip submissions).
+2. **`categoryOutfitStructurePromptRule` gains `allowMiddleLayer`, default `false`.** Capsule expansion (`routes/ai.js`) and the planner (`outfitSetPlanner.js`) keep the byte-for-byte strict contract; only the visual composer opts in. Its new text permits one middle layer and one outer layer, asks that a middle layer do "a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card", and requires wear order plus a `styling_instructions` note. The layered JSON example gains the third garment, since the example is what gets imitated.
+Registered as accepted byte deltas in `test/prompt_equivalence.test.js` rather than by re-freezing the fixture, per that rail's existing convention.
+**Known follow-up, not done here:** the engine's three-layer thermal credit (`orderedSubstantialUpperStackContribution`) reads `piece.role`, and `normalizeWholeWardrobeOutfitObject` trims whole-wardrobe pieces to `{id, name, category, photo, worn_photo}` — so a permitted cardigan-under-coat card still computes its warmth from the two-piece rule and can carry a shortfall note despite being a genuine three-layer system. Emitting and preserving roles is the next step. The layer-band membership question (using `requiredThermalBand().layer` instead of the base band for outerwear) is deliberately parked behind it: it was sized against a wardrobe that could only wear one layer at a time, which turned out to be a prompt rule rather than a fact.
+
+**[amended 2026-09-12 — the cold-coat reserve was defeating itself; roster, not wardrobe, was the bottleneck]**
+The question "did the roster even have enough warm outerwear" turned out to be the root of the whole arc. Captures for runs 2077-2079 show **7 outerwear pieces shown, exactly 1 of them `warm` or above**, every run — while the wardrobe owns **five** warm+ coats (four `very warm`, one `warm`), all five passing automatic-use eligibility. The four `very warm` coats were cut at `buildVisualComposerRoster`'s Step 4 category ceiling (outerwear ceiling 7 = floor(8 × 90/93)) carrying `score=-10` from the adjustment *"thermal band: warmer than the conditions call for"*: a stated 65/46 range produces a CERTAIN `[warm, warm]` band, so `very warm` overshoots by one step and takes a flat penalty.
+`Step 4`'s cold-coat reserve exists precisely to prevent that, and instrumentation showed it firing — and then filling itself wrongly:
+```
+partition: coats=[996867, 996760, 996761, 996762, 996765, 996775, 996866, 996868]
+           targetCoats=3
+           keptCoats=[996867, 996760, 996761]   ← the wool coat and two `moderate` fleeces
+```
+Two independent defects, both fixed in `styling-engine/rules.js`:
+1. **Membership was too broad.** `isColdCoat` matched on ANY insulating evidence, so `moderate` fleece coats counted as cold coats and consumed reserved slots on a day whose demand they do not meet. Membership now also requires answering the demand (`thermalRankingFit(...).fit !== 'undershoot'`), with `unknown` still eligible — a structurally-tagged coat with no warmth evidence is not evidence of a bad coat.
+2. **The reserve was filled in RELEVANCE order** (`coats.slice(0, targetCoats)`) — the same score that had just penalized every genuinely warm coat −10. Inside the reserve, ordering is now thermal fit (`thermalRankingFit`, shared primitive), with relevance only breaking ties; `unknown` fit ranks behind measured layers, since absence of evidence must not outrank a garment that demonstrably answers the conditions.
+Measured against the owner's real wardrobe on run 2079's own weather profile: **warm+ layers shown went from 1 to 3** (the wool coat plus the brown leather coat and tan shearling). This reframes the three preceding prompt iterations — requirement wording, tail evidence, demand at the point of choice — all of which were arguing with a roster that contained exactly one qualifying layer for five outfits. The corrective pass above has the same ceiling: it can only offer layers that made the roster.
+Still open, deliberately not changed here (ratified calibration, owner's call): the flat −10 overshoot penalty for outerwear on a narrow certain band, when `requiredThermalBand` already returns a separate, wider `layer: {range: [light, warm]}` that this penalty ignores — a removable `very warm` coat on a 46°F low is not meaningfully "too warm".
+
+**[amended 2026-09-12 — one corrective pass for the whole-wardrobe visual composer (owner ruling, capped at a single pass)]**
+Runs 2077, 2078 and 2080 shipped ~4 cards carrying `THERMAL_UNDERSHOOT` each, under three successive prompt wordings (requirement → tail evidence → demand at the point of choice), and used the wardrobe's one adequate layer exactly once every time. The diagnosis was NOT model capability — the same `gemini-3.5-flash-lite` runs the trip and freeform flows — but **loop structure**, and this is the only composition path in the app without one:
+| flow | what happens to a validation finding |
+|---|---|
+| trip plan | returned to the model via `submit_plan_outfits` ("Fix these plan outfit issues in ONE submit_plan_outfits call…"), up to 2 resubmits |
+| freeform `/ask` | returned as `retryPending` broken cards plus the error text |
+| whole-wardrobe visual | **nothing** — "single model call, no tools", "exactly one provider request with no in-call retry" |
+The finding was computed on every run and printed on the card for the owner; the composer was never told. `generateWholeWardrobeOutfitsVisualInternal` now runs ONE corrective pass after `locallyGateWholeWardrobeOutfits` (`reviseWholeWardrobeOutfitsForLayerFit` in `styling-engine/core.js`, `WHOLE_WARDROBE_LAYER_REVISION_SYSTEM` in `prompts.js` — renamed from `…ForCoolLayer` when the pass gained the overshoot direction, see the amendment below):
+- **Fires only when it can change something**: at least one delivered card with a warmth-shortfall finding (`isWarmthShortfallFinding`, the same family the chip collapse uses — read as codes, never as message prose) AND at least one shown layer that answers the demand. A wardrobe with nothing warmer pays nothing and keeps its honest disclosure; `finalSelection.coolLayerRevision` records which branch ran.
+- **Contact sheet, not the manifest**: rows are the affected outfits plus one row of the adequate layers, so the pass costs a fraction of the ~40k-token 83-image first call. Images rather than a text list because a layer swap is a composition decision (visual-grounding precedent), and the sheet is built from `makeGarmentTile` exactly as the clash critic's is.
+- **Revision is a styling decision, not a substitution**: the prompt states that repeating one layer across outfits is not a variety failure, and that an outfit the only adequate layer would fight should be left alone and reported in `skipped`.
+- **Cannot make the set worse**: each revised card is re-run through the SAME gate with the same options, is kept only if its warmth shortfall is strictly smaller than the original's, and is dropped otherwise. A revision with no replacement `reason` is refused outright — a swapped layer under the old card's prose is the auto-completion title/reason mismatch this app has already shipped once.
+- **Capped at one pass, never recursive**; revised cards are never re-revised. Failure is non-fatal (the original cards ship), and the pass's usage is folded into `composerUsage` so the turn's reported cost is not an undercount — the same correction the clash critic needed.
 
 **[amended 2026-09-11 — database safety guardrails, script isolation, and prohibition of live db bypass under test]**
 Audit of a live diagnostic error where an eval script executed against the root `wardrobe.db` connection:
@@ -104,6 +521,13 @@ The PR #316 improvements (catalog warmth salience, physical wearability prompt p
 5. **Prompt Tail & Catalog Cleanliness**: In `routes/ai.js`, activity-profile footwear discouragement rules (`discouraged_footwear_warm`, `discouraged_materials_warm`) are conditionally gated on `weatherProfile?.isHot` and `season === 'summer'` so cold-weather walking prompts never discourage boots; visual composer category section headings are normalized to clean grammatical plurals (`DRESSES`, `SHOES`, `OUTERWEAR`, `ACCESSORIES`); and renderer/wear mechanics guidance in the prompt tail is consolidated into one authoritative instruction block. In `styling-engine/rules.js` (`getWholeWardrobeFeedbackMemory`), feedback note suppression is trimmed at word boundaries to eliminate broken partial words.
 6. **Shared Prompt Primitive Cleanliness & Sleeve Harmony**: In `styling-engine/prompts.js`, `PHYSICAL_WEARABILITY_REALISM_RULES`'s sleeve layering bullet is streamlined to harmonize with the canonical `layerConstructionPromptRule()` from `styling-engine/outfitValidation.js`. It removes the inaccurate conflation of fabric bulk with sleeve volume and clarifies outer sleeve capacity: a structured or narrow outer sleeve cannot accommodate an inner sleeve with excess volume (puff, gathered/ruched, voluminous, or flared), but generous, relaxed cuts and roomy puffer coats have space to accommodate layered sleeves without binding.
 7. **Selected-Piece Flow Catalog & Activity Rules Parity**: In `routes/ai.js` (`composeSelectedPieceVisualWardrobeOutfits`), activity-profile footwear and material discouragement rules are conditionally gated on `weatherProfile?.isHot` and `season === 'summer'`, eliminating false discouragement of boots and warm materials on cold-weather selected-piece turns. Support category section headings are normalized to clean grammatical plurals (`SUPPORT DRESSES`, `SUPPORT SHOES`, `SUPPORT OUTERWEAR`, `SUPPORT ACCESSORIES`), matching the visual composer standard.
+**[amended 2026-09-15 — items 5 and 7 are superseded: the taste lists left the prompt entirely]**
+The occasion and activity `preferred_*` / `discouraged_*` lists are no longer rendered into any
+model-facing prompt, so there is nothing left to weather-gate in the prompt tail. They remain what
+`docs/occasion_profiles_ratification.md` ratified them as — soft roster scoring (+8/+10 preferred,
+−8/−10 discouraged in `rules.js`), never suppression. See the 2026-09-15 amendment below.
+
+**[amended 2026-09-15 — items 1, 2 and 8 (below) are superseded]** Model-facing garment lines no longer carry a derived `warmth:` level or the name-derived `outerwear (layer_top)` label, and the composer thumbnail labels no longer come from `composerPieceLineSuffix` (removed). Whole Wardrobe, selected-piece and repair composers and trip composition use the shared fact line; `/ask` uses its sparse rendering; the plan workbench line, search thermal facts and the manifest line state recorded construction without a warmth level. See `docs/garment-evidence-parity-2026-09-15.md` §7.
 8. **Plan and Capsule Workbench Warmth & Layering Salience**: In `styling-engine/outfitSetPlanner.js` (`planWorkbenchPieceLine`), middle-layer cardigans and knit vests are tagged distinctly as `outerwear (layer_top)`, and `warmth:${level}` is promoted to the front of garment attributes for non-shoe/accessory pieces, giving trip packing and seasonal capsule models immediate salience of thermal facts and layer roles across multi-look slots.
 9. **Universal Stylist Tool Loop Prompt Cleanliness**: In `styling-engine/prompts.js` (`stylistSystemTemplate`), removed redundant duplicate parenthetical phrasing in the card presentation instruction (`Focus your prose on explaining the silhouette, visual proportion, texture interplay, and practical wearing advice`). Verified alignment between the tool-level cold layering logic and the shared physical wearability prompt primitives, with all byte deltas tracked in `test/prompt_equivalence.test.js`.
 10. **Natural Single-Temperature Summary Phrasing**: In `styling-engine/tools.js` (`toolContext.boundedWeatherSummary` and `resolvedSeason`), when the high and low temperatures are identical (such as from a single user observation like 'around 58°F'), the summary formats as `a temperature around ${highF}°F` rather than repeating `a forecast high of ${highF}°F and low of ${highF}°F`. Ranges where high and low differ continue formatting as `a forecast high of ${highF}°F and low of ${lowF}°F`.
@@ -130,7 +554,14 @@ result wrongly activated hard footwear exclusions. `routeFreeformExecutionProfil
 activity from an explicit structured UI value when supplied, otherwise `extractExplicitActivity`:
 only affirmative walk/stroll/on-foot or hike/trail language can establish the structured activity;
 location, outing, sightseeing, and outdoor duration alone
-remain `none`, and negated mentions remain inactive. The same run spent its initial photo budget on
+remain `none`, and negated mentions remain inactive.
+**[amended 2026-09-15 — a default `none` is not authority]** The chat UI's activity picker defaults to "No special activity"
+and sends `activity: none` on every turn, and `routeFreeformExecutionProfile` treated that as the structured value, discarding
+explicit language. Live threads `thread_1789501326521` (/ask, "walking around the city outdoors from 4–8 p.m.") and
+`thread_1789501370356` (Whole Wardrobe) were locked to `none`: the /ask search and the Whole Wardrobe roster never applied the
+walking footwear gate (`excluded_heel_heights: mid, high`), so mid-heel wedges and pointed heels were delivered for a four-hour
+walk. Now only a structured `walking`/`hiking` selection is authority; a structured `none` or empty value falls back to
+`extractExplicitActivity`, which still returns `none` for outings without walking language. The same run spent its initial photo budget on
 two `warm:moderate` outerwear directions for a certain 60→48°F breezy range, then repeated the error
 with another moderate jacket. The first `view_pieces` call now runs each model-authored direction
 through the same shared `evaluateWearableOutfit` hard-fact stages before loading images. Invalid
@@ -519,7 +950,7 @@ sleeve volume. Known conflicts require the existing directional sleeve-zone evid
 diagnostic cards remain visible within their originating turn but are removed before
 `current_outfit_set` is persisted, so follow-ups inherit accepted cards only.
 
-**[ratified correction, 2026-09-09] Uninsulated outerwear shells stay capped at `light`.** Outerwear
+**[SUPERSEDED 2026-09-13 — see "Amendment (2026-09-13) — blanket outerwear warmth cap removed" below]** **[ratified correction, 2026-09-09] Uninsulated outerwear shells stay capped at `light`.** Outerwear
 pieces with no insulating fill (`insulating_layer_materials: []` or unset) and no positive insulating fiber
 evidence (e.g. cotton, linen, rayon, polyester shell, or uninsulated leather/suede) are shells (wind/rain barriers), not thermal insulators.
 Coverage adjustments (long sleeves, knee length) and medium fabric weight previously combined in
@@ -1493,6 +1924,26 @@ read as neutral with no structured fallback. `environment` (indoor/outdoor/beach
 the sole model-facing setting field; the free-text `weather` field is removed from the tool schema
 entirely.
 
+**[amended 2026-09-15 — one-sided stated endpoints, not just complete ranges or a single point]**
+`user_weather` and its supporting parsers now carry three genuinely distinguishable shapes: a
+complete range ("50/40°F", both endpoints), a point temperature ("it's 46°F", ratified equal
+endpoints, spec §4.1), and a one-sided forecast ("highs near 85F", one endpoint stated, the other
+left `null` rather than manufactured equal to it). `validateUserWeather` accepts `high_f` XOR
+`low_f` alone as valid (previously rejected as an "incomplete range"). `classifyTemperatureRange`
+computes `isHot`/`isCold` independently off whichever endpoint is finite, instead of requiring both
+finite and returning `{isHot:false, isCold:false}` for a one-sided input — a reading that used to be
+indistinguishable from "weather unresolved". `stylingIntent.extractStructuredUserWeather` and
+`stylingContext.js`'s `statedTemperatures` (the prose-parsing sibling behind
+`weatherProfileFromStatedText`, used by `buildStylistConversationPayload`) both detect a `highs?`/
+`lows?`/`up to`/`down to`/etc. qualifier immediately before the sole stated number and return only
+that endpoint. Both had the same latent bug during implementation: the qualifier-adjacency check
+used a trailing `\b`, which never matches between a digit and the unit letter directly following it
+("85F", "40F" — both word characters, no boundary) — so a one-sided statement with its unit
+immediately adjacent silently fell through to the point-temperature branch and manufactured the
+very equal-endpoint reading the sided branch exists to prevent. Fixed with `(?!\d)` in place of the
+trailing `\b`. `docs/future-trip-weather-estimate-spec.md` §4.1 amended to match. `restoreWeatherProfile`/`serializeWeatherProfile` already omitted a non-finite endpoint rather than
+coercing it, so the one-sided shape round-trips through THREAD STATE unchanged.
+
 **[single-outfit parity, 2026-08-31] `search_wardrobe`/`propose_outfit`/`generate_outfits` resolve
 weather through the same structured contract as `plan_outfit_set`.** `stylingContext.js`'s shared
 `resolveWeather` — used by every direct/non-chat generation caller too — gains
@@ -1952,10 +2403,11 @@ garment is known `fitted`/`straight` (zero capacity) at that same zone — a vol
 over a fitted inner one is no longer flagged, closing the "the old rule couldn't tell top-under from
 top-over" gap the previous entry's writeup already named as future work. Direction unresolved or
 either shape unrecorded still returns `unknown` (sight required), never a guessed incompatibility,
-except: both garments carry fully-known zero-volume geometry (compatible regardless of direction), or
-both are tagged medium/heavy `fabric_weight` (an incompatible fabric-bulk conflict — kept as a
-direction-agnostic dimension independent of sleeve geometry, per the taxonomy spec's explicit
-instruction not to conflate fabric bulk with sleeve volume). `layerConstructionPromptRule()` was
+except when both garments carry fully-known zero-volume geometry (compatible regardless of direction).
+**Correction (2026-09-14):**
+- **Not implemented.** An earlier version of this entry also listed a whole-garment-weight "fabric-bulk conflict" (both garments medium or heavy `fabric_weight`). Current code does not implement it: no sleeve verdict reads `fabric_weight`, and the `isBulkyFabric` flag the sleeve evidence reader computes is unused.
+- **Not sleeve evidence.** Garment-level `fabric_weight` must not be treated as sleeve-specific evidence of thickness, bulk, structure or compressibility.
+- **Nowhere to record it.** No sleeve-specific construction field exists (`docs/stage1-cause-matrix-2026-09-14.md` §10a). `layerConstructionPromptRule()` was
 rewritten to describe the zone/direction mechanics; its three wiring points (visual composer,
 `propose_outfit`, plan/capsule workbench) are unchanged. Migration and visual-backfill of existing
 wardrobe data are a separate, deterministic-only DB pass (no AI calls in server-startup migration) —
@@ -2419,6 +2871,19 @@ In `gate` mode each one **drops the outfit**. In `advisor` mode each one instead
 This is the "hard gate vs LLM judgment" split made concrete: advisor mode trusts the model's
 composition and reports concerns; gate mode enforces. **[by design]** — and the reason a check
 "not firing" in one flow is not evidence it is absent.
+
+**[amended 2026-09-16 — thread_1789526496845, two bugs in the flattery-language check]** A card's
+watchFor read *"Mixing olive and emerald requires confidence in saturated earth tones"* — a
+color-boldness remark, not body-shape framing — and the check fired anyway, purely on the bare word
+"confidence": unlike `flattering`/`elongating`/`slimming`/`draws attention upward`/`balance the
+body`, "confidence" carries no inherent body reference and is common, legitimate styling prose
+("this print requires confidence to pull off"). Dropped from the trigger word list rather than
+special-cased. Separately: the trigger scans label+direction+silhouette+reason+watchFor+piece names,
+but the scrub (`scrubBodyShapeFraming`) only ever rewrote `reason` — so a match landing in `watchFor`
+alone (as here) left the flag claiming *"Removed body-shape framing from the explanation"* when
+nothing had been removed from anywhere. Fixed to scrub every prose field the card actually ships
+(`reason` and `watchFor`) and attach the flag only when a sentence was genuinely dropped from one of
+them. `rules.js`'s `BODY_SHAPE_FRAMING_PATTERN` (was inlined at two call sites, now one constant).
 
 Four checks are **unconditional in both modes** and always reject: structurally invalid, contains a
 non-owned piece, user-excluded for the occasion, duplicate formula.
@@ -3595,3 +4060,708 @@ If the bounded composer nevertheless returns no outfits, `plan_outfit_set` retur
 locks the atomic attempt, and exposes no alternate outfit-building tools for that turn. It must not
 report zero accepted cards as success or invite the conversational model to reconstruct the capsule
 slot by slot.
+
+### Amendment (2026-09-12) — the corrective layer pass is deleted; thermal amount is judged across configurations
+
+Two entries above are superseded.
+
+**The corrective pass is gone, not disabled.** `reviseWholeWardrobeOutfitsForLayerFit`,
+`makeLayerRevisionContactSheet` and `WHOLE_WARDROBE_LAYER_REVISION_SYSTEM` have been removed. Its
+application step dropped every outerwear-category piece and appended one replacement — destroying a
+legitimate `layer_top` + `outerwear` composition and adding a layer to a card that had none, while
+its own comment claimed it never added a garment. Changing its trigger underneath that application
+would have been unsafe, and leaving it unreachable would have invited its revival. The debug key
+`finalSelection.layerRevision` survives and reports `{ attempted: false, parked: true, reason }`, so
+a run still discloses that no repair was attempted. The contract any replacement must satisfy —
+deterministic per-card repairs, swap-only, role and wear order preserved, re-gated, per-direction
+acceptance, prose consistency — is written at the top of the corrective-pass section of
+`test/aiEndpointContracts.test.js`.
+
+**Thermal amount is no longer a single-target comparison.** `evaluateOutfitEnvironmentalAdequacy`
+now judges configurations against the two PET endpoints via `wornConfigurations` and
+`evaluateEndpointFit`; adjacency is ranking evidence (`evidence.endpointFit`) and only a substantial,
+single-direction, fully-known mismatch produces `THERMAL_UNDERSHOOT` or `THERMAL_OVERSHOOT`. Severe
+cold still runs off `isColdSevere` — which decides whether the PHYSICAL backstops run, never what
+the thermal demand is — while its capacity measurement moved from the retired `systemColdScore`
+floor to the same PET-endpoint evaluator (`evidence.severeColdFit`). With severity but no
+temperature, thermal amount is `no_target` and produces no finding; 45/45 is the fixture proving the
+severe classifier and the PET target can legitimately disagree. See
+`docs/thermal-comfort-band-spec.md` §25.8 for the full contract, including the unknown-evidence
+semantics and the one live outcome that changed severity.
+
+**Not in these commits, and deliberately so:** the calendar-season hard exclusion from supply remains
+unratified and unimplemented — the roster ranks out-of-season pieces down and excludes nothing.
+
+### Amendment (2026-09-14) — sleeve geometry is log-only across production
+
+**Owner ruling.** Sleeve shape and relative length cannot establish layering compatibility, and no field records sleeve structure or compressibility (`docs/stage1-cause-matrix-2026-09-14.md` §1, §10a). The geometry verdict is now log-only everywhere, and every model-facing layering rule states one neutral sentence.
+
+**What changed.**
+- **Evaluator.** `evaluateWearableOutfit` still runs `evaluateLayerPairConstruction` (pairs and chain fold) when `includeLayerDirections` is set, but the `layer_construction` stage is marked `shadow`. Its findings appear only in `shadowFindings` and `evidence.shadowStages`, never in `findings`, `hardFindings` or `advisoryFindings`.
+  - **Consequences.** It cannot make an outfit invalid, reject or demote a card, exclude a backfill or repair candidate, trigger a repair or substitution, or become a system note or flag.
+  - **Thermal configurations.** The thermal evaluator's worn configurations are no longer filtered by the construction verdict; only a caller-supplied validator can mark one invalid.
+- **Model-facing text.** `layerConstructionPromptRule()` returns only `NEUTRAL_SLEEVE_LAYERING_STATEMENT`: "Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient." That covers the Whole Wardrobe and selected-piece composer system, the `propose_outfit` tool description, and the plan/capsule workbench. The same sentence also replaces:
+  - the categorical "Layering & Sleeve Physics" bullet in `PHYSICAL_WEARABILITY_REALISM_RULES`;
+  - the missing-layer repair prompt's sleeve wording, which now also says sleeve compatibility is not decided mechanically;
+  - `garment_fact`'s instruction to treat a computed layering verdict as authoritative.
+- **`garment_fact`.** It no longer receives a "Layering evidence (computed)" block.
+- **Debug.** The verdict remains in structured debug: Whole Wardrobe `debug.sleeveGeometryShadow` (per composer card, rehydrated garment facts) and `propose_outfit` card `debug.sleeveGeometryShadow`.
+
+**Scope note.** Whole Wardrobe card validation never ran the construction stage (it does not set `includeLayerDirections`). In Whole Wardrobe the verdict acted only through the missing-layer repair candidate screen. It acted directly in `propose_outfit`, where it was a blocking finding in freeform turns and a model-facing note in single-outfit turns, as well as in plan/capsule validation, the thermal configuration filter and `garment_fact`.
+
+**Pins and tradeoff.** `test/sleeveGeometryLogOnly.test.js` uses the owner's recorded facts under the fitted puffer 996866:
+- 144 (ruched turtleneck) and 184 (voluminous patchwork knit) are not rejected;
+- **238 (substantial knit cardigan) is also not mechanically rejected**, a deliberate temporary false negative until a sleeve structure/compressibility dimension exists, because shape evidence alone would reject the wearable 144 and 184 too.
+
+The file also covers prompt text, gate and backfill. Cross-flow route tests (LOG-ONLY SLEEVE GEOMETRY, `test/aiEndpointContracts.test.js`) cover Whole Wardrobe delivery, missing-layer repair candidates and `propose_outfit` in single-outfit and freeform turns.
+
+**Ranking A/B (required).** `scratch/rankings_ab_diff.js` against a copy of the pre-change working tree, on the frozen Stage 2 snapshot, reported **0 scenarios with differences** in capsule rosters, benches and plan workbenches. The production Whole Wardrobe composer request for S1–S3 was also captured before and after: roster (83 garments, same order), user text, image bytes and token budget are identical. The only change is two system-prompt lines, the sleeve-layering rule and the physical-wearability sleeve bullet, both now the neutral sentence. No eligibility or ranking difference exists to attribute.
+
+**Not in this change.** No sleeve taxonomy field, no new compatibility rule, no broader construction logic.
+
+### Amendment (2026-09-13) — sleeve construction is judged across the worn chain
+
+`evaluateLayerPairConstruction` now folds the assigned wear chain inside-out
+(`chainConstructionFindings`) in addition to comparing adjacent pairs. Accommodation no longer erases
+volume: a layer judged able to contain an elevated sleeve still presents that volume to the next
+layer, so a gathered sleeve under an accommodating cardigan under a narrow, structured outer sleeve
+is now a **hard** `layer_construction_sleeve_conflict` — the same code and severity the direct-pair
+case has always produced, carrying the origin garment, the zone, and the intermediate layer the
+volume is still inside.
+
+**Superseded 2026-09-14:** the chain fold still computes this verdict, but it is log-only shadow evidence, never a hard finding. See the 2026-09-14 amendment above.
+
+Scope and limits, all deliberate:
+
+- **Propagated volume only.** A conflict with the garment directly inside is the pair rule's finding;
+  the fold never re-reports it. Two-garment outfits are unchanged — verified across all 3060
+  top × outerwear pairs in the owner's wardrobe.
+- **One owner.** Construction lives in `evaluateLayerPairConstruction`; `evaluateLayerDirections`
+  answers only which garment is worn over which. `evaluateWearableOutfit` composes both stages, so a
+  chain fold in either one would report a single conflict twice — which it briefly did, and
+  `test/outfit_structure.test.js` now pins uniqueness through the composed evaluator.
+- **Qualitative.** The existing `elevated`/`none`/`null` and `accommodates`/`restricted`/`null`
+  vocabulary, with no magnitudes, no counting of cuffed layers and no fabric-weight arithmetic.
+- **Unknown propagates and never hard-fails.** A conflict requires both participants known to have a
+  sleeve; anything unresolved is a mandatory visual review instead.
+- **Sleeve length is not a bulk proxy.** Rejected during review for lack of evidence; see
+  `docs/garment-field-reference.md`, which also records sleeve wall thickness as an unresolved
+  dimension pending its own audit.
+
+Live `thread_1789274442146` is the origin: the model held photographs of all three garments, composed
+the card anyway, and justified it by asserting that the puffer's ribbed TORSO panels supply sleeve
+capacity. Visual judgment alone was not an adequate enforcement layer — the engine returning nothing
+is what left the invention unchallenged.
+
+### Amendment (2026-09-13) — the missing-layer repair pass, and the nested debug boundary
+
+Live `thread_1789274358263`: five cards at 65/50, **four** carrying `NO_REMOVABLE_COOL_LAYER`. Every
+one was detected, `visualDebugLog.advisorFlaggedCount` counted them, and nothing consumed that
+number — detection with no return path. The set shipped knowing four of its five cards lacked the
+configuration the conditions call for.
+
+**One bounded missing-layer repair pass** now runs after the gate. It is not the retired revision
+pass, which mutated piece lists field-wise (dropping every outerwear garment and appending one
+replacement). This one:
+
+- fires only when **both** halves are real — at least one card carrying the configuration finding
+  AND at least one shown layer that suits the conditions — so a wardrobe with no adequate layer pays
+  nothing;
+- sends each deficient card back with **its own garments' photographs and structured lines**, plus
+  the layer candidates', the same evidence the composer had (sleeve construction added, since that
+  decides whether a layer can be worn over that base);
+- asks for **one layer added** to a card whose other garments are preserved. The card is rebuilt
+  from the ORIGINAL pieces plus that layer; the model's `pieceIds` is a tamper check, never the card
+  (a disagreeing list is rejected as `not_a_layer_repair`);
+- validates the whole resulting card through the complete evaluator (`evaluateWearableOutfit` with
+  roles, structural caps, wear order, sleeve construction and the weather stage), then applies
+  **typed acceptance**: the original configuration finding is gone, no NEW hard finding appears, and
+  no new weather or construction deficiency is introduced. A new *unknown* is not a deficiency —
+  inability-to-judge findings (`*_unknown`) never block a repair, because absence of evidence is
+  not a fault and 122 pieces in this wardrobe have no recorded sleeve length;
+- is capped at one batched call and is never recursive.
+
+**Tier 2 (owner ruling):** when repairs are declined or rejected, the cards ship **unchanged** with
+their own advisory — the engine never adds a garment deterministically and never drops a card — and
+the run returns `coolLayerSetDisclosure`, one set-level sentence naming how many cards still have
+nothing to put on. The advisory stays advisory; what changed is that the set can no longer ship a
+known deficiency silently.
+
+**The repair's bench is not the composer's shortlist (2026-09-13).** Candidates are sourced from
+`recoveryEligiblePieces` — the existing authority for "omitted only for presentation or capacity,
+never rejected by a validity gate", already used by the comfort-footwear repair.
+
+*What the live run actually did:* `thread_1789288270913` offered seven candidates —
+`[996866, 88, 131, 996760, 996762, 159, 990362]` — so the navy puffer **was** shown to that repair.
+Under the code active during that run, `996759` and `996761` were register-excluded, while `996767`
+and `996764` were cap-cut.
+
+*Current-branch replay* (same wardrobe, occasion and 65/50 weather, after the register change):
+**33** hard-eligible outerwear pieces, **25** of them weather-qualifying, against **7** the composer
+shows — so 18 qualifying layers would be invisible to a repair that inherited the roster's
+presentation cap. Image cost measured from the live run's telemetry is ~1,081 tokens per image
+(37 images ≈ 44k input tokens for a four-card repair), small enough that the full bench is shown
+directly and no shortlisting stage was added. This matches PR 315 (broad trip bench, model-owned
+roster selection, then full catalog/photo visibility for the selected roster) and PR 316 (complete
+sparse catalog → model-selected visual workbench): a later stage gets the full eligible set rather
+than the first stage's presentation cut.
+
+**Nested debug boundary.** `generate_outfits` reached through `/ask` previously kept only
+`result.debug.composerUsage`, discarding the composer's whole `visualDebugLog`. That is why
+thread_1789274358263 could not be explained from its own record. `toolContext.freeformDiagnostics.nestedComposer`
+now carries `finalSelection` across, along with the resolved exposure.
+
+**Resolved exposure** (`visualDebugLog.resolvedExposure`: activity, weather source, high/low,
+cold-presence state) is recorded in RUN debug, not stamped on every card — no card renderer consumes
+it, and a per-card copy would duplicate what the run already knows. It is what lets a capture verify
+that `sedentary` versus `hiking` actually reached evaluation.
+
+**Closed 2026-09-13 (live thread_1789341140366 made it concrete: `visualClashReview.reviewedCount: 0`
+while four repaired combinations shipped).** The clash critic still runs before the repair on the
+composer's own cards; a second review now runs afterwards, scoped to the repaired subset only. A
+repaired card the critic rejects is RESTORED to its original form with its weather advisory and
+rejoins `coolLayerSetDisclosure` — never re-repaired, never dropped. Recorded under
+`layerRepair.repairedCardReview`.
+
+**Season ranking is separate evidence.** For that run the signal ran and was honoured by the roster:
+the warm-season pieces that survived (beige wide-leg trousers, pink ballet flats, grey sneakers) each
+carried `season: tagged warm-season clothing; this is a fall trip (−6)` and ranked 32nd, 56th and
+58th of 82. That proves the signal reached ranking — not that the model preferred what it ranked
+higher. The calendar-season exclusion remains parked and unratified.
+
+### Amendment (2026-09-13) — register is a preference below a stated dress code, and capability outranks it
+
+Live `thread_1789288270913`: an ordinary "five casual outfits" request excluded **80** owned pieces
+as `prohibited` — 27 tops, 18 dresses, 13 bottoms, 11 outerwear, 11 shoes — while four `elevated`
+BASE garments shipped in the same set. There was never a category rule. The survivors carried an
+explicit `casual` occasion tag and the excluded pieces did not, so the effective rule was *"elevated
+is invalid for casual unless you already typed casual onto this piece"* — tagging completeness in
+the costume of occasion invalidity. The pre-existing explicit-tag exemption is the proof: if one
+rank up were genuinely invalid, an owner tag could not make it valid.
+
+**The rule now** (`registerCeilingVerdict`, `registerCeilingIsExplicit`):
+
+| ceiling source | any distance above |
+| --- | --- |
+| wearer stated a MAXIMUM ("nothing above casual", "nothing dressy") | `exclude` |
+| occasion default, activity default, or a stated TARGET | `above_request` — eligible, ranked down **by distance** |
+
+**No ordinal cutoff survives without a stated maximum** (final ruling 2026-09-13). The one-step bound
+came from Amendment 1 (2026-07-30), which the record itself calls a preference *"marked for revisit
+during testing"* — not an independently provable incompatibility. A dressy garment for a casual
+request ranks poorly without being declared invalid; what makes a piece invalid is the wearer saying
+so, or an independent physical gate.
+
+**Register is strictly subordinate to weather adequacy.** The advisory scales per rank
+(`REGISTER_ADVISORY_PER_RANK`) and is then floored at `REGISTER_ADVISORY_FLOOR` — one less than the
+thermal band's smallest adjustment magnitude — so a weather-appropriate candidate can never be
+displaced by a weather-inadequate one on register distance alone, at any distance and under any
+ceiling. This is an invariant, not arithmetic luck: measured before the floor existed, the ordering
+held at one rank (weather ahead by 14) and two ranks (by 8), but a three-rank distance would have
+inverted it. Reproduce with `scratch/audit_register_ranking_subordination.js`, which prints the
+paired comparisons and exits non-zero on any inversion.
+
+**A target is not a maximum.** "Casual outfit" and "something dressy" say what the wearer is going
+FOR; neither says what they will not wear. Only a stated maximum is a constraint.
+
+**An activity's register ceiling is not a capability claim either** (owner ruling 2026-09-13).
+Formality does not establish whether a garment can physically serve an activity — movement
+allowance, footwear support, maintenance/delicacy, construction and weather protection do, and each
+keeps its own hard gate. An elevated fleece is the case that settles it. The consequence, recorded
+rather than hidden: **nothing hard now excludes an elevated city trench from a hiking slot.**
+`required_occasion_tags` is deliberately `discouraged, never prohibited` (ratified 2026-06-12, so a
+day dress stays allowed for outdoor-active) and applies only to top/bottom/dress, so register was
+the only gate reaching outerwear there. The trench is now eligible and must be beaten on ranking;
+`rosterFitScore` gained the shared register advisory so the plan path ranks it rather than merely
+admitting it.
+
+**Authority for the retired two-rank cutoff.** Asked and answered from the record rather than from
+tests: `docs/occasion_profiles_ratification.md` — *"Ratified Amendment: Register Ceilings For Roster
+Gating"* (2026-07-05) established that a ceiling excludes pieces above it, and *Amendment 1*
+(2026-07-30) capped the explicit-tag exemption at one register step, measured at the time (52
+tagged-casual pieces above the ceiling: 50 `elevated` admitted, 2 `dressy` excluded). Both were
+intentional; both were preferences, and Amendment 1 was explicitly marked for reassessment. The
+owner's 2026-09-13 ruling completes that reassessment: preferences rank, constraints gate. The
+ratification table's ceilings remain — as ranking targets.
+
+**Every consumer receives the distinction explicitly.** `profileRuleFit` defaults
+`registerCeilingExplicit` to `true` so an un-migrated caller fails closed, which is safe but silent —
+and that silence is exactly how the automatic-use pool went on suppressing one-rank-above pieces
+after the composer had been migrated. That pool runs UPSTREAM of `recoveryEligiblePieces`, so
+anything it drops is unavailable to composition and repair alike. The audited call sites, all now
+passing it: `wholeWardrobePieceTrustDecision` (automatic use), `locallyGateWholeWardrobeOutfits`,
+`buildVisualComposerRoster`, `search_wardrobe`, the swap tool, the plan slot pool, and the
+selected-anchor check in `core.js`. `test/register_explicitness_cross_consumer.test.js` drives one
+garment pair through all four flows and asserts, by scanning the sources, that no `profileRuleFit`
+call passes a ceiling without its explicitness.
+
+**Negation defect fixed (was recorded as pre-existing).** `resolveFormalityIntent`'s negation
+alternation was `not|no|avoid|less`, so "nothing dressy" matched nothing, survived the stripping step
+and was read by the positive matcher as a dressy TARGET — raising the ceiling to dressy and admitting
+exactly what the wearer excluded. The vocabulary now includes `nothing|none|never`, and an explicit
+maximum ("nothing above casual") is recognised in its own right and expressed through `intent.avoid`
+over the rank ladder.
+
+**Both consumers changed, not just the composer.** `profileRuleFit` returns `discouraged` rather
+than `prohibited` for the default case, so `search_wardrobe` returns the piece in compose mode and
+stops describing it as prohibited under `intent: 'explain'`. The prohibited tier holds prohibitions.
+
+**Capability outranks register at the roster boundary.** Register is a −6 relevance advisory, the
+same weight as the season advisory and deliberately smaller than the thermal band's ±10. Inside the
+cold-coat reserve the endpoint evaluator's ranking distance is the PRIMARY key and register only
+separates coats of comparable capability. An intermediate version made register an absolute sort key
+and was measured evicting a warm wind-protective layer for a less suitable elevated coat — the exact
+priority inversion the ruling forbids. `test/outfit_structure.test.js` pins the key ORDER.
+
+**Measured on the owner's wardrobe** (casual, 65/50, fall): register exclusions 80 → 15 (dressy
+only); roster 82 → 83; 8 elevated pieces enter, 7 everyday leave under the per-category cap. Every
+one of the seven lost on capability or season, not on register: the two dropped dresses carry
+`thermal band: lighter than the conditions call for (−20)` plus a warm-season penalty; both dropped
+bottoms carry −10; and the dropped puffer (996866) sits at ranking distance **1.125** from the
+`warm` layer demand while the elevated coat that replaced it (996867) sits at **0.25** with the same
+`warm` level and the same wind protection. The capability ordering promoted a better-matched coat;
+it did not trade capability for register.
+
+**Ranking A/B for the register scoring change** (`scratch/rankings_ab_diff.js`, owner wardrobe).
+Run against an **isolated baseline**, not against `HEAD`: a copy of this working tree with only the
+register delta reverted (`registerCeilingIsExplicit` forced true, the ranking advisory zeroed), so
+every other change on the branch is held constant. Build it with
+`node scratch/audit_register_ranking_subordination.js --baseline`, which prints the path to pass to
+`rankings_ab_diff.js --baseline-dir` and fails loudly if `rules.js` no longer has the entry points it
+patches. The diff is identical to the HEAD-based run,
+which is what establishes that these differences come from the register change and from nothing
+else on the branch. **9 scenarios differ**, all from the same cause — an inferred ceiling no longer
+removing pieces from eligibility:
+
+- *Eligible supply grows*: summer 220 → 231 (85T 56B 18D 33O 28S → 87T 58B 21D 34O 31S), winter
+  +1T +1B. These are one-rank-above pieces that were previously `prohibited`.
+- *Per-slot capacity rises* (Casual/Home/Errands 44 → 59, At Home 8 → 15): the same pieces, now
+  countable toward a slot's supply.
+- *Bench membership shifts*: out 996788, 990441, 139; in 208, 246, 996794. The additions are
+  `dressy`/`everyday` pieces whose occasion tags put them one rank above the capsule's register, now
+  competing on rank; the drops are within-register pieces they outranked on the bench's own
+  target-fill, not pieces the register rule removed.
+- *Freeform workbench assessments change for 3 pieces* (256, 141, 996778) — all `elevated`,
+  previously absent from the assessment list because they were gated out, now present and ranked.
+
+No difference is unexplained, and none is a piece losing eligibility.
+
+On the owner's own wardrobe at 65/50 casual, register exclusions are now **0** (from 80 before this
+arc): the roster carries 56 everyday, 24 elevated, 2 dressy and 1 lounge, with the cap — not the
+register — deciding what fits. Nine pieces enter and eight leave, every departure explained by
+capability or season rather than register (see the ranked adjustments recorded per piece in
+`debug.relevanceAdjustments`).
+
+**Known pre-existing defect, recorded not fixed:** `resolveFormalityIntent` matches the register WORD
+and drops the negation, so *"nothing dressy"* resolves to a dressy TARGET and raises the ceiling to
+dressy, and *"nothing above casual"* is not recognised at all. That now also decides whether a
+ceiling is hard. Fixing it means touching prose parsing shared with the rest of formality intent and
+needs its own review; `test/outfit_structure.test.js` pins the behaviour so it cannot be mistaken for
+intent.
+
+### Amendment (2026-09-13) — conservative critic, delivered repair accounting, diagnostic-card evidence
+
+Live `thread_1789346300319` exposed three defects in the repair work and one composer failure.
+
+**The clash critic is conservative.** It answered flag-or-pass, flagged "colors that clash despite
+similar tags", and received taste-suppression memory — so it restored a conventional navy-stripe /
+olive-cargo / grey-cardigan repair on a tone-harmony opinion. It now answers `reject`, `note` or
+nothing: reject only for a clear photograph-grounded failure (prints fighting, a garment plainly
+wrong in place); colour harmony and uncertainty are notes that attach a Visual note. Anything not
+literally `reject` is a note. The critic no longer receives suppression memory. Why the busier
+tank / botanical-skirt / grey-fleece card passed while the conventional one was restored was not a
+judgement inconsistency: the pre-repair critic only sees cards with two or more patterned pieces, so
+the botanical card (one pattern) never reached a model critic, while the repaired-card review sends
+every repaired card to the model.
+
+**Repair accounting describes what ships.** Accepted counts (`acceptedRepairCount`,
+`acceptedCleanCount`) are fixed at validation; delivered counts are recomputed after the
+repaired-card critic restores anything. The live run had reported 3/3 while two repairs shipped.
+
+**The disclosure counts ready outfits only** — the live run said "1 of these 5" over four ready cards
+and one broken diagnostic.
+
+**Diagnostic cards keep all their evidence.** A structurally invalid model card stays visible during
+development with its original fields verbatim, marked broken/diagnostic, and now carries every
+structural finding (`structuralFindings`); it previously recorded only the first. It is excluded from
+ready counts, repair targets and the disclosure denominator only. No partial-card local backfill:
+backfill remains a last resort for a composer that returned nothing.
+
+**The spliced fifth card was emitted by the model**, established by elimination because provider
+capture records inputs only: `unresolvedReferences` was empty, de-duplication and
+`normalizeWholeWardrobeOutfitObject` are per-card, saved-variant mode was off, and the diagnostic
+builder only appends `: standard wear` to the model's own label. `modelMissingMainRejected` never
+measured a missing top (it counts cards missing the saved main piece in saved-variant mode), and
+`proseIntegritySanitizedCount` only checks `ID 123` citations, deliberation phrasing and skirt/pants
+silhouette words. The durable fix — provider-enforced structured output with category slots — is
+proposed separately rather than more prompt prose, since the captured prompt already prohibits two
+bottoms.
+
+### Amendment (2026-09-13) — atomic structured composer output
+
+The spliced card in `thread_1789346300319` was not answered with more anti-splicing prose; the captured
+prompt already prohibited two bottoms. Both visual composers (whole-wardrobe and selected-piece, which
+share `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`) now call `askStylistStructuredWithUsage` with
+`COMPOSER_OUTFIT_SLOTS_SCHEMA` (`styling-engine/composerSlots.js`): six nullable integer ID slots per
+card, every field required, `additionalProperties: false`, no per-slot enums and no `anyOf`, so one
+schema serves OpenAI (strict json_schema), Anthropic (forced tool) and Gemini (`response_format`).
+Gemini acceptance was checked by one text-only probe (2026-09-13, `gemini-3.5-flash-lite`, 175 input /
+373 output tokens, ≈$0.001): the schema — nullable integer slots plus `minItems`/`maxItems` — was
+accepted, both cards came back with exactly two outfits, unused slots as `null`, and zero slot findings.
+One compliant answer shows acceptance, not strict enforcement, so local validation remains the
+guarantee. If a provider ever refuses the schema, the composer call fails into the existing
+`composerError` path; it is not silently simplified. The image-bearing composer call itself has not
+been run under the schema yet.
+
+What the schema does not make unrepresentable is checked locally by `resolveComposerSlotOutfit`, and
+the shared `evaluateWearableOutfit` still runs on every card:
+
+| Slot | Admits (from `ROLE_CATEGORY_EXPECTATIONS`) | Role it states |
+|---|---|---|
+| `base_top_id` | top | `primary_top`; `layer_top` beside a dress (a top worn under it) |
+| `bottom_id` | bottom | `primary_bottom` |
+| `dress_id` | dress | `dress` |
+| `middle_layer_id` | top or outerwear | `layer_top` |
+| `outer_layer_id` | outerwear | `outerwear` |
+| `shoes_id` | shoes | `shoes` |
+
+**Count.** `composerOutfitSlotsSchema({ minOutfits, maxOutfits })` puts the requested count in the
+schema — exactly `limit` for whole-wardrobe, 3–4 for selected-piece (the same range its user message
+asks for). OpenAI strict mode and Gemini `response_format` enforce `minItems`/`maxItems`; an Anthropic
+forced tool treats them as guidance. `composerOutfitCountCheck` records `{ minOutfits, maxOutfits,
+returned, withinRequest }` on every provider; a mismatch is reported, not repaired — shortfall keeps its
+existing path and extras are cut by the flow's own limit.
+
+**Diagnostic de-duplication.** Ready cards stay de-duplicated by garment set. Model diagnostic cards are
+de-duplicated by slot signature (`modelSlots`), or card index when absent, so a slot-misassigned card
+using a ready card's garments is shown. Garment keys are still recorded for the unchanged local-fill
+diagnostic loop.
+
+**Direction wording.** The composer projects `layerDirectionPromptRule({ vocabulary: 'slots' })` — the
+same evidence rule stated in `middle_layer_id`/`outer_layer_id`/`base_top_id` terms — so the prompt
+carries no `layer_top`/`primary_top` vocabulary it does not emit. `propose_outfit` and the set planner
+keep the role wording.
+
+Permitted: top+bottom; dress alone; top under a dress; a middle layer over top or dress; an outer
+layer over any valid base; middle plus outer. `test/composerSlots.test.js` proves each is valid under
+both the category and the role-aware evaluator. Top-under-dress plus middle plus outer is four
+upper-body pieces and was already `too_many_upper_layers`; it stays invalid. Slot findings:
+`slot_category_mismatch`, `unknown_piece_id`, `duplicate_slot_piece`, `invalid_slot_value`,
+`missing_shoes`, `missing_top_or_dress`, `missing_bottom`, `dress_with_bottom`, and on the
+selected-piece flow `missing_selected_anchor` (reported first). Evaluator findings that repeat a slot
+code are dropped as the same fact.
+
+Nothing is derived or inserted. Stated slot roles are the only roles on a composer card
+(`deriveWholeWardrobeRoles` no longer runs for it); a misplaced garment stays on the card with no role;
+stale IDs are no longer rescued by name; the selected anchor is no longer unshifted into a card that
+omitted it; required-footwear repair on the selected-piece flow runs only on cards without slot
+findings. Every invalid card is preserved as a diagnostic / Needs review card carrying `modelSlots`.
+
+Known limits, recorded rather than changed here:
+- The role vocabulary cannot say which of a top and a dress is outside; `base_top_id` beside
+  `dress_id` means "under" to the model, but the direction evaluator still decides from garment
+  evidence, as before.
+- Selected-piece required-footwear repair replaces the shoe object without carrying its `role`; that
+  flow validates by category, so nothing reads it today.
+
+**Raw output capture.** `lib/providerInputCapture.js` gains an `output` stage, on whenever
+`WARDROBE_CAPTURE_PROVIDER_INPUT_DIR` is set and written to the same directory — a complete capture
+needs no second variable — written from `askStylistWithUsage` and
+`askStylistStructuredWithUsage` before any parsing (Anthropic structured calls record the raw content
+blocks). Input and output records of one call share a `callId`; `askStylistStructuredWithUsage` now
+takes a `subflow` (the composers pass `whole_wardrobe_visual_composer` /
+`selected_piece_visual_composer`; the router keeps `execution_router`, which it was previously
+hard-coded to for every structured caller). The tool loop is covered too (2026-09-13, Stage 1
+contract): every `stylist_tool_loop` turn records its raw response before parsing — Anthropic content
+blocks, the OpenAI message with unparsed tool-call arguments, and Gemini's status and steps (captured
+before the usability check, so an unusable turn is kept). Wire records carry `callId` too, and every
+single-shot call (`askStylistWithUsage`, including its Anthropic path through `askClaudeWithUsage`, and
+`askStylistStructuredWithUsage`) now records the exact SDK request object as its wire capture. So every
+captured call, tool-loop turns included, has exactly three records — normalized, wire, output — sharing
+one `callId` and `iterationIndex`. `test/providerCaptureCallIdPairing.test.js` drives the real functions
+for all three providers against stubbed SDK methods and asserts this.
+
+
+### Amendment (2026-09-13) — A/B instrumentation: neutral-verdict flag and Stage 1 preflight harness
+
+`WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS=true` (read at call time, default off, payloads byte-identical when
+unset) removes collapsed verdict words from model-facing text for the production-path comparison only:
+the Whole Wardrobe composer's `(ordered for these conditions)` heading, the repair payload's
+`(acceptable)` suffix and its "acceptable neighbour" sentence,
+and the `WARM_LAYER_RECOMMENDED` message, which states the recorded construction facts
+instead of "is recommended" (same code and severity). Ordering itself, supply selection, validation,
+repair and critic sequencing are unchanged. The selected-piece composer's activity guidance is out of
+scope: it is not a Stage 1 arm.
+
+**[amended 2026-09-15 — the `/ask` context boundary]** `buildStylistConversationPayload` no longer
+treats the activity picker's default `'none'` as a structured choice (it falls back to
+`extractExplicitActivity`, matching the execution router), and no longer deletes the weather profile
+when a turn states weather — it replaces it with the stated profile built by
+`weatherProfileFromStatedText`. Both `THREAD STATE` endpoints and the stated activity now survive
+into the tool loop. `extractWeatherContext` and `extractStructuredUserWeather` also accept `/` as a
+range separator, so "50/40°F" no longer parses as a single temperature. See
+`docs/garment-evidence-parity-2026-09-15.md` §11(a).
+
+**[amended 2026-09-15 — one filter for every prompt that serializes profiles]**
+`selectedItemVisualComposerSystemPrompt()` serialized both `OCCASION_PROFILES` and
+`ACTIVITY_PROFILES` as RULES-AS-DATA, republishing the soft taste lists that had been removed from
+the composer tails and `/ask`. Every serializing path now goes through `stripSoftRankingRules()`
+(`styling-engine/occasions.js`); hard keys are unchanged. See §11(b).
+
+**[amended 2026-09-15]** Two items left this flag's scope by becoming the default. The occasion and
+activity taste lists are no longer rendered into any prompt (see the amendment above), and
+`search_wardrobe` results and photo labels no longer carry the soft `preferred` / `discouraged` /
+`neutral` tiers on either arm — `ruleFit` now appears only as `prohibited` (a hard-gate exclusion,
+with its reason, in `intent:'explain'` and in the annotated supply fallback) or `unknown` (a field
+the gate reads is untagged). Both are ratified soft scoring, which still ranks the roster in
+`rules.js`; neither is model-facing text any more. See `docs/garment-evidence-parity-2026-09-15.md`
+§9–§10.
+
+`scratch/ab_stage1_production_paths.mjs` runs each scenario × arm in its own child process on a copy of
+one frozen snapshot, so session rotation memory ("Recently shown garments") cannot leak between runs.
+Both arms receive the snapshot's home location and the same date explicitly in the request body, with
+the scenario's stated weather passed structurally. The default `--mode preflight` is a **tool/payload
+preflight only, never comparison evidence**: it serves every model call locally, blocks non-loopback
+fetches, blanks provider keys and removes BYOK rows from the copy. The test hook short-circuits the
+router and the tool loop, so the single-outfit arm's tool results are produced by calling the real tools
+with a route-shaped context. `--mode live` runs the real router and the real single-outfit model/tool
+loop. Every attempt captures normalized and wire input and raw output for every provider call, each
+tool-loop turn included, and the contract report counts paired captures per attempt. Live mode is
+refused without `--approved` and unless the replicate count equals the pre-registered two.
+
+The pre-registration is `scratch/ab_stage1_preregistration.json`; its sha256 is recorded in every
+manifest, alongside the sha256 of all six snapshot files (`wardrobe.db` and `system.db`, each with `-wal`
+and `-shm`). The design is exactly two replicates per scenario × arm cell, each run once. There is no
+extension, replacement or selective rerun. An inconclusive result needs a new pre-registration with
+symmetric sampling. Routing is an end-to-end outcome: single_outfit routing success, technical success
+and the conditions check are reported over every attempt in `manifest.contract` and
+`contract-report.md`. The outfit-quality comparison is conditional on successful routing.
+`scratch/ab_stage1_contract.mjs` holds the checks the harness and the sheet share. Before either cell of
+a scenario/replicate enters a review sheet, the sheet builder recomputes from each route's recorded debug
+that both arms resolved identical high and low temperatures and the same location. It also confirms that
+both routes answered and that the one-outfit attempt routed to single_outfit. Excluded pairs are listed
+only in the sealed key. For this check `/ask` now records `resolvedWeather` (highF, lowF, location,
+source) in its diagnostics, debug only.
+
+The manifest keeps each returned card's user-visible fields, the composer's `modelSlots` and every
+piece's role as returned, and the evaluator reads those roles; nothing derives a role from category. The
+sheet shows each card as the product shows a user (StylistChat with the debug flag off): title, rank
+label or Needs-review status, review notice and "What didn't clear" reason, flags, the model's reason,
+styling instructions and watchFor. Only the arm and replicate are blinded. A blinded ratings export
+carries the sheet seed, the pre-registration hash and each card position with its ratings and notes.
+
+Contract pass (owner review, 2026-09-13). The harness's completeness check counts a call as complete only
+when all three capture stages share its `callId`. Attempts run in the pre-registered counterbalanced
+order: replicate 1 is S1-S2-S3 with one before bundle, and replicate 2 is S2-S3-S1 with bundle before
+one. Each attempt records its `executionIndex`. The sheet shows and rates every card the product
+displays, Needs-review cards included, and the report counts ready and Needs-review cards separately.
+The three rating items are separate pre-registered outcomes per arm, scenario and replicate. The primary
+outcomes are mean weather adequacy, mean style and intent, and would-wear proportion; best weather and
+best style are secondary. `scratch/ab_stage1_score.mjs` joins the blinded export with the sealed key to
+compute them and refuses unrated cards. An attempt with zero displayable cards has non-computable
+outcomes, never imputed, and is reported as a zero-card outcome; the other arm is still rated. The
+sheet's single strongest-card pick is descriptive only and feeds no comparison. On the sheet, flags
+render once, and the "Why this outfit" block renders when any of reason, styling instructions or watchFor
+exists (`test/ab_stage1_contract.test.js`).
+
+Live-readiness pass (owner review, 2026-09-13). Cells run under `NODE_ENV=test`, where `assertProviderKey()`
+refuses provider requests. The provider-network gate in `scratch/ab_stage1_contract.mjs` grants `WARDROBE_ALLOW_TEST_PROVIDER_NETWORK=true` only
+to an approved live run and removes it in preflight; the ordinary suite never has it
+(`test/ab_stage1_contract.test.js`). `--boundary-check` runs a cell's exact environment against a blocked
+network and a Gemini SDK stub that throws at the request. It shows the live environment passing the key
+guard and building structured and tool-loop requests up to the SDK, and the preflight environment being
+refused — no billing, no attempt consumed. The review-sheet builder reads a private copy of the snapshot, so
+building a sheet can no longer create WAL/SHM files in it or checkpoint into its `system.db`. Manifests record the source state: git HEAD, the sha256 of
+`git diff --binary HEAD` and untracked files, which live mode refuses. A technically successful live
+attempt with incomplete normalized/wire/output capture is reported as a capture-integrity failure before
+any sheet is built. The attempt is kept, stays ratable and is not rerun.
+
+**Stage 1 results record (2026-09-14).** The approved live run completed as pre-registered: 12 attempts
+in the counterbalanced order, no reruns or replacements, routing 6/6, technical success 12/12, identical
+resolved conditions in all six pairs, capture integrity complete for all 44 provider calls, and snapshot
+and source hashes unchanged.
+
+- **Round 1 — the pre-registered result.** The owner rated all 36 displayed cards blind, and the
+  pre-registered scorer (`scratch/ab_stage1_score.mjs`) computed the outcomes. Would-wear, verified
+  directly from the untouched original exports: one-outfit 3 of 6 cards (S1 0/1 and 1/1, S2 0/1 and 0/1,
+  S3 1/1 and 1/1), bundle 14 of 30. An earlier chat summary stated 4 of 6 for the one-outfit flow; that
+  aggregate was wrong, and the per-replicate values were right.
+- **Presentation defect in round 1.** The round-1 sheet builder chose each garment's worn photo first
+  (worn photo, else hanger photo). The Stylist Chat outfit cards in `src/components/StylistChat.jsx` do
+  the opposite: they show the hanger photo and fall back to the worn photo. So round 1 did not show the
+  garments as a user sees them on a card. The owner also reported that worn photos made weather harder to
+  judge. `scratch/ab_stage1_review_sheet.mjs` now defaults to hanger-first; `--photo worn` reproduces
+  round 1.
+- **Round 2 — a blinded robustness round.** A second blinded owner-rating round used newly randomized,
+  hanger-first review sheets and was completed with more time. The owner remained blind to which flow
+  produced each card. These are fresh ratings under the UI-representative visual evidence, not a numeric
+  transformation of round 1. Round 1 stays the pre-registered result. Round 2 is the more
+  UI-representative robustness round and is reported alongside it, with its own sealed keys and scores.
+  Round 2 would-wear: one-outfit 3 of 6, bundle 10 of 30.
+
+**Supply boundary, by ID (preflight, snapshot of 2026-09-13).** Both routes now record their supply
+boundary per piece in debug only: `singleOutfitCatalogEligibleIds` and `singleOutfitCatalogExclusions`
+in the single-outfit diagnostics, and `suppressedPieces` (id, reasons) in the Whole Wardrobe debug. At
+65/50 and 72/62 the single-outfit catalog holds 237 garments and the bundle's pre-cap pool 220. All 220
+are in the catalog. The 17 catalog-only garments are exactly the accessories, which the visual composer
+roster excludes by design (`accessories excluded from visual composer`). Neither arm excludes a garment
+the other admits for any other reason. Two evening-tagged dresses (246, 993006) are outside both
+supplies. The bundle records `AI profile low confidence for casual`, but the single-outfit catalog drops
+them with no entry in its exclusion map. That is an observability gap in the catalog's reason map, not a
+supply difference. At 46°F walking the counts are 231 and 214, with the same 17
+accessories as the only difference. The bundle then shows 83 of its pool after the roster cap.
+
+Reconciled evidence from live runs (captures in `/tmp/provider-capture-slot-schema`): piece 88 reads
+`warmth: moderate` in both the wire capture and the evaluator (an earlier offline check read unparsed
+rows and wrongly reported unknown warmth); the botanical-dress card was one level under the cold-end
+target. The 65/50 single-outfit weather stop came from `extractStructuredUserWeather` returning null for
+a message with three Fahrenheit values (65, 50, 50), after which the payload stated "No numeric weather
+range was stated" (capture 0011) and the first search returned `weather_context_required` (0013).
+
+**Measurement rule for the A/B (owner, 2026-09-13).** The outcome is the owner's independent lived-wear
+rating. One-level adjacency is recorded as raw evidence and is never reported as proof an outfit is
+practically warm enough. The review sheet hides every engine output — endpoint values and garment
+warmth labels — until the card is rated, and shows targets, completed levels and signed distances rather
+than evaluator verdict words. Owner ratings of the scripted dry-run sheet are recorded as a sheet
+usability check only.
+
+### Amendment (2026-09-13) — blanket outerwear warmth cap removed; severe-cold capacity backstop separates protection, substance and insulation evidence
+
+**The cap was not a shell detector.** `garmentWarmthScore` clamped every outerwear garment whose
+material verdict was not `insulating` to `light` (0.5). On the real wardrobe it demoted seven garments
+from `moderate` to `light` — a fully lined leather jacket, a fully lined knee-length trench, a
+second-face windbreaker, an unlined olive jacket, a technical zip jacket, a cotton/rayon knit jacket and
+a cotton knit cardigan — and placed the lined trench below a long-sleeved cotton tee, inverting the
+verified clo anchors (thin coat 0.36 > thin long-sleeve shirt 0.25). It is removed. No lining or
+coat-length magnitude replaces it: the verified anchor extract has no lined/unlined rows and the
+wardrobe has no garment pair differing only in lining (`interior_construction` is recorded on 6
+outerwear pieces). Removing the cap alone does not create a lined-vs-unlined distinction.
+
+**Why it could not be removed alone.** The cap was accidentally holding up a severe-cold safeguard.
+`outerwearLayerPositivelyInadequate` (the presence/substance floor) needs two of ultralight,
+non-insulating and unlined, so lining lets a garment escape it by absence; wind protection makes a
+jacket outdoor-capable. Uncapped, a tee under the lined trench at 45/35 is one level short of the
+`very warm` PET target and the capacity rule, which only convicts a substantial shortfall, went silent.
+The floor itself is unchanged: as a presence/substance floor, lining is admissible substance evidence.
+
+**The replacement, endpoint-gated.** `upperGarmentInsulationEvidence` classifies each upper-body
+garment from its material verdict alone: a recorded fill or insulating fibre is positive evidence;
+an answered "no insulating layer", or a base garment with a recorded face fabric, is `none`; an outer
+layer whose interior was never answered is `unknown`. Weather protection and lining never count —
+they prove exposure protection and construction substance. Cotton, rayon and silk still insulate
+physically; the classifier only says they carry no special insulating-fibre or fill evidence.
+
+In the severe outdoor branch, `outfit_thermal_capacity_short_without_insulation_evidence` (hard)
+fires only when all hold: a numeric PET cold target exists; the completed upper system is exactly one
+level short (`fits`, best delta −1); the outer layer is outdoor-capable or of unknown capability; and no
+upper garment carries positive evidence. Decision order: any positive evidence → pass; otherwise any
+`unknown` → advisory `outfit_thermal_capacity_insulation_evidence_unknown` (an inability-to-judge
+code); otherwise → hard. Without a temperature there is no target and nothing is judged (the flag-only
+and 45/45 contracts hold); a system that reaches its target is never failed on fibre names; a
+substantial shortfall stays with `outfit_thermal_capacity_insufficient_for_severe_cold`. The evidence
+is recorded as `evidence.severeColdInsulation`.
+
+**One owner-facing explanation.** Typed findings are all kept in evaluation and debug.
+`collapseThermalErrorFindings` / `primaryUserFacingFinding` choose what the owner reads, in the
+approved order: no outer layer → indoor layer only → no sufficiently warm layer → substantial capacity
+shortfall → one-level shortfall without positive insulation evidence. Consumer audit:
+- `propose_outfit` needs-review card `rejectionReason` — collapsed; the model's validation message keeps every finding.
+- trip-plan rejected cards (`rejectionReason`, `brokenPieces[].reason`) — collapsed through `displayReasons`; `failures[].reasons` sent to the model keeps every finding.
+- selected-piece Needs-review cards (routes/ai.js) — `primaryUserFacingFinding`; `result.findings` keeps every finding.
+- Whole Wardrobe gate rejections (`locallyGateWholeWardrobeOutfits`, which feeds direct composer and local-fill diagnostic cards) — `primaryUserFacingFinding`.
+- advisory chips (`advisoryFindingsToSystemFlags`) — already collapsed by `collapseWarmthAdvisoryFindings`.
+- not owner-facing, unchanged: slot-swap `rejected` (tool result), recovery reason codes, the repair pass's typed evidence; the Whole Wardrobe structural check runs without weather and emits no thermal findings.
+
+**Measured (isolated A/B, frozen snapshot).** Roster membership and overall roster order are unchanged
+in every scenario (65/50, 50°F walking, 45/35, no weather). The model-facing outerwear subsection
+sequence changes wherever a demand exists: the seven garments move into the `moderate` group, and
+because unplaceable layers keep reserved slots, 12 unchanged garments sit at a new index — but the
+relative order of unchanged placeable garments is identical, and unplaceable slot positions are
+identical. The repair bench is unchanged. At 45/35, 16 cards (4 bases × lined trench, leather jacket,
+windbreaker, olive jacket) keep a hard finding (now the typed one-level code); outdoor-capability and
+presence findings are identical to before. `scratch/audit_ensemble_thermal_calibration.js` was re-run
+before and after: only the two formerly capped layers it includes change, and its quilted-puffer-over-
+moderate-sweater case at 35/25 (one level short, acceptable) is unchanged.
+
+### Amendment (2026-09-16) — Hill Hiking slot (thread_1789585467294): evidence loss, reuse-over-suitability prompt pressure, no weak-fit disclosure, and a travel exclusion silently bypassed
+
+**Incident.** A 4-day Paso Robles trip plan (Winery Days / Hill Hiking / Dinner Out) delivered the
+Hill Hiking slot elevated city clothing (211 black solid long shirt + 251 gray stretch slim pants)
+with hiking boots (996865) attached, and the composer described it as an optimal hiking outfit.
+Corrected framing (owner, after two rounds of diagnosis review): the upstream roster-selection model
+did see several lighter, more hot-weather-plausible tops (990351 explicitly tagged `outdoor`; 990582,
+228, 174, 225) and appropriate footwear, but those tops never reached the final composer — they were
+already dropped from the fixed capsule roster by the time composition ran. The wardrobe bench did not
+clearly contain a strong hot-weather hiking bottom; 114 and 251 are possible compromises, not
+established good answers. The five lighter tops are "worth visual consideration," not asserted here
+or anywhere in this fix as proven hiking-appropriate — that remains stylist judgment (photos,
+movement, maintenance, pairing), never inferred from a score or a category.
+
+**Four separate, bounded fixes — no hard formality gate, no protected garment formula, no childcare-
+advisory extension to hiking, no `rosterFitScore`-derived validity floor** (all explicitly ruled out):
+
+1. **Evidence gap at the final composer.** The shared garment fact line
+   (`docs/garment-evidence-parity-2026-09-15.md`) deliberately omits occasion tags everywhere, on the
+   stated rationale that "every row already survived this request's occasion gate" — true for a
+   single-occasion request, **false for a trip roster**, which is deliberately a multi-occasion
+   capsule serving distinct slots (a daytime walk, a hike, an evening dinner) in one call. Trip's
+   catalog line (`tripPlanTruthCatalog`, routes/ai.js) now appends each piece's recorded occasions as
+   a structured fact — `TRIP_GARMENT_FACT_CONVENTIONS` states why. This is a recorded field, not
+   tagger prose, and is not a reopening of the 2026-09-15 ruling that tagger `best_use`/`style_risk`
+   stay omitted from every model path (owner ruling 2026-09-16: keep that decision as-is).
+2. **Reuse-over-suitability prompt pressure.** `tripRosterSelectionSystemPrompt`'s "REUSE ACROSS USE
+   CASES IS THE POINT... should be preferred... all else equal" had no suitability check attached, so
+   the model could — and did — prefer a cross-slot-reusable dressier piece over a hiking-only-useful
+   lighter one. Reworded: reuse only counts when the shared piece is genuinely suited to each use
+   case on its own merits, and a use case's own strongest fit is never traded away for cross-use-case
+   versatility. `tripPlanCompositionSystemPrompt`'s "aiming... to showcase the core versatile pieces...
+   avoid leaving large portions of the packed suitcase untouched" is reworded the same way: slot
+   quality outranks showcasing, an unused packed piece beats a worse-fitting outfit chosen to use it.
+3. **No honest decline path.** The composer had no way to say "I could not compose a credible outfit
+   here" — so it wrote confident language ("optimal") over a real roster gap. A required per-card
+   self-rating was considered and explicitly rejected (owner ruling 2026-09-16): requiring the model
+   to grade and explain its own choice on every card risks producing exactly the kind of confident
+   post-hoc justification that caused the incident, the same failure family as the day-wear
+   explanation experiment (`docs/day-wear-explanation-experiment-2026-09-15.md`), and it would have
+   added schema/card-face prose no root-cause fix needed. Instead, `tripPlanCompositionSchema` gained
+   a distinct, optional **slot-level DECLINE**: the composer may omit a specific outfit from `outfits`
+   (relaxed from an exact per-request count to `minItems: 1`) and add a `{slot_id, gap_reason}` entry
+   to a new top-level `slot_gaps` array. `styling-engine/tools.js`'s atomic branch folds each declined
+   outfit's reason into the same `coverageGaps` list an under-supplied slot's generic message already
+   uses (`describeSlotCoverageGap`), so both reach the user through the one existing disclosure path
+   (`plan_lines`) with no new UI. A card the model does submit carries no confidence rating of any
+   kind — `structural_capacity` on the slot payload stays a factual, non-suitability diagnostic, and
+   suitability remains entirely the model's judgment, including the ability to decline honestly.
+4. **`coverage_report` renamed `structural_capacity`.** `buildCoveredCandidateSet`'s `complete` flag
+   is a pure supply-shape check (does a top/bottom-or-dress + shoes + any required base layer exist
+   among the slot's allowed pieces) computed with zero knowledge of activity or weather — a
+   structurally complete slot can still have no genuinely suitable combination for what it is
+   actually for. The old model-facing key name invited exactly that misreading. `workbenchInstructions`
+   now states this explicitly; see `docs/model-facing-signal-inventory.md` row 9.
+5. **Travel exclusion silently bypassed (separate, cleanly-isolated defect).** Piece 256 (black
+   abstract midi dress) carries `occasion_exclusions: ["travel"]`, yet appeared in the trip's Winery
+   Days and Dinner Out cards — `wholeWardrobePieceTrustDecision`'s exclusion check
+   (styling-engine/rules.js) only ever received the slot's own occasion
+   (`slot.eligibilityOccasion || slot.occasion`), never `"travel"`, so a trip-level owner exclusion
+   could never match inside any individual slot. `wholeWardrobePieceTrustDecision` now accepts
+   `options.ownerExclusionOccasion` as an array and matches against any entry (existing single-string
+   callers are unaffected); `buildPlanSlotWorkbench`'s one call site passes
+   `[slot.eligibilityOccasion || slot.occasion, 'travel']` when `planKind === 'trip'`. Fixed through the
+   existing evaluator, not a parallel ad hoc travel check.
+
+**Regression coverage** (`test/hill_hiking_incident_regression.test.js`, plus an integration test in
+`test/plan_outfit_set.test.js`) pins the evidence and priority contract, not a garment-specific
+expected outfit or specific temperature: trip catalog occasions (recorded vs `unknown`, never
+inferred), the reworded roster/composition prompt text, the `slot_gaps` decline schema (and that no
+per-card confidence field exists anywhere), `structural_capacity`'s wording and key name, the travel
+exclusion binding inside a non-"travel"-occasioned trip slot while staying inert for a non-trip plan
+kind, and — end to end through `executeTool('plan_outfit_set', ...)` — that a composer honestly
+declining one slot's outfit via `slot_gaps` still accepts the other slot's card, with the decline
+reason surfacing in `plan_lines` and no confidence rating anywhere on the accepted card.
+
+**Open finding, out of scope here — tracked in a separate session.** The app currently collapses a
+multi-day forecast into one trip-wide maximum/minimum envelope and presents that envelope as every
+slot's weather; an activity with no assigned date within the trip must not be treated as occurring at
+the trip maximum. Not implemented, fixed, or resolved by this Hill Hiking change — see the dedicated
+weather-resolution workstream for design and status.
+
