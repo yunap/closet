@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { locallyGateWholeWardrobeOutfits, inferOutfitArchetype, qualifiesWholeWardrobeMission } from '../styling-engine/rules.js'
-import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateOutfitStructure, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
+import { describeOutfitStructureGap, evaluateLayerDirections, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateOutfitStructure, evaluateWearableOutfit, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, layerDirectionPromptRule, wardrobeSupportsLayeringPair } from '../styling-engine/outfitValidation.js'
 import { pieceRequiresBaseLayer, pieceSleeveInterference, pieceOuterSleeveCapacity, SLEEVE_SHAPE_VALUES } from '../styling-engine/attributes.js'
 
 const structureValid = (pieces, options = {}) => evaluateOutfitStructure(pieces, options).valid
@@ -202,24 +202,25 @@ test('evaluateLayerPairConstructionFor resolves direction for a direct two-garme
   assert.equal(conflictReversed.verdict, 'incompatible')
 })
 
-test('layerConstructionPromptRule projects zone/direction mechanics, not fashion-name shape lists', () => {
+test('layerConstructionPromptRule states only the neutral sleeve sentence, never a categorical shape verdict', () => {
   const rule = layerConstructionPromptRule()
-  assert.match(rule, /OUTER layer over a fitted inner sleeve is not a conflict/)
-  assert.match(rule, /INNER layer under a narrow, structured outer sleeve is/)
-  assert.doesNotMatch(rule, /puff, bishop, bell/, 'must not enumerate retired fashion-name shapes')
+  assert.equal(rule, `- ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`)
+  assert.doesNotMatch(rule, /is a conflict|cannot accommodate|no room to accommodate|puff, bishop, bell/)
 })
 
-test('evaluateWearableOutfit inherits the sleeve-conflict finding as a hard error when includeLayerDirections is set', () => {
-  // Voluminous INNER sleeve under a structured OUTER (outerwear-category) sleeve — direction is
-  // established so the construction verdict resolves to a real conflict, not merely unknown.
+test('evaluateWearableOutfit keeps the sleeve-geometry verdict as log-only shadow evidence, never a finding', () => {
+  // Voluminous INNER sleeve under a structured OUTER sleeve: the geometry verdict still resolves to a
+  // conflict, but only as shadow evidence — it is not a hard or advisory finding.
   const voluminousInner = { id: 11, name: 'voluminous-sleeve blouse', category: 'top', role: 'primary_top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
   const structuredOuter = { id: 12, name: 'structured jacket', category: 'outerwear', role: 'layer_top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
   const bottom = { id: 13, name: 'trousers', category: 'bottom', role: 'primary_bottom' }
   const shoes = { id: 14, name: 'loafers', category: 'shoes', role: 'shoes' }
   const result = evaluateWearableOutfit([structuredOuter, voluminousInner, bottom, shoes], { roleAware: true, includeLayerDirections: true })
-  assert.equal(result.hardValid, false)
-  assert.ok(result.hardFindings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
+  assert.equal(result.hardValid, true)
+  assert.ok(![...result.hardFindings, ...result.advisoryFindings].some(finding => String(finding.code).startsWith('layer_construction_')))
+  assert.ok(result.shadowFindings.some(finding => finding.code === 'layer_construction_sleeve_conflict'))
   assert.ok(result.evidence.includedStages.includes('layer_construction'))
+  assert.deepEqual(result.evidence.shadowStages, ['layer_construction'])
 })
 
 // PR review: a caller gating a pre-role-assignment prompt projection (does this candidate set
@@ -624,4 +625,362 @@ test('a dress carrying an extra top is not described as a one-piece column', asy
     pieces, 'casual')
   assert.ok(String(plain.silhouette || '').trim())
   assert.doesNotMatch(String(plain.silhouette || ''), /layered with/i)
+})
+
+// --- bounded upper-body layering (owner ruling 2026-09-12) --------------------------------------
+//
+// The composer's prose rule ("optional single outerwear … no two tops") was the ONLY thing
+// preventing a pile of same-slot garments: this validator counted tops solely when a bottom was
+// missing, and never counted outerwear at all. Keeping the guarantee in prose is what forbade the
+// owner's own Layer 2 formula — an open layer over a fitted base — in every composed card (0 of 27
+// saved outfits carried a middle layer). The bound lives here now, so the prompt can describe a
+// real three-layer system.
+
+const base = () => ({ id: 1, name: 'knit top', category: 'top' })
+const middle = () => ({ id: 2, name: 'open cardigan', category: 'outerwear' })
+const outer = () => ({ id: 3, name: 'wool coat', category: 'outerwear' })
+const trouser = () => ({ id: 4, name: 'trousers', category: 'bottom' })
+const loafer = () => ({ id: 5, name: 'loafers', category: 'shoes' })
+
+test('LAYERING: base + middle + outer is a valid outfit', () => {
+  const result = evaluateOutfitStructure([base(), middle(), outer(), trouser(), loafer()])
+  assert.equal(result.valid, true, `three upper layers is a layered outfit, not a pile: ${JSON.stringify(result.findings)}`)
+})
+
+test('LAYERING: a vest over a blouse is a valid outfit', () => {
+  // The same ban also caught a second TOP worn over a base — a tweed vest in this wardrobe is
+  // `category: top`, so "no two tops" forbade it on warmth-independent styling grounds.
+  const vest = { id: 6, name: 'tweed vest', category: 'top' }
+  assert.equal(evaluateOutfitStructure([base(), vest, trouser(), loafer()]).valid, true)
+})
+
+test('LAYERING: four upper pieces is the pile the old rule was written against', () => {
+  const extra = { id: 7, name: 'second coat', category: 'outerwear' }
+  const result = evaluateOutfitStructure([base(), middle(), outer(), extra, trouser(), loafer()])
+  assert.equal(result.valid, false)
+  const codes = result.findings.map(finding => finding.code)
+  assert.ok(codes.includes('too_many_upper_layers'), `got ${JSON.stringify(codes)}`)
+  assert.ok(codes.includes('multiple_outerwear'), 'three outerwear pieces is also its own finding')
+})
+
+test('LAYERING: three tops is rejected even with a bottom present', () => {
+  const second = { id: 8, name: 'overshirt', category: 'top' }
+  const third = { id: 9, name: 'another top', category: 'top' }
+  const result = evaluateOutfitStructure([base(), second, third, trouser(), loafer()])
+  assert.equal(result.valid, false, 'this shape passed silently before — the prose rule was the only guard')
+  assert.ok(result.findings.map(finding => finding.code).includes('multiple_tops'))
+})
+
+test('LAYERING: a dress with a coat is unaffected, and so is a plain outfit', () => {
+  const dress = { id: 10, name: 'knit dress', category: 'dress' }
+  assert.equal(evaluateOutfitStructure([dress, outer(), loafer()]).valid, true)
+  assert.equal(evaluateOutfitStructure([base(), trouser(), loafer()]).valid, true)
+})
+
+// --- wear order as data (owner ruling 2026-09-12) -----------------------------------------------
+
+test('ROLES: a model-stated role survives the card projection, and a contradicting one is dropped', async () => {
+  const { normalizeWholeWardrobeOutfitObject, roleMatchesCategory, deriveWholeWardrobeRoles } = await import('../styling-engine/rules.js')
+  const candidates = [
+    { id: 1, name: 'knit top', category: 'top' },
+    { id: 2, name: 'knit cardigan', category: 'outerwear' },
+    { id: 3, name: 'wool coat', category: 'outerwear' },
+    { id: 4, name: 'trousers', category: 'bottom' },
+    { id: 5, name: 'loafers', category: 'shoes' },
+  ]
+  const stated = normalizeWholeWardrobeOutfitObject({
+    label: 'stack',
+    pieces: [{ id: 1, role: 'primary_top' }, { id: 2, role: 'layer_top' }, { id: 3, role: 'outerwear' }, { id: 4 }, { id: 5 }],
+  }, candidates)
+  assert.deepEqual(stated.pieces.map(piece => piece.role), ['primary_top', 'layer_top', 'outerwear', null, null])
+
+  // Category is truth, role is intent — the same split propose_outfit already holds. A trouser
+  // claiming to be outerwear is dropped and the derivation answers instead.
+  const spoofed = normalizeWholeWardrobeOutfitObject({
+    label: 'spoof',
+    pieces: [{ id: 1 }, { id: 4, role: 'outerwear' }, { id: 5 }],
+  }, candidates)
+  assert.equal(spoofed.pieces.find(piece => piece.id === 4).role, null, 'a bottom cannot be assigned an upper-body role')
+  assert.equal(roleMatchesCategory('layer_top', 'outerwear'), true, 'a cardigan under a coat is a layer_top doing the middle job')
+  assert.equal(roleMatchesCategory('primary_top', 'dress'), false)
+})
+
+test('ROLES: wear order is derived when the composer states nothing', async () => {
+  const { deriveWholeWardrobeRoles } = await import('../styling-engine/rules.js')
+  const derived = deriveWholeWardrobeRoles([
+    { id: 1, category: 'top' }, { id: 2, category: 'outerwear' }, { id: 3, category: 'outerwear' },
+  ])
+  assert.equal(derived.get(1), 'primary_top')
+  assert.equal(derived.get(2), 'layer_top', 'the first outerwear listed is worn under the second')
+  assert.equal(derived.get(3), 'outerwear')
+})
+
+test('ROLES: the stack they unlock is what clears a `warm` demand from moderate pieces', async () => {
+  const { outfitThermalContribution } = await import('../styling-engine/outfitThermalContribution.js')
+  const stack = [
+    { id: 1, category: 'top', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'long', role: 'primary_top' },
+    { id: 2, category: 'outerwear', fabric_weight: 'medium', fiber_content: ['wool'], sleeve_length: 'long', role: 'layer_top' },
+    { id: 3, category: 'outerwear', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'long', role: 'outerwear' },
+  ]
+  assert.equal(outfitThermalContribution(stack).withLayer, 'warm',
+    'base + middle + outer steps up — the only route to `warm` in a wardrobe whose bases top out at moderate')
+  const roleless = stack.map(({ role, ...piece }) => piece)
+  assert.notEqual(outfitThermalContribution(roleless).withLayer, 'warm',
+    'and without the roles the same three garments earn nothing, which is what shipped before')
+})
+
+// ─── chain-aware construction: volume that travels through an intermediate layer ────────────────
+//
+// Live thread_1789274442146: a gathered/ruched turtleneck, a cream open cardigan and a fitted navy
+// puffer. Both adjacent pairs returned `compatible` and the outfit carried zero findings, because
+// the pairwise rule treats accommodation as ABSORPTION — once the cardigan is judged able to
+// contain the turtleneck sleeve, that volume disappears before the puffer is evaluated. The model,
+// which had all three photographs, then justified the card by asserting that the puffer's ribbed
+// TORSO panels supply sleeve capacity. Nothing structured says that.
+//
+// The fold is qualitative: the same elevated/none/null and accommodates/restricted/null vocabulary
+// the pair rule already uses. No magnitudes, no counting of cuffed layers, no fabric-weight
+// arithmetic, and deliberately NO use of sleeve LENGTH as a proxy for sleeve thickness — an
+// extra-long fitted sleeve extends past a cuff without trapping volume, and treating extent as
+// bulk would hard-reject real combinations on evidence that does not exist.
+
+const RUCHED_BASE = { id: 401, name: 'ruched turtleneck', category: 'top', role: 'primary_top', sleeve_length: 'extra_long', sleeve_shape: 'gathered_ruched', fabric_weight: 'medium' }
+const ACCOMMODATING_MIDDLE = { id: 402, name: 'open knit cardigan', category: 'outerwear', role: 'layer_top', sleeve_length: 'extra_long', sleeve_shape: 'straight', fabric_weight: 'medium', silhouette: 'relaxed', fit_on_body: 'hangs_straight' }
+const FITTED_OUTER = { id: 403, name: 'quilted puffer', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium', silhouette: 'fitted', fit_on_body: 'skims' }
+const ROOMY_OUTER = { id: 404, name: 'boxy puffer coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'heavy', silhouette: 'boxy', fit_on_body: 'hangs_straight' }
+
+test('CHAIN: elevated sleeve volume survives an accommodating middle layer and meets the outer sleeve', () => {
+  const result = evaluateLayerPairConstruction([RUCHED_BASE, ACCOMMODATING_MIDDLE, FITTED_OUTER], { roleAware: true })
+  assert.equal(result.verdict, 'incompatible')
+  const conflict = result.findings.find(f => f.code === 'layer_construction_sleeve_conflict')
+  assert.ok(conflict, 'the propagated conflict is the same known construction conflict, not a new code')
+  assert.equal(conflict.severity, 'error')
+  assert.equal(conflict.evidence.originId, RUCHED_BASE.id, 'the finding names where the volume came from')
+  assert.equal(conflict.evidence.outerId, FITTED_OUTER.id)
+  assert.deepEqual(conflict.evidence.throughIds, [ACCOMMODATING_MIDDLE.id], 'and what it is still inside')
+  assert.match(conflict.message, /still inside open knit cardigan/)
+
+  // Exactly one finding for the relationship, matching the pair rule's one-zone-and-stop behaviour.
+  assert.equal(result.findings.filter(f => f.code === 'layer_construction_sleeve_conflict').length, 1)
+})
+
+test('CHAIN: a flared middle layer is rejected under a fitted outer by the DIRECT pair rule', () => {
+  // The second half of the incident, and the reason the chain rule is not the only fix needed: a
+  // sleeve that widens into a deep cuff carries its own volume, so it fails under a narrow sleeve
+  // with any base at all — no propagation required.
+  const flaredCardigan = { ...ACCOMMODATING_MIDDLE, role: 'primary_top', sleeve_shape: 'flared' }
+  const result = evaluateLayerPairConstruction([flaredCardigan, FITTED_OUTER], { roleAware: true })
+  assert.equal(result.verdict, 'incompatible')
+  assert.ok(result.findings.some(f => f.code === 'layer_construction_sleeve_conflict'))
+})
+
+test('CHAIN: genuinely roomy outerwear accepts both combinations', () => {
+  assert.equal(evaluateLayerPairConstruction([RUCHED_BASE, ACCOMMODATING_MIDDLE, ROOMY_OUTER], { roleAware: true }).verdict, 'compatible')
+  const flaredCardigan = { ...ACCOMMODATING_MIDDLE, role: 'primary_top', sleeve_shape: 'flared' }
+  assert.equal(evaluateLayerPairConstruction([flaredCardigan, ROOMY_OUTER], { roleAware: true }).verdict, 'compatible')
+})
+
+test('CHAIN (negative control): a fine fitted EXTRA-LONG sleeve is not rejected under ordinary long outerwear', () => {
+  // Sleeve length is EXTENT, not trapped volume. An extra-long fitted sleeve may extend past a
+  // shorter jacket cuff or fold without making the combination unwearable, so `extra_long` inside
+  // `long` is not a conflict and must never become one — that would be sleeve length standing in
+  // for the sleeve-thickness dimension the catalog does not record, and it would hard-reject real
+  // combinations (59 of them in the owner's wardrobe) with no evidence that they fail.
+  const fineExtraLong = { id: 410, name: 'fine jersey top', category: 'top', role: 'primary_top', sleeve_length: 'extra_long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const ordinaryCoat = { id: 411, name: 'wool coat', category: 'outerwear', role: 'outerwear', sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium', silhouette: 'fitted', fit_on_body: 'skims' }
+  assert.equal(evaluateLayerPairConstruction([fineExtraLong, ordinaryCoat], { roleAware: true }).verdict, 'compatible')
+
+  // Same through a chain, and with a straight middle layer — multiple ordinary straight sleeves
+  // never accumulate into a conflict.
+  const straightMiddle = { ...ACCOMMODATING_MIDDLE, sleeve_shape: 'straight' }
+  assert.equal(evaluateLayerPairConstruction([fineExtraLong, straightMiddle, ordinaryCoat], { roleAware: true }).verdict, 'compatible')
+})
+
+test('CHAIN: unresolved sleeve construction stays unknown and never becomes a hard failure', () => {
+  const unknownOuter = { ...FITTED_OUTER, sleeve_shape: null, silhouette: null, fit_on_body: null }
+  const unknownOuterResult = evaluateLayerPairConstruction([RUCHED_BASE, ACCOMMODATING_MIDDLE, unknownOuter], { roleAware: true })
+  assert.equal(unknownOuterResult.verdict, 'unknown')
+  assert.ok(unknownOuterResult.findings.every(f => f.severity !== 'error'))
+  assert.equal(unknownOuterResult.sightRequired, 'both', 'it is a question for the photographs')
+
+  const unknownBase = { ...RUCHED_BASE, sleeve_shape: null }
+  const unknownBaseResult = evaluateLayerPairConstruction([unknownBase, ACCOMMODATING_MIDDLE, FITTED_OUTER], { roleAware: true })
+  assert.equal(unknownBaseResult.verdict, 'unknown')
+  assert.ok(unknownBaseResult.findings.every(f => f.severity !== 'error'))
+
+  const unknownLength = { ...RUCHED_BASE, sleeve_length: null }
+  const unknownLengthResult = evaluateLayerPairConstruction([unknownLength, ACCOMMODATING_MIDDLE, FITTED_OUTER], { roleAware: true })
+  assert.ok(unknownLengthResult.verdict !== 'incompatible',
+    'a conflict needs BOTH participants known to have a sleeve')
+})
+
+test('CHAIN: two-garment outfits are unchanged — the fold only speaks for propagated volume', () => {
+  // The direct relationship is the pair rule's to report; the fold never double-reports it.
+  const direct = evaluateLayerPairConstruction([RUCHED_BASE, FITTED_OUTER], { roleAware: true })
+  assert.equal(direct.verdict, 'incompatible')
+  assert.equal(direct.findings.filter(f => f.code === 'layer_construction_sleeve_conflict').length, 1)
+  assert.equal(direct.evidence.chainLength, 0, 'no chain is folded for a two-garment upper body')
+})
+
+test('CHAIN: exactly ONE conflict is reported, and the direction stage owns none of it', () => {
+  // The chain fold briefly lived in evaluateLayerDirections as well as
+  // evaluateLayerPairConstruction, and evaluateWearableOutfit composes both stages — so a single
+  // propagated conflict surfaced twice, once under a stage whose only question is which garment is
+  // worn over which. Construction has exactly one owner.
+  const result = evaluateWearableOutfit([
+    RUCHED_BASE, ACCOMMODATING_MIDDLE, FITTED_OUTER,
+    { id: 405, name: 'trousers', category: 'bottom', role: 'primary_bottom' },
+    { id: 406, name: 'boots', category: 'shoes', role: 'shoes' },
+  ], { roleAware: true, includeLayerDirections: true })
+
+  // Log-only since 2026-09-14: the chain conflict is shadow evidence, not a finding.
+  assert.equal(result.hardValid, true)
+  const conflicts = result.shadowFindings.filter(f => f.code === 'layer_construction_sleeve_conflict')
+  assert.equal(conflicts.length, 1, `exactly one conflict for one relationship: ${JSON.stringify(conflicts.map(c => c.message))}`)
+  assert.equal(result.hardFindings.filter(f => f.code === 'layer_construction_sleeve_conflict').length, 0)
+
+  const directionStage = result.stages.find(stage => stage.stage === 'layer_direction')
+  const constructionStage = result.stages.find(stage => stage.stage === 'layer_construction')
+  assert.ok(directionStage && constructionStage, 'both stages ran')
+  assert.equal(directionStage.result.findings.filter(f => String(f.code).startsWith('layer_construction_')).length, 0,
+    'the direction stage reports no construction finding of any kind')
+  assert.equal(constructionStage.result.findings.filter(f => f.code === 'layer_construction_sleeve_conflict').length, 1)
+})
+
+// ─── register: an unstated ceiling ranks, a stated one gates ────────────────────────────────────
+import fs from 'node:fs'
+import path from 'node:path'
+import { registerCeilingVerdict, registerCeilingIsExplicit, profileRuleFit, resolveFormalityIntent, registerFitPieceAdvisory } from '../styling-engine/rules.js'
+
+test('REGISTER: any distance above an UNSTATED ceiling is eligible and ranked down, not prohibited', () => {
+  // Live thread_1789288270913: an ordinary "five casual outfits" request excluded 80 owned pieces as
+  // `prohibited` while four `elevated` base garments shipped in the same set — the survivors simply
+  // carried an explicit `casual` tag. The gate was reading tagging completeness as validity.
+  const elevatedCoat = { id: 1, name: 'cream trench coat', category: 'outerwear', formality: 'elevated', occasions: ['city', 'smart-casual'] }
+  const everydayCoat = { id: 2, name: 'quilted puffer', category: 'outerwear', formality: 'everyday', occasions: ['casual', 'city'] }
+  const dressyCoat = { id: 3, name: 'tweed evening coat', category: 'outerwear', formality: 'dressy', occasions: ['evening'] }
+  const EVERYDAY = 1
+
+  // Default ceiling (the app's own idea of what casual usually asks for).
+  assert.equal(registerCeilingVerdict(everydayCoat, EVERYDAY, { occasion: 'casual', explicitCeiling: false }).verdict, 'pass')
+  assert.equal(registerCeilingVerdict(elevatedCoat, EVERYDAY, { occasion: 'casual', explicitCeiling: false }).verdict, 'above_request',
+    'one rank up is eligible and ranked down')
+  // 2026-09-13 final ruling: the one-step bound was a ratified PREFERENCE, marked for revisit, and a
+  // preference ranks. Two ranks up sinks further in the ranking instead of being declared invalid.
+  const twoUp = registerCeilingVerdict(dressyCoat, EVERYDAY, { occasion: 'casual', explicitCeiling: false })
+  assert.equal(twoUp.verdict, 'above_request')
+  assert.equal(twoUp.ranksAbove, 2)
+  const oneUp = registerCeilingVerdict(elevatedCoat, EVERYDAY, { occasion: 'casual', explicitCeiling: false })
+  assert.ok(registerFitPieceAdvisory(dressyCoat, { registerCeiling: 'everyday', occasion: 'casual' }).score
+    < registerFitPieceAdvisory(elevatedCoat, { registerCeiling: 'everyday', occasion: 'casual' }).score,
+    'and it ranks strictly worse than one rank up')
+  assert.equal(oneUp.ranksAbove, 1)
+
+  // A ceiling the WEARER stated keeps hard authority: "nothing elevated" means nothing elevated.
+  assert.equal(registerCeilingVerdict(elevatedCoat, EVERYDAY, { occasion: 'casual', explicitCeiling: true }).verdict, 'exclude')
+
+  // The existing explicit-tag exemption is unchanged — and is the evidence this was always a
+  // preference: an owner tag cannot make a genuinely invalid piece valid.
+  const taggedElevated = { ...elevatedCoat, occasions: ['casual', 'city'] }
+  assert.equal(registerCeilingVerdict(taggedElevated, EVERYDAY, { occasion: 'casual', explicitCeiling: true }).exemptedByExplicitTag, true)
+})
+
+test('REGISTER: the prohibited tier holds prohibitions, not preferences', () => {
+  // search_wardrobe drops `prohibited` pieces in compose mode and explains them in `intent: explain`,
+  // so a preference in that tier is both a silent supply cut and a false explanation to the wearer.
+  const elevatedCoat = { id: 1, name: 'cream trench coat', category: 'outerwear', formality: 'elevated', occasions: ['city', 'smart-casual'] }
+  const occasionProfile = { id: 'casual', rules: {} }
+
+  const defaulted = profileRuleFit(elevatedCoat, {}, { occasionProfile, registerCeiling: 'everyday', registerCeilingExplicit: false })
+  assert.equal(defaulted.tier, 'discouraged')
+  assert.match(defaulted.reason, /one rank above/)
+
+  const stated = profileRuleFit(elevatedCoat, {}, { occasionProfile, registerCeiling: 'everyday', registerCeilingExplicit: true })
+  assert.equal(stated.tier, 'prohibited', 'a stated dress code still prohibits')
+})
+
+test('REGISTER: only a stated MAXIMUM makes a ceiling hard', () => {
+  // Owner ruling 2026-09-13, refined: an occasion-derived target or ceiling is soft, and so is a
+  // stated TARGET — "something dressy" says what the wearer is going for, not what they will not
+  // wear. Only a maximum is a constraint.
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'five casual outfits for a cool day' }), false)
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'I want something dressy' }), false,
+    'a target is not a maximum')
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'nothing dressy' }), true)
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'nothing above casual' }), true)
+
+  // An ACTIVITY ceiling is NOT a capability claim either (owner ruling 2026-09-13): formality does
+  // not establish whether a garment can physically serve an activity. An elevated fleece settles it.
+  // Movement allowance, footwear support, maintenance/delicacy, construction and weather protection
+  // are the real owners, and each keeps its own hard gate.
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', activity: 'hiking', request: 'a hike' }), false)
+})
+
+test('REGISTER: "casual outfit" is a target, "nothing above casual" is a maximum', () => {
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'five casual outfits for a 65/50 day' }), false)
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'casual outfit for running errands' }), false)
+  assert.equal(registerCeilingIsExplicit({ occasion: 'casual', request: 'nothing above casual please' }), true)
+
+  // And the maximum lands on the right rank: everything above the named register is excluded,
+  // derived from the ladder rather than named case by case.
+  const intent = resolveFormalityIntent({ occasion: 'casual', request: 'nothing above casual please' })
+  assert.deepEqual([...intent.avoid].sort(), ['dressy', 'elevated'])
+})
+
+test('REGISTER: a negated register word is a maximum, not a target (defect fixed 2026-09-13)', () => {
+  // `resolveFormalityIntent`'s negation alternation was `not|no|avoid|less`, so "nothing dressy"
+  // matched nothing, survived the stripping step, and was read by the POSITIVE matcher as a dressy
+  // TARGET — raising the ceiling to dressy and admitting exactly what the wearer excluded. The
+  // vocabulary now includes nothing/none/never, and an explicit "above X" maximum is recognised in
+  // its own right.
+  const negated = resolveFormalityIntent({ occasion: 'casual', request: 'nothing dressy' })
+  assert.equal(negated.target, null, 'the word is no longer read as a target')
+  assert.deepEqual([...negated.avoid], ['dressy'])
+
+  const maximum = resolveFormalityIntent({ occasion: 'casual', request: 'nothing above casual please' })
+  assert.equal(maximum.target, null)
+  assert.deepEqual([...maximum.avoid].sort(), ['dressy', 'elevated'])
+
+  // A genuine target still resolves as one.
+  assert.equal(resolveFormalityIntent({ occasion: 'casual', request: 'I want something dressy' }).target, 'dressy')
+})
+
+test('ROSTER RULE: capability decides the reserve, register only separates comparable coats', () => {
+  // Owner ruling 2026-09-13. Register cannot have absolute priority at the roster boundary when
+  // environmental capability differs — but it decides between coats that answer the day equally.
+  // Both keys already exist: the endpoint evaluator's ranking distance, and the register verdict.
+  const source = fs.readFileSync(path.join(process.cwd(), 'styling-engine/rules.js'), 'utf8')
+  const reserve = source.slice(source.indexOf('const byThermalFit = coats'), source.indexOf('const keptCoats'))
+
+  // Distance is compared BEFORE the register tiebreak — the ordering of the two keys is the rule.
+  const distanceAt = reserve.indexOf('a.distance !== b.distance')
+  const registerAt = reserve.indexOf('registerAboveRequestIds')
+  assert.ok(distanceAt > 0 && registerAt > 0, 'both keys are present in the reserve sort')
+  assert.ok(distanceAt < registerAt,
+    'capability is the primary key; register breaks ties between comparable coats')
+
+  // And the category sort carries no absolute register key at all — register lives in the relevance
+  // score there, alongside the thermal band's own weighting.
+  const categorySort = source.slice(source.indexOf('// Sort by relevance score descending'), source.indexOf('if (cat === \'outerwear\''))
+  assert.doesNotMatch(categorySort, /registerAboveRequestIds/,
+    'a piece one rank up must not sort behind every within-register piece regardless of capability')
+})
+
+test('REGISTER: the advisory is floored so it can never outrank weather adequacy', () => {
+  // Owner ruling 2026-09-13: weather adequacy must not lose to register preference by score
+  // arithmetic. The floor makes that an invariant rather than a coincidence — before it, the
+  // ordering held at one and two ranks (by 14 and 8) but a three-rank distance would have inverted.
+  const dressyCoat = { id: 3, name: 'tweed evening coat', category: 'outerwear', formality: 'dressy', occasions: ['evening'] }
+  const twoRanks = registerFitPieceAdvisory(dressyCoat, { registerCeiling: 'everyday', occasion: 'casual' })
+  assert.equal(twoRanks.score, -9, 'scaled per rank, then floored below the thermal band magnitude')
+  assert.ok(Math.abs(twoRanks.score) < 10,
+    'strictly smaller than the smallest thermal adjustment, at any distance')
+
+  // Distance is still expressed: farther from the request ranks worse, up to the floor.
+  const elevatedCoat = { id: 1, name: 'trench', category: 'outerwear', formality: 'elevated', occasions: ['city'] }
+  const oneRank = registerFitPieceAdvisory(elevatedCoat, { registerCeiling: 'everyday', occasion: 'casual' })
+  assert.ok(twoRanks.score < oneRank.score)
+
+  // A stated maximum is the gate's business, not the ranking's.
+  assert.equal(registerFitPieceAdvisory(dressyCoat, { registerCeiling: 'everyday', occasion: 'casual', explicitCeiling: true }).score, 0)
 })

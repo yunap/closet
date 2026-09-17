@@ -82,6 +82,20 @@ export const FIBER_FAMILY_BY_VALUE = Object.fromEntries(
 // Derived, not hand-kept: "which fibres trap body heat" is the definition of the insulating family.
 export const INSULATING_FIBERS = new Set(FIBER_FAMILIES.insulating)
 
+// HIGH LOFT — the insulating fibres whose warmth does not track their WEIGHT.
+//
+// Owner, 2026-09-12: "cashmere is meant to be thin and light in weight but warm." The warmth scale
+// keys its substance term on `fabric_weight`, which is a mass proxy; these fibres are the ones that
+// break the weight-warmth correlation by trapping air per gram (fine crimped animal hair, lofted
+// fill), so a medium cashmere knit and a medium cotton knit landing in the same bucket is the scale
+// reading mass where it means insulation.
+//
+// Deliberately NARROW, and not simply `INSULATING_FIBERS`: docs/source-sensitive-insulating-credit-
+// spec.md's census found a flat credit for fibre-NAME evidence pushed 23 of 34 pieces to `warm`.
+// Generic wool, wool blends and acrylic-wool stay on the ordinary fibre-only credit; only these
+// carry the extra half-step.
+export const HIGH_LOFT_FIBERS = new Set(['cashmere', 'alpaca', 'mohair', 'merino', 'down', 'shearling'])
+
 // lyocell is the generic fibre name; tencel is its branded form, and this app stores one concept
 // for both. Remapped before validation rather than treated as a distinct value.
 export const FIBER_SYNONYMS = { lyocell: 'tencel' }

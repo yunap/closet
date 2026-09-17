@@ -6010,9 +6010,15 @@ export default function StylistChat({
         />
       </div>
 
+      {/* These numbers are used VERBATIM as the range the outfit is dressed for — the engine
+          deliberately does not treat a stated range as a daily envelope and lift its low the way it
+          does for a forecast (styling-engine/exposure.js, the stated_user branch). The old copy
+          said "overrides the forecast" with high/low placeholders, so a forecast's numbers were the
+          natural thing to type — and a 46°F pre-dawn low nobody is outside for became the
+          temperature every outfit was judged against. The field now says what it actually means. */}
       <div className="wardrobe-builder-weather">
         <div style={wardrobeBuilderFieldLabelStyle}>
-          Temperature <span style={{ fontWeight: 400, opacity: 0.7 }}>— optional, overrides the forecast</span>
+          Temperatures you'll be out in <span style={{ fontWeight: 400, opacity: 0.7 }}>— optional</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
@@ -6020,8 +6026,8 @@ export default function StylistChat({
             inputMode="numeric"
             value={wardrobeOutfitHighF}
             onChange={e => setWardrobeOutfitHighF(e.target.value)}
-            placeholder="high °F"
-            aria-label="High temperature in Fahrenheit"
+            placeholder="warmest °F"
+            aria-label="Warmest temperature you will be out in, Fahrenheit"
             style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
           />
           <input
@@ -6029,10 +6035,14 @@ export default function StylistChat({
             inputMode="numeric"
             value={wardrobeOutfitLowF}
             onChange={e => setWardrobeOutfitLowF(e.target.value)}
-            placeholder="low °F"
-            aria-label="Low temperature in Fahrenheit"
+            placeholder="coolest °F"
+            aria-label="Coolest temperature you will be out in, Fahrenheit"
             style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
           />
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+          The range you'll actually be outside for — not the day's forecast high and low. Outfits are
+          dressed for this range, so a pre-dawn low you won't be out in makes everything read too cold.
         </div>
       </div>
       </fieldset>

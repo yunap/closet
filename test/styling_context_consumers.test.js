@@ -76,7 +76,8 @@ test('paid visual composition preserves hard-invalid model results as Needs revi
     "router.post('/generate-wardrobe-outfits-visual'",
   )
   assert.match(selected, /const needsReviewOutfits = selectedModelOutfits/)
-  assert.match(selected, /rejectionReason: selectedValidation\.get\(outfit\)\.primaryFinding/)
+  // The owner-facing reason is the approved primary of the card's own typed findings (2026-09-13).
+  assert.match(selected, /rejectionReason: primaryUserFacingFinding\(selectedValidation\.get\(outfit\)\.hardFindings\)/)
   assert.match(whole, /const paidRejectedDiagnostics = \[/)
   assert.match(whole, /const readyOutfits = structuredOutfits\.filter\(outfit => !outfit\.broken\)\.slice\(0, requestedLimit\)/)
 })
@@ -152,7 +153,7 @@ test('visual composition stops before its provider call when structural supply i
   )
   for (const block of [selected, whole]) {
     const guard = block.indexOf("compositionSkipped: 'incomplete_candidate_supply'")
-    const provider = block.indexOf('askStylistWithUsage({')
+    const provider = block.indexOf('askStylistStructuredWithUsage({')
     assert.ok(guard >= 0 && provider > guard, 'structural shortfall must return before the composer boundary')
   }
 })
@@ -202,8 +203,15 @@ test('whole-wardrobe and submitted-plan gates consume the composed wearable verd
   // check — so the shape assertion is widened to the options object, and the weatherContext hand-off
   // is pinned alongside it.
   assert.match(whole, /const validation = evaluateWearableOutfit\(pieces, \{[\s\S]*?requireShoes,/)
-  assert.match(whole, /weatherContext: weatherProfile \? \{ weatherProfile \} : null/,
+  assert.match(whole, /weatherContext: weatherProfile \? \{ weatherProfile, activity \} : null/,
     'the whole-wardrobe wrapper must pass the SUPPLIED profile, never its prose-derived fallback')
+  // 2026-09-12: and the structured activity it already holds. Without it `resolveExposureContext`
+  // resolves exertion to `unknown` and applies no shift, so a hiking card is graded against
+  // sedentary demand — two taxonomy levels away, which is substantial-shortfall territory rather
+  // than a ranking nudge. `environment` is deliberately NOT here: this flow has no typed
+  // environment input, and inferring one from occasion or prose is the inference this arc forbids.
+  assert.doesNotMatch(whole, /weatherContext:[^\n]*environment:/,
+    'no environment may be manufactured for a flow that has no typed environment input')
   assert.doesNotMatch(whole, /isOutfitStructurallyValid\(/)
 
   const planStart = plannerSource.indexOf('export function validateSubmittedPlanOutfits')
@@ -211,12 +219,14 @@ test('whole-wardrobe and submitted-plan gates consume the composed wearable verd
   assert.ok(planStart >= 0 && planEnd > planStart, 'missing validateSubmittedPlanOutfits source block')
   const plan = plannerSource.slice(planStart, planEnd)
   assert.match(plan, /const wearableValidation = evaluateWearableOutfit\(pieces, \{/)
+  assert.match(plan, /weatherContext: \{ weatherProfile: slot\.weatherProfile \|\| \{\}, environment: slot\.environment, activity: slot\.activity,/,
+    'a plan slot passes every piece of structured exposure truth it holds — profile, environment AND activity')
   assert.doesNotMatch(plan, /isOutfitStructurallyValid\(/)
   assert.doesNotMatch(plan, /describeOutfitStructureGap\(/)
 })
 
 test('route-level structure filters reuse typed findings and contain no category recount', () => {
-  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateLayerPairConstructionFor, evaluateWearableOutfit \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
+  assert.match(routeSource, /import \{ categoryOutfitStructurePromptRule, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateWearableOutfit, isInabilityToJudgeCode, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, correctTuckInstruction \} from '\.\.\/styling-engine\/outfitValidation\.js'/)
   assert.doesNotMatch(routeSource, /isOutfitStructurallyValid\(/)
   const whole = sourceBlock(
     'export async function generateWholeWardrobeOutfitsVisualInternal',
@@ -229,7 +239,7 @@ test('route-level structure filters reuse typed findings and contain no category
 
 test('freeform proposal and swap validation consume the composed wearable verdict', () => {
   assert.match(validationSource, /export function evaluateOutfitRoles\(/)
-  assert.match(toolSource, /import \{ evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule \} from '\.\/outfitValidation\.js'/)
+  assert.match(toolSource, /import \{ evaluateOutfitRoles, evaluateWearableOutfit, layerConstructionPromptRule, layerDirectionPromptRule, OUTFIT_ROLES, projectOutfitValidationFindings, roleOutfitStructurePromptRule, tuckInstructionConflict \} from '\.\/outfitValidation\.js'/)
   assert.match(toolSource, /const wearableValidation = evaluateWearableOutfit\(resolved, \{/)
   assert.match(validationSource, /export function evaluateLayerDirections\(/)
   assert.match(validationSource, /includeLayerDirections/)
@@ -262,6 +272,8 @@ test('every active layering-capable composer projects the canonical layer-constr
   const { layerConstructionPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
   const constructionRuleText = layerConstructionPromptRule()
   const directionRuleText = layerDirectionPromptRule()
+  const { NEUTRAL_SLEEVE_LAYERING_STATEMENT } = await import('../styling-engine/outfitValidation.js')
+  assert.equal(constructionRuleText, `- ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`, 'the projected sleeve rule is the neutral sentence (log-only geometry)')
   assert.ok(constructionRuleText.length > 0)
   assert.ok(directionRuleText.length > 0)
 
@@ -275,8 +287,12 @@ test('every active layering-capable composer projects the canonical layer-constr
     'the visual composer must cite the canonical construction rule verbatim'
   )
   assert.ok(
-    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(directionRuleText),
-    'the visual composer must cite the canonical direction rule verbatim'
+    built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(layerDirectionPromptRule({ vocabulary: 'slots' })),
+    'the visual composer must cite the canonical direction rule verbatim, in its slot vocabulary'
+  )
+  assert.ok(
+    !/layer_top|primary_top/.test(built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM),
+    'the slot composer carries no role vocabulary it does not emit'
   )
 
   // Freeform propose_outfit: the tool description is static (cache-stable), so the projection is

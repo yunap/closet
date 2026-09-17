@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveToolStylingContext, recordNestedFreeformUsage, recordFreeformToolIteration, declareBoundedMultiLookIntent, declareSingleOutfitIntent, searchVisualEvidenceOrder, buildSingleOutfitStylistCatalog, singleOutfitStylistCatalogLine, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 const { createStylingContextResolver } = await import('../styling-engine/stylingContext.js')
-const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, composerPieceLineSuffix, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext, freeformExecutionContextEvidence } = await import('../routes/ai.js')
+const { persistFreeformGenerationRun, boundedConversationStateFromToolContext, compactFreeformAnswerSystem, compactFreeformPieceFacts, compactFreeformContext, compactProfileHasContext, compactFreeformAnswerMessage, compactGarmentVisualEvidence, compactAnswerWithTruncationGuard, formatWardrobeInventoryAnswer, exactNamedPieceIdsFromQuestion, isSavedPhotoWearMechanicsQuestion, compactRouterTurnHasContext, freeformExecutionContextEvidence } = await import('../routes/ai.js')
 const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, boundedAtomicMultiLookFinalAnswer, boundedAtomicMultiLookResponse, applyAcceptedCardAuthority, stripPieceIdCitations, freeformToolLoopFallbackAnswer, recordToolLoopUsage, stylistToolsForTurn, routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
 const { buildSingleOutfitConversationPayload, buildStylistConversationPayload, priorStylistConversationHistory } = await import('../styling-engine/core.js')
 
@@ -146,28 +146,13 @@ test('a fresh this-is request stays new after transport history is projected', a
   assert.equal(payload.historyDiagnostics.historyMessagesReceived, 0)
 })
 
-test('whole-wardrobe composer labels expose authoritative opacity and explicit base-layer status', () => {
-  assert.equal(
-    composerPieceLineSuffix({ fabric_category: 'lace', opacity: 'opaque', needs_base: 'no', tuck_behavior: 'wear_over_only' }),
-    '; fabric: lace; opacity: opaque; tuck_behavior: wear_over_only; needs_base: no'
-  )
-  assert.equal(composerPieceLineSuffix({ opacity: 'sheer', needs_base: 'yes' }), '; opacity: sheer; needs_base: yes')
-})
-
-test('whole-wardrobe composer labels expose a piece\'s own do-not-pair rules', () => {
-  const piece = {
-    fabric_category: 'jersey',
-    style_profile_json: {
-      garment_intelligence: {
-        do_not_pair_rules: ['avoid another loud pattern']
-      }
-    }
-  }
-  assert.equal(
-    composerPieceLineSuffix(piece),
-    '; fabric: jersey; do not pair: avoid another loud pattern'
-  )
-  assert.equal(composerPieceLineSuffix({ fabric_category: 'cotton' }), '; fabric: cotton')
+test('whole-wardrobe composer labels (shared fact line) expose opacity and explicit base-layer status, and no tagger do-not-pair text', async () => {
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const lace = sharedGarmentEvidenceLine({ id: 1, name: 'lace top', category: 'top', fabric_category: 'lace', opacity: 'opaque', needs_base: 'no', tuck_behavior: 'wear_over_only' })
+  assert.match(lace, /fabric lace; .*opacity opaque; needs no base layer; .*tuck wear_over_only/)
+  assert.match(sharedGarmentEvidenceLine({ id: 2, name: 'sheer top', category: 'top', opacity: 'sheer', needs_base: 'yes' }), /opacity sheer; needs a base layer/)
+  const cautioned = sharedGarmentEvidenceLine({ id: 3, name: 'jersey top', category: 'top', fabric_category: 'jersey', style_profile_json: { garment_intelligence: { do_not_pair_rules: ['avoid another loud pattern'] } } })
+  assert.doesNotMatch(cautioned, /do not pair|loud pattern/, 'unverified tagger pairing cautions are not stylist instructions (owner ruling 2026-09-15)')
 })
 
 test('compact answer profiles expose only bounded card and garment context', () => {
@@ -181,7 +166,15 @@ test('compact answer profiles expose only bounded card and garment context', () 
   assert.equal(facts.opacity, 'opaque')
   assert.equal(facts.needs_base, 'no')
   assert.equal('photo' in facts, false)
-  assert.match(compactFreeformAnswerSystem('existing_card_explanation'), /only the supplied verified outfit cards/)
+  // thread_1789536455443 (2026-09-16, revised again on owner review): "verified outfit cards"
+  // invited treating the composer's own stored reason/weatherUsed as settled truth. Those fields
+  // are now removed from the card projection entirely (not merely relabeled), and the system
+  // instruction instead frames CONVERSATION HISTORY generally (not just card fields) as fallible
+  // prior claims, plus names a card's own label as an untrusted display string.
+  assert.match(compactFreeformAnswerSystem('existing_card_explanation'), /Explain or compare the supplied outfit cards/)
+  assert.match(compactFreeformAnswerSystem('existing_card_explanation'), /judge it fresh from the supplied garment construction facts and photographs/)
+  assert.match(compactFreeformAnswerSystem('existing_card_explanation'), /fallible prior claims, not authoritative garment evidence/)
+  assert.match(compactFreeformAnswerSystem('existing_card_explanation'), /untrusted_display_label` is the composer's own untrusted display text/)
   assert.match(compactFreeformAnswerSystem('garment_fact'), /only from the supplied structured garment evidence/)
   assert.match(compactFreeformAnswerSystem('general_advice'), /Do not imply that you inspected the wardrobe/)
   assert.match(compactFreeformAnswerSystem('general_advice'), /multiple valid pathways/)
@@ -196,6 +189,128 @@ test('compact answer profiles expose only bounded card and garment context', () 
     pieces: [{ id: 11, name: 'must not leak' }], state: { established: { occasion: 'private context' } }
   })
   assert.equal(generalMessage, 'Question: What is smart casual?')
+})
+
+// thread_1789536455443: asked "what weather does this outfit work for?", the explanation model was
+// handed the requested range, the card's own reason (already calling the outfit "weather-ready for
+// 50/40"), weatherUsed, needsRemovableCoolLayer, and a visible outerwear item — and its "authoritative
+// garment facts" omitted insulating_layer_materials/interior_construction/weather_protection, so it
+// could not distinguish the trench from genuinely warmer outerwear. It repeated 50/40 back. Fixed:
+// the missing construction facts are now present, and the card is framed as the composer's own prior
+// claim rather than a verified conclusion.
+test('compactFreeformPieceFacts carries insulation/construction/protection facts; the existing-card message frames prior claims as claims, not proof', () => {
+  const trench = {
+    id: 40, name: 'cream trench coat', category: 'outerwear',
+    insulating_layer_materials: [], interior_construction: 'full_lining', weather_protection: ['wind'],
+    fiber_content: ['cotton', 'polyester'], season: 'cool',
+  }
+  const facts = compactFreeformPieceFacts(trench)
+  assert.deepEqual(facts.insulating_layer_materials, [])
+  assert.equal(facts.interior_construction, 'full_lining')
+  assert.deepEqual(facts.weather_protection, ['wind'])
+  // 2026-09-16 (audited against garmentEvidenceLine.js's shared fact set, not declared from the
+  // first three fields alone): fiber_content and season are also weather-relevant and were also
+  // missing. `stretch` is on the shared line too but is a fit/comfort fact, not weather-relevant,
+  // and is deliberately not added here.
+  assert.deepEqual(facts.fiber_content, ['cotton', 'polyester'])
+  assert.equal(facts.season, 'cool')
+
+  // 2026-09-16 (owner review, second pass): a local keyword classifier deciding WHEN a prior
+  // conclusion is dangerous was itself the wrong mechanism — it is a second guess, brittle by
+  // construction, and the underlying problem (repeating a conclusion sitting in the prompt) is not
+  // limited to questions that happen to contain a weather word. `existing_card_explanation` now
+  // strips the composer's reason and weather/warmth conclusions from EVERY question, ordinary or
+  // not — the model explains the card afresh from its pieces, facts, and photographs every time.
+  const ordinaryMessage = compactFreeformAnswerMessage({
+    profile: 'existing_card_explanation',
+    question: 'Why did you choose this outfit?',
+    context: { outfits: [{ label: 'Trench Look', reason: 'weather-ready layers for a 50°F-to-40°F afternoon walk', weatherUsed: '50/40', needsRemovableCoolLayer: true, pieceIds: [40] }] },
+    pieces: [trench],
+    state: {},
+  })
+  assert.doesNotMatch(ordinaryMessage, /weather-ready layers for a 50°F-to-40°F afternoon walk/, 'the stored reason must never reach the model through this profile, even for an ordinary question')
+  assert.doesNotMatch(ordinaryMessage, /50\/40/, 'weatherUsed must never reach the model through this profile')
+  assert.match(ordinaryMessage, /Card membership as composed \(garment IDs and names only — the composer's own reason and weather\/warmth conclusions are withheld here/)
+  assert.doesNotMatch(ordinaryMessage, /Verified current cards/, 'the old "Verified" framing implied settled truth and is gone')
+
+  const weatherMessage = compactFreeformAnswerMessage({
+    profile: 'existing_card_explanation',
+    question: 'What weather does this outfit work for?',
+    context: { outfits: [{ label: 'Trench Look', reason: 'weather-ready layers for a 50°F-to-40°F afternoon walk', weatherUsed: '50/40', needsRemovableCoolLayer: true, pieceIds: [40] }] },
+    pieces: [trench],
+    state: {},
+  })
+  assert.doesNotMatch(weatherMessage, /weather-ready layers for a 50°F-to-40°F afternoon walk/, 'the stored reason must not be handed to the model as evidence for a weather question')
+  assert.doesNotMatch(weatherMessage, /50\/40/, 'weatherUsed must not be handed to the model as evidence for a weather question')
+  assert.match(weatherMessage, /Card membership as composed \(garment IDs and names only — the composer's own reason and weather\/warmth conclusions are withheld here/)
+})
+
+// thread_1789543565383 (2026-09-16, owner review): a real capture showed a composer-written card
+// `label` of "Polished Urban Walk at 50° to 40°F" reaching the model verbatim — the exact kind of
+// conclusion-bearing text the reason/weatherUsed stripping above was meant to keep out, just carried
+// through a field that survives because a bundle of several cards genuinely needs SOME way to tell
+// them apart. The label is not deleted; it is renamed to a key that says what it is.
+test('a conclusion-bearing composer label is renamed to an explicitly untrusted key, never left as `label`', () => {
+  const trench = { id: 40, name: 'cream trench coat', category: 'outerwear' }
+  const message = compactFreeformAnswerMessage({
+    profile: 'existing_card_explanation',
+    question: 'What weather does this work for?',
+    context: { outfits: [{ label: 'Polished Urban Walk at 50° to 40°F', pieceIds: [40], index: 1 }] },
+    pieces: [trench],
+    state: {},
+  })
+  assert.match(message, /"untrusted_display_label":"Polished Urban Walk at 50° to 40°F"/,
+    'the conclusion-bearing text survives (cards in a bundle still need to be told apart) but under an explicitly untrusted key')
+  assert.doesNotMatch(message, /"label":/, 'the raw `label` key must never appear in the projection')
+})
+
+// 2026-09-16 (owner review): thread_1789543565383's truncated answer ("...this outfit can be
+// trusted for an outdoor temperature range of 40°F to") must never be stored/served as if the model
+// had finished speaking. compactAnswerWithTruncationGuard is unit-tested directly with an injected
+// `ask` because askStylistWithUsage's own test-mode shortcut cannot simulate a provider stopReason
+// (see test/bounded_multi_context_continuity_e2e.test.js's documented harness limitation) — an HTTP
+// mock could never reach the truncated branch at all.
+test('compactAnswerWithTruncationGuard retries once on a token-cap truncation, then discloses honestly if still truncated', async () => {
+  const calls = []
+  const alwaysTruncated = async ({ messages, maxTokens }) => {
+    calls.push({ messages, maxTokens })
+    return { text: 'This outfit can be trusted for an outdoor temperature range of 40°F to', usage: { stopReason: 'max_tokens' } }
+  }
+  const stillTruncated = await compactAnswerWithTruncationGuard({
+    system: 'sys', messages: [{ role: 'user', content: 'q' }], maxTokens: 1500, ask: alwaysTruncated
+  })
+  assert.equal(calls.length, 2, 'exactly one retry is attempted, not an open-ended loop')
+  assert.equal(calls[0].maxTokens, 1500)
+  assert.match(calls[1].messages.at(-1).content, /cut off by the token limit/, 'the retry nudges for a shorter, complete answer')
+  assert.equal(stillTruncated.truncated, true)
+  assert.doesNotMatch(stillTruncated.text, /40°F to$/, 'the raw truncated fragment must never be the returned text')
+  assert.match(stillTruncated.text, /ran out of room/, 'an honest disclosure replaces the fragment')
+
+  let attempt = 0
+  const truncatedThenClean = async () => {
+    attempt += 1
+    return attempt === 1
+      ? { text: 'cut off mid', usage: { stopReason: 'max_tokens' } }
+      : { text: 'A complete, finished answer.', usage: { stopReason: null } }
+  }
+  const recovered = await compactAnswerWithTruncationGuard({
+    system: 'sys', messages: [{ role: 'user', content: 'q' }], ask: truncatedThenClean
+  })
+  assert.equal(recovered.truncated, false)
+  assert.equal(recovered.text, 'A complete, finished answer.', 'a clean retry ships its own real text, not the fallback disclosure')
+  assert.equal(recovered.usages.length, 2)
+
+  let onlyCall = 0
+  const cleanFirstTry = async () => {
+    onlyCall += 1
+    return { text: 'Fine on the first try.', usage: { stopReason: null } }
+  }
+  const clean = await compactAnswerWithTruncationGuard({
+    system: 'sys', messages: [{ role: 'user', content: 'q' }], ask: cleanFirstTry
+  })
+  assert.equal(onlyCall, 1, 'no retry is attempted when the first call is not truncated')
+  assert.equal(clean.truncated, false)
+  assert.equal(clean.text, 'Fine on the first try.')
 })
 
 test('explicit "ID N" garment mentions resolve into compact context, and recent history reaches existing_card_explanation and garment_fact but not general_advice', async () => {
@@ -398,11 +513,12 @@ test('single-outfit stylist catalog is complete, sparse, decision-useful, and id
   assert.match(catalog.catalog, /fit:skims/)
   assert.match(catalog.catalog, /stretch:stretchy/)
   assert.match(catalog.catalog, /#11 late warm coat/)
-  assert.match(catalog.catalog, /reads as|tailored wool coat/)
+  // The tagger read is not a discovery-row fact (2026-09-15); view_pieces carries it as tagger_notes.
+  assert.doesNotMatch(catalog.catalog, /tailored wool coat|warmth/)
   assert.match(catalog.catalog, /insulation:wool batting/)
   assert.match(catalog.catalog, /interior:full_lining/)
   assert.doesNotMatch(catalog.catalog, /#5 everyday pendant[^\n]*formal:everyday/)
-  assert.match(catalog.sparse_conventions, /omitted formality means everyday.*formal:unknown/)
+  assert.match(catalog.sparse_conventions, /omitted formal means everyday.*written `:unknown`/)
   assert.doesNotMatch(catalog.catalog, /pattern solid|opacity opaque|season year-round|needs-base no/)
   assert.ok(catalog.catalog.indexOf('#2 gallery top') < catalog.catalog.indexOf('#11 late warm coat'))
   assert.doesNotMatch(catalog.catalog, /system_paths|thermal_disposition|adequate|overshoot/)
@@ -818,6 +934,50 @@ test('compact garment facts attach bounded saved hanger and worn evidence', asyn
   assert.match(compactFreeformAnswerSystem('garment_fact'), /do not guess cotton, wool, viscose, modal or a blend/)
 })
 
+// thread_1789536455443 (2026-09-16): a 4-piece outfit (top, bottom, shoes, outerwear) with a
+// 4-image budget previously spent all four images on the FIRST two pieces (worn + hanger each),
+// leaving the shoes and — critically — the outerwear (the piece a weather-suitability question is
+// actually about) with zero visual evidence. Pass 1 now gives every piece ONE image before any
+// piece gets a second.
+test('compact garment visual evidence gives every piece in a 4-piece outfit at least one image before any piece gets a second', async () => {
+  const uploadsDir = path.join(tmpRoot, 'compact-visuals-fair-share')
+  fs.mkdirSync(uploadsDir, { recursive: true })
+  const sharp = (await import('sharp')).default
+  const names = ['top', 'bottom', 'shoes', 'outer']
+  for (const name of names) {
+    for (const kind of ['hanger', 'worn']) {
+      await sharp({ create: { width: 12, height: 12, channels: 3, background: '#f4f0ea' } })
+        .png()
+        .toFile(path.join(uploadsDir, `${name}-${kind}.png`))
+    }
+  }
+  const pieces = names.map((name, index) => ({
+    id: 100 + index, name: `${name} piece`, photo: `${name}-hanger.png`, worn_photo: `${name}-worn.png`,
+  }))
+  const blocks = await compactGarmentVisualEvidence(pieces, { uploadsDir, maxImages: 4 })
+  const texts = blocks.filter(block => block.type === 'text').map(block => block.text)
+  // Every one of the four pieces gets its one image (worn preferred) — none is left with zero,
+  // and no piece gets a second image while another still has none.
+  for (const name of names) {
+    assert.ok(texts.some(text => text.includes(`${name} piece`)), `${name} has no visual evidence at all: ${texts.join(' | ')}`)
+  }
+  assert.equal(blocks.filter(block => block.type === 'image').length, 4)
+  assert.deepEqual(texts, names.map(name => `Saved worn photo for ${name} piece:`))
+
+  // With only two pieces (so pass 1 uses only 2 of the 4-image budget), pass 2 fills in each
+  // piece's SECOND photo afterward, in the same order — never a third image for the first piece
+  // before the second piece gets its first (which pass 1 already guaranteed above).
+  const twoPieces = pieces.slice(0, 2)
+  const withSpareCapacity = await compactGarmentVisualEvidence(twoPieces, { uploadsDir, maxImages: 4 })
+  const spareTexts = withSpareCapacity.filter(block => block.type === 'text').map(block => block.text)
+  assert.deepEqual(spareTexts, [
+    'Saved worn photo for top piece:',
+    'Saved worn photo for bottom piece:',
+    'Saved hanger photo for top piece:',
+    'Saved hanger photo for bottom piece:',
+  ])
+})
+
 // thread_1787728618995: asked whether a lace-sleeve blouse could layer over a turtleneck, the
 // compact garment_fact answer confidently said the pairing worked ("solves both problems at
 // once") despite both pieces carrying sleeve_length: "long" in the supplied structured facts —
@@ -826,11 +986,17 @@ test('compact garment facts attach bounded saved hanger and worn evidence', asyn
 // canonical outfitValidation.js verdict shared by propose_outfit/plan/capsule validation — see
 // evaluateLayerPairConstruction in styling-engine/outfitValidation.js and its census correction.
 // garment_fact now defers to that verdict instead of restating sleeve/fabric thresholds itself.
-test('garment_fact defers to the computed layering-evidence block instead of restating sleeve rules itself', () => {
+test('garment_fact states the neutral sleeve sentence and never receives a computed sleeve-geometry verdict (log-only)', async () => {
+  const { NEUTRAL_SLEEVE_LAYERING_STATEMENT } = await import('../styling-engine/outfitValidation.js')
+  const { compactFreeformAnswerMessage } = await import('../routes/ai.js')
   const system = compactFreeformAnswerSystem('garment_fact')
   assert.match(system, /layering one garment over or under another/)
-  assert.match(system, /"Layering evidence \(computed\)" block/)
-  assert.match(system, /that verdict is authoritative/)
+  assert.ok(system.includes(NEUTRAL_SLEEVE_LAYERING_STATEMENT))
+  assert.doesNotMatch(system, /Layering evidence \(computed\)|that verdict is authoritative/)
+  const voluminousInner = { id: 303, name: 'voluminous-sleeve base top', category: 'top', sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light' }
+  const structuredOuterLayer = { id: 304, name: 'structured cardigan layer', category: 'top', sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'light' }
+  const message = compactFreeformAnswerMessage({ profile: 'garment_fact', question: 'can I wear these together?', pieces: [voluminousInner, structuredOuterLayer] })
+  assert.doesNotMatch(message, /Layering evidence|incompatible|sleeve construction conflict/)
   assert.doesNotMatch(system, /sleeve_type/, 'must not cite the retired sleeve_type field')
 })
 
@@ -1083,6 +1249,25 @@ test('execution router cannot invent walking when the request supplies no activi
       explicitActivity: 'walking',
     })
     assert.equal(explicitlyWalking.value.activity, 'walking', 'structured UI activity remains authoritative')
+
+    // The chat UI's activity picker defaults to "No special activity" and sends `none` on every turn. That default must not
+    // discard explicit request language (live threads thread_1789501326521 / thread_1789501370356, 2026-09-15): the turn was
+    // locked to `none` and the walking footwear gate never ran, so mid-heel wedges were chosen for a four-hour city walk.
+    const defaultPickerWalking = await routeFreeformExecutionProfile({
+      question: 'Give me exactly one complete outfit. I’ll be walking around the city outdoors from 4–8 p.m.; comfortable for the whole outing.',
+      explicitActivity: 'none',
+    })
+    assert.equal(defaultPickerWalking.value.activity, 'walking', 'a default `none` yields to explicit walking language')
+    const defaultPickerOuting = await routeFreeformExecutionProfile({
+      question: 'Style one outfit for an afternoon and early-evening outing in Santa Fe. I will be outside from 3–8 p.m.',
+      explicitActivity: 'none',
+    })
+    assert.equal(defaultPickerOuting.value.activity, 'none', 'and still does not invent walking from an outing')
+    const selectedHiking = await routeFreeformExecutionProfile({
+      question: 'I will be walking around the city.',
+      explicitActivity: 'hiking',
+    })
+    assert.equal(selectedHiking.value.activity, 'hiking', 'a selected walking/hiking value stays authoritative')
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
   }
@@ -1173,8 +1358,17 @@ test('single-outfit payload keeps exact weather and excludes the universal workb
   assert.equal(payload.wardrobeManifestIncluded, false)
   assert.ok(payload.system.length < 15000, `narrow system unexpectedly large: ${payload.system.length}`)
   assert.match(payload.system, /Walking, sightseeing, and city errands are low-exertion outdoor exposure and do not earn warmth credits/)
-  assert.match(payload.system, /Layering & Sleeve Physics: Follow sleeve layering compatibility/)
-  assert.match(payload.system, /construct an intentional 3-layer system with a middle knit layer/)
+  // 2026-09-14: the categorical sleeve rule was replaced by the neutral sentence (sleeve geometry is log-only).
+  assert.match(payload.system, /Layering & Sleeve Physics: Sleeve shape and relative sleeve length alone do not establish whether two garments layer\./)
+  assert.doesNotMatch(payload.system, /Follow sleeve layering compatibility|cannot accommodate an inner sleeve/)
+  // 2026-09-15 (owner ruling, two passes): the "insulating coat or three-layer system" formula and
+  // its garment-category prescription are retired — thermal adequacy is judged from the system's
+  // own recorded facts, photographs, and construction, not a fixed recipe. The second pass also
+  // dropped the meta-negation that spelled out the retired formula just to disclaim it; the final
+  // wording states only the positive task.
+  assert.match(payload.system, /judge the protection of the whole worn system against the stated exposure/)
+  assert.doesNotMatch(payload.system, /construct an intentional 3-layer system with a middle knit layer/)
+  assert.doesNotMatch(payload.system, /insulating-coat-or-three-layer-system|no garment-category requirement/, 'no meta-negation naming the retired formula')
   assert.doesNotMatch(payload.system, /Planning a Coordinated Multi-Outfit Set|OCCASION & CLIMATE PROFILES|SAVED STYLIST FEEDBACK|THREAD STATE/)
 })
 
@@ -1317,8 +1511,8 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
 
     const viewed = await executeTool('view_pieces', { ids: [ids[0], ids[1], ids[2], ids[3], ids[5]] }, toolContext)
     assert.equal(viewed.filter(item => item.name).length, 5)
-    assert.match(viewed.find(item => item.id === ids[0]).truth, /fit:skims/)
-    assert.match(viewed.find(item => item.id === ids[0]).truth, /warmth:moderate/)
+    assert.match(viewed.find(item => item.id === ids[0]).truth, /whole garment: [^;]*fit skims/, 'view_pieces returns the full recorded fact line')
+    assert.doesNotMatch(viewed.find(item => item.id === ids[0]).truth, /warmth/)
     assert.equal(toolContext.freeformDiagnostics.singleOutfitWorkbenchPieceCount, 5)
 
     const targetedSecondView = await executeTool('view_pieces', { ids: [...ids, ...ids] }, toolContext)
@@ -1341,7 +1535,9 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
     assert.equal(missingBottomProposal.status, 'validation_error')
     assert.match(missingBottomProposal.message, /needs a primary_top plus primary_bottom|missing_primary_core/)
 
-    // Advisory validation: light jacket causes cold-end thermal undershoot at 48°F, but is accepted with system notes
+    // Advisory validation: a light jacket is SUBSTANTIALLY short of a 30/20 day, so the proposal is
+    // accepted with system notes rather than blocked. (2026-09-12, Concern 2: at 60/48 the same
+    // outfit is one level under its target, which is now ranking evidence rather than a note.)
     const undershootProposal = await executeTool('propose_outfit', {
       pieces: [
         { id: ids[0], role: 'primary_top' },
@@ -1352,7 +1548,7 @@ test('single-outfit complete search returns a complete stylist-owned catalog and
       label: 'Breezy light layer',
       why_it_works: 'A light layer look.',
       activity: 'none',
-      user_weather: { high_f: 60, low_f: 48, wind: 'breezy' },
+      user_weather: { high_f: 30, low_f: 20, wind: 'breezy' },
     }, toolContext)
     assert.equal(undershootProposal.status, 'success')
     assert.ok(undershootProposal.systemNotes?.length > 0)
@@ -1506,15 +1702,35 @@ test('compact garment facts carry tag confidence and allow evidence-based infere
   assert.match(system, /say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”/)
 })
 
-test('whole-wardrobe composer receives wear mechanics but is told not to recite fixed garment truth', () => {
+test('whole-wardrobe composer receives wear mechanics but is told not to recite fixed garment truth', async () => {
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  assert.match(routeSrc, /tuck_behavior: \$\{piece\.tuck_behavior\}/)
-  assert.match(routeSrc, /hem_finish: \$\{piece\.hem_finish\}/)
-  assert.match(routeSrc, /waistband_type: \$\{piece\.waistband_type\}/)
-  assert.match(routeSrc, /opacity: \$\{piece\.opacity\}/)
-  assert.match(routeSrc, /needs_base: \$\{piece\.needs_base\}/)
-  assert.match(routeSrc, /Opacity and needs_base are authoritative/)
+  // Wear mechanics reach the composer through the shared fact line (2026-09-15), checked behaviourally.
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const top = sharedGarmentEvidenceLine({ id: 1, name: 'shell', category: 'top', tuck_behavior: 'wear_over_only', hem_finish: 'curved', opacity: 'semi_sheer', needs_base: 'yes' })
+  assert.match(top, /hem curved; opacity semi_sheer; needs a base layer; .*tuck wear_over_only/)
+  assert.match(sharedGarmentEvidenceLine({ id: 2, name: 'trouser', category: 'bottom', waistband_type: 'elastic' }), /waistband elastic/)
+  assert.match(routeSrc, /sharedGarmentEvidenceLine\(p\)/)
+  assert.match(routeSrc, /Opacity and base-layer facts are authoritative/)
   assert.match(routeSrc, /Do not repeat a fixed fact the owner already knows/)
+})
+
+// Live thread_1789503026074 (2026-09-15): an opaque lace top (opacity recorded by the owner, no base-layer need recorded) was
+// layered over a shell "as a clean base". The composer rules still named the retired `needs_base: yes` / `fit_on_body` labels
+// while garment lines say "needs a base layer" / "whole garment: fit …", and nothing said an unrecorded base need is no
+// requirement. The rules must speak the fact line's vocabulary, and an opaque top without that fact carries no base requirement.
+test('base-layer rules use the shared fact-line vocabulary; an opaque garment without a recorded base need has no base requirement', async () => {
+  const { requiredBaseLayerPromptRule, layerDirectionPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const rule = requiredBaseLayerPromptRule()
+  assert.doesNotMatch(`${rule}\n${layerDirectionPromptRule({ vocabulary: 'slots' })}`, /needs_base|fit_on_body/, 'no retired label names')
+  const dependent = sharedGarmentEvidenceLine({ id: 1, name: 'open lace shrug', category: 'top', opacity: 'sheer', needs_base: 'yes', fit_on_body: 'drapes' })
+  const base = sharedGarmentEvidenceLine({ id: 2, name: 'fitted shell', category: 'top', opacity: 'opaque', fit_on_body: 'clings_drapey' })
+  assert.ok(dependent.includes('needs a base layer') && rule.includes('`needs a base layer`'), 'the rule quotes the phrase the line prints')
+  assert.ok(base.includes('whole garment: fit clings_drapey') && rule.includes('whole garment: … fit'), 'the rule points at the whole-garment fit the line prints')
+  assert.match(rule, /A garment whose facts do not say it needs a base layer has no base requirement\./)
+  const laceTop = sharedGarmentEvidenceLine({ id: 173, name: 'beige lace relaxed top', category: 'top', fabric_category: 'lace', opacity: 'opaque', sleeve_length: 'elbow', sleeve_shape: 'deep_armhole', tuck_behavior: 'wear_over_only' })
+  assert.match(laceTop, /opacity opaque/)
+  assert.doesNotMatch(laceTop, /needs a base layer/, 'an unrecorded base need is not stated as a need')
 })
 
 test('recordToolLoopUsage aggregates every paid provider iteration into turn diagnostics', () => {
@@ -2143,7 +2359,11 @@ test('compact answer profiles are unconditional, bounded, and return before the 
   assert.ok(compactStart > 0 && compactStart < payloadStart, 'compact answer must return before full manifest payload assembly')
   assert.ok(boundedStart > compactStart && boundedStart < payloadStart, 'compact and bounded execution profiles must remain separate branches')
   const compactBlock = routeSrc.slice(compactStart, boundedStart)
-  assert.match(compactBlock, /await askStylistWithUsage/)
+  // 2026-09-16 (owner review): the direct askStylistWithUsage call here was wrapped in
+  // compactAnswerWithTruncationGuard (routes/ai.js), which retries once on a provider-reported
+  // token-cap truncation and returns an honest disclosure rather than a stored fragment; the
+  // underlying askStylistWithUsage call now lives inside that helper, not inline here.
+  assert.match(compactBlock, /await compactAnswerWithTruncationGuard/)
   assert.doesNotMatch(compactBlock, /askStylistWithTools|search_wardrobe|generate_outfits/)
   assert.match(compactBlock, /compactFreeformAnswerMessage/)
   assert.match(routeSrc, /profile !== 'general_advice' && pieces\.length/, 'general advice must not receive cards, garment facts, or established wardrobe context')
@@ -2509,7 +2729,52 @@ test('stored weather physics survive echoed display prose but yield to explicit 
     question: 'Would this still work?',
     weather: '95°F and sunny'
   })
-  assert.equal('weather_profile' in superseded.threadState, false)
+  // 2026-09-15: a new explicit statement still supersedes the stored profile — but it now REPLACES
+  // it with the stated physics instead of deleting them. Previously this asserted the profile was
+  // absent entirely, which is the defect behind the live capture: the turn that stated the weather
+  // most explicitly was the turn that left THREAD STATE with no temperature at all.
+  assert.equal(superseded.threadState.weather_profile.high_f, 95, 'the stated value replaces the stored 78')
+  assert.equal(superseded.threadState.weather_profile.low_f, 95)
+  assert.equal(superseded.threadState.weather_profile.is_hot, true)
+  assert.equal(superseded.threadState.weather_profile.source, 'stated')
+})
+
+// 2026-09-15 boundary regression (live thread_1789508440573). The /ask context recorded
+// `activity: none` and a single `50°` for a request that stated walking at 50/40°F. Two separate
+// defects: the activity picker's default "none" was treated as a real choice (the same ruling the
+// execution router already got), and the structured weather profile was DELETED whenever the turn
+// stated weather, leaving one-number display prose as the only weather in THREAD STATE.
+//
+// The composer recovered the full range on that run by its own route; this pins the boundary so a
+// path that cannot recover it still gets the stated facts.
+test('a stated range and a stated activity survive into THREAD STATE despite the UI activity default', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { restoreWeatherProfile } = await import('../styling-engine/weather.js')
+
+  const payload = await buildStylistConversationPayload({
+    sessionId: `stated-context-${Date.now()}`,
+    conversationMode: 'new_request',
+    question: 'what should I wear walking around the city 1-6pm, 50/40°F?',
+    occasion: 'city',
+    activity: 'none', // exactly what the picker sends when the user never touched it
+  })
+
+  // The user's words decide when the structured field is the untouched default.
+  assert.equal(payload.threadState.established.activity, 'walking',
+    'a UI default must not outrank "walking around the city"')
+
+  // Both endpoints, not just one.
+  assert.equal(payload.threadState.weather_profile.high_f, 50)
+  assert.equal(payload.threadState.weather_profile.low_f, 40)
+  assert.equal(payload.threadState.weather_profile.is_cold, true, 'the stated range still carries its physics')
+  assert.equal(payload.threadState.established.weather, 'a forecast high of 50°F and low of 40°F',
+    'the display prose states both endpoints rather than one number')
+
+  // And the handoff routes/ai.js performs into the tool loop preserves them.
+  const restored = restoreWeatherProfile(payload.threadState.weather_profile)
+  assert.equal(restored.highF, 50)
+  assert.equal(restored.lowF, 40)
+  assert.equal(restored.isCold, true)
 })
 
 test('historical outfit-set addressability: pure resolver functions', async () => {
@@ -3154,6 +3419,38 @@ test('shared tool context falls through to live resolution when weather is unsta
   const profile = context.weatherProfile
   assert.equal(profile.weatherSource, 'live')
   assert.equal(profile.isHot, true)
+})
+
+// thread_1789546295700 (2026-09-16, owner review): the execution router resolved `early fall` for
+// this turn; a later tool call's own `season: "warm"` argument (a temperature descriptor answering
+// generate_outfits's own schema wording, not a calendar correction) silently overwrote it, and
+// lib/seasonContext.js's `warm -> summer` mapping then changed which season-eligibility exclusions
+// applied — OUT_OF_SEASON is asymmetric (`fall` excludes `warm`-tagged pieces, `summer` excludes
+// `cool`-tagged ones instead). Locking season the same way activity is already locked
+// (executionRouterActivityLocked) closes this — a later tool call's own season argument is ignored
+// for calendar-season purposes once the router's classification is locked for the turn.
+test('a router-resolved season is locked for the turn: a later tool call\'s "warm" cannot replace "early fall"', async () => {
+  const lockedToolContext = {
+    executionRouterSeasonLocked: true,
+    executionRouterSeason: 'early fall',
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { season: 'warm', occasion: 'gallery / art event' },
+    toolContext: lockedToolContext,
+    policy: { allowLiveWeather: false },
+  })
+  assert.equal(context.season, 'early fall', 'the locked router season must win over the tool call\'s own "warm" argument')
+  assert.notEqual(context.calendarSeason, 'summer', '"warm" must never reach the calendar-season mapping once season is locked')
+
+  // Unlocked (no fresh-turn router classification to preserve) still lets an explicit tool
+  // argument through unchanged — this is a lock added on top of the existing contract, not a
+  // blanket override of every season argument regardless of context.
+  const unlockedContext = await resolveToolStylingContext({
+    explicitRequest: { season: 'warm', occasion: 'gallery / art event' },
+    toolContext: {},
+    policy: { allowLiveWeather: false },
+  })
+  assert.equal(unlockedContext.season, 'warm', 'without a lock, an explicit season argument is used as before')
 })
 
 // ============================================================================
@@ -4043,7 +4340,7 @@ test('every unresolved clause is disclosed, and a new failure cannot mask a retr
   assert.equal(discloseUnresolvedFreeformChecks(first, counted, new Set(['cardProseInconsistent', 'unverifiedCitation'])), first)
 })
 
-test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans/vests as outerwear (layer_top)', () => {
+test('singleOutfitStylistCatalogLine states recorded facts only: no derived warmth and no name-derived layer_top label', () => {
   const cardigan = {
     id: 88,
     name: 'Striped knit cardigan',
@@ -4057,7 +4354,8 @@ test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans
     formality: 'everyday',
   }
   const line = singleOutfitStylistCatalogLine(cardigan)
-  assert.match(line, /^#88 Striped knit cardigan \| outerwear \(layer_top\) \| warmth:moderate;/)
+  assert.match(line, /^#88 Striped knit cardigan \| outerwear \| fab:wool;fibre:unknown;weight:medium;fit:skims;sil:relaxed;slv:unknown;/)
+  assert.doesNotMatch(line, /warmth|layer_top|navy striped knit cardigan/)
 
   const heavyCoat = {
     id: 99,
@@ -4071,7 +4369,9 @@ test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans
     formality: 'elevated',
   }
   const coatLine = singleOutfitStylistCatalogLine(heavyCoat)
-  assert.match(coatLine, /^#99 Wool trench coat \| outerwear \| warmth:warm;/)
+  assert.match(coatLine, /^#99 Wool trench coat \| outerwear \| fab:wool;fibre:unknown;weight:heavy;/)
+  assert.match(coatLine, /insulation:not recorded;interior:unknown/, 'thermal construction is stated as recorded, unknowns included')
+  assert.doesNotMatch(coatLine, /warmth/)
 
   const shoe = {
     id: 101,
@@ -4080,11 +4380,23 @@ test('singleOutfitStylistCatalogLine promotes warmth to front and tags cardigans
     colors: ['black'],
     shoe_type: 'loafer',
   }
-  const shoeLine = singleOutfitStylistCatalogLine(shoe)
-  assert.doesNotMatch(shoeLine, /warmth:/)
+  assert.doesNotMatch(singleOutfitStylistCatalogLine(shoe), /warmth:/)
 })
 
-test('buildSingleOutfitStylistCatalog provides cold workbench seeding guidance when cold', () => {
+test('buildSingleOutfitStylistCatalog gives a cold request the same instruction — no computed band target, count or garment-category formula', async () => {
+  // 2026-09-15: the engine-DERIVED thermal band target ("conditions call for 'warm' total
+  // upper-body warmth") and its cold-need workbench instruction (a specific count of a named
+  // garment category, computed and inserted only when the engine judged conditions cold) were
+  // removed. Catalog rows state recorded construction; the model judges the outfit against the
+  // stated conditions. The single-outfit system prompt no longer promises a thermal_guidance field.
+  //
+  // 2026-09-16 (thread_1789536455443): a STATIC sentence was added back — present verbatim on
+  // every call regardless of weather, naming no count and no garment category, only pointing at the
+  // catalog's own insulation/weight fields and leaving "does this call for real warmth" to the
+  // model. This is a different kind of instruction than the retired one (constant text vs. a
+  // computed injection), so the banned-phrase list below is narrowed to the specific formula that
+  // was actually retired, while the load-bearing invariant — this instruction does not vary with a
+  // derived thermal need — is still asserted below via the mild/cold comparison.
   const catalogOutput = buildSingleOutfitStylistCatalog([
     { id: 1, name: 'Tee', category: 'top' },
     { id: 2, name: 'Jeans', category: 'bottom' }
@@ -4094,8 +4406,20 @@ test('buildSingleOutfitStylistCatalog provides cold workbench seeding guidance w
       weatherProfile: { highF: 46, lowF: 46, tempBand: 'cold' }
     }
   })
-  assert.match(catalogOutput.instruction, /pull 2–3 insulating outer coats \(warmth:warm or warmth:very warm\) OR middle layer knits/)
-  assert.match(catalogOutput.thermal_guidance, /Outdoor conditions call for/)
+  assert.equal(catalogOutput.thermal_guidance, undefined)
+  assert.match(catalogOutput.instruction, /Assemble a visual workbench of 8–12 pieces/)
+  // The specific retired formula: a computed count of a named garment category.
+  assert.doesNotMatch(catalogOutput.instruction, /cold-side need|2–3 insulating|insulating outer coats|middle layer knits|cardigans or vests/)
+  // No count and no garment-category name in the new static sentence either.
+  assert.doesNotMatch(catalogOutput.instruction, /\b\d\W\d\b.{0,20}(coat|jacket|cardigan|vest|sweater|knit)/i)
+  const mild = buildSingleOutfitStylistCatalog([{ id: 1, name: 'Tee', category: 'top' }], { stylingContext: { activity: 'none', weatherProfile: { highF: 72, lowF: 62 } } })
+  assert.equal(catalogOutput.instruction, mild.instruction, 'the instruction does not vary with a derived thermal need — same text whether the request is cold or mild, leaving the judgment to the model')
+
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const { LEGACY_PROFILE, LEGACY_CONSTITUTION } = await import('../styling-engine/constitutionSeed.js')
+  const system = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION }).SINGLE_OUTFIT_STYLIST_SYSTEM
+  assert.doesNotMatch(system, /thermal_guidance|warmth band|cold-side need/)
+  assert.match(system, /This returns a sparse stylist_catalog of hard-eligible garments in identity order\./)
 })
 
 test('propose_outfit merges advisory findings into non-blocking notes in single_outfit', async () => {
@@ -4106,8 +4430,11 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
     retrievedPieceIds: new Set([10, 20, 30, 40]),
     visuallySeenPieceIds: new Set([10, 20, 30, 40]),
     freeformDiagnostics: {},
-    userWeather: { high_f: 40, low_f: 40 },
-    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold', isCold: true },
+    // 2026-09-12, Concern 2: an adjacent difference is ranking evidence, not a finding, so this
+    // fixture states conditions the outfit is SUBSTANTIALLY short of — a tee under a light cotton
+    // jacket is two levels below what 30/20 asks for, where at 40F it was merely one.
+    userWeather: { high_f: 30, low_f: 20 },
+    weatherProfile: { highF: 30, lowF: 20, tempBand: 'cold', isCold: true },
     activity: 'walking',
   }
   declareSingleOutfitIntent(toolContext)
@@ -4222,8 +4549,11 @@ test('propose_outfit merges advisory findings into non-blocking notes in full_st
     retrievedPieceIds: new Set([10, 20, 30, 40]),
     visuallySeenPieceIds: new Set([10, 20, 30, 40]),
     freeformDiagnostics: {},
-    userWeather: { high_f: 40, low_f: 40 },
-    weatherProfile: { highF: 40, lowF: 40, tempBand: 'cold', isCold: true },
+    // 2026-09-12, Concern 2: an adjacent difference is ranking evidence, not a finding, so this
+    // fixture states conditions the outfit is SUBSTANTIALLY short of — a tee under a light cotton
+    // jacket is two levels below what 30/20 asks for, where at 40F it was merely one.
+    userWeather: { high_f: 30, low_f: 20 },
+    weatherProfile: { highF: 30, lowF: 20, tempBand: 'cold', isCold: true },
     activity: 'walking',
   }
 
@@ -4260,6 +4590,7 @@ test('view_pieces projects stylistCatalogLine truth across all execution profile
   assert.equal(viewed.length, 2)
   const jacket = viewed.find(item => item.id === 10)
   assert.ok(jacket.truth)
-  assert.match(jacket.truth, /warmth:light/)
+  assert.match(jacket.truth, /whole garment: weight light/)
+  assert.doesNotMatch(jacket.truth, /warmth/)
 })
 

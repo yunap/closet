@@ -240,12 +240,22 @@ export function stylingRulesForPrompt(rules) {
   return (Array.isArray(rules) ? rules : []).filter(rule => !GENERATED_OCCASION_RECEIPT.test(String(rule || '')))
 }
 
+// RETIRED OUTFIT-REACTION COPIES (owner ruling 2026-08-08; routes/crud.js). The retired writer copied a board or outfit
+// reaction onto each reacted piece as `[feedback:<type>] (label) note`. Those copies are reactions to a combination, not
+// garment rules, so no prompt presents them as rules. The stored data is left as it is; styling-engine/ruleProvenance.js applies this.
+const RETIRED_REACTION_COPY = /^\s*\[feedback:[a-z_]+\]/
+export function isRetiredOutfitReactionCopy(rule) {
+  return RETIRED_REACTION_COPY.test(String(rule || ''))
+}
+
 // includeVisualRoles (thread_1788518048013 arc, default true so every existing caller is
 // unchanged): hero_piece/color_accent/sharpener_piece/support_piece/etc. are capsule-era STYLING-
 // ROLE judgments -- which garment should carry an outfit's visual weight in that planning
 // objective. Trip roster selection has no equivalent objective for the roles to answer, so passing
 // false there stops surfacing them as if they were a garment fact the trip model should weigh.
-export function buildWardrobePieceTruthText(piece = {}, { includeVisualRoles = true } = {}) {
+// storedRules (from styling-engine/ruleProvenance.js via buildPieceText): the owner's stored rules minus receipts, retired
+// reaction copies and saved chat replies. Without it (no database here), receipts and retired copies are still excluded.
+export function buildWardrobePieceTruthText(piece = {}, { includeVisualRoles = true, storedRules = null } = {}) {
   const parts = []
   const colors = Array.isArray(piece.colors) ? piece.colors : []
 
@@ -346,10 +356,8 @@ export function buildWardrobePieceTruthText(piece = {}, { includeVisualRoles = t
   const intelligence = pieceGarmentIntelligence(piece)
   if (intelligence.autoUseTrust) parts.push(`AI auto-use trust: ${intelligence.autoUseTrust}`)
   if (intelligence.bestOutfitRole) parts.push(`best outfit role: ${intelligence.bestOutfitRole}`)
-  if (intelligence.pairingRequirements.length) parts.push(`pairing requirements: ${intelligence.pairingRequirements.slice(0, 3).join('; ')}`)
-  if (intelligence.failureRisks.length) parts.push(`failure risks: ${intelligence.failureRisks.slice(0, 3).join('; ')}`)
-  if (intelligence.formulaCompatibility.length) parts.push(`formula compatibility: ${intelligence.formulaCompatibility.slice(0, 3).join('; ')}`)
-  if (intelligence.doNotPairRules.length) parts.push(`do not pair: ${intelligence.doNotPairRules.slice(0, 3).join('; ')}`)
+  // Tagger pairing guidance (pairing requirements, failure risks, formula compatibility, do-not-pair) is unverified and is not sent to the
+  // stylist (owner ruling 2026-09-15). The owner's stored RULES and REJECTED notes below are the pairing authority.
   const realWearNotes = Object.entries(intelligence.realWearNotes || {})
     .filter(([, value]) => value)
     .slice(0, 4)
@@ -358,7 +366,7 @@ export function buildWardrobePieceTruthText(piece = {}, { includeVisualRoles = t
   if (piece.notes) parts.push(`note: ${piece.notes}`)
 
   let text = `• ${piece.name} (${piece.category} | ${parts.join(' | ')})`
-  const promptRules = stylingRulesForPrompt(piece.styling_rules_learned)
+  const promptRules = storedRules || stylingRulesForPrompt(piece.styling_rules_learned).filter(rule => !isRetiredOutfitReactionCopy(rule))
   if (promptRules.length) {
     text += `\n  RULES (authoritative): ${promptRules.join(' | ')}`
   }
@@ -416,8 +424,6 @@ export function buildWardrobeManifestLine(piece = {}) {
 
   const attrs = [
     color,
-    isOuterwearLayerTop ? 'outerwear (layer_top)' : '',
-    warmth ? `warmth:${warmth}` : '',
     fabric ? `fabric ${fabric}` : '',
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
     piece.needs_base === 'yes' ? 'needs base layer' : '',

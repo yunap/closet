@@ -74,6 +74,7 @@ export function evaluateVisualComposerPiecePool({
   const result = buildVisualComposerRoster(pieces, {
     occasion: context.occasion,
     weatherProfile: context.weatherProfile,
+    calendarSeason: context.calendarSeason,
     mood: context.mood,
     activity: context.activity,
     request: context.requestText ?? context.request,

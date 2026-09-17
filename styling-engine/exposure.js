@@ -64,6 +64,9 @@ function normalizeExposureMode(slot = {}) {
 // recorded so a consumer can see how much to trust the number:
 //
 //   stated_user_exposure_range      the user stated the range this outfit will encounter
+//   stated_user_daily_forecast      the user stated the day's high/low, decoupled from a narrower
+//                                   outing window — real numbers, waking window estimated like any
+//                                   other daily envelope (thread_1789526496845)
 //   explicit_hourly                 an exposure window is known and sampled from real hourly data
 //   waking_window_estimate          live daily high/low, waking window estimated
 //   seasonal_waking_window_estimate model-estimated high/low, waking window estimated
@@ -152,13 +155,22 @@ function resolveConditions(resolvedWeather = null) {
     }
   }
 
-  // A structured stated-user range is the range the user told us this outfit will encounter. Do
-  // not reinterpret its low as a pre-dawn daily trough and move it upward: the live acceptance
-  // prompt in thread_1788767789621 explicitly said 60°F on departure and 48°F on return, yet the
-  // generic daily-envelope estimator silently changed the encountered low to 52.2°F. Live and
-  // model-estimated daily high/low still need the waking-window estimate below; stated-user facts
-  // do not. Duration remains honestly unknown until a typed duration field exists.
-  if (source === 'stated_user') {
+  // A structured stated-user range scoped to the outing itself (`scope: 'exposure_window'`,
+  // also the default — see validateUserWeather) is the range the user told us this outfit will
+  // encounter. Do not reinterpret its low as a pre-dawn daily trough and move it upward: the live
+  // acceptance prompt in thread_1788767789621 explicitly said 60°F on departure and 48°F on return,
+  // yet the generic daily-envelope estimator silently changed the encountered low to 52.2°F.
+  // Duration remains honestly unknown until a typed duration field exists.
+  //
+  // thread_1789526496845 (reopened 2026-09-16): a stated range scoped `daily_forecast` is a
+  // DIFFERENT claim — the day's overall high/low, stated separately from a narrower outing window,
+  // never a claim about what happens during that window. Treating it as verbatim-certain let a
+  // pre-dawn-adjacent daily low be read as the temperature during a 1-6pm walk. It falls through to
+  // the SAME waking-window estimate every live/model-estimated daily envelope already gets below —
+  // the exact numbers are kept (dailyHighF/dailyLowF), never discarded to a qualitative band; only
+  // the confidence changes, exactly like any other daily envelope of unknown intraday timing.
+  const scope = t?.scope || 'exposure_window'
+  if (source === 'stated_user' && scope === 'exposure_window') {
     return {
       dailyHighF: highF,
       dailyLowF: lowF,
@@ -173,11 +185,12 @@ function resolveConditions(resolvedWeather = null) {
   }
 
   const window = estimateWakingWindow(highF, lowF)
-  // A model estimate five weeks out and a live forecast for tomorrow are both estimates of the
-  // waking window here, but they are not equally trustworthy, so the tier records which.
-  const conditionsSource = /estimate/i.test(String(source))
-    ? 'seasonal_waking_window_estimate'
-    : 'waking_window_estimate'
+  // A model estimate five weeks out, a live forecast for tomorrow, and a user-stated daily forecast
+  // decoupled from a narrower outing are all estimates of the waking window here, but they are not
+  // equally trustworthy, so the tier records which.
+  const conditionsSource = source === 'stated_user'
+    ? 'stated_user_daily_forecast'
+    : (/estimate/i.test(String(source)) ? 'seasonal_waking_window_estimate' : 'waking_window_estimate')
 
   return {
     // The envelope is kept: it is real data, and the daily low still matters to anything genuinely

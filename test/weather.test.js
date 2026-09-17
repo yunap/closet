@@ -2,12 +2,22 @@ process.env.NODE_ENV = 'test'
 
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// tools.js (imported below for STYLIST_TOOLS) reaches db.js transitively — isolate before any import
+// resolves, per docs/database-safety.md and test/hermeticity_guard.test.js.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closet-weather-test-'))
+process.env.WARDROBE_DB_PATH = path.join(tempRoot, 'wardrobe.db')
 import {
   getCurrentWeatherProfile, getWeatherProfileForPlan, _clearWeatherCachesForTests, serializeWeatherProfile, restoreWeatherProfile,
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
   COLD_F,
 } from '../styling-engine/weather.js'
+import { weatherProfileFromStatedText } from '../styling-engine/stylingContext.js'
+import { STYLIST_TOOLS } from '../styling-engine/tools.js'
 
 test('resolved weather physics round-trips independently from display season text', () => {
   const stored = serializeWeatherProfile({ weatherSource: 'live', highF: 78, lowF: 56, isHot: false, isCold: false, isExtremeHeat: false })
@@ -186,15 +196,36 @@ test('validateWeatherEstimate: 65/45 validates; invalid shapes are rejected', ()
 })
 
 test('validateUserWeather: numeric range, single temperature, and qualitative band all validate', () => {
-  assert.deepEqual(validateUserWeather({ high_f: 65, low_f: 45 }), { temperature: { highF: 65, lowF: 45, band: null }, precipitation: null, wind: null })
-  assert.deepEqual(validateUserWeather({ high_f: 70, low_f: 70 }), { temperature: { highF: 70, lowF: 70, band: null }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ high_f: 65, low_f: 45 }), { temperature: { highF: 65, lowF: 45, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ high_f: 70, low_f: 70 }), { temperature: { highF: 70, lowF: 70, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
   assert.deepEqual(validateUserWeather({ temperature_band: 'cold' }), { temperature: { highF: null, lowF: null, band: 'cold' }, precipitation: null, wind: null })
   assert.deepEqual(validateUserWeather({ precipitation: 'rain' }), { temperature: null, precipitation: 'rain', wind: null })
 })
 
-test('validateUserWeather rejects range+band together, incomplete ranges, empty objects, and invalid enums', () => {
+// thread_1789526496845 (reopened): `scope` defaults to 'exposure_window' — the only behavior that
+// existed before this field — so any caller that predates it (the dedicated "Temperatures you'll be
+// out in" UI numeric fields, docs/app-surface-map.md 2026-09-12) is completely unaffected. Only a
+// caller that explicitly says `scope: 'daily_forecast'` gets the new, less-certain treatment.
+test('validateUserWeather: scope defaults to exposure_window; an explicit daily_forecast scope is preserved', () => {
+  assert.deepEqual(validateUserWeather({ high_f: 50, low_f: 40, scope: 'daily_forecast' }),
+    { temperature: { highF: 50, lowF: 40, band: null, scope: 'daily_forecast' }, precipitation: null, wind: null })
+  assert.equal(validateUserWeather({ high_f: 50, low_f: 40 }).temperature.scope, 'exposure_window', 'no scope stated defaults to the prior, only behavior')
+  assert.equal(validateUserWeather({ high_f: 50, low_f: 40, scope: 'not_a_real_scope' }).temperature.scope, 'exposure_window', 'an invalid scope value falls back to the default rather than rejecting the whole statement')
+})
+
+// 2026-09-15 (spec §4.1 amended): a genuinely one-sided forecast ("highs near 85") states one
+// endpoint and leaves the other unknown. The unknown side stays null rather than being rejected or
+// manufactured equal to the stated one — see weather.js's validateUserWeather and
+// classifyTemperatureRange, and stylingIntent.js's extractStructuredUserWeather.
+test('validateUserWeather: a one-sided stated range keeps the unknown endpoint null, not rejected or manufactured', () => {
+  assert.deepEqual(validateUserWeather({ high_f: 85 }), { temperature: { highF: 85, lowF: null, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ low_f: 40 }), { temperature: { highF: null, lowF: 40, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.equal(validateUserWeather({ high_f: 'warm' }), null, 'a stated-but-non-finite high is still rejected')
+  assert.equal(validateUserWeather({ low_f: '40' }), null, 'a numeric string is not a number even one-sided')
+})
+
+test('validateUserWeather rejects range+band together, empty objects, and invalid enums', () => {
   assert.equal(validateUserWeather({ high_f: 65, low_f: 45, temperature_band: 'cold' }), null, 'range and band together')
-  assert.equal(validateUserWeather({ high_f: 65 }), null, 'incomplete numeric range')
   assert.equal(validateUserWeather({}), null, 'empty object')
   assert.equal(validateUserWeather(null), null)
   assert.equal(validateUserWeather({ temperature_band: 'freezing' }), null, 'invalid band enum')
@@ -220,6 +251,64 @@ test('classifyTemperatureRange: exclusive vs non-exclusive, and a 90/40 range is
   const wideExclusive = classifyTemperatureRange({ highF: 90, lowF: 40 }, { exclusive: true })
   assert.equal(wideExclusive.isHot, false)
   assert.equal(wideExclusive.isCold, false, 'exclusive mode still collapses a genuinely wide single-context range — callers must opt into non-exclusive for a range')
+})
+
+// 2026-09-15: a one-sided stated range ("highs near 85") must classify off the endpoint it has
+// rather than falling back to {isHot:false, isCold:false} as though the weather were unresolved —
+// that used to indistinguishably mean "unavailable" and "half-stated".
+test('classifyTemperatureRange: a one-sided range classifies from the known endpoint only', () => {
+  assert.deepEqual(classifyTemperatureRange({ highF: 85, lowF: null }), { isHot: true, isCold: false })
+  assert.deepEqual(classifyTemperatureRange({ highF: null, lowF: 30 }), { isHot: false, isCold: true })
+  assert.deepEqual(classifyTemperatureRange({ highF: 60, lowF: null }), { isHot: false, isCold: false })
+  assert.deepEqual(classifyTemperatureRange({ highF: undefined, lowF: undefined }), { isHot: false, isCold: false })
+})
+
+// 2026-09-15: statedTemperatures (stylingContext.js), the prose-parsing sibling behind
+// weatherProfileFromStatedText, previously took every 2-3 digit number in the text and set
+// high_f/low_f to their max/min — so "highs near 85" (one number) collapsed to 85/85, inventing a
+// low the text never stated. It now recognizes the same high/low qualifiers as the structured
+// extractor and leaves the unstated side unresolved.
+test('weatherProfileFromStatedText: a one-sided statement does not manufacture the missing endpoint', () => {
+  const highOnly = weatherProfileFromStatedText({ statedWeather: 'highs near 85F this week' })
+  assert.equal(highOnly.highF, 85)
+  assert.equal(highOnly.lowF, null, 'the low was never stated and must stay unresolved, not equal to 85')
+  assert.equal(highOnly.isHot, true)
+
+  const lowOnly = weatherProfileFromStatedText({ statedWeather: 'down to 30F overnight' })
+  assert.equal(lowOnly.lowF, 30)
+  assert.equal(lowOnly.highF, null)
+  assert.equal(lowOnly.isCold, true)
+
+  const range = weatherProfileFromStatedText({ statedWeather: '50/40°F and walking around the city' })
+  assert.equal(range.highF, 50)
+  assert.equal(range.lowF, 40)
+
+  const point = weatherProfileFromStatedText({ statedWeather: "it's 46°F out" })
+  assert.equal(point.highF, 46)
+  assert.equal(point.lowF, 46, 'a genuine point temperature keeps the ratified equal-endpoint representation')
+})
+
+// 2026-09-16 (thread_1789526496845, reopened a second time): converting an ambiguous daily-forecast
+// statement into a qualitative temperature_band threw away real numeric evidence — the evaluator
+// went completely silent (no demand level at all), which is not the same thing as a fixed timing
+// defect. The corrected design keeps the exact numbers and adds a `scope` field distinguishing the
+// two claims the same two numbers can make: 'exposure_window' (certain — what the wearer will
+// actually be outside in) vs 'daily_forecast' (real numbers, but not a claim about a narrower stated
+// outing). The engine (exposure.js) treats a daily_forecast-scoped range exactly like a live/
+// model-estimated daily envelope — same waking-window estimate, same uncertainty — never a band and
+// never a certain claim about the outing. See its own pinned tests in exposureContext.test.js and
+// thermalDemand.test.js.
+test('generate_outfits\' user_weather schema requires scope alongside a numeric range, and does not ask the model to convert real numbers into a band', () => {
+  const tool = STYLIST_TOOLS.find(t => t.name === 'generate_outfits')
+  assert.ok(tool, 'generate_outfits tool exists')
+  const schema = tool.input_schema.properties.user_weather
+  assert.ok(schema.properties.scope, 'scope is a real schema field')
+  assert.deepEqual(schema.properties.scope.enum, ['exposure_window', 'daily_forecast'])
+  assert.match(schema.properties.scope.description, /'exposure_window'.*wearer will personally be outside in/)
+  assert.match(schema.properties.scope.description, /'daily_forecast'.*separately from a narrower/)
+  assert.match(schema.properties.temperature_band.description, /do not throw away real numbers by converting them to a band yourself/)
+  assert.doesNotMatch(schema.description + schema.properties.high_f.description + schema.properties.low_f.description,
+    /translate.*into temperature_band/, 'the model is never told to convert a numeric statement into a band')
 })
 
 test('resolveWeatherContext: user temperature overrides live temperature', () => {

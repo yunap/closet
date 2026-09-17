@@ -65,7 +65,10 @@ export function normalizeMission(value) {
 export function extractWeatherContext(text = '') {
   const raw = String(text || '')
   const normalized = raw.toLowerCase().replace(/[–—]/g, '-')
-  const numeric = normalized.match(/\b(?:highs?|lows?|around|about|near|mid|low|upper)?\s*(\d{2,3})(?:\s*(?:-|to)\s*(\d{2,3}))?\s*(?:degrees?|deg|f|°)\b/)
+  // 2026-09-15: `/` joins the endpoints in the most common way a forecast is stated ("50/40°F").
+  // Without it this matched only the second number, so the display prose said "40°" for a request
+  // that stated both. Adding a separator is factual parsing, not interpretation.
+  const numeric = normalized.match(/\b(?:highs?|lows?|around|about|near|mid|low|upper)?\s*(\d{2,3})(?:\s*(?:-|\/|to)\s*(\d{2,3}))?\s*(?:degrees?|deg|f|°)\b/)
   if (numeric) return numeric[0].trim()
   const decade = normalized.match(/\b(?:mid|low|upper)?\s*(\d{2})s\b/)
   if (decade) return decade[0].trim()
@@ -94,13 +97,18 @@ export function extractStructuredUserWeather(text = '') {
   const normalized = String(text || '')
     .toLowerCase()
     .replace(/[–—→]/g, '-')
-  const rangeMatch = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
+  // 2026-09-15: `/` is a range separator too ("50/40°F"). Without it this fell through to the
+  // single-value branch and returned {high:40, low:40} — the stated high silently lost, on exactly
+  // the requests where the user was most explicit.
+  const rangeMatch = normalized.match(/\b(-?\d{1,3})\s*(?:°\s*)?(?:f(?:ahrenheit)?)?\s*(?:-|\/|to)\s*(-?\d{1,3})\s*(?:(?:°|degrees?)\s*)?(?:f(?:ahrenheit)?)\b/)
   // A wearing-window request often states the endpoints as two timed observations rather than
   // typographically as a range: "60°F when I leave and 48°F after sunset". Both values must carry
   // an explicit Fahrenheit unit so this remains factual extraction, not climate interpretation.
   const explicitFahrenheitValues = [...normalized.matchAll(/(-?\d{1,3})\s*(?:(?:°\s*)?f(?:ahrenheit)?|degrees?\s+fahrenheit)\b/g)]
     .map(match => Number(match[1]))
   let endpoints = null
+  // 'high' or 'low' when the user stated only that side of a forecast and the other is unknown.
+  let sided = null
   if (rangeMatch) {
     endpoints = [Number(rangeMatch[1]), Number(rangeMatch[2])]
   } else if (explicitFahrenheitValues.length === 2) {
@@ -108,13 +116,33 @@ export function extractStructuredUserWeather(text = '') {
   } else if (explicitFahrenheitValues.length === 1) {
     const isPastReference = /\b(yesterday|last\s+(?:week|month|year|night|weekend))\b/.test(normalized)
     if (!isPastReference) {
-      endpoints = [explicitFahrenheitValues[0], explicitFahrenheitValues[0]]
+      // 2026-09-15: three distinguishable statements, not two.
+      //   complete range  — "50/40°F"      -> high 50, low 40
+      //   point temperature — "it's 46°F"  -> high 46, low 46 (ratified, spec §4.1)
+      //   one-sided forecast — "highs 85F" -> high 85, low UNKNOWN
+      // The third used to take the point path, manufacturing a low the user never stated. A
+      // qualifier must sit immediately before the number, so this stays factual reading of what
+      // was written rather than an interpretation of what the weather is likely to do.
+      const value = explicitFahrenheitValues[0]
+      // (?!\d) rather than a trailing \b: "85f"/"40°f" has no word-boundary between the digit and
+      // the unit letter directly following it (both are word characters), so a plain trailing \b
+      // silently failed to match on exactly the units an explicit-Fahrenheit statement carries —
+      // "highs near 85F" never matched statedHigh at all and fell through to the point-temperature
+      // branch, manufacturing the very equal-endpoint reading this branch exists to avoid.
+      const near = `\\b[^0-9]{0,12}${value}(?!\\d)`
+      const statedHigh = new RegExp(`\\b(?:highs?|up\\s+to|no\\s+higher\\s+than)${near}`).test(normalized)
+      const statedLow = new RegExp(`\\b(?:lows?|overnight|down\\s+to|no\\s+lower\\s+than)${near}`).test(normalized)
+      if (statedHigh && !statedLow) sided = 'high'
+      else if (statedLow && !statedHigh) sided = 'low'
+      endpoints = [value, value]
     }
   }
   if (!endpoints) return null
   const [first, second] = endpoints
   if (!Number.isFinite(first) || !Number.isFinite(second) || first < -100 || first > 150 || second < -100 || second > 150) return null
-  const weather = { high_f: Math.max(first, second), low_f: Math.min(first, second) }
+  const weather = sided === 'high' ? { high_f: first }
+    : sided === 'low' ? { low_f: first }
+    : { high_f: Math.max(first, second), low_f: Math.min(first, second) }
   if (/\b(rain|rainy|showers?|drizzle|wet)\b/.test(normalized)) weather.precipitation = 'rain'
   else if (/\b(snow|snowy)\b/.test(normalized)) weather.precipitation = 'snow'
   else if (/\b(dry|no (?:rain|snow|precipitation))\b/.test(normalized)) weather.precipitation = 'none'

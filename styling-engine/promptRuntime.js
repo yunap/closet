@@ -16,7 +16,8 @@ export {
   EDITORIAL_IMAGE_REALISM_RULE,
   STYLE_SELECTED_ITEM_FEW_SHOTS,
   WHOLE_WARDROBE_OUTFIT_ARCHETYPES,
-  OUTFIT_MISSIONS
+  OUTFIT_MISSIONS,
+  STYLIST_COMPETENCE_CONTRACT
 } from './prompts.js'
 
 export function loadUserProfile(userId = getCurrentUserId()) {

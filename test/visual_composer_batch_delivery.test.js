@@ -78,13 +78,12 @@ test('visual composer batch delivery: delivers all requested structurally valid 
           dominantDirection: 'clean casual',
           silhouette: 'relaxed',
           bestFor: 'casual',
-          pieceIds: [topId, bottomId, shoesId, lightLayerId],
-          pieces: [
-            { id: topId, name: 'Cotton Crewneck Top', category: 'top' },
-            { id: bottomId, name: 'Straight Chino Pants', category: 'bottom' },
-            { id: shoesId, name: 'Leather Derby Shoes', category: 'shoes' },
-            { id: lightLayerId, name: 'Linen Overshirt', category: 'outerwear' },
-          ]
+          base_top_id: topId,
+          bottom_id: bottomId,
+          dress_id: null,
+          middle_layer_id: null,
+          outer_layer_id: lightLayerId,
+          shoes_id: shoesId,
         },
         {
           id: 'look_2',
@@ -93,13 +92,12 @@ test('visual composer batch delivery: delivers all requested structurally valid 
           dominantDirection: 'workwear structure',
           silhouette: 'straight',
           bestFor: 'casual',
-          pieceIds: [topId, bottomId, shoesId, midJacketId],
-          pieces: [
-            { id: topId, name: 'Cotton Crewneck Top', category: 'top' },
-            { id: bottomId, name: 'Straight Chino Pants', category: 'bottom' },
-            { id: shoesId, name: 'Leather Derby Shoes', category: 'shoes' },
-            { id: midJacketId, name: 'Denim Work Jacket', category: 'outerwear' },
-          ]
+          base_top_id: topId,
+          bottom_id: bottomId,
+          dress_id: null,
+          middle_layer_id: null,
+          outer_layer_id: midJacketId,
+          shoes_id: shoesId,
         },
         {
           id: 'look_3',
@@ -108,13 +106,12 @@ test('visual composer batch delivery: delivers all requested structurally valid 
           dominantDirection: 'grounded tailored warmth',
           silhouette: 'column',
           bestFor: 'casual',
-          pieceIds: [topId, bottomId, shoesId, heavyCoatId],
-          pieces: [
-            { id: topId, name: 'Cotton Crewneck Top', category: 'top' },
-            { id: bottomId, name: 'Straight Chino Pants', category: 'bottom' },
-            { id: shoesId, name: 'Leather Derby Shoes', category: 'shoes' },
-            { id: heavyCoatId, name: 'Wool Overcoat', category: 'outerwear' },
-          ]
+          base_top_id: topId,
+          bottom_id: bottomId,
+          dress_id: null,
+          middle_layer_id: null,
+          outer_layer_id: heavyCoatId,
+          shoes_id: shoesId,
         },
       ]
     }

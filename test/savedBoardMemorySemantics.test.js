@@ -774,7 +774,11 @@ test('getWholeWardrobeFeedbackMemory formats payload.occasion and outfit.bestFor
   }))
 
   const memory = getWholeWardrobeFeedbackMemory(20)
-  assert.match(memory, /Whole-wardrobe outfit feedback to suppress/)
+  // 2026-09-13: the header follows the narrow evidence authority — a reaction to one exact combination,
+  // not a rule against its formula, roles or occasion. The per-line formatting below is unchanged.
+  assert.match(memory, /Whole-wardrobe outfit feedback\. Each line is a reaction to one exact combination/)
+  assert.match(memory, /Do not infer dislike of its formula, piece roles, occasion/)
+  assert.doesNotMatch(memory, /Avoid repeating these exact combinations, piece roles, formulas, or occasion mismatches/)
   assert.match(memory, /bad_occasion \/ Too formal \(gallery opening\) \| formula: column_outer \| pieces: Silk blouse \+ Pleated skirt/)
   assert.match(memory, /not_me \/ Over-styled \(weekend brunch\) \| formula: relaxed_tailoring \| pieces: Linen blazer \+ Denim jeans/)
 })

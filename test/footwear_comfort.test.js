@@ -104,6 +104,13 @@ async function seedWardrobe() {
   }
 }
 
+function selectedShoeAnchor(messages = []) {
+  const match = JSON.stringify(messages || []).match(/SELECTED ANCHOR ID (\d+)/)
+  const anchorId = match ? Number(match[1]) : null
+  const shoeIds = [seeded.stiletto, seeded.blockHeel, seeded.sneaker, seeded.kittenHeel, seeded.ankleBoot].map(Number)
+  return anchorId != null && shoeIds.includes(anchorId) ? anchorId : null
+}
+
 function mockAiHandler({ system, messages }) {
   const text = String(system || '')
   
@@ -138,12 +145,13 @@ function mockAiHandler({ system, messages }) {
         dominantDirection: 'structure with shoe',
         silhouette: 'controlled top over lower line',
         bestFor: 'evening',
-        pieceIds: [seeded.top, seeded.bottom, seeded.sneaker],
-        pieces: [
-          { id: seeded.top, name: 'black tee', category: 'top' },
-          { id: seeded.bottom, name: 'blue jeans', category: 'bottom' },
-          { id: seeded.sneaker, name: 'canvas sneakers', category: 'shoes' }
-        ],
+        base_top_id: seeded.top,
+        bottom_id: seeded.bottom,
+        dress_id: null,
+        middle_layer_id: null,
+        outer_layer_id: null,
+        // A compliant selected-piece answer names its footwear anchor in the shoes slot.
+        shoes_id: selectedShoeAnchor(messages) ?? seeded.sneaker,
         reason: 'Styling mock reason.',
         watchFor: 'Keep the shoe visible.',
       }],
@@ -500,7 +508,8 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
       ? capturedMessages[0].content.map(part => part?.text || '').join('\n')
       : String(capturedMessages[0].content || '')
     assert.ok(userText.includes('Activity: walking'), 'The prompt must contain Activity: walking')
-    assert.ok(userText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The prompt must contain walking guidance')
+    // 2026-09-15: gate-enforced exclusions only — the SOFT warm-boot list stays in scoring.
+    assert.ok(userText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals'), 'The prompt must contain walking guidance')
   } finally {
     globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
   }
@@ -516,7 +525,9 @@ test('9. Whole-wardrobe clash critic drops a questionable outfit its own prose r
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = (args) => {
     const text = String(args.system || '')
     if (text.includes('second stylist reviewing outfits')) {
-      return { flagged: [{ index: 0, reason: 'two competing prints fight in the photo despite the shared warm palette' }] }
+      // Two prints fighting is the clear, photograph-grounded failure the critic may still reject;
+      // since 2026-09-13 only an explicit `reject` removes a card (a verdict-less flag reads as a note).
+      return { flagged: [{ index: 0, verdict: 'reject', reason: 'two competing prints fight in the photo despite the shared warm palette' }] }
     }
     return defaultHandler(args)
   }

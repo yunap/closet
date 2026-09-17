@@ -1,4 +1,4 @@
-import { evaluateOutfitEnvironmentalAdequacy } from './outfitEnvironmentalAdequacy.js'
+import { evaluateOutfitEnvironmentalAdequacy, ENVIRONMENTAL_ADEQUACY_CODES } from './outfitEnvironmentalAdequacy.js'
 import {
   pieceDressSupportsUnderlayer,
   pieceHasExplicitBaseLayerEvidence,
@@ -33,7 +33,7 @@ const BASE_LAYER_INCOMPATIBLE_OPACITIES = new Set(['sheer', 'semi_sheer', 'open_
 // Prompt projection of the executable contract. Prompts may explain the rule to a composer, but
 // may not maintain a second list of fit values that can drift from the validator.
 export function requiredBaseLayerPromptRule() {
-  return `- Base-layer compatibility: a piece labeled \`needs_base: yes\` requires a base underneath whose \`fit_on_body\` is \`skims\`, \`clings_stretchy\`, or \`clings_drapey\` — close enough to the body to sit cleanly under an open or sheer dependent garment without its own excess fabric bunching or showing through unevenly. A candidate base tagged \`drapes\`, \`hangs_straight\`, \`structured\`, or \`none\` does not satisfy this even if it is otherwise the right color or a good match. Missing fit or opacity is unknown rather than proof either way: inspect both garments before using that pairing. This rule is only for a garment that needs required coverage beneath it; it is not a close-fit rule for ordinary layering. When two pieces share a near-identical name, check each candidate's own fields by ID — never assume they are interchangeable.`
+  return `- Base-layer compatibility: a garment whose facts say it \`needs a base layer\` requires a base underneath whose whole-garment fit (\`whole garment: … fit\`) is \`skims\`, \`clings_stretchy\`, or \`clings_drapey\` — close enough to the body to sit cleanly under an open or sheer dependent garment without its own excess fabric bunching or showing through unevenly. A candidate base whose fit is \`drapes\`, \`hangs_straight\` or \`structured\` does not satisfy this even if it is otherwise the right color or a good match. A garment whose facts do not say it needs a base layer has no base requirement. Missing fit or opacity is unknown rather than proof either way: inspect both garments before using that pairing. This rule is only for a garment that needs required coverage beneath it; it is not a close-fit rule for ordinary layering. When two pieces share a near-identical name, check each candidate's own fields by ID — never assume they are interchangeable.`
 }
 
 // Model-visible projection of the canonical category structure. Options describe deliberate flow
@@ -43,7 +43,21 @@ export function categoryOutfitStructurePromptRule({
   strictSingleTop = false,
   maxOuterwear = null,
   allowAccessories = true,
+  // Opt-in, default off: every existing caller keeps the byte-for-byte strict contract below, and
+  // only a caller that has decided layering is worth the extra surface asks for this text.
+  allowMiddleLayer = false,
 } = {}) {
+  if (strictSingleTop && maxOuterwear === 1 && !allowAccessories && allowMiddleLayer) {
+    // The layering contract. The strict text below banned the middle layer outright — which also
+    // banned "open shirt or vest over a fitted base is almost always better than the top alone",
+    // the owner's own Layer 2 formula, and the three-layer system this same system prompt asks for
+    // under Thermal Adequacy. Measured cost: 0 of 27 saved outfits carried a middle layer.
+    //
+    // What made the ban load-bearing was that nothing else enforced it; evaluateOutfitStructure now
+    // does (too_many_upper_layers / multiple_outerwear / multiple_tops), so this text describes a
+    // bound the gate actually holds instead of asking the model to hold it.
+    return 'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and outerwear never replaces the required top. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer worn over the base (a cardigan, vest, or overshirt) and at most one OUTER layer over that (a coat or jacket). Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. Put each garment in the slot for the job it does in the outfit, and name the relationship in styling_instructions. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
+  }
   if (strictSingleTop && maxOuterwear === 1 && !allowAccessories) {
     // Preserve the ratcheted visual-composer contract byte-for-byte while moving its ownership
     // here. Capsule expansion deliberately selects the same strict, accessory-free policy.
@@ -404,6 +418,11 @@ export function evaluateLayerDirections(pieces = [], { roleAware = false } = {})
     })
   })
 
+  // DIRECTION ONLY. Which garment is worn over which is this stage's entire question; sleeve
+  // CONSTRUCTION — including the chain fold — belongs to evaluateLayerPairConstruction, and
+  // evaluateWearableOutfit composes both stages. An earlier version of the chain work landed here
+  // as well, so a propagated conflict was reported twice, once under a stage that has no business
+  // owning it.
   const findings = pairs.flatMap(pair => pair.findings)
   const verdict = pairs.some(pair => pair.verdict === 'incompatible')
     ? 'incompatible'
@@ -442,7 +461,12 @@ export function evaluateLayerDirections(pieces = [], { roleAware = false } = {})
 // alone resolves layer_top_over_primary_top (source: outerwear_category), no notes or dependency
 // required. Composers cite this instead of writing their own direction rule; the mechanical verdict,
 // not the prompt, decides what counts as evidence.
-export function layerDirectionPromptRule() {
+// The slot composers state wear order structurally (styling-engine/composerSlots.js), so they get the
+// same direction evidence in their own vocabulary rather than a role word they never emit.
+export function layerDirectionPromptRule({ vocabulary = 'roles' } = {}) {
+  if (vocabulary === 'slots') {
+    return `- Layer direction: the slot states the wear order — \`middle_layer_id\` is worn over the base (\`base_top_id\` or \`dress_id\`) and \`outer_layer_id\` over both. Choose a garment for an over or under slot only when it can actually be worn there. An outerwear-category piece is itself direction evidence: it goes over the base. A \`base_top_id\` beside a \`dress_id\` is worn under that dress, so pair them only when the evidence supports it. Otherwise, direction comes from explicit garment notes describing a piece as an overlay or a base/underlayer, a piece that itself needs a base layer beneath it (that piece goes over the other piece serving as its base — whether the dependent piece is the added layer or the dress), or a dress explicitly meant to be worn over a top. Missing direction evidence means the direction is unknown, not that the two pieces cannot layer: inspect both garments before deciding how they layer.`
+  }
   return `- Layer direction: a layer_top role establishes that a pairing is intended to layer together, but does not by itself decide which one sits over or under — that comes from the piece's own category or from recorded construction/intent/dependency evidence. An outerwear-category piece is itself direction evidence: it sits over the primary top. Otherwise, direction comes from explicit garment notes describing a piece as an overlay or a base/underlayer, a piece that itself needs a base layer beneath it (that piece sits over the other piece serving as its base — whether the dependent piece is the added layer or the dress), or a dress explicitly meant to be worn over a top. Missing direction evidence means the direction is unknown, not that the two pieces cannot layer: inspect both garments before deciding how they layer.`
 }
 
@@ -515,12 +539,18 @@ function layerConstructionPair(added, base, direction = null) {
       innerZones[zone] === 'elevated' && pieceOuterSleeveCapacity(outerPiece, zone) === 'restricted'
     )
     if (conflictZone) {
-      const reason = `${innerLabel}'s sleeve carries excess volume at the ${SLEEVE_INTERFERENCE_ZONE_LABELS[conflictZone]} that ${outerLabel}'s narrower, structured sleeve has no room to accommodate`
+      // 2026-09-16: worded as a heuristic signal, not a confirmed defect — this compares recorded
+      // sleeve LENGTH and SHAPE only. Actual fabric compressibility and inner construction (does
+      // the sleeve compress under the layer, is there a gusset) are not recorded fields, so a
+      // shape-only match can and does false-positive on genuinely wearable combinations. That is
+      // exactly why this finding is log-only (never a hard reject, never model-facing) rather than
+      // a gate — see the log-only sleeve-geometry architecture, `docs/engine-behaviour-map.md`.
+      const reason = `${innerLabel}'s sleeve reads as carrying excess volume at the ${SLEEVE_INTERFERENCE_ZONE_LABELS[conflictZone]}, which ${outerLabel}'s narrower sleeve profile may not have room for based on recorded shape alone`
       return {
         verdict: 'incompatible',
         addedPiece: added,
         basePiece: base,
-        findings: [layerConstructionFinding('layer_construction_sleeve_conflict', `${addedLabel} + ${baseLabel} is a checkable sleeve construction conflict: ${reason}`, 'error', evidence)],
+        findings: [layerConstructionFinding('layer_construction_sleeve_conflict', `${addedLabel} + ${baseLabel}: a possible sleeve construction conflict by shape heuristic only (not confirmed) — ${reason}; compressibility and construction are not recorded, so this may be a false positive`, 'error', evidence)],
         evidence,
         sightRequired: 'none',
       }
@@ -611,29 +641,217 @@ export function evaluateAssignedLayerPairConstruction(inner, outer) {
 // owner instead of leaving it to prompt prose per consumer. Consumes resolveLayerDirection so the
 // two questions ("who's on top" and "does the sleeve construction work") never disagree about who is
 // inner vs outer for the same pair.
+// THE WORN CHAIN, INNERMOST FIRST — base, then any middle layer worn over it, then the outermost
+// piece. Returns null when the outfit has no chain longer than one pair, which is every two-garment
+// outfit and therefore every case the pairwise rule already answers on its own.
+function orderedUpperChain(pieces = [], { roleAware = false } = {}) {
+  if (!roleAware) return null
+  const list = Array.isArray(pieces) ? pieces : []
+  const base = list.find(piece => piece.role === 'dress') || list.find(piece => piece.role === 'primary_top')
+  if (!base) return null
+  const middles = list.filter(piece => piece.role === 'layer_top'
+    && resolveLayerDirection(piece, base, base.role === 'dress' ? 'layer_top_dress' : 'layer_top_primary_top')?.outer === piece)
+  const outers = list.filter(piece => piece.role === 'outerwear')
+  const chain = [base, ...middles, ...outers]
+  return chain.length >= 3 ? chain : null
+}
+
+// CHAIN-AWARE CONSTRUCTION: what sleeve system does each successive outer layer actually receive?
+//
+// The pairwise rule compares garment to garment, so accommodation reads as ABSORPTION: once a
+// relaxed cardigan is judged able to contain a gathered turtleneck sleeve, that volume vanishes
+// before the next layer is evaluated. Live thread_1789274442146 shipped exactly that — gathered
+// turtleneck, cardigan, fitted puffer, both adjacent pairs `compatible`, zero findings, and the
+// model then invented that the puffer's ribbed TORSO panels supplied sleeve capacity.
+//
+// The fold is deliberately qualitative. It uses the same three-value vocabulary the pair rule uses
+// (`elevated`/`none`/null against `accommodates`/`restricted`/null) and adds no magnitudes, no
+// layer counting, and no fabric-weight arithmetic: "accommodates" means the layer can be worn over
+// the sleeve, not that the volume has left the system. A stack of ordinary straight sleeves
+// therefore never becomes a conflict, and sleeve LENGTH is not used as a proxy for sleeve
+// thickness — that dimension is unresolved (docs/garment-field-reference.md) and stays unresolved.
+//
+// A hard conflict needs both participants known to have a sleeve: the garment the volume came from
+// and the garment restricting it. Unknown evidence propagates outward and can never be certified
+// compatible later, but it also never becomes a fabricated failure.
+function chainConstructionFindings(chain) {
+  const findings = []
+  let system = null
+  const origin = {}          // zone -> { piece, index, cuffed }
+  for (const [index, piece] of chain.entries()) {
+    const cuffed = pieceSleeveLayerEvidence(piece).isCuffed
+    // A garment with no cuffed sleeve contributes nothing to the sleeve system — not volume, and
+    // not unknownness. Its unrecorded sleeve_shape is irrelevant rather than unresolved, which is
+    // the same call the pair rule's own not-both-cuffed short-circuit makes.
+    const own = cuffed === false
+      ? { shoulder: 'none', arm: 'none', lowerArm: 'none', armhole: 'none' }
+      : pieceSleeveInterference(piece)
+    if (system === null) {
+      system = { ...own }
+      for (const zone of SLEEVE_INTERFERENCE_ZONES) {
+        if (own[zone] === 'elevated') origin[zone] = { piece, index, cuffed: cuffed === true }
+      }
+      continue
+    }
+    if (cuffed === false) continue
+    // One finding per RELATIONSHIP, not per zone — the pair rule reports the first conflicting zone
+    // and stops, and two reports of the same garment relationship would read as two problems.
+    const reported = new Set()
+    for (const zone of SLEEVE_INTERFERENCE_ZONES) {
+      const source = origin[zone]
+      // PROPAGATED ONLY. A conflict with the garment directly inside this one is the pairwise
+      // rule's finding and is reported there; this pass speaks only for volume that travelled
+      // through an intermediate layer, so the two can never double-report the same relationship.
+      const propagated = system[zone] === 'elevated' && source && source.index < index - 1
+      if (propagated) {
+        const capacity = pieceOuterSleeveCapacity(piece, zone)
+        const label = name => name?.name || `piece ${name?.id}`
+        const through = chain.slice(source.index + 1, index).map(label).join(' and ')
+        const zoneLabel = SLEEVE_INTERFERENCE_ZONE_LABELS[zone]
+        const evidence = {
+          zone,
+          originId: Number(source.piece?.id) || null,
+          outerId: Number(piece?.id) || null,
+          throughIds: chain.slice(source.index + 1, index).map(item => Number(item?.id) || null),
+          capacity,
+        }
+        const relationship = `${Number(source.piece?.id) || source.index}->${Number(piece?.id) || index}`
+        if (reported.has(relationship)) {
+          // fall through to the state update below without a second finding
+        } else if (capacity === 'restricted' && source.cuffed && cuffed === true) {
+          reported.add(relationship)
+          findings.push(layerConstructionFinding(
+            'layer_construction_sleeve_conflict',
+            `${label(piece)} + ${label(source.piece)}: a possible sleeve construction conflict by shape heuristic only (not confirmed) — ${label(source.piece)}'s sleeve reads as carrying excess volume at the ${zoneLabel} still inside ${through}, and ${label(piece)}'s narrower sleeve profile may not have room for the combined system based on recorded shape alone; compressibility and construction are not recorded, so this may be a false positive`,
+            'error',
+            evidence,
+          ))
+        } else if (capacity !== 'accommodates') {
+          reported.add(relationship)
+          findings.push(layerConstructionFinding(
+            'layer_construction_bulk_unknown',
+            `${label(piece)} + ${label(source.piece)}: ${label(source.piece)}'s sleeve volume at the ${zoneLabel} is still inside ${through}, and whether ${label(piece)}'s sleeve has room for the combined system is unresolved from catalog data`,
+            'warning',
+            evidence,
+          ))
+        }
+      }
+      if (own[zone] === null) { system[zone] = null; continue }
+      // ACCOMMODATION IS NOT ERASURE: contained volume stays in the system presented outward.
+      if (own[zone] === 'elevated' && system[zone] !== 'elevated') origin[zone] = { piece, index, cuffed: cuffed === true }
+      if (system[zone] === 'elevated' || own[zone] === 'elevated') system[zone] = 'elevated'
+    }
+  }
+  return findings
+}
+
+// INABILITY TO JUDGE IS NOT A DEFECT — the codes that say so, enumerated rather than pattern-matched.
+//
+// Several consumers need to tell "we looked and it is wrong" apart from "we could not tell". A
+// `endsWith('_unknown')` test would have worked today and quietly mis-sorted the first code that
+// breaks the naming habit, so the set is explicit and lives with the findings it names. Membership
+// means: this finding reports missing evidence, and absence of evidence is never a fault (the rule
+// this whole arc holds). It does NOT mean the finding is ignorable — an unknown still asks for a
+// photograph and still marks the card for review.
+export const INABILITY_TO_JUDGE_CODES = new Set([
+  'layer_construction_sleeve_length_unknown',
+  'layer_construction_bulk_unknown',
+  'layer_direction_unknown',
+  ENVIRONMENTAL_ADEQUACY_CODES.CAPABILITY_UNKNOWN,
+  ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_INSULATION_EVIDENCE_UNKNOWN,
+])
+
+export function isInabilityToJudgeCode(code) {
+  return INABILITY_TO_JUDGE_CODES.has(String(code || ''))
+}
+
 export function evaluateLayerPairConstruction(pieces = [], { roleAware = false } = {}) {
   const normalizedPieces = Array.isArray(pieces) ? pieces : []
   const pairs = layeringCandidatePairs(normalizedPieces, { roleAware })
     .map(({ added, base, relationship }) => layerConstructionPair(added, base, resolveLayerDirection(added, base, relationship)))
-  const findings = pairs.flatMap(pair => pair.findings)
-  const verdict = pairs.some(pair => pair.verdict === 'incompatible')
+  const chain = orderedUpperChain(normalizedPieces, { roleAware })
+  const chainFindings = chain ? chainConstructionFindings(chain) : []
+  const findings = [...pairs.flatMap(pair => pair.findings), ...chainFindings]
+  const chainConflict = chainFindings.some(finding => finding.severity === 'error')
+  const chainUnknown = chainFindings.length > 0
+  const verdict = pairs.some(pair => pair.verdict === 'incompatible') || chainConflict
     ? 'incompatible'
-    : (pairs.some(pair => pair.verdict === 'unknown') ? 'unknown' : 'compatible')
+    : (pairs.some(pair => pair.verdict === 'unknown') || chainUnknown ? 'unknown' : 'compatible')
   return {
     verdict,
     findings,
     primaryFinding: findings[0] || null,
     pairs,
-    evidence: { roleAware: Boolean(roleAware) },
-    sightRequired: pairs.some(pair => pair.sightRequired === 'both') ? 'both' : 'none',
+    evidence: { roleAware: Boolean(roleAware), chainLength: chain ? chain.length : 0 },
+    sightRequired: pairs.some(pair => pair.sightRequired === 'both') || (chainUnknown && !chainConflict) ? 'both' : 'none',
   }
 }
 
 // Prompt projection of the executable contract, matching requiredBaseLayerPromptRule's pattern.
 // Composers that want to explain the rule to a model cite this; they do not restate sleeve zone/
 // fabric thresholds in their own prose.
+// SLEEVE GEOMETRY IS LOG-ONLY (owner ruling 2026-09-14, docs/stage1-cause-matrix-2026-09-14.md §1, §10a).
+// Sleeve shape and relative length cannot establish compatibility: soft ruched (144) and voluminous (184)
+// sleeves fit under a fitted puffer, while a substantial knit sleeve (238) does not, and no field yet
+// records sleeve structure or compressibility. Every model-facing layering rule therefore states only
+// this neutral sentence; the geometry verdict itself is shadow evidence (see evaluateWearableOutfit).
+export const NEUTRAL_SLEEVE_LAYERING_STATEMENT = 'Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient.'
+
+// GARMENT-FACT INTEGRITY: TUCK (live thread_1789508440573, 2026-09-15). A card's styling_instructions told the wearer to tuck
+// tops recorded as \`wear_over_only\` (133, 140) although the fact line said so — and the image renderer obeys the recorded fact,
+// so the card's own text and its render contradicted each other. Only the base top can be tucked into a bottom, so the check is
+// structural (the base-top slot or primary_top role) and never matches garment names; it reads only the model's own instruction
+// prose for an affirmative tuck. Returns null when there is no conflict.
+const UNTUCKED_PHRASE = /\b(?:un-?tucked|not\s+tucked|no\s+tuck(?:ing)?|without\s+(?:a\s+)?tuck(?:ing)?|never\s+tuck(?:ed)?|don'?t\s+tuck|do\s+not\s+tuck|left\s+untucked)\b/i
+const TUCK_WORD = /\b(?:half[- ]?tuck(?:ed)?|french[- ]?tuck(?:ed)?|front[- ]?tuck(?:ed)?|tuck(?:ed|s|ing)?)\b/i
+function basePiece(pieces = []) {
+  const byRole = pieces.find(piece => ['primary_top', 'base_top'].includes(String(piece?.role || '')))
+  if (byRole) return byRole
+  const tops = pieces.filter(piece => String(piece?.category || '') === 'top' && !['layer_top', 'outerwear'].includes(String(piece?.role || '')))
+  return tops.length === 1 ? tops[0] : null
+}
+export function tuckInstructionConflict({ pieces = [], stylingInstructions = '' } = {}) {
+  const base = basePiece(Array.isArray(pieces) ? pieces : [])
+  if (!base || String(base.tuck_behavior || '').toLowerCase() !== 'wear_over_only') return null
+  const clauses = String(stylingInstructions || '').split(/[.;!?\n]+/)
+  const affirmative = clauses.some(clause => TUCK_WORD.test(clause) && !UNTUCKED_PHRASE.test(clause)) // ratchet-allow: model's own instruction prose, not garment matching
+  if (!affirmative) return null
+  return {
+    code: 'tuck_instruction_contradicts_wear_over_only',
+    pieceId: Number(base.id),
+    message: `${base.name || 'the base top'} is recorded as wear over only, so it is worn untucked — the styling instructions' tuck does not apply`,
+  }
+}
+
+// Correction for the conflict above. The recorded fact wins, so the contradicted clause must not ship as authoritative placement
+// guidance (the renderer prompt labels styling_instructions "follow exactly"). The clause is dropped and the recorded mechanic
+// stated in its place; the model's original text is returned so the card can still show what it said.
+//
+// LIMITS, deliberately narrow (2026-09-15): it reads the base-top slot only, and only the instruction field — a tuck asserted in
+// `reason`, `watchFor` or chat prose is not caught, nor is a paraphrase that never uses a tuck word ("hem inside the waistband"),
+// nor any other mechanic that contradicts a recorded fact (belting, sleeves, worn-open). It catches this incident's shape, not
+// prose contradiction in general.
+export function correctTuckInstruction({ pieces = [], stylingInstructions = '' } = {}) {
+  const conflict = tuckInstructionConflict({ pieces, stylingInstructions })
+  if (!conflict) return { conflict: null, corrected: String(stylingInstructions || ''), original: String(stylingInstructions || ''), removed: [] }
+  const original = String(stylingInstructions || '')
+  const parts = original.split(/([.;!?\n]+)/)
+  const kept = []
+  const removed = []
+  for (let index = 0; index < parts.length; index += 2) {
+    const clause = parts[index]
+    if (!clause || !clause.trim()) continue
+    const conflicting = Boolean(tuckInstructionConflict({ pieces, stylingInstructions: clause }))
+    if (conflicting) removed.push(clause.trim())
+    else kept.push(`${clause.trim()}${(parts[index + 1] || '.').trim().slice(0, 1) || '.'}`)
+  }
+  const base = pieces.find(piece => Number(piece?.id) === conflict.pieceId)
+  kept.push(`${base?.name || 'The base top'} is worn untucked (recorded wear over only).`)
+  return { conflict, corrected: kept.join(' ').trim(), original, removed }
+}
+
 export function layerConstructionPromptRule() {
-  return `- Sleeve layering compatibility: when one garment layers over or under another, two cuffed sleeves (elbow-length or longer) worn one over the other are a problem only when there is actual bulk evidence at a shared zone — the inner garment's sleeve has excess volume at the shoulder, arm, lower arm, or armhole/underarm that the outer garment's narrower, structured sleeve has no room to accommodate. Overall garment fabric_weight is not sleeve-volume evidence. A voluminous sleeve worn as the OUTER layer over a fitted inner sleeve is not a conflict—it has room to spare; the same shape worn as the INNER layer under a narrow, structured outer sleeve is a conflict. Two fitted cuffed sleeves layer normally. Missing sleeve_shape or an unresolved over/under direction is unknown, not proof either way — inspect both garments before ruling on it.`
+  return `- ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`
 }
 
 function structureFinding(code, message, evidence = {}) {
@@ -742,6 +960,12 @@ export function evaluateOutfitRoles(pieces = []) {
   }
 }
 
+// One base (top or dress), one middle layer worn over it, one outer layer over that. Three is a
+// layered outfit; four is a pile. See the findings that read these in evaluateOutfitStructure.
+const MAX_UPPER_LAYERS = 3
+const MAX_OUTERWEAR_LAYERS = 2
+const MAX_TOP_LAYERS = 2
+
 // Canonical category-level outfit structure. Role intent, layer mechanics, contextual suitability,
 // and set-level constraints remain separate validators that may compose these findings.
 export function evaluateOutfitStructure(pieces = [], { requireShoes = true } = {}) {
@@ -751,7 +975,9 @@ export function evaluateOutfitStructure(pieces = [], { requireShoes = true } = {
     bottom: groups.filter(group => group === 'bottom').length,
     dress: groups.filter(group => group === 'dress').length,
     top: groups.filter(group => group === 'top').length,
+    outerwear: groups.filter(group => group === 'outerwear').length,
   }
+  counts.upper = counts.top + counts.dress + counts.outerwear
   const findings = []
 
   if (requireShoes && counts.shoes === 0) {
@@ -778,6 +1004,38 @@ export function evaluateOutfitStructure(pieces = [], { requireShoes = true } = {
     } else {
       findings.push(structureFinding('missing_bottom', 'missing bottom', { actual: counts.bottom, required: 1 }))
     }
+  }
+
+  // UPPER-BODY LAYERING, BOUNDED — and this is where the bound belongs.
+  //
+  // The malformation it prevents (a pile of same-slot garments, outerwear standing in for a top)
+  // was real, and the visual composer has been preventing it since with one sentence of PROSE:
+  // "optional single outerwear … no two tops". That sentence is also the only thing that ever
+  // prevented it — this validator counted tops only when a bottom was missing, and never counted
+  // outerwear at all, so a card carrying three coats passed structure silently. The guarantee was
+  // on the honour system, and the cost of keeping it there was a composer structurally unable to
+  // propose the most reliable move in the owner's own constitution ("open shirt or vest over a
+  // fitted base is almost always better than the top alone"). Measured: 0 of 27 saved outfits
+  // carry a middle layer.
+  //
+  // So the bound moves into code, where it is enforced rather than requested, and the prose is
+  // free to describe a real three-layer system: ONE base (top or dress), ONE middle layer worn over
+  // it, ONE outer layer over that. Anything beyond that is the pile the original rule was written
+  // against.
+  if (counts.upper > MAX_UPPER_LAYERS) {
+    findings.push(structureFinding('too_many_upper_layers',
+      `${counts.upper} upper-body pieces were submitted; an outfit carries a base plus at most a middle layer and an outer layer`,
+      { upperCount: counts.upper, maximum: MAX_UPPER_LAYERS, topCount: counts.top, dressCount: counts.dress, outerwearCount: counts.outerwear }))
+  }
+  if (counts.outerwear > MAX_OUTERWEAR_LAYERS) {
+    findings.push(structureFinding('multiple_outerwear',
+      `${counts.outerwear} outerwear pieces were submitted; at most a middle layer and an outer layer`,
+      { actual: counts.outerwear, maximum: MAX_OUTERWEAR_LAYERS }))
+  }
+  if (counts.top > MAX_TOP_LAYERS) {
+    findings.push(structureFinding('multiple_tops',
+      `${counts.top} tops were submitted; a base top plus at most one worn over it`,
+      { actual: counts.top, maximum: MAX_TOP_LAYERS }))
   }
 
   return {
@@ -830,7 +1088,12 @@ export function evaluateWearableOutfit(pieces = [], {
   const construction = includeLayerDirections
     ? evaluateLayerPairConstruction(normalizedPieces, { roleAware })
     : null
-  if (construction) stages.push({ stage: 'layer_construction', result: construction })
+  // LOG-ONLY: the sleeve-geometry verdict is kept as structured shadow evidence. It is never a hard or
+  // advisory finding, so it cannot reject, demote, exclude a repair/backfill candidate, trigger a
+  // substitution, or reach any model as a verdict. Known false-negative tradeoff: a genuinely
+  // incompatible sleeve (for example a substantial knit under a fitted puffer) is not mechanically
+  // rejected until a sleeve structure/compressibility dimension exists.
+  if (construction) stages.push({ stage: 'layer_construction', shadow: true, result: construction })
 
   // Contract C (owner ruling [O2], docs/outerwear-weather-consolidation-spec.md). This function
   // stays the canonical outfit-validity AGGREGATOR; the weather semantics live in
@@ -840,11 +1103,23 @@ export function evaluateWearableOutfit(pieces = [], {
   // switch this on — pass the one resolveStylingContext already resolved, or pass nothing.
   const normalizedEnvironmentPieces = Array.isArray(environmentPieces) ? environmentPieces : normalizedPieces
   const environment = weatherContext
-    ? evaluateOutfitEnvironmentalAdequacy(normalizedEnvironmentPieces, weatherContext)
+    ? evaluateOutfitEnvironmentalAdequacy(normalizedEnvironmentPieces, {
+        ...weatherContext,
+        // The thermal evaluator reasons over the configurations the wearer can actually reach by
+        // taking outerwear off. Removing a layer loosens every count-based and dependency-based
+        // rule, but it can create an inner/outer sleeve adjacency the composed outfit never had —
+        // so the configuration set asks US to revalidate, rather than assuming removal is safe. The
+        // dependency runs this way round on purpose: this module already imports the evaluator, so
+        // the evaluator must never import this one.
+        // The sleeve-geometry verdict is log-only, so it no longer removes a worn configuration from
+        // the endpoint evaluation; only a caller-supplied validator can.
+        validateConfiguration: weatherContext.validateConfiguration,
+      })
     : null
   if (environment?.applicable) stages.push({ stage: 'environment', result: environment })
 
-  const findings = stages.flatMap(({ result }) => result?.findings || [])
+  const findings = stages.filter(stage => !stage.shadow).flatMap(({ result }) => result?.findings || [])
+  const shadowFindings = stages.filter(stage => stage.shadow).flatMap(({ result }) => result?.findings || [])
   const hardFindings = findings.filter(finding => finding.severity === 'error')
   const advisoryFindings = findings.filter(finding => finding.severity !== 'error')
   const unresolvedPairs = [
@@ -865,9 +1140,8 @@ export function evaluateWearableOutfit(pieces = [], {
     // and is not evidence of a likely problem the way an unresolved required-base or direction pair
     // is — those exist only when a real dependency or an explicit overlay/underlayer signal was
     // already found. Forcing a photo re-verification on every sleeve-metadata gap would block
-    // ordinary composition for a data-completeness issue, not a suspected conflict. A KNOWN
-    // conflict (directional sleeve geometry) is still a hard error via hardFindings
-    // below; an unknown one stays a visible advisory finding only.
+    // ordinary composition for a data-completeness issue, not a suspected conflict. Since
+    // 2026-09-14 every sleeve-geometry verdict, known or unknown, is log-only shadow evidence.
   ]
   const unresolvedSightPairs = unresolvedPairs.filter(pair =>
     pair.pieceIds.some(pieceId => !seenIds.has(pieceId)))
@@ -880,6 +1154,7 @@ export function evaluateWearableOutfit(pieces = [], {
     findings,
     hardFindings,
     advisoryFindings,
+    shadowFindings,
     primaryFinding: hardFindings[0] || advisoryFindings[0] || null,
     unresolvedPairs,
     unresolvedSightPairs,
@@ -887,6 +1162,7 @@ export function evaluateWearableOutfit(pieces = [], {
     evidence: {
       roleAware: Boolean(roleAware),
       includedStages: stages.map(stage => stage.stage),
+      shadowStages: stages.filter(stage => stage.shadow).map(stage => stage.stage),
       seenPieceIds: [...seenIds],
     },
     stages,

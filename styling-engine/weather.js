@@ -247,6 +247,10 @@ const TEMP_MAX_F = 140
 export const PRECIPITATION_VALUES = ['none', 'rain', 'snow', 'mixed', 'unknown']
 export const WIND_VALUES = ['calm', 'breezy', 'windy', 'unknown']
 export const TEMPERATURE_BAND_VALUES = ['hot', 'cold', 'mild']
+// thread_1789526496845: does a stated numeric range describe what the wearer will actually be
+// outside in (exposure_window), or the day's general forecast stated separately from a narrower
+// outing (daily_forecast)? See validateUserWeather.
+export const TEMPERATURE_SCOPE_VALUES = ['exposure_window', 'daily_forecast']
 
 // THE canonical structured-precipitation → wet-exposure rule. Two projections of a resolved
 // ResolvedWeatherContext need this fact — stylingContext.js's profileFromResolvedWeatherContext
@@ -283,10 +287,15 @@ function isFiniteTemp(n) {
 // RANGE (a whole trip, not one instant) can genuinely be both — a 90°F/40°F
 // range must not silently collapse to neither.
 export function classifyTemperatureRange({ highF, lowF } = {}, { exclusive = true } = {}) {
-  if (!Number.isFinite(highF) || !Number.isFinite(lowF)) return { isHot: false, isCold: false }
-  const isHot = highF >= HOT_F
-  const isCold = lowF < COLD_F
-  const extreme = highF >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
+  const hasHigh = Number.isFinite(highF)
+  const hasLow = Number.isFinite(lowF)
+  if (!hasHigh && !hasLow) return { isHot: false, isCold: false }
+  // A one-sided stated range ("highs near 85") genuinely lacks the other endpoint. isHot is a
+  // fact about the high, isCold a fact about the low — each is computable independently when its
+  // own endpoint is known, and stays false (not manufactured) when it is not.
+  const isHot = hasHigh && highF >= HOT_F
+  const isCold = hasLow && lowF < COLD_F
+  const extreme = hasHigh && highF >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
   if (!exclusive) return { isHot, isCold, ...extreme }
   return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme }
 }
@@ -305,8 +314,37 @@ export function validateUserWeather(input) {
   if (hasRange) {
     const highF = input.high_f
     const lowF = input.low_f
-    if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
-    temperature = { highF, lowF, band: null }
+    const hasHigh = highF !== undefined && highF !== null
+    const hasLow = lowF !== undefined && lowF !== null
+    // thread_1789526496845 (reopened 2026-09-16): a numeric range is not automatically the range
+    // the wearer will actually be outside in. `scope` distinguishes the two claims the model can
+    // make with the SAME two numbers, so the executor can tell them apart:
+    //   exposure_window  — these ARE the temperatures the wearer will encounter during the outing.
+    //   daily_forecast   — this is the day's overall high/low, decoupled from the stated outing.
+    // Defaults to exposure_window (the prior, only behavior) so the dedicated "Temperatures you'll
+    // be out in" UI field (docs/app-surface-map.md, 2026-09-12 ruling) and any caller that predates
+    // this field are completely unaffected. The scope is carried on the temperature object itself
+    // (not discarded) so `weather.js`/`exposure.js` can size confidence off it without collapsing
+    // the numbers into a qualitative band — a daily forecast is still real numeric evidence, just
+    // uncertain relative to the outing, not evidence-free.
+    const scope = TEMPERATURE_SCOPE_VALUES.includes(input.scope) ? input.scope : 'exposure_window'
+    // 2026-09-15 (spec §4.1 amended): an explicitly one-sided forecast — "highs near 85" — states
+    // one endpoint and leaves the other genuinely unknown. Requiring both meant the only way to
+    // pass such a statement through was to set both to the same value, manufacturing a low the
+    // user never gave. A single endpoint is now a valid stated temperature; the unknown side stays
+    // null, which every downstream helper already handles (classifyTemperatureRange,
+    // coldSevereForRange, needsRemovableCoolLayerForRange, serializeWeatherProfile).
+    // A POINT temperature is unchanged and still arrives as both endpoints set to the same value.
+    if (hasHigh && hasLow) {
+      if (!isFiniteTemp(highF) || !isFiniteTemp(lowF) || highF < lowF) return null
+      temperature = { highF, lowF, band: null, scope }
+    } else if (hasHigh) {
+      if (!isFiniteTemp(highF)) return null
+      temperature = { highF, lowF: null, band: null, scope }
+    } else {
+      if (!isFiniteTemp(lowF)) return null
+      temperature = { highF: null, lowF, band: null, scope }
+    }
   } else if (hasBand) {
     if (!TEMPERATURE_BAND_VALUES.includes(input.temperature_band)) return null
     temperature = { highF: null, lowF: null, band: input.temperature_band }
@@ -410,6 +448,10 @@ function resolveTemperatureField({ userTemperature, liveTemperature, estimateTem
       needsRemovableCoolLayer: needsRemovableCoolLayerForRange(userTemperature),
       isExtremeHeat: Boolean(classified.isExtremeHeat),
       source: 'stated_user',
+      // thread_1789526496845: carried through so exposure.js can size confidence off it —
+      // 'exposure_window' (default) keeps the prior, verbatim-certain treatment; 'daily_forecast'
+      // means these are real numbers that are NOT a claim about the stated outing specifically.
+      scope: userTemperature.scope || 'exposure_window',
     }
   }
   if (liveTemperature && Number.isFinite(liveTemperature.highF) && Number.isFinite(liveTemperature.lowF)) {

@@ -21,7 +21,6 @@
 // finding, anything else is advisory.
 import { fabricWeight, hasSleevelessConstruction, wardrobeCategoryGroup, thermalMaterialVerdict, pieceWeatherProtection, garmentKind } from './attributes.js'
 import { interiorConstruction } from './fiberTaxonomy.js'
-import { pieceWeatherScores } from './thermal.js'
 import { evaluateOuterwearCapability } from './outerwearCapability.js'
 // §8 step 3: completed outfits compare against the band. Semantic signals only — the ranking slice
 // found a filter keyed on a reason STRING that silently stopped matching when the band renamed it,
@@ -29,6 +28,10 @@ import { evaluateOuterwearCapability } from './outerwearCapability.js'
 import { resolveExposureContext } from './exposure.js'
 import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from './thermalDemand.js'
 import { outfitThermalContribution, outfitRangeCoverage } from './outfitThermalContribution.js'
+import { hasFaceMaterialEvidence } from './garmentWarmth.js'
+import { WARMTH_LEVELS } from './garmentWarmth.js'
+
+const LEVEL_INDEX_FOR_FIT = new Map(WARMTH_LEVELS.map((level, index) => [level, index]))
 
 export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_REMOVABLE_COOL_LAYER: 'outfit_no_removable_layer_for_cool_conditions',
@@ -45,8 +48,142 @@ export const ENVIRONMENTAL_ADEQUACY_CODES = {
   NO_TRANSIT_LAYER_FOR_SEVERE_COLD: 'outfit_no_removable_layer_for_severe_cold_transit',
   TRANSIT_LAYER_NOT_OUTDOOR_CAPABLE: 'outfit_transit_layer_not_outdoor_capable',
   THERMAL_CAPACITY_INSUFFICIENT: 'outfit_thermal_capacity_insufficient_for_severe_cold',
+  THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE: 'outfit_thermal_capacity_short_without_insulation_evidence',
+  THERMAL_CAPACITY_INSULATION_EVIDENCE_UNKNOWN: 'outfit_thermal_capacity_insulation_evidence_unknown',
   RAIN_PROTECTION_MISSING: 'outfit_rain_protection_missing_for_wet_exposure',
   CAPABILITY_UNKNOWN: 'outfit_outerwear_capability_unknown',
+}
+
+// ── Endpoint / configuration evaluation (Concern 2, owner-approved 2026-09-12) ─────────────────
+//
+// WHAT THIS REPLACES, AND WHY. The thermal-amount findings used to compare ONE number — the outfit
+// with every layer on — against ONE level derived from the cold endpoint. That converted forecast
+// precision into clothing certainty: a coarse forecast widened the acceptable band while an exact
+// one collapsed it to a single level, so a `moderate` knit was declared objectively wrong at 65F
+// and only a quilted puffer could dress a 50F morning. The Matzarakis scale supplies a comfort
+// TARGET; it does not establish that one ordinal level below it is physically inadequate.
+//
+// The model, in three separated parts:
+//   TARGET       — the PET-derived level at each endpoint. Ranking preference, reported as evidence.
+//   FIT          — does at least ONE realistic worn configuration suit this endpoint? Adjacent (one
+//                  ordinal level, either direction) counts as suiting it: ranking/debug evidence,
+//                  never a card-face note.
+//   SUBSTANTIAL  — two or more levels away with NO configuration inside the adjacent band. That,
+//                  and the independent physical rules, is what a finding is for.
+//
+// ADJACENT_LEVEL_TOLERANCE is the one magnitude here and it is deliberately NOT derived from the
+// forecast: it is the resolution limit of a five-level garment taxonomy against a comfort scale,
+// applied identically whether the temperature came from a stated range or a coarse estimate.
+const ADJACENT_LEVEL_TOLERANCE = 1
+
+// Realistic worn configurations: the outfit as composed, and the outfit with each removable layer
+// taken off (plus bare, when more than one layer exists). Only outerwear is removed, so the base and
+// every dependency it carries — `needs_base`, layer direction, sleeve pairing — are untouched by
+// construction, and the structural caps that bound an outfit (one base, one middle, one outer) bound
+// this enumeration with it. A configuration whose level cannot be placed proves NEITHER fit nor
+// failure; it is carried as `unknown` and excluded from every claim.
+export function wornConfigurations(pieces = [], { validateConfiguration = null } = {}) {
+  const list = Array.isArray(pieces) ? pieces : []
+  const removables = list.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  const configurations = [{ removedPieceId: null, pieces: list }]
+  for (const layer of removables) {
+    configurations.push({
+      removedPieceId: Number(layer.id) || null,
+      pieces: list.filter(piece => Number(piece.id) !== Number(layer.id)),
+    })
+  }
+  if (removables.length > 1) {
+    configurations.push({ removedPieceId: 'all_layers', pieces: list.filter(piece => wardrobeCategoryGroup(piece) !== 'outerwear') })
+  }
+  // REVALIDATION IS NOT FREE, AND REMOVAL IS NOT MONOTONIC. Dropping an outerwear piece keeps every
+  // structural cap and every `needs_base` dependency satisfied — those only ever loosen — but taking
+  // out an INTERMEDIATE layer creates a base-to-outer adjacency that the composed outfit never had
+  // and nothing validated: a voluminous sleeve that was fine under a cardigan may not fit under the
+  // coat directly. So the configuration set accepts an injected validator rather than asserting a
+  // revalidation it does not perform. `outfitValidation` owns the layer checks and supplies it; with
+  // no validator every configuration is `valid: true`, which is exactly the old behaviour, stated.
+  return configurations.map(configuration => ({
+    ...configuration,
+    valid: typeof validateConfiguration === 'function'
+      ? validateConfiguration(configuration.pieces, configuration) !== false
+      : true,
+  }))
+}
+
+// One endpoint, one question. Returns a verdict plus the evidence a ranker or a debug payload wants.
+export function evaluateEndpointFit(configurations = [], target = null, { upperOnly = false, endpoint = 'cold' } = {}) {
+  if (!target) return { verdict: 'no_target', entries: [] }
+  // WHICH CONFIGURATIONS ARE AVAILABLE AT THIS ENDPOINT.
+  //
+  // At the cold end, every configuration is: you can put on everything you brought.
+  //
+  // At the warm end, the outfit as composed is NOT a candidate whenever it carries something
+  // removable — the warm end of the day is where a layer comes off, and letting "keep the down coat
+  // on" satisfy a 60F afternoon is how a bare satin shell under a winter coat passed. Every REDUCED
+  // configuration stays in play, including the intermediate ones (coat off, cardigan retained), so
+  // this is not "lightest state only" — it is "a state you would actually be in once you shed".
+  // An unwearable configuration is not a way of wearing the outfit, so it can neither prove fit nor
+  // carry a failure. It stays visible in the evidence via `wornConfigurations`, not here.
+  const wearable = configurations.filter(configuration => configuration.valid !== false)
+  const candidates = endpoint === 'warm' && wearable.some(configuration => configuration.removedPieceId != null)
+    ? wearable.filter(configuration => configuration.removedPieceId != null)
+    : wearable
+  const entries = candidates.map(configuration => {
+    const contribution = outfitThermalContribution(configuration.pieces)
+    const level = upperOnly ? contribution.upperWithLayer : contribution.withLayer
+    const unknown = upperOnly ? contribution.unknown.upper : (contribution.unknown.base || contribution.unknown.removable)
+    return {
+      removedPieceId: configuration.removedPieceId,
+      level,
+      // A configuration is UNKNOWN when any garment in it could not be placed — even though a known
+      // layer may still give the configuration a non-null level. `upperWithLayer` returns `light`
+      // for an unplaceable base under a light jacket, and reading that as evidence would let
+      // incomplete data prove both fit and failure. The level is kept for debug; the flag decides.
+      unknown: Boolean(unknown) || level == null,
+      delta: level == null ? null : LEVEL_INDEX_FOR_FIT.get(level) - LEVEL_INDEX_FOR_FIT.get(target),
+    }
+  })
+  const known = entries.filter(entry => !entry.unknown && entry.delta != null)
+  const unknownRemains = entries.some(entry => entry.unknown)
+  if (!known.length) return { verdict: 'cannot_judge', entries, best: null }
+
+  // A KNOWN FITTING CONFIGURATION PROVES FIT, whatever else is unknown: there is a way to wear this
+  // outfit that suits the endpoint, and no missing datum can take that away.
+  const best = known.reduce((a, b) => (Math.abs(a.delta) <= Math.abs(b.delta) ? a : b))
+  const fitting = known.filter(entry => Math.abs(entry.delta) <= ADJACENT_LEVEL_TOLERANCE)
+  if (fitting.length) {
+    return {
+      verdict: 'fits',
+      adjacent: best.delta !== 0,
+      direction: best.delta === 0 ? null : (best.delta < 0 ? 'under' : 'over'),
+      best, entries,
+    }
+  }
+
+  // NOTHING KNOWN FITS. Failure needs the whole relevant picture: an unknown configuration could
+  // still be the one that suits this endpoint, so a substantial verdict requires every viable
+  // configuration to be sufficiently known.
+  if (unknownRemains) return { verdict: 'cannot_judge', entries, best }
+
+  // ...and they must all miss the SAME way. A set that is two levels too warm in one state and two
+  // levels too light in another is a genuine finding about neither: no direction describes it, and
+  // a mechanical claim would have to pick one arbitrarily.
+  const directions = new Set(known.map(entry => (entry.delta < 0 ? 'under' : 'over')))
+  if (directions.size > 1) return { verdict: 'no_fitting_configuration', entries, best }
+
+  // NOTHING FITS — so which way is it wrong? Not "whichever configuration is closest": an outfit
+  // that is +2 with the coat on and -2 with it off was then reported as EXCESS at the warm end,
+  // when the state a person would actually be in for the warm part of the day is the lighter one.
+  // The fit question stays general (does ANY configuration suit this endpoint), and only the
+  // direction of the message is taken from the configuration the wearer would reach for at this
+  // endpoint: the lightest at the warm end, the warmest at the cold end.
+  const representative = endpoint === 'warm'
+    ? known.reduce((a, b) => (a.delta <= b.delta ? a : b))
+    : known.reduce((a, b) => (a.delta >= b.delta ? a : b))
+  return {
+    verdict: representative.delta < 0 ? 'substantial_shortfall' : 'substantial_excess',
+    best, representative, entries,
+  }
 }
 
 // [R3]: a hard environmental finding can be unsatisfiable from the wardrobe the user actually
@@ -56,10 +193,17 @@ export const ENVIRONMENTAL_ADEQUACY_CODES = {
 // an unsatisfiable rejection with no way forward.
 const SUPPLY_REMEDY = 'if no owned piece can satisfy this, say so as a wardrobe gap rather than resubmitting — re-plan at a milder context or accept the disclosed shortfall'
 
-// A layered system can be adequate without any single piece being adequate, so thermal capacity is
-// read across the whole outfit. The threshold is intentionally coarse: this asks "is there real
-// insulation here at all", not "how many degrees". Contract A owns the grading.
-const SEVERE_COLD_SYSTEM_COLD_FLOOR = 12
+// NO FALLBACK DEMAND LEVEL, deliberately (owner ruling 2026-09-12, second pass).
+//
+// A constant `very warm` stood here for flag-only callers, justified by 45/35, 40/28 and 30/20 all
+// resolving to `very warm`. They do — because their LOWS happen to be under 39F, not because
+// severity implies that target. `isColdSevere` means the daily HIGH is at most SEVERE_COLD_F, and
+// 45/45 is severe with a PET cold endpoint of `warm`. The constant would have graded that day two
+// levels too high, hard-failing an upper system that is merely adjacent to the real target.
+//
+// So the separation is literal: severity decides whether the PHYSICAL backstops run (outdoor
+// capability, layer presence, transit coverage); a numeric PET endpoint decides thermal AMOUNT.
+// With severity present and temperature absent, amount has no target and stays unjudged.
 
 // Shared structured predicate for a wearable removable layer. Exported for the freeform
 // single-outfit request contract: an explicit owner request for a layer must be checked against
@@ -69,18 +213,6 @@ export function outerwearPieces(pieces) {
   return pieces.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
 }
 
-function systemColdScore(pieces) {
-  return pieces.reduce((total, piece) => total + (pieceWeatherScores(piece).cold || 0), 0)
-}
-
-// Are the layers UNDER the outerwear all thermally tagged?
-//
-// This is the line between "we measured a thin base" and "we could not measure the base", and it is
-// the whole reason the severe-cold shortfall has two tiers. pieceWeatherEvidence returns null when
-// nothing about a garment's warmth is known, so an all-tagged base whose total still falls short is
-// POSITIVE evidence of inadequacy — the same class as an indoor_layer-only outfit, which hard-fails.
-// A base with any unmeasured piece is absence of evidence, which acceptance criterion 8 says must
-// never become invalidity.
 // Does at least one layer plausibly DO something in cool conditions?
 //
 // The first cut of the cool tier tested `!layers.length` — which is `Boolean(layer)`, the exact
@@ -116,11 +248,6 @@ function baseIsWarmSeasonOnly(pieces) {
   return base.length > 0 && base.every(piece => String(piece?.season || '').toLowerCase().trim() === 'warm')
 }
 
-function baseLayersAreFullyMeasured(pieces) {
-  const base = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
-  return base.length > 0 && base.every(piece => pieceWeatherScores(piece).evidence !== null)
-}
-
 // Can this layer serve as the OUTERMOST layer in severe cold?
 //
 // This replaces the `outerwear_role` gate (docs/outerwear-role-ontology-spec.md). That tag asked a
@@ -129,9 +256,10 @@ function baseLayersAreFullyMeasured(pieces) {
 // already knows the temperature.
 //
 // Built from facts that are genuinely intrinsic, and following this file's own method: no new
-// threshold. `SEVERE_COLD_SYSTEM_COLD_FLOOR` below still does all the quantitative work; this
-// function only sorts a layer into the same three buckets the role did, so the surrounding severity
-// ladder is unchanged.
+// threshold, and none of its own: the quantitative work is done by the endpoint/configuration
+// evaluator (2026-09-12, Concern 3 — previously by the retired `SEVERE_COLD_SYSTEM_COLD_FLOOR`).
+// This function only sorts a layer into the same three buckets the role did, so the surrounding
+// severity ladder is unchanged.
 //
 // Criterion 8 shapes the asymmetry, as everywhere else here. 'insufficient' requires POSITIVE
 // evidence of inadequacy — see-through construction, or a composition established as carrying no
@@ -140,6 +268,24 @@ function baseLayersAreFullyMeasured(pieces) {
 // `non_insulating` is now reachable precisely because it demands an explicit human assertion (a
 // complete composition AND "no insulating layer"), which is exactly the positive-evidence standard
 // this branch needs. Under the old tag the equivalent signal was a model's guess.
+// INSULATION EVIDENCE for one upper-body garment, kept apart from two neighbouring facts that are
+// NOT insulation:
+//   - weather_protection proves EXPOSURE protection (wind/rain blocked), not thermal capacity;
+//   - interior_construction (a lining, a second fabric face) proves construction SUBSTANCE, not
+//     insulation.
+// Only the material verdict speaks: a recorded fill or insulating fibre is 'insulating'; an answered
+// "no insulating layer" is 'none'. Ordinary base clothing whose face fabric is recorded cannot
+// plausibly conceal a fill, so it is known 'none' — the same rule garmentWarmth.js applies to
+// placement. An outer layer whose interior was never answered stays 'unknown', and unknown is never
+// a fault.
+export function upperGarmentInsulationEvidence(piece = {}) {
+  const verdict = thermalMaterialVerdict(piece)
+  if (verdict === 'insulating') return 'insulating'
+  if (verdict === 'non_insulating') return 'none'
+  if (wardrobeCategoryGroup(piece) !== 'outerwear' && hasFaceMaterialEvidence(piece)) return 'none'
+  return 'unknown'
+}
+
 function outerLayerSevereColdAdequacy(piece = {}) {
   // Same bar the cool tier uses, and for the same reason: a sheer shrug is not a coat, and opacity
   // is a defined tagged field rather than a number someone picked.
@@ -288,6 +434,29 @@ export function hasMinimumWarmLayer(pieces) {
  * @param {object} resolvedContext.weatherProfile  canonical resolved profile; never prose
  * @param {string} [resolvedContext.environment]   'indoor' | 'outdoor', when the flow resolved one
  */
+// Which severe-cold capacity tier, if any, does an endpoint verdict warrant?
+//
+// The two tiers now come from the evaluator's own accounting rather than a second predicate.
+// `substantial_shortfall` is only ever returned when every viable configuration is KNOWN and all of
+// them miss the cold end by two levels or more — precisely the "we measured the base and it is
+// thin" case the hard tier was split out for. Anything unmeasured returns `cannot_judge` and stays
+// advisory, so acceptance criterion 8 holds by construction rather than by a separate check.
+//
+// THERE IS NO THIRD ROW, and that was measured rather than assumed. A version of this function also
+// disclosed an ADJACENT shortfall at advisory severity, on the reasoning that severe cold deserves a
+// higher disclosure bar. Run against the real wardrobe it put "this outfit carries little
+// insulation" on a quilted puffer over a moderate sweater at 35/25 — bestDelta -1, a perfectly
+// well-dressed card. One level short of a `very warm` target is where good winter outfits actually
+// sit, so adjacency stays what it is everywhere else: ranking evidence, not a note.
+function severeColdCapacityTier(fit = {}) {
+  if (fit.verdict === 'substantial_shortfall') return 'error'
+  if (fit.verdict === 'cannot_judge') return 'advisory'
+  // `no_target` is the flag-only case: severity without a temperature. Unknown GARMENTS produce an
+  // inability-to-judge advisory; an unknown DEMAND produces nothing at all, because there is no
+  // question to be unable to answer.
+  return null
+}
+
 export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext = {}) {
   const list = Array.isArray(pieces) ? pieces : []
   const weather = resolvedContext.weatherProfile || null
@@ -410,8 +579,26 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       'no warm layer for cold weather', { evidence, severity: 'error', remedy: false }))
   } else if (presence?.state === 'recommended' && !indoorDestination && !hasMinimumWarmLayer(list)) {
     findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.WARM_LAYER_RECOMMENDED,
-      'a warm or midweight layer is recommended for cool weather', { evidence, severity: 'advisory' }))
+      // Experiment instrumentation (default off): the same finding stated as the recorded facts that
+      // triggered it, without the engine's recommendation.
+      process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS === 'true'
+        ? (layers.length
+          ? 'every outer layer here is recorded with at least two thin-construction facts (ultralight fabric, no insulating material, unlined), and no base garment is recorded as heavy-weight, for a day that turns cool at the low end'
+          : 'this outfit has no outer layer and no base garment recorded as heavy-weight, for a day that turns cool at the low end')
+        : 'a warm or midweight layer is recommended for cool weather', { evidence, severity: 'advisory' }))
   }
+
+  // thread_1789536455443: a "no outer layer carries recorded insulation" advisory was tried here
+  // and reverted (owner review, 2026-09-16). Missing dedicated insulation is a per-GARMENT fact; it
+  // does not, on its own, establish a whole-OUTFIT shortfall — a system can carry real warmth from a
+  // medium insulating base, from multiple garments together, from wind protection genuinely
+  // mattering at the stated exposure, or from construction this module does not itemize. A check
+  // keyed on one garment's material verdict alone ignores all of those and manufactures a second,
+  // narrower verdict that competes with the one this function already computes below (which is the
+  // ratified authority and remains genuinely miscalibrated for this case — see its own note, and
+  // `docs/engine-behaviour-map.md`'s 2026-09-16 amendment for the honest, unresolved status). The
+  // fix for the missing evidence lives in what the MODEL is shown (full construction facts and
+  // photographs), not in a new engine verdict.
 
   // --- thermal amount, from the band (§8 step 3) -------------------------------------------------
   //
@@ -424,6 +611,10 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
   // transit coverage ("sleeve-bearing") and outdoor capability are different questions from
   // "how much insulation", and §2.1 keeps them separate. This slice adds the amount and leaves
   // those triggers alone.
+  // The configuration set is shared: the amount question below and the severe-cold backstop further
+  // down must reason about the same worn states, not about two different pictures of the outfit.
+  const configurations = wornConfigurations(list, { validateConfiguration: resolvedContext.validateConfiguration })
+  let coldEndpointTarget = null
   if (!indoorDestination) {
     const exposure = resolveExposureContext(
       {
@@ -431,83 +622,71 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         activity: resolvedContext.activity,
       }, weather)
     const demand = requiredThermalBand(exposure)
+    const endpoints = requiredThermalEndpointBands(exposure)
     const contribution = outfitThermalContribution(list)
-    if (demand.level && contribution.withLayer) {
-      const fit = compareThermalFit(contribution.withLayer, demand)
+    coldEndpointTarget = endpoints.cold?.level || null
+    // Upper-body only, per the owner's ruling: a trouser contributes to whole-body comfort but must
+    // not decide what an upper LAYER accomplishes. Lower-body suitability stays separate evidence
+    // and is deliberately not given a finding or a production field until something consumes it.
+    const coldFit = evaluateEndpointFit(configurations, endpoints.cold?.level, { upperOnly: true, endpoint: 'cold' })
+    const warmFit = evaluateEndpointFit(configurations, endpoints.warm?.level, { upperOnly: true, endpoint: 'warm' })
+    if (demand.level) {
       evidence.thermalDemand = demand.level
       evidence.thermalContribution = contribution.withLayer
-      evidence.thermalFit = fit.fit
       evidence.thermalCertain = demand.certain
+      // Ranking/debug evidence. Adjacency lives HERE and never becomes a card-face note.
+      evidence.endpointFit = {
+        coldTarget: endpoints.cold?.level || null,
+        warmTarget: endpoints.warm?.level || null,
+        cold: { verdict: coldFit.verdict, adjacent: Boolean(coldFit.adjacent), direction: coldFit.direction || null, bestDelta: coldFit.best?.delta ?? null },
+        warm: { verdict: warmFit.verdict, adjacent: Boolean(warmFit.adjacent), direction: warmFit.direction || null, bestDelta: warmFit.best?.delta ?? null },
+        configurations: (coldFit.entries || []).map(entry => ({
+          removedPieceId: entry.removedPieceId,
+          level: entry.level,
+          unknown: entry.unknown,
+          coldDelta: entry.delta,
+          warmDelta: (warmFit.entries || []).find(warmEntry => warmEntry.removedPieceId === entry.removedPieceId)?.delta ?? null,
+        })),
+      }
 
-      // UNKNOWN IS NEVER INADEQUACY (§5.6) — but the asymmetry that runs through this whole arc
-      // applies here too, and collapsing it would silence the finding that matters most.
+      // UNKNOWN IS NEVER INADEQUACY (§5.6), and it is now expressed by the evaluator itself: a
+      // configuration whose level cannot be placed is carried as `unknown` and excluded from every
+      // claim, so `cannot_judge` produces no finding at all rather than a silent verdict.
       //
-      // UNDERSHOOT is blocked by unknown evidence: an unplaceable base could be secretly warm, so
-      // "this is too light" is exactly the claim the missing data could falsify. Silence is right.
-      //
-      // OVERSHOOT is not: an unknown base cannot make a `very warm` coat LESS excessive for a mild
-      // day. Positive evidence of too much insulation stands on its own, the same way positive
-      // insulating evidence settles thermalMaterialVerdict from an incomplete record.
+      // The old asymmetry (undershoot blocked by unknown evidence, overshoot allowed through)
+      // survives where it still applies: positive evidence of excess stands on incomplete records,
+      // while "this is too light" is exactly the claim missing data could falsify.
       const unknownPresent = contribution.unknown.base || contribution.unknown.removable
       if (unknownPresent) evidence.thermalContributionUnknown = true
-      const overshooting = String(fit.fit).includes('overshoot')
-      // The overshoot signal is carried by the garment that was actually PLACED — here the removable
-      // layer. An unknown base is irrelevant to it, so requiring complete evidence would silence the
-      // finding on almost every real outfit: a plain medium cotton top is itself unplaceable (§13.3's
-      // at-risk band), and most outfits contain one.
-      if (unknownPresent && !overshooting) {
-        // undershoot with unknown evidence: record it, claim nothing
-      } else if (fit.fit === 'undershoot') {
-        // Thermal amount is advisory by default. A synthetic "sleeved wool coat" tagged
-        // `fabric_weight: light` with no fibre content once hard-blocked a 65/45 day; incomplete
-        // metadata may never become hard invalidity, and a barely-tagged wardrobe is exactly the
-        // shape that produces it. The PRESENCE gate above keeps its independent authority.
-        //
-        // A single-outfit request that explicitly
-        // requires a weather layer is narrower: when the user supplied a certain encountered range
-        // and every thermal contribution is known, letting a below-demand layer through would make
-        // the mechanical requirement meaningless. Only that caller opts into hard enforcement.
+
+      if (coldFit.verdict === 'substantial_shortfall' && !unknownPresent) {
+        // SUBSTANTIAL ONLY. An adjacent shortfall is a ranking preference, not a fault: the PET
+        // target says which layer is preferable, not that the neighbouring one is unwearable.
         const enforceCertainRequiredLayer = resolvedContext.requireThermalAdequacy === true && demand.certain
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT,
-          corroborate('this outfit carries less warmth than the conditions call for'),
+          corroborate('no way of wearing this outfit carries enough warmth for the cold end of these conditions'),
           { evidence, severity: enforceCertainRequiredLayer ? 'error' : 'advisory' }))
-      } else if (overshooting) {
-        // ADVISORY, never hard. §5.5: overshoot ranks, it never excludes — a wardrobe whose only
-        // layer is a heavy coat still gets dressed. This is the puffer-on-a-65F-museum-day finding
-        // that layer-weight-ceiling.md recorded and nothing has ever been able to state.
+      }
+      if (warmFit.verdict === 'substantial_excess') {
+        // ADVISORY, never hard (§5.5): overshoot ranks, it never excludes. Judged across
+        // configurations, so excess a person can simply take off is no longer reported as a fault —
+        // only warmth that remains in every wearable state.
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT,
-          fit.fit === 'substantial_overshoot'
-            ? 'this outfit carries considerably more warmth than the conditions call for'
-            : 'this outfit carries more warmth than the conditions call for',
+          'even with the removable layers off, this outfit carries considerably more warmth than the warm end of these conditions calls for',
           { evidence, severity: 'advisory' }))
       }
 
-      // A required removable layer creates TWO worn states. Cold-end adequacy above checks the
-      // complete outfit with the layer on. The warm endpoint must check the clothes that actually
-      // remain after one real outerwear piece comes off—not the warmest garment in the whole card,
-      // and not an imaginary bare base. This is intentionally hard only for the same narrow,
-      // certain stated-range contract as cold undershoot; unknown garment evidence stays silent.
-      if (resolvedContext.requireThermalAdequacy === true && demand.certain && layers.length) {
-        const endpoints = requiredThermalEndpointBands(exposure)
-        const coverage = outfitRangeCoverage(list, endpoints.cold, endpoints.warm, compareThermalFit)
-        evidence.thermalRange = {
-          coldDemand: endpoints.cold.level,
-          warmDemand: endpoints.warm.level,
-          removableConfigurations: coverage.candidates.map(candidate => ({
-            removedPieceId: Number(candidate.removedPieceId) || null,
-            remainingContribution: candidate.remaining.upperWithLayer,
-            coldFit: candidate.coldEnd.fit,
-            warmFit: candidate.warmEnd.fit,
-            unknownPresent: candidate.unknownPresent,
-            warmUnknownPresent: candidate.warmUnknownPresent,
-          })),
-        }
-        const knownConfigurations = coverage.candidates.filter(candidate => !candidate.warmUnknownPresent)
-        if (knownConfigurations.length && knownConfigurations.every(candidate => candidate.warmEnd.fit === 'undershoot')) {
-          findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT,
-            'after the removable outer layer comes off, the clothes that remain carry less warmth than the warm end of the stated outdoor range calls for',
-            { evidence, severity: 'error', remedy: true }))
-        }
+      // THE WARM ENDPOINT'S OWN SHORTFALL. A required removable layer creates two worn states, and
+      // the clothes left after the outer layer comes off must still suit the warm end. This stays
+      // scoped to the narrow explicit contract it has always had — `requireThermalAdequacy` with a
+      // certain stated range — rather than widening a hard finding while the rest of the model is
+      // softening; and it now asks the same question as every other endpoint check: is there a
+      // configuration that suits it, with substantial mismatch the only fault.
+      if (resolvedContext.requireThermalAdequacy === true && demand.certain && layers.length
+        && warmFit.verdict === 'substantial_shortfall') {
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.WARM_END_THERMAL_UNDERSHOOT,
+          'after the removable outer layer comes off, the clothes that remain carry less warmth than the warm end of the stated outdoor range calls for',
+          { evidence, severity: 'error', remedy: true }))
       }
     }
   }
@@ -531,8 +710,26 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     const verdicts = layers.map(piece => ({ piece, verdict: outerLayerSevereColdAdequacy(piece) }))
     const outdoorCapable = verdicts.filter(v => v.verdict === 'adequate')
     const unknown = verdicts.filter(v => v.verdict === 'unknown')
-    const systemCold = systemColdScore(list)
-    evidence.systemColdScore = systemCold
+    // 2026-09-12, Concern 3. Thermal CAPACITY is now asked of the same endpoint/configuration
+    // evaluator as every other amount question, instead of an additive raw-score floor
+    // (`systemColdScore` summed per-piece `cold` scores against a hand-set 12). Two systems grading
+    // the same quantity was the defect: the floor could convict an outfit the band called adequate,
+    // and it summed ordinal-ish scores across garments in exactly the way §15.5 forbids.
+    //
+    // `isColdSevere` (weather.js `coldSevereForRange`, daily high <= SEVERE_COLD_F) remains the
+    // physical backstop AUTHORITY — it decides that this branch runs at all. What changed is the
+    // measurement inside it. The target is the PET cold endpoint and nothing else: with no
+    // temperature there is no target, `evaluateEndpointFit` returns `no_target`, and the capacity
+    // question produces no finding while every physical rule in this branch still runs.
+    const severeFit = evaluateEndpointFit(configurations, coldEndpointTarget, { upperOnly: true, endpoint: 'cold' })
+    evidence.severeColdFit = {
+      target: coldEndpointTarget,
+      verdict: severeFit.verdict,
+      bestDelta: severeFit.best?.delta ?? null,
+    }
+    const upperGarments = list.filter(piece => ['top', 'dress', 'outerwear'].includes(wardrobeCategoryGroup(piece)))
+    const severeColdInsulation = upperGarments.map(piece => ({ id: Number(piece.id) || null, evidence: upperGarmentInsulationEvidence(piece) }))
+    evidence.severeColdInsulation = severeColdInsulation
 
     // The severity ladder here is deliberately asymmetric, and acceptance criterion 8 is why:
     // missing metadata may never become hard invalidity. So a HARD finding requires positive
@@ -548,11 +745,15 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     } else if (!outdoorCapable.length && !unknown.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.INDOOR_LAYER_ONLY_FOR_SEVERE_COLD,
         'the only outer layer here is an indoor layer; it adds warmth but is not outdoor outerwear for cold exposure', { evidence, remedy: true }))
-    } else if (unknown.length && systemCold < SEVERE_COLD_SYSTEM_COLD_FLOOR) {
+    } else if (unknown.length && severeFit.verdict !== 'fits') {
+      // INABILITY TO JUDGE, preserved deliberately. The layer carries no tagged outerwear
+      // capability, and the configurations do not establish that the system suits the cold end
+      // either — so the honest output is that this cannot be judged from saved garment facts, not
+      // a verdict in either direction. A configuration that demonstrably fits ends the question.
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.CAPABILITY_UNKNOWN,
         'the outer layer has no tagged outerwear capability and little thermal evidence, so its adequacy for sustained cold cannot be judged from saved garment facts',
         { severity: 'advisory', evidence }))
-    } else if (outdoorCapable.length && systemCold < SEVERE_COLD_SYSTEM_COLD_FLOOR) {
+    } else if (outdoorCapable.length && severeColdCapacityTier(severeFit)) {
       // Two tiers, split 2026-09-01 after a live "Trail Tee, Pants & Puffer" card put a light
       // warm-season tee and light warm-season track pants under a winter puffer. The shortfall was
       // detected (systemCold 4 against a floor of 12) and stayed advisory, so it never rendered and
@@ -563,12 +764,38 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
       // measured the base and it is thin". Only the first is absence of evidence. An all-tagged
       // base that still falls short is a measurement, and it belongs in the same tier as the
       // indoor_layer-only case rather than in a note nobody sees.
-      const measured = baseLayersAreFullyMeasured(list)
+      const measured = severeColdCapacityTier(severeFit) === 'error'
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_INSUFFICIENT,
         measured
           ? 'the outer layer is outdoor-capable, but the layers under it are light enough that this outfit carries little insulation for sustained cold'
           : 'the outer layer is outdoor-capable but little insulation is recorded beneath it for sustained cold',
         { severity: measured ? 'error' : 'advisory', evidence, remedy: measured }))
+    }
+
+    // ADJACENT CAPACITY WITHOUT INSULATION EVIDENCE (owner ruling 2026-09-13).
+    //
+    // isColdSevere decides that this branch runs; the numeric PET cold endpoint alone decides amount.
+    // So this asks nothing without a target (flag-only severity makes no amount judgment — the 45/45
+    // regression), nothing when the completed system reaches the target (fibre names never fail an
+    // outfit that meets it), and nothing on a substantial shortfall (the capacity authority above owns
+    // that). It asks one narrow question in between: the upper system is ONE level short, so is there
+    // any positive cold-weather insulation evidence in it? A filled coat or a wool/fleece layer under
+    // a shell supplies it and the one-level tolerance stands. Weather protection and a lining never
+    // do: they prove exposure protection and construction substance. Cotton, rayon and silk still
+    // insulate physically; the classifier only says they carry no special insulating-fibre or fill
+    // evidence. Unknown garment evidence is disclosed, never convicted.
+    const hasPositiveInsulationEvidence = severeColdInsulation.some(entry => entry.evidence === 'insulating')
+    const oneLevelShort = Boolean(coldEndpointTarget) && severeFit.verdict === 'fits' && severeFit.best?.delta === -1
+    if (oneLevelShort && upperGarments.length && !hasPositiveInsulationEvidence && (outdoorCapable.length || unknown.length)) {
+      if (!severeColdInsulation.some(entry => entry.evidence === 'unknown')) {
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE,
+          'for sustained severe cold this outfit is one level short of the warmth target, and no upper-body garment has positive cold-weather insulation evidence (a recorded fill or an insulating fibre such as wool or fleece); the outer layer\'s weather protection and any lining do not supply that evidence',
+          { evidence, remedy: true }))
+      } else {
+        findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_INSULATION_EVIDENCE_UNKNOWN,
+          'this outfit is one level short of the warmth target for sustained severe cold, and insulation evidence is not recorded for every upper-body garment, so whether that shortfall is acceptable cannot be judged from saved garment facts',
+          { severity: 'advisory', evidence }))
+      }
     }
   }
 
@@ -629,4 +856,102 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     advisoryFindings: findings.filter(f => f.severity !== 'error'),
     evidence,
   }
+}
+
+// --- advisory findings as card-face notes ------------------------------------------------------
+//
+// ONE SHORTFALL, ONE NOTE. The engine keeps these as separate findings on purpose — §2.1 holds
+// removability ("is there something to put on"), presence ("is there a warm layer at all") and
+// amount ("how much insulation") apart, and each carries its own evidence for diagnostics. But on
+// a 65/46 day an outfit with no layer trips all three at once, and live QA (thread_1789174415595,
+// Whole Wardrobe Visual Composer) shipped three chips saying the same thing three ways:
+//   · "no layer to put on for the cooler part of the day..."
+//   · "a warm or midweight layer is recommended for cool weather"
+//   · "this outfit carries less warmth than the conditions call for"
+// That is a PRESENTATION defect, not a semantic one, so it is fixed here — where findings become
+// chips — and never by suppressing a finding inside the evaluator, which would take the evidence
+// with it.
+//
+// Precedence is by information, most specific first: the removability findings name the missing
+// thing AND (via demandHint) how much is needed; the undershoot finding at least states the amount;
+// WARM_LAYER_RECOMMENDED is the most generic of the three. The winner alone is shown.
+//
+// Only members of this family collapse. An undershoot note surviving alone (an outfit that HAS a
+// layer, just a lighter one than the day asks for) is untouched, and every non-warmth advisory —
+// rain, overshoot, fit — passes through unchanged.
+const COOL_WARMTH_ADVISORY_PRECEDENCE = [
+  ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER,
+  ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
+  ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
+  ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT,
+  ENVIRONMENTAL_ADEQUACY_CODES.WARM_LAYER_RECOMMENDED,
+]
+
+// HARD THERMAL ERRORS, the same presentation rule as the advisory family below: several typed errors
+// can describe one physical shortfall (no warm layer, capacity short, no insulation evidence). Every
+// typed finding stays in the evaluation and in debug; only the user-facing list shows one primary
+// explanation, most fundamental first.
+const SEVERE_COLD_THERMAL_ERROR_PRECEDENCE = [
+  ENVIRONMENTAL_ADEQUACY_CODES.NO_OUTDOOR_LAYER_FOR_SEVERE_COLD,
+  ENVIRONMENTAL_ADEQUACY_CODES.INDOOR_LAYER_ONLY_FOR_SEVERE_COLD,
+  ENVIRONMENTAL_ADEQUACY_CODES.NO_WARM_LAYER_FOR_COLD,
+  ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_INSUFFICIENT,
+  ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE,
+]
+
+// The single explanation a surface shows when it can show only one: the first finding after the
+// thermal family has collapsed, so structural findings keep their evaluation order and a thermal
+// explanation is always the approved primary rather than whichever typed error the evaluator emitted
+// first. Typed findings are untouched; this only chooses what the owner reads.
+export function primaryUserFacingFinding(hardFindings = []) {
+  return collapseThermalErrorFindings(Array.isArray(hardFindings) ? hardFindings : [])[0] || null
+}
+
+export function collapseThermalErrorFindings(findings = []) {
+  const family = findings.filter(finding => SEVERE_COLD_THERMAL_ERROR_PRECEDENCE.includes(finding?.code))
+  if (family.length < 2) return findings
+  const kept = family.reduce((best, finding) =>
+    SEVERE_COLD_THERMAL_ERROR_PRECEDENCE.indexOf(finding.code) < SEVERE_COLD_THERMAL_ERROR_PRECEDENCE.indexOf(best.code) ? finding : best)
+  return findings.filter(finding => !SEVERE_COLD_THERMAL_ERROR_PRECEDENCE.includes(finding?.code) || finding === kept)
+}
+
+export function collapseWarmthAdvisoryFindings(findings = []) {
+  const family = findings.filter(finding => COOL_WARMTH_ADVISORY_PRECEDENCE.includes(finding?.code))
+  if (family.length < 2) return findings
+  const kept = family.reduce((best, finding) =>
+    COOL_WARMTH_ADVISORY_PRECEDENCE.indexOf(finding.code) < COOL_WARMTH_ADVISORY_PRECEDENCE.indexOf(best.code)
+      ? finding
+      : best)
+  return findings.filter(finding =>
+    !COOL_WARMTH_ADVISORY_PRECEDENCE.includes(finding?.code) || finding === kept)
+}
+
+// The same family, asked as a question: "is this finding about the outfit not carrying enough
+// warmth?" Exported so a caller deciding whether a corrective pass could help reads the one list
+// rather than matching on message prose — the ranking slice already found a filter keyed on a
+// reason STRING that silently stopped matching when the wording changed.
+export function isWarmthShortfallFinding(finding) {
+  return COOL_WARMTH_ADVISORY_PRECEDENCE.includes(finding?.code)
+}
+
+// "Is this outfit's LAYER wrong for the day" — in either direction. A corrective pass that only
+// knows about shortfall watched three of five live cards ship a winter coat on a 65°F afternoon
+// (thread_1789238243751) and had nothing to say: too much warmth is as much a layer error as too
+// little, and the same swap fixes it.
+export function isLayerFitFinding(finding) {
+  return isWarmthShortfallFinding(finding) || finding?.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT
+}
+
+const ENVIRONMENTAL_CODE_VALUES = new Set(Object.values(ENVIRONMENTAL_ADEQUACY_CODES))
+
+// The single card-face projection of advisory findings, shared by every composer that shows chips
+// (outfitSetPlanner's plan slots, rules.js's whole-wardrobe gate). It was copied prose-for-prose in
+// both before this, which is how one of them could have drifted.
+export function advisoryFindingsToSystemFlags(findings = []) {
+  return collapseWarmthAdvisoryFindings(findings).map(finding => ({
+    type: ENVIRONMENTAL_CODE_VALUES.has(finding.code) || finding.stage === 'environment' || finding.kind === 'environment' || String(finding.code || '').startsWith('env_')
+      ? 'Weather note'
+      : 'Fit note',
+    message: finding.message,
+  }))
 }

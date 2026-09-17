@@ -3,10 +3,13 @@ import assert from 'node:assert'
 import {
   evaluateOutfitEnvironmentalAdequacy,
   ENVIRONMENTAL_ADEQUACY_CODES as C,
+  advisoryFindingsToSystemFlags,
+  collapseWarmthAdvisoryFindings,
 } from '../styling-engine/outfitEnvironmentalAdequacy.js'
-import { evaluateWearableOutfit } from '../styling-engine/outfitValidation.js'
+import { evaluateWearableOutfit, evaluateLayerPairConstruction } from '../styling-engine/outfitValidation.js'
 import {
   resolveWeatherContext,
+  validateUserWeather,
   serializeResolvedWeatherContext,
   restoreResolvedWeatherContext,
 } from '../styling-engine/weather.js'
@@ -181,40 +184,141 @@ test('SEVERE cold: an indoor destination does not demand outdoor outerwear', () 
   assert.deepEqual(hardCodes(result), [])
 })
 
-// --- a thin base under a real outer layer: two tiers, split by evidence --------------------------
+// --- a thin base under a real outer layer: two tiers, and the demand they need ------------------
+//
+// A NUMERIC PET ENDPOINT DECIDES AMOUNT; SEVERITY DECIDES WHETHER THE PHYSICAL RULES RUN (owner
+// ruling 2026-09-12, second pass). A bare `isColdSevere` flag carries no temperature, so these
+// fixtures pass a real range wherever the assertion is about how much warmth is enough — and the
+// flag-only fixtures below assert the physical rules and the ABSENCE of an amount verdict.
+const severeRange = (highF, lowF) =>
+  resolveWeatherContext({ userWeather: validateUserWeather({ high_f: highF, low_f: lowF }) }).temperature
 
-test('SEVERE cold: a MEASURED thin base under a good coat is a hard finding', () => {
+test('SEVERE cold: a MEASURED thin base under a good coat is NO LONGER a finding — recorded, not hidden', () => {
   // Live "Trail Tee, Pants & Puffer": a light warm-season tee and light warm-season track pants
-  // under a winter puffer. The shortfall was detected (systemCold 4 against a floor of 12) and was
-  // advisory, so it never rendered and the card shipped. Every base piece is tagged, so this is a
-  // measurement, not a gap.
+  // under a winter puffer, at a real 35/25.
+  //
+  // 2026-09-12, Concern 3 — A DELIBERATE SEVERITY CHANGE, recorded rather than absorbed. Under the
+  // retired additive floor this was a hard finding (systemCold 4 against a hand-set 12). Under the
+  // endpoint evaluator the upper system reads `warm` against a `very warm` cold endpoint: ONE level
+  // short, not two. The approved model says adjacency is a ranking preference and only a
+  // substantial mismatch is a mechanical fault, so this can no longer be an error without
+  // reintroducing the zero-tolerance cold endpoint that was rejected.
+  //
+  // An advisory tier for adjacent severe-cold shortfalls was written to keep this card disclosed,
+  // and then removed: run against the real wardrobe it also fired on a quilted puffer over a
+  // moderate sweater at 35/25, which is a well-dressed outfit. Keeping a note that misfires on
+  // correct cards to preserve one true positive is the trade this arc keeps refusing. This card now
+  // produces NO finding, and that is the owner-visible consequence of the migration.
+  //
+  // The part of the old verdict that does NOT survive: the light track pants. The floor summed
+  // every piece, so thin trousers dragged the total down; the production authority is upper-body
+  // only by owner ruling, and lower-body suitability remains audit evidence with no finding.
   const tee = top({ fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' })
   const trackPants = { id: 11, category: 'bottom', name: 'track pants', fabric_weight: 'light', fiber_content: ['polyester'] }
   const result = evaluateOutfitEnvironmentalAdequacy([tee, trackPants, shoes(), WOOL_COAT], {
-    weatherProfile: { isCold: true, isColdSevere: true },
+    weatherProfile: severeRange(35, 25), environment: 'outdoor',
   })
-  assert.deepEqual(hardCodes(result), [C.THERMAL_CAPACITY_INSUFFICIENT])
-  assert.match(result.hardFindings[0].message, /wardrobe gap|re-plan/, 'a supply-sensitive finding names a legal move')
+  assert.equal(result.evidence.severeColdFit.target, 'very warm')
+  assert.equal(result.evidence.severeColdFit.verdict, 'fits', 'the adjacency is still recorded as evidence')
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(!codes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT), 'no capacity finding at one level short')
+})
+
+test('SEVERE cold: a base that is SUBSTANTIALLY short under a good coat is still a hard finding', () => {
+  // The hard tier survives where the evidence is substantial. A waterproof shell is outdoor-capable
+  // by construction and thermally light, so a silk camisole under it leaves the upper system
+  // several levels under the `very warm` cold endpoint — every configuration known, all short the
+  // same way. This is the exact counterpart of "a shell over real insulation passes" above: same
+  // shell, and the verdict turns on what is underneath it rather than on the shell's own tag.
+  const camisole = top({ fabric_weight: 'light', fiber_content: ['silk'], sleeve_length: 'sleeveless' })
+  const result = evaluateOutfitEnvironmentalAdequacy([camisole, bottom(), shoes(), RAIN_SHELL], {
+    weatherProfile: severeRange(35, 25), environment: 'outdoor',
+  })
+  assert.equal(result.evidence.severeColdFit.verdict, 'substantial_shortfall')
+  assert.ok(hardCodes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
+  const capacity = result.hardFindings.find(f => f.code === C.THERMAL_CAPACITY_INSUFFICIENT)
+  assert.match(capacity.message, /wardrobe gap|re-plan/, 'a supply-sensitive finding names a legal move')
 })
 
 test('SEVERE cold: an UNMEASURED base under the same coat stays advisory', () => {
   // The distinction acceptance criterion 8 turns on. Nothing is known about these garments, so the
-  // low total is absence of evidence rather than evidence of absence.
+  // configurations are `cannot_judge` — absence of evidence rather than evidence of absence.
   const result = evaluateOutfitEnvironmentalAdequacy(
     [{ id: 10, category: 'top', name: 'untagged top' }, { id: 11, category: 'bottom', name: 'untagged bottom' }, shoes(), RAIN_SHELL],
-    { weatherProfile: { isCold: true, isColdSevere: true } },
+    { weatherProfile: severeRange(35, 25), environment: 'outdoor' },
   )
+  assert.equal(result.evidence.severeColdFit.verdict, 'cannot_judge')
   assert.deepEqual(hardCodes(result), [])
   assert.ok(codes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
 })
 
 test('SEVERE cold: a measured but genuinely warm base passes', () => {
-  // The split must not turn "fully tagged" into "suspicious" — a tagged heavy base clears the floor.
+  // The split must not turn "fully tagged" into "suspicious" — a tagged heavy base under the same
+  // shell reaches the endpoint.
   const result = evaluateOutfitEnvironmentalAdequacy(
     [top({ fabric_weight: 'heavy', fiber_content: ['wool'] }), bottom(), shoes(), RAIN_SHELL],
-    { weatherProfile: { isCold: true, isColdSevere: true } },
+    { weatherProfile: severeRange(35, 25), environment: 'outdoor' },
   )
   assert.deepEqual(hardCodes(result), [])
+})
+
+// --- severity and the PET target are allowed to disagree ----------------------------------------
+
+test('REGRESSION: 45/45 is SEVERE and its PET cold endpoint is `warm`, not `very warm`', () => {
+  // The counterexample that retired the flag-derived demand level. `isColdSevere` means the daily
+  // HIGH is at most 45F; it says nothing about the low, and a flat 45/45 day is severe with a cold
+  // endpoint a full level below the one 35/25 produces. A constant `very warm` fallback graded this
+  // day two levels too high, so an upper system merely ADJACENT to its real target could hard-fail.
+  const flat = severeRange(45, 45)
+  assert.equal(flat.isColdSevere, true, 'the classifier still fires — the high is at or below the threshold')
+
+  const moderateBase = [top({ fabric_weight: 'medium', fiber_content: ['wool'] }), bottom(), shoes(), WOOL_COAT]
+  const result = evaluateOutfitEnvironmentalAdequacy(moderateBase, { weatherProfile: flat, environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.target, 'warm',
+    'a severe day whose PET cold endpoint is a level below the one 35/25 produces')
+  assert.equal(result.evidence.severeColdFit.target, result.evidence.endpointFit.coldTarget,
+    'severe cold reads the same PET endpoint the ordinary amount question does — one target, two consumers')
+
+  // And the outfit that would have been convicted by the retired constant is simply fine here.
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(!codes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
+
+  // Same wardrobe, a genuinely colder severe day: the target rises and the evidence moves with it.
+  const colder = evaluateOutfitEnvironmentalAdequacy(moderateBase, { weatherProfile: severeRange(35, 25), environment: 'outdoor' })
+  assert.equal(colder.evidence.severeColdFit.target, 'very warm')
+})
+
+// --- the flag-only legacy shape: physical rules run, amount stays unjudged -----------------------
+
+test('SEVERE cold: a bare severity flag runs every PHYSICAL rule and manufactures no demand level', () => {
+  // Callers that carry `isColdSevere` without a temperature still get presence, outdoor capability
+  // and transit coverage — those are construction questions, and severity is enough to ask them.
+  // What they must NOT get is an invented thermal target.
+  const flagOnly = { isCold: true, isColdSevere: true }
+
+  const noLayer = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes()], { weatherProfile: flagOnly })
+  assert.ok(hardCodes(noLayer).includes(C.NO_OUTDOOR_LAYER_FOR_SEVERE_COLD), 'presence still runs')
+
+  const indoorLayer = evaluateOutfitEnvironmentalAdequacy([top(), bottom(), shoes(), CARDIGAN], { weatherProfile: flagOnly })
+  assert.ok(hardCodes(indoorLayer).includes(C.INDOOR_LAYER_ONLY_FOR_SEVERE_COLD), 'outdoor capability still runs')
+
+  // The tee-and-track-pants card, flag-only: no target, so no amount verdict in either direction.
+  const tee = top({ fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'short' })
+  const trackPants = { id: 11, category: 'bottom', name: 'track pants', fabric_weight: 'light', fiber_content: ['polyester'] }
+  const thin = evaluateOutfitEnvironmentalAdequacy([tee, trackPants, shoes(), WOOL_COAT], { weatherProfile: flagOnly })
+  assert.equal(thin.evidence.severeColdFit.target, null)
+  assert.equal(thin.evidence.severeColdFit.verdict, 'no_target',
+    'severity without a temperature leaves thermal amount unjudged rather than guessed')
+  assert.deepEqual(hardCodes(thin), [])
+  assert.ok(!codes(thin).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
+
+  // Even a camisole under a light shell — substantially short at any real severe range — produces
+  // no amount finding without a temperature. The physical rules are what still speak.
+  const camisole = top({ fabric_weight: 'light', fiber_content: ['silk'], sleeve_length: 'sleeveless' })
+  const bare = evaluateOutfitEnvironmentalAdequacy([camisole, bottom(), shoes(), RAIN_SHELL], { weatherProfile: flagOnly })
+  assert.equal(bare.evidence.severeColdFit.verdict, 'no_target')
+  assert.ok(!codes(bare).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
 })
 
 // --- missing metadata is never hard invalidity (acceptance criterion 8) --------------------------
@@ -692,3 +796,309 @@ test('season does not leak into the cold or severe tiers', () => {
   assert.deepEqual(hardCodes(result), [C.NO_WARM_LAYER_FOR_COLD])
   assert.doesNotMatch(result.hardFindings[0].message, /warm-season/)
 })
+
+// --- one shortfall, one note (thread_1789174415595) ---------------------------------------------
+//
+// The engine keeps removability, presence and amount as separate findings on purpose. The card face
+// must not: a layerless 65/46 day tripped all three and showed three chips saying the same thing.
+
+// The live profile from that run, as resolveStylingContext produced it (65F high / 46F low,
+// stated_user, sustained outdoor exposure) — the three overlapping findings need the presence
+// requirement and the resolved context, not just the needsRemovableCoolLayer flag.
+const WALNUT_CREEK_65_46 = {
+  isHot: false,
+  isCold: false,
+  isColdSevere: false,
+  isExtremeHeat: false,
+  needsRemovableCoolLayer: true,
+  highF: 65,
+  lowF: 46,
+  weatherSource: 'stated_user',
+  resolvedWeatherContext: {
+    status: 'resolved',
+    location: 'Walnut Creek, CA',
+    dateRange: null,
+    temperature: { highF: 65, lowF: 46, band: null, isHot: false, isCold: false, isColdSevere: false, needsRemovableCoolLayer: true, isExtremeHeat: false, source: 'stated_user' },
+    precipitation: { value: 'unknown', source: 'unavailable' },
+    wind: { value: 'unknown', source: 'unavailable' },
+    overallSource: 'stated_user',
+  },
+  coldPresenceRequirement: {
+    state: 'recommended',
+    applies: false,
+    evidence: { wakingLowF: 46, wakingHighF: 65, exertion: 'none', exposureMode: 'sustained_outdoor', isSevereCold: false, severeBasis: null },
+    rationale: 'ordinary cool/cold exposure with unknown duration (proposed advisory calibration)',
+  },
+}
+
+test('CHIPS: a layerless cool day still produces every finding for diagnostics', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: WALNUT_CREEK_65_46,
+  })
+  const found = advisoryCodes(result)
+  assert.ok(found.includes(C.NO_REMOVABLE_COOL_LAYER), `expected the removability finding, got ${found.join(', ')}`)
+  assert.ok(found.includes(C.WARM_LAYER_RECOMMENDED), `expected the presence finding, got ${found.join(', ')}`)
+  // The live run added THERMAL_UNDERSHOOT as a third; it needs a fully thermally-tagged base,
+  // which these deliberately generic fixtures are not. Two overlapping notes is already the defect.
+  assert.ok(found.length >= 2, `the overlapping family is what this collapse exists for, got ${found.join(', ')}`)
+})
+
+test('CHIPS: that same outfit shows ONE weather chip, not three', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: WALNUT_CREEK_65_46,
+  })
+  const flags = advisoryFindingsToSystemFlags(result.advisoryFindings)
+  assert.equal(flags.length, 1, `three ways of saying one thing is the live defect, got ${JSON.stringify(flags)}`)
+  assert.equal(flags[0].type, 'Weather note')
+  assert.match(flags[0].message, /no layer to put on/)
+})
+
+test('CHIPS: the overlapping warmth family collapses to the most specific note', () => {
+  const findings = [
+    { code: C.WARM_LAYER_RECOMMENDED, message: 'a warm or midweight layer is recommended for cool weather' },
+    { code: C.THERMAL_UNDERSHOOT, message: 'this outfit carries less warmth than the conditions call for' },
+    { code: C.NO_REMOVABLE_COOL_LAYER, message: 'this outfit has no layer to put on for the cooler part of the day' },
+  ]
+  const flags = advisoryFindingsToSystemFlags(findings)
+  assert.deepEqual(flags, [{ type: 'Weather note', message: 'this outfit has no layer to put on for the cooler part of the day' }])
+})
+
+test('CHIPS: an undershoot on an outfit that HAS a layer survives alone', () => {
+  // The Outfit 1 case: a light jacket on a day that asks for a warm one. Nothing to collapse into,
+  // so the amount note is the note.
+  const flags = advisoryFindingsToSystemFlags([
+    { code: C.THERMAL_UNDERSHOOT, message: 'this outfit carries less warmth than the conditions call for' },
+  ])
+  assert.deepEqual(flags, [{ type: 'Weather note', message: 'this outfit carries less warmth than the conditions call for' }])
+})
+
+test('CHIPS: non-warmth advisories pass through untouched', () => {
+  const flags = advisoryFindingsToSystemFlags([
+    { code: C.NO_REMOVABLE_COOL_LAYER, message: 'nothing to put on' },
+    { code: C.WARM_LAYER_RECOMMENDED, message: 'a warm or midweight layer is recommended' },
+    { code: C.RAIN_PROTECTION_MISSING, message: 'no layer here has tagged rain protection for wet conditions' },
+    { code: C.THERMAL_OVERSHOOT, message: 'this outfit carries more warmth than the conditions call for' },
+    { code: 'layer_direction_conflict', stage: 'layer_direction', message: 'sleeve geometry conflict' },
+  ])
+  assert.deepEqual(flags, [
+    { type: 'Weather note', message: 'nothing to put on' },
+    { type: 'Weather note', message: 'no layer here has tagged rain protection for wet conditions' },
+    { type: 'Weather note', message: 'this outfit carries more warmth than the conditions call for' },
+    { type: 'Fit note', message: 'sleeve geometry conflict' },
+  ])
+})
+
+test('CHIPS: collapsing is display-only — the finding list itself is never mutated', () => {
+  const findings = [
+    { code: C.NO_REMOVABLE_COOL_LAYER, message: 'nothing to put on' },
+    { code: C.WARM_LAYER_RECOMMENDED, message: 'a warm or midweight layer is recommended' },
+  ]
+  advisoryFindingsToSystemFlags(findings)
+  assert.equal(findings.length, 2, 'the evaluator keeps its evidence; only the projection collapses')
+  assert.deepEqual(collapseWarmthAdvisoryFindings([]), [])
+})
+
+// --- configuration revalidation, through the production path ------------------------------------
+
+test('INTEGRATION: the chain rule reaches the production path, and reduced configurations are revalidated', () => {
+  // 2026-09-13. This fixture used to assert that the composed outfit was `compatible` while the
+  // vest-removed configuration was not — non-monotonic removal, which is why `wornConfigurations`
+  // takes an injected validator. The chain rule subsumes that example: a voluminous sleeve under a
+  // SLEEVELESS vest is still directly inside the coat sleeve, so the composed outfit is now
+  // correctly rejected up front rather than only after the vest is hypothetically removed.
+  //
+  // Recorded rather than quietly re-pointed at a new fixture, because it is the honest result: for
+  // SLEEVES, removal is now monotonic — the chain compares the base against every outer layer
+  // whether or not a middle layer sits between them. The injected validator stays as the contract
+  // (a configuration is a state someone can actually wear), and its filtering behaviour is pinned
+  // with an explicit validator in test/thermalAdequacyMigration.test.js.
+  const voluminousBlouse = {
+    id: 70, name: 'voluminous-sleeve blouse', category: 'top', role: 'primary_top',
+    sleeve_length: 'long', sleeve_shape: 'voluminous', fabric_weight: 'light', fiber_content: ['cotton'],
+  }
+  const vest = {
+    id: 71, name: 'quilted vest', category: 'outerwear', role: 'layer_top',
+    sleeve_length: 'sleeveless', sleeve_type: 'sleeveless', fabric_weight: 'medium', fiber_content: ['polyester'],
+  }
+  const structuredCoat = {
+    id: 72, name: 'structured wool coat', category: 'outerwear', role: 'outerwear',
+    sleeve_length: 'long', sleeve_shape: 'fitted', fabric_weight: 'heavy', fiber_content: ['wool'],
+  }
+  const pieces = [voluminousBlouse, vest, structuredCoat,
+    { id: 73, name: 'trousers', category: 'bottom', role: 'primary_bottom', fabric_weight: 'medium' },
+    { id: 74, name: 'boots', category: 'shoes', role: 'shoes', shoe_type: 'boot' }]
+
+  const result = evaluateWearableOutfit(pieces, {
+    roleAware: true,
+    includeLayerDirections: true,
+    weatherContext: { weatherProfile: severeRange(60, 48), environment: 'outdoor', activity: 'none' },
+  })
+  // Log-only since 2026-09-14: the geometry conflict is still computed through the aggregator, as shadow evidence only.
+  assert.equal(result.hardValid, true, 'a sleeve-geometry verdict never makes the outfit invalid')
+  const conflict = result.shadowFindings.find(finding => finding.code === 'layer_construction_sleeve_conflict')
+  assert.ok(conflict, 'the sleeveless middle layer does not hide the blouse from the coat in the shadow evidence')
+  assert.equal(conflict.evidence.originId, voluminousBlouse.id)
+  assert.equal(conflict.evidence.outerId, structuredCoat.id)
+
+  // And the weather stage still ran on the same call — the two contracts remain independent.
+  assert.ok(result.stages.some(stage => stage.stage === 'environment'))
+})
+
+// --- adjacent severe-cold capacity without insulation evidence (owner ruling 2026-09-13) ----------
+const LINED_TRENCH = { id: 30, category: 'outerwear', name: 'lined trench coat', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton', 'polyester'], insulating_layer_materials: [], interior_construction: 'full_lining', weather_protection: ['wind'], sleeve_length: 'long', length_hits_at: 'knee', opacity: 'opaque' }
+const cottonTee = () => top({ fiber_content: ['cotton'] })
+const ADJ = C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE
+const ADJ_UNKNOWN = C.THERMAL_CAPACITY_INSULATION_EVIDENCE_UNKNOWN
+
+test('ADJACENT SEVERE CAPACITY: tee + lined trench at 45/35 is one level short with no positive insulation evidence, and fails', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([cottonTee(), bottom(), shoes(), LINED_TRENCH], { weatherProfile: severeRange(45, 35), environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.ok(hardCodes(result).includes(ADJ))
+  const f = result.hardFindings.find(x => x.code === ADJ)
+  assert.match(f.message, /no upper-body garment has positive cold-weather insulation evidence/)
+  assert.doesNotMatch(f.message, /\bno insulation\b/, 'the classifier does not claim cotton carries no insulation')
+})
+
+test('ADJACENT SEVERE CAPACITY: a filled puffer one level short at 35/25 stays acceptable', () => {
+  const puffer = { id: 31, category: 'outerwear', name: 'quilted puffer jacket', fabric_weight: 'medium', fiber_content: ['polyester', 'nylon'], insulating_layer_materials: ['polyester'], interior_construction: 'full_lining', weather_protection: ['wind'], sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([cottonTee(), bottom(), shoes(), puffer], { weatherProfile: severeRange(35, 25), environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.ok(!codes(result).includes(ADJ) && !codes(result).includes(ADJ_UNKNOWN))
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('ADJACENT SEVERE CAPACITY: wool under the same protective trench supplies the evidence', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fiber_content: ['wool'] }), bottom(), shoes(), LINED_TRENCH], { weatherProfile: severeRange(45, 35), environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(!codes(result).includes(ADJ_UNKNOWN))
+})
+
+test('ADJACENT SEVERE CAPACITY: unknown garment evidence is disclosed, never convicted', () => {
+  // A placeable system one level short whose outer layer never answered the interior question: a warm
+  // mock-neck cotton base under a light rain jacket with no recorded fill or "no fill" answer.
+  const warmBase = top({ fabric_weight: 'heavy', fiber_content: ['cotton'], neckline: 'mock neck' })
+  const rainJacket = { id: 33, category: 'outerwear', name: 'rain jacket', fabric_weight: 'light', fiber_content: ['polyester'], weather_protection: ['rain'], sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([warmBase, bottom(), shoes(), rainJacket], { weatherProfile: severeRange(45, 35), environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(advisoryCodes(result).includes(ADJ_UNKNOWN))
+})
+
+test('REGRESSION 45/45: a system that reaches its actual PET endpoint stays clean without wool or fill', () => {
+  const flat = severeRange(45, 45)
+  assert.equal(flat.isColdSevere, true)
+  const result = evaluateOutfitEnvironmentalAdequacy([cottonTee(), bottom(), shoes(), LINED_TRENCH], { weatherProfile: flat, environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.target, 'warm')
+  assert.equal(result.evidence.severeColdFit.bestDelta, 0, 'the endpoint is met')
+  assert.deepEqual(hardCodes(result), [])
+  assert.ok(!codes(result).includes(ADJ) && !codes(result).includes(ADJ_UNKNOWN) && !codes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT))
+})
+
+test('REGRESSION severe flag without temperature: no new amount or capacity verdict', () => {
+  const flagOnly = { isCold: true, isColdSevere: true }
+  const result = evaluateOutfitEnvironmentalAdequacy([cottonTee(), bottom(), shoes(), LINED_TRENCH], { weatherProfile: flagOnly })
+  assert.equal(result.evidence.severeColdFit.verdict, 'no_target')
+  for (const code of [ADJ, ADJ_UNKNOWN, C.THERMAL_CAPACITY_INSUFFICIENT]) assert.ok(!codes(result).includes(code), `no ${code} without a temperature`)
+})
+
+test('user-facing thermal errors collapse to one primary explanation while every typed finding stays in the evaluation', async () => {
+  const { collapseThermalErrorFindings } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  // Through the shared evaluator, with the presence requirement the styling-context resolver attaches
+  // to a verified severe outdoor exposure (resolveColdLayerPresenceRequirement) — without it the floor
+  // has no requirement to enforce.
+  const unlined = { ...LINED_TRENCH, id: 32, name: 'unlined cotton jacket', interior_construction: 'unlined', length_hits_at: 'hip' }
+  const pieces = [
+    { ...cottonTee(), role: 'primary_top' },
+    { ...bottom(), role: 'primary_bottom' },
+    { ...shoes(), role: 'shoes' },
+    { ...unlined, role: 'outerwear' },
+  ]
+  const result = evaluateWearableOutfit(pieces, { requireShoes: true, roleAware: true, weatherContext: { weatherProfile: { ...severeRange(45, 35), coldPresenceRequirement: { state: 'required' } }, activity: 'none' } })
+  assert.ok(hardCodes(result).includes(C.NO_WARM_LAYER_FOR_COLD) && hardCodes(result).includes(ADJ), `both typed errors are kept: ${JSON.stringify(hardCodes(result))}`)
+  const shown = collapseThermalErrorFindings(result.hardFindings)
+  assert.deepEqual(shown.map(f => f.code), [C.NO_WARM_LAYER_FOR_COLD])
+})
+
+test('ADJACENT SEVERE CAPACITY precedence: positive insulation evidence wins even when another garment is unknown', () => {
+  // Decision order: any positive evidence -> this backstop passes; otherwise any unknown -> advisory;
+  // otherwise -> hard. A warm wool mock-neck base under a light rain jacket whose interior was never
+  // answered: one level short, one garment insulating, one unknown.
+  const woolBase = top({ fabric_weight: 'heavy', fiber_content: ['wool'], neckline: 'mock neck' })
+  const rainJacket = { id: 34, category: 'outerwear', name: 'rain jacket', fabric_weight: 'light', fiber_content: ['polyester'], weather_protection: ['rain'], sleeve_length: 'long' }
+  const result = evaluateOutfitEnvironmentalAdequacy([woolBase, bottom(), shoes(), rainJacket], { weatherProfile: severeRange(45, 35), environment: 'outdoor' })
+  assert.equal(result.evidence.severeColdFit.bestDelta, -1)
+  assert.deepEqual(result.evidence.severeColdInsulation.map(entry => entry.evidence).sort(), ['insulating', 'unknown'])
+  assert.ok(!codes(result).includes(ADJ), 'no hard backstop')
+  assert.ok(!codes(result).includes(ADJ_UNKNOWN), 'and no unknown-evidence advisory either')
+  assert.deepEqual(hardCodes(result), [])
+})
+
+test('primaryUserFacingFinding: structural order is kept and the thermal family shows only its approved primary', async () => {
+  const { primaryUserFacingFinding, collapseThermalErrorFindings } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const f = code => ({ code, message: code })
+  const order = [C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE, C.THERMAL_CAPACITY_INSUFFICIENT, C.NO_WARM_LAYER_FOR_COLD, C.INDOOR_LAYER_ONLY_FOR_SEVERE_COLD, C.NO_OUTDOOR_LAYER_FOR_SEVERE_COLD]
+  // Approved precedence, most fundamental first, whatever order the evaluator emitted them in.
+  for (let i = order.length - 1; i >= 0; i--) {
+    const present = order.slice(0, i + 1).map(f)
+    assert.equal(primaryUserFacingFinding(present).code, order[i])
+  }
+  const structural = f('missing_shoes')
+  assert.equal(primaryUserFacingFinding([structural, f(C.NO_WARM_LAYER_FOR_COLD), f(C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE)]).code, 'missing_shoes')
+  assert.deepEqual(collapseThermalErrorFindings([structural, f(C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE), f(C.NO_WARM_LAYER_FOR_COLD)]).map(x => x.code),
+    ['missing_shoes', C.NO_WARM_LAYER_FOR_COLD])
+  assert.equal(primaryUserFacingFinding([]), null)
+})
+
+// thread_1789536455443 (2026-09-16, reopened): medium knit shirt + heavy trousers + boots + a
+// medium-weight, fully-lined, wind-protective, NON-insulating trench, at 50/40°F exposure_window
+// (certain). `propose_outfit` accepted this with ZERO findings, and owner review confirmed the
+// outfit is genuinely NOT adequate for that outing (works to ~55°F). This is recorded here as an
+// UNRESOLVED false negative, not a fixed one: `hasMinimumWarmLayer`'s presence/substance floor
+// treats a full lining as legitimate substance evidence (2026-09-13 amendment) so the trench clears
+// that low bar; the thermal-contribution bucket separately reads the whole system as `warm`, an
+// EXACT match to the certain `warm` cold-end target (bestDelta 0, verdict 'fits'), so
+// THERMAL_UNDERSHOOT never fires either. A dedicated "no outer layer carries recorded insulation"
+// advisory was tried and reverted (2026-09-16 owner review): missing insulation is a per-garment
+// fact, not independently a whole-outfit shortfall — it ignores warmth that can legitimately come
+// from a medium insulating base, multiple garments together, or wind protection genuinely mattering
+// at the exposure, and it manufactured a second verdict alongside the one below rather than fixing
+// it. Re-tuning the floor or the bucket itself was ALSO tried (2026-09-13) and reverted for
+// miscalibrating seven other real garments the other way. The evaluator's aggregated contribution
+// for this system is measured here as `warm`/`fits` — genuinely overvalued relative to owner truth,
+// and left that way pending a real calibration fix, not a workaround. The mitigation shipped
+// instead gives the MODEL the complete construction facts and photographs so it can judge this
+// itself, rather than manufacturing a second deterministic engine verdict.
+test('KNOWN UNRESOLVED: a fully-lined, wind-protective, non-insulating trench at 50/40°F clears both the presence floor and the thermal-amount check, with no finding at all', () => {
+  const trench = {
+    id: 40, category: 'outerwear', name: 'cream trench coat', fabric_weight: 'medium',
+    fiber_content: ['cotton', 'polyester'], insulating_layer_materials: [], interior_construction: 'full_lining',
+    weather_protection: ['wind'], sleeve_length: 'long',
+  }
+  const weatherProfile = { ...severeRange(50, 40), coldPresenceRequirement: { state: 'recommended' } }
+  const result = evaluateOutfitEnvironmentalAdequacy(
+    [top({ fabric_weight: 'medium', fiber_content: ['cotton'] }), bottom(), shoes(), trench],
+    { weatherProfile, environment: 'outdoor', activity: 'walking' },
+  )
+  assert.deepEqual(result.findings, [], 'STILL UNRESOLVED as of 2026-09-16: owner truth says this system is not adequate below ~55°F, and the evaluator currently disagrees with zero findings — do not treat this assertion passing as evidence the calibration is fixed')
+})
+
+test('NEUTRAL VERDICTS (experiment flag): the warm-layer advisory is stated as the recorded facts, not a recommendation', () => {
+  const thinJacket = { id: 35, category: 'outerwear', name: 'unlined cotton jacket', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', sleeve_length: 'long' }
+  const weatherProfile = { ...severeRange(60, 48), coldPresenceRequirement: { state: 'recommended' } }
+  const run = () => evaluateOutfitEnvironmentalAdequacy([top({ fiber_content: ['cotton'] }), bottom(), shoes(), thinJacket], { weatherProfile, environment: 'outdoor' })
+    .findings.find(finding => finding.code === C.WARM_LAYER_RECOMMENDED)
+  const production = run()
+  assert.match(production.message, /recommended/)
+  process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS = 'true'
+  try {
+    const neutral = run()
+    assert.equal(neutral.code, production.code, 'same typed finding, same severity')
+    assert.equal(neutral.severity, production.severity)
+    assert.doesNotMatch(neutral.message, /recommend/)
+    assert.match(neutral.message, /at least two thin-construction facts/)
+  } finally {
+    delete process.env.WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS
+  }
+})
+
