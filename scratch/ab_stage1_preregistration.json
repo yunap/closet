@@ -1,0 +1,119 @@
+{
+  "experiment": "Stage 1 production-path comparison: one-outfit slice vs Whole Wardrobe five-outfit bundle",
+  "status": "pre-registered; paid run NOT approved",
+  "registeredOn": "2026-09-13",
+  "harness": "scratch/ab_stage1_production_paths.mjs",
+  "contractChecks": "scratch/ab_stage1_contract.mjs",
+  "scenarioDefinitions": "scratch/ab_stage1_scenarios.mjs",
+  "reviewSheet": "scratch/ab_stage1_review_sheet.mjs",
+  "preflightIsNotAResult": "The default --mode preflight serves every model call from a recorder and runs the single-outfit tools directly. It verifies tools, payloads and the contract report only and is never reported as comparison evidence.",
+  "provider": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "thinkingLevel": "low"
+  },
+  "snapshot": "one frozen copy of wardrobe.db, wardrobe.db-wal, wardrobe.db-shm, system.db, system.db-wal and system.db-shm; the sha256 of each (null when absent) is recorded in every manifest; each cell runs on its own fresh copy",
+  "experimentFlag": "WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS=true in every cell (ordering heading, taste lists, ruleFit tiers and photo-label tiers removed; 'acceptable' and 'recommended' stated as raw evidence)",
+  "arms": {
+    "one": "POST /api/ai/ask with a fresh session: the real execution router, the real single_outfit model/tool loop (search_wardrobe, view_pieces, propose_outfit) and its real validation",
+    "bundle": "POST /api/ai/generate-wardrobe-outfits-visual: the real supply selection, composer, clash critic, missing-layer repair and validation; five cards"
+  },
+  "identicalContext": {
+    "occasion": "casual",
+    "season": "fall",
+    "location": "the snapshot's home_location, passed explicitly in both request bodies",
+    "date": "2026-09-13, passed explicitly to both",
+    "weather": "the scenario's stated user_weather, passed structurally to both (never extracted from prose)",
+    "activity": "the scenario's activity",
+    "situationText": "identical per scenario; the one-outfit question adds only 'Style one casual outfit.' and 'Show me one outfit card.'"
+  },
+  "scenarios": [
+    "S1 65/50 sedentary",
+    "S2 46F walking",
+    "S3 72/62 mild"
+  ],
+  "replicates": {
+    "perCell": 2,
+    "cell": "scenario x arm",
+    "rule": "Exactly two replicates per cell, run once each. There is no extension, no replacement and no selective rerun of any cell. A run with fewer than two completed attempts per cell is a pilot and is not reported as a result.",
+    "inconclusive": "If the result is inconclusive, any follow-up is a new experiment with its own pre-registration and symmetric sampling across every cell."
+  },
+  "attempts": "Every attempt is kept and reported, including route errors, misrouting, fallback and zero-card answers. Nothing is rerun to replace it.",
+  "outcomes": {
+    "routing": "End-to-end outcome of the one-outfit arm: the share of all attempts where the execution router chose single_outfit and the executed profile was single_outfit, reported per scenario and overall. Misclassification or fallback to another profile is a failure of this outcome, not an invalid cell.",
+    "technical": "Per attempt, both arms: HTTP 200 and no route/provider error, reported over all attempts.",
+    "zeroCardAttempts": "Per arm: the share of attempts that returned zero displayable cards, over all attempts.",
+    "ratingItems": "Each displayed card receives three independent ratings: weather adequacy 1-5, style and intent 1-5, and would wear as shown yes/no. They are separate outcomes and are never combined into one score.",
+    "primaryPerAttempt": {
+      "meanWeather": "Mean weather-adequacy rating across all displayed cards of the attempt (ready and Needs review).",
+      "meanStyle": "Mean style-and-intent rating across all displayed cards of the attempt.",
+      "wouldWearProportion": "Share of the attempt's displayed cards rated would wear = yes."
+    },
+    "secondaryPerAttempt": {
+      "bestWeather": "Highest weather-adequacy rating among the attempt's displayed cards.",
+      "bestStyle": "Highest style-and-intent rating among the attempt's displayed cards."
+    },
+    "descriptiveOnly": "The sheet's single strongest-card pick spans hidden arms and replicates. It is reported descriptively and is never used to derive any per-arm, per-replicate or secondary comparison.",
+    "completeness": "Scoring runs only when every displayed card has all three ratings; otherwise it stops and lists the unrated positions.",
+    "conditioning": "The outfit-quality comparison is conditional on successful single_outfit routing for the one-outfit attempt, and on both arms of that scenario and replicate passing the conditions check. Attempts excluded by this condition are listed with their reason."
+  },
+  "conditionsCheck": "Before either cell of a scenario/replicate enters a review sheet, the sheet builder recomputes from the recorded route debug that both arms resolved identical high and low temperatures and the same location (scratch/ab_stage1_contract.mjs weatherParity). A mismatch excludes both cells from rating and is reported.",
+  "blinding": {
+    "hidden": "Which arm and which replicate produced each card. The arm key is sealed in a separate file.",
+    "shown": "Each card as the product shows it to a user: title, rank label or visible Needs-review status, the review notice and 'What didn't clear' rejection reason for cards the product marked broken, flags (once), the model's reason, styling instructions and watchFor under the product's visibility rules, and the garment photos.",
+    "engineEvidence": "Endpoint targets, completed levels, signed distances, garment warmth labels and findings are collapsed until each card is rated, and are never used as proof an outfit is practically warm enough.",
+    "order": "Randomized with a recorded seed."
+  },
+  "roles": "Each card's actual slots (composer modelSlots) and per-piece roles as returned by the route are kept in the manifest and used by the evaluator. Nothing reconstructs a role from category.",
+  "ratingsExport": "The sheet exports a blinded JSON containing the sheet seed, the pre-registration sha256, the scenario, each card position with its three ratings and notes, and the descriptive strongest-card pick. It contains no arm, replicate or Needs-review-count information beyond what each card visibly shows.",
+  "comparisons": {
+    "unit": "Scenario x replicate, one-outfit attempt versus bundle attempt, computed after unblinding from the blinded export and the sealed key (scratch/ab_stage1_score.mjs).",
+    "primary": "For each of meanWeather, meanStyle and wouldWearProportion separately: one-outfit value minus bundle value.",
+    "secondary": "For each of bestWeather and bestStyle separately: one-outfit value minus bundle value.",
+    "reporting": "Every scenario x replicate difference is reported for each outcome, with ready and Needs-review counts per attempt. No pooling rule or threshold is applied in this experiment; an inconclusive result needs a new pre-registration."
+  },
+  "recordedPerAttempt": [
+    "execution index",
+    "request bodies",
+    "provider capture: normalized input, wire input and raw output for every provider call, including every stylist_tool_loop turn, all three sharing one callId",
+    "every returned card with its user-visible fields, slots, piece roles, flags and rejection reason",
+    "router profile and executed profile",
+    "tool sequence",
+    "resolved temperature and location per arm",
+    "token usage by call",
+    "latency",
+    "supply boundary by ID and exclusion reason"
+  ],
+  "costEstimate": {
+    "perScenarioUSD": {
+      "one": 0.033,
+      "bundle": 0.047
+    },
+    "runUSD": 0.48,
+    "basis": "3 scenarios x 2 arms x 2 replicates; preflight payload sizes and live analog token counts at gemini-3.5-flash-lite pricing"
+  },
+  "executionOrder": {
+    "rule": "Attempts run sequentially in exactly this order, recorded per attempt as executionIndex. Replicate 1 runs one before bundle within each scenario, S1-S2-S3; replicate 2 runs bundle before one, with scenario order rotated to S2-S3-S1, so arm order and scenario position are both counterbalanced across the two replicates.",
+    "sequence": [
+      "r1:S1:one",
+      "r1:S1:bundle",
+      "r1:S2:one",
+      "r1:S2:bundle",
+      "r1:S3:one",
+      "r1:S3:bundle",
+      "r2:S2:bundle",
+      "r2:S2:one",
+      "r2:S3:bundle",
+      "r2:S3:one",
+      "r2:S1:bundle",
+      "r2:S1:one"
+    ]
+  },
+  "diagnosticCards": "Every card the product returns for display is shown on the sheet, including cards the product marked Needs review (broken, diagnostic or retry-pending), with the product's own Needs-review treatment. None is hidden or discarded. Every displayed card is rated and counts toward its attempt's quality outcomes. Ready and Needs-review card counts are reported separately per arm, scenario and replicate.",
+  "zeroVisibleCards": "An attempt that returns zero displayable cards has no ratable cards: its rating outcomes are recorded as not computable (never imputed as zero), it is counted in a separate per-arm zero-card outcome, and every comparison for that scenario and replicate is reported as not computable with the reason. The other arm's cards for that scenario and replicate are still shown and rated, and its outcomes still reported.",
+  "stage2": "Component isolation on the fixed bench (scratch/ab_stage2_bench_design.md) runs only if Stage 1 shows a difference.",
+  "scoring": "scratch/ab_stage1_score.mjs",
+  "sourceState": "Every manifest records git HEAD, the sha256 of `git diff --binary HEAD` and the list of untracked files. Live mode refuses to start while any untracked file exists.",
+  "providerNetwork": "Cells run under NODE_ENV=test. WARDROBE_ALLOW_TEST_PROVIDER_NETWORK=true is set for a cell only in an approved live run (--mode live --approved) and is removed in every other state. Before the paid run, --boundary-check proves without billing or attempts that the live environment passes assertProviderKey() and reaches the SDK boundary, and that the preflight environment is refused.",
+  "captureIntegrity": "A technically successful live attempt whose capture is incomplete (no captured call, any call lacking a normalized, wire or output record under its callId, any record without a callId, or a one-outfit attempt with no tool-loop turn) is a capture-integrity failure. It is reported in the contract report and the sealed key before any sheet is built. The attempt is kept, stays ratable, and is never rerun."
+}
