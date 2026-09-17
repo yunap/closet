@@ -99,11 +99,16 @@ test('conditionsSource records the sourcing tier, and coarse survives it', () =>
   assert.equal(none.conditionsSource, 'unknown')
   assert.equal(none.known, false)
 
-  // explicit_hourly is defined in the tier list but deliberately unreachable: the forecast requests
-  // `daily=` only, and no clock fact exists to key a window. Spec §10.3. Asserted so the day it
-  // becomes reachable, this test is what says so.
-  assert.ok(!/'explicit_hourly'/.test(fsRead('styling-engine/exposure.js').split('function resolveConditions')[1] || ''),
-    'no code path may claim explicit_hourly until hourly data is actually sampled')
+  // Activity time windows spec (2026-09-17): explicit_hourly is now reachable — weather.js's
+  // resolveExposureWindowHourly supplies genuinely sampled hourly data (source: 'live_hourly') keyed
+  // to a stated or inferred time_window, closing the gap this test used to pin as deliberately
+  // unreachable. Only a resolvedWeather actually carrying that source/scope pair may claim it.
+  const hourly = resolveExposureContext(MUSEUM, {
+    highF: 66.7, lowF: 61.1, source: 'live_hourly', scope: 'exposure_window',
+  }).conditions
+  assert.equal(hourly.conditionsSource, 'explicit_hourly')
+  assert.equal(hourly.wakingLowF, 61.1, 'the sampled window\'s own low, not a waking-window estimate derived from it')
+  assert.equal(hourly.coarse, false, 'genuinely observed, not inferred')
 })
 
 // thread_1789526496845 (reopened a second time): a stated_user range explicitly scoped

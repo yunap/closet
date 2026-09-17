@@ -63,6 +63,7 @@ export function normalizedWeatherLocationIdentity(value = '') {
 
 const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
 const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
+const hourlyCache = new Map() // `${date}|${lat},${lon}` -> { data: {times, temps, precip}, expiresAt }
 
 export function serializeWeatherProfile(profile = null) {
   if (!profile || typeof profile !== 'object') return null
@@ -160,6 +161,137 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   return result
 }
 
+// Activity time windows & material exposure sensitivity (spec 2026-09-17). Open-Meteo's free forecast
+// endpoint carries hourly data for the same ~16-day rolling horizon its daily data covers (verified
+// live 2026-09-16: a date 6 days out returns hourly temperature_2m/precipitation normally; a date 3
+// months out returns an explicit "start_date is out of allowed range" error) — no separate product,
+// no separate key, just a different query param on the same URL. This is genuinely new information
+// the app did not have before: a slot's exposure can now be sliced to when the wearer actually
+// expects to be outside, instead of the day's full envelope.
+async function fetchHourlyRange(coords, startDate, endDate, fetchImpl) {
+  const start = dateKey(startDate)
+  const end = dateKey(endDate || startDate)
+  if (!start || !end) return null
+  const cacheKey = `${start}:${end}|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
+  const cached = hourlyCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&timezone=auto&start_date=${start}&end_date=${end}`
+  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  if (!res?.ok) return null
+  const data = await res.json()
+  const times = data?.hourly?.time || []
+  const temps = data?.hourly?.temperature_2m || []
+  const precip = data?.hourly?.precipitation || []
+  if (!times.length) return null
+  const result = { times, temps, precip }
+  hourlyCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
+  return result
+}
+
+// Canonical waking outdoor dayparts (spec §5). Night (21:00-08:00) is deliberately excluded from
+// "plausible outdoor recreation exposure" — this states an assumption about ORDINARY waking activity
+// timing, the same kind of stated, labelled assumption WAKING_WINDOW.troughOffsetFraction already is
+// below, not a claim about when any specific activity happens. A user who explicitly asks for a night
+// activity states their own time_window and bypasses daypart guessing entirely.
+export const DAYPARTS = {
+  morning: { startHour: 8, endHour: 12 },
+  afternoon: { startHour: 12, endHour: 17 },
+  evening: { startHour: 17, endHour: 21 },
+}
+
+// An explicit start_local/end_local pair wins over a named period; a bare period maps to its
+// DAYPARTS range. Hours are LOCAL (Open-Meteo's timezone=auto returns local ISO timestamps, and
+// fetchHourlyRange never converts them), matching how a wearer states "morning" or "9am".
+function resolveTimeWindowHours(timeWindow = null) {
+  const startLocal = String(timeWindow?.start_local || '').trim()
+  const endLocal = String(timeWindow?.end_local || '').trim()
+  const parseHour = value => {
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value)
+    return match ? Number(match[1]) : null
+  }
+  const startHour = parseHour(startLocal)
+  const endHour = parseHour(endLocal)
+  if (Number.isFinite(startHour) && Number.isFinite(endHour) && endHour > startHour) {
+    return { startHour, endHour }
+  }
+  // 'midday' is the schema's own synonym for the afternoon daypart (plan_outfit_set's time_window
+  // enum states both spellings; DAYPARTS keeps one canonical key).
+  const period = String(timeWindow?.period || '').toLowerCase().trim()
+  return DAYPARTS[period === 'midday' ? 'afternoon' : period] || null
+}
+
+// Slices an hourly series to one calendar date's [startHour, endHour) local window and reduces it to
+// the range actually encountered — a range, never a point, same discipline as estimateWakingWindow.
+function sliceHourlyWindow(hourly, date, { startHour, endHour } = {}) {
+  const dateStr = dateKey(date)
+  if (!dateStr || !hourly?.times?.length) return null
+  const temps = []
+  let sawRain = false
+  for (let i = 0; i < hourly.times.length; i += 1) {
+    const timestamp = String(hourly.times[i] || '')
+    if (!timestamp.startsWith(dateStr)) continue
+    const hour = Number(timestamp.slice(11, 13))
+    if (!Number.isFinite(hour) || hour < startHour || hour >= endHour) continue
+    const temp = hourly.temps[i]
+    if (Number.isFinite(temp)) temps.push(temp)
+    const precip = hourly.precip[i]
+    if (Number.isFinite(precip) && precip > 0) sawRain = true
+  }
+  if (!temps.length) return null
+  return { highF: Math.max(...temps), lowF: Math.min(...temps), precipitation: sawRain ? 'rain' : 'none' }
+}
+
+// The near-term path (spec §4): resolves live hourly data sliced to a stated or inferred time
+// window, for a single calendar date. Returns null on anything ungeocodable, out of the live
+// horizon, or lacking hourly coverage for that date — callers degrade to the existing waking-window
+// estimate on null, never fabricate hourly certainty from a day this call could not resolve.
+export async function resolveExposureWindowHourly({ location = '', date = '', timeWindow = null, fetchImpl = defaultFetch } = {}) {
+  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  const hours = resolveTimeWindowHours(timeWindow)
+  if (!hours) return null
+  try {
+    const coords = await resolveLocationToCoords(location, fetchImpl)
+    if (!coords) return null
+    const hourly = await fetchHourlyRange(coords, date, date, fetchImpl)
+    if (!hourly) return null
+    const sliced = sliceHourlyWindow(hourly, date, hours)
+    if (!sliced) return null
+    // Same classification classify() gives resolveLive's daily range, applied to the sliced window
+    // instead of the whole day — the same downstream isHot/isCold/needsRemovableCoolLayer/
+    // isExtremeHeat consumers (resolveSlotWeather, tripRosterFailures) read regardless of source.
+    return {
+      ...classify([sliced.highF], [sliced.lowF], { exclusive: true }),
+      precipitation: sliced.precipitation,
+      weatherSource: 'live_hourly',
+      scope: 'exposure_window',
+    }
+  } catch {
+    return null
+  }
+}
+
+// The no-time-stated path (spec §6): resolves the same hourly series once, sliced into all three
+// canonical dayparts, for a caller (outfitSetPlanner.js) to judge whether the plausible windows are
+// PHYSICALLY distinguishable — this function states facts only, never a materiality verdict. Returns
+// null under the same conditions resolveExposureWindowHourly does.
+export async function resolveDaypartHourlyEvidence({ location = '', date = '', fetchImpl = defaultFetch } = {}) {
+  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  try {
+    const coords = await resolveLocationToCoords(location, fetchImpl)
+    if (!coords) return null
+    const hourly = await fetchHourlyRange(coords, date, date, fetchImpl)
+    if (!hourly) return null
+    const evidence = {}
+    for (const [period, hours] of Object.entries(DAYPARTS)) {
+      evidence[period] = sliceHourlyWindow(hourly, date, hours)
+    }
+    if (Object.values(evidence).every(entry => !entry)) return null
+    return evidence
+  } catch {
+    return null
+  }
+}
+
 // `exclusive`: a single day is rarely legitimately both hot and cold, so isHot/isCold are mutually
 // exclusive (matching weatherProfileFromContext's contract). A multi-day trip range genuinely can
 // span both — non-exclusive lets a packing plan flag both extremes instead of suppressing one.
@@ -230,6 +362,7 @@ export async function getWeatherProfileForPlan({ dateRange = {}, location = '', 
 export function _clearWeatherCachesForTests() {
   geocodeCache.clear()
   weatherCache.clear()
+  hourlyCache.clear()
 }
 
 // ============================================================================

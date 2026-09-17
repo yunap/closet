@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -50,8 +50,9 @@ import {
 import { resolveExposureContext } from './exposure.js'
 import { seasonFitPieceAdvisory, seasonEligibleForCalendar } from '../lib/seasonContext.js'
 import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
-import { garmentWarmthLevel } from './garmentWarmth.js'
-import { requiredThermalBand } from './thermalDemand.js'
+import { garmentWarmthLevel, WARMTH_LEVELS } from './garmentWarmth.js'
+import { SEVERE_COLD_THRESHOLD_F } from './biometeorology.js'
+import { requiredThermalBand, requiredThermalEndpointBands } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
@@ -931,6 +932,28 @@ function normalizePlanEnvironment(rawEnvironment = '') {
   return ['indoor', 'outdoor', 'beach_coastal'].includes(value) ? value : ''
 }
 
+// Activity time windows spec (2026-09-17): validates the tool-supplied time_window against the
+// schema's own contract rather than trusting it structurally unchecked — a malformed period or a
+// clock string that doesn't parse must not silently reach weather.js's resolveTimeWindowHours (which
+// would just as silently treat it as "no window", losing the distinction between "the user gave no
+// timing" and "the model sent something the schema doesn't allow"). Returns null for anything
+// invalid or absent, same convention validateUserWeather/validateWeatherEstimate already use.
+const PLAN_SLOT_TIME_WINDOW_PERIODS = new Set(['morning', 'midday', 'afternoon', 'evening']) // 'midday' is weather.js's afternoon daypart under the schema's other spelling
+function normalizePlanSlotTimeWindow(raw = null) {
+  if (!raw || typeof raw !== 'object') return null
+  const period = String(raw.period || '').trim().toLowerCase()
+  const startLocal = String(raw.start_local || '').trim()
+  const endLocal = String(raw.end_local || '').trim()
+  const clockPattern = /^([01]\d|2[0-3]):([0-5]\d)$/
+  const hasValidClockPair = clockPattern.test(startLocal) && clockPattern.test(endLocal)
+  const hasValidPeriod = PLAN_SLOT_TIME_WINDOW_PERIODS.has(period)
+  if (!hasValidClockPair && !hasValidPeriod) return null
+  return {
+    ...(hasValidPeriod ? { period } : {}),
+    ...(hasValidClockPair ? { start_local: startLocal, end_local: endLocal } : {}),
+  }
+}
+
 function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
@@ -1051,6 +1074,7 @@ export function truthfulWeatherLabel(temperature, { location = '', heuristicText
       : describeWeatherProfile(temperature)
   switch (temperature.source) {
     case 'live': return `${range} — live forecast${where}`
+    case 'live_hourly': return `${range} — live hourly forecast, sliced to this activity's actual time window${where}`
     case 'stated_user': return `${range} — you said so`
     case 'model_estimate': return `${range} — seasonal estimate, not a live forecast`
     case 'heuristic': return `${isGenericSeasonText(heuristicText) ? range : heuristicText} (estimated)`
@@ -1079,6 +1103,46 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // silently disables it, which would regress the keyword pre-route's weather.
   const day = slot.date || undefined
   const targetLocation = slot.location || location || ''
+  // Activity time windows spec (2026-09-17): a stated or inferred time_window only means something
+  // for a SPECIFIC calendar day (slicing "which hours" requires knowing "which day") and an outdoor
+  // slot (an indoor destination's base is climate-controlled regardless of arrival time — transit
+  // still uses the ordinary daily/waking-window path below, unchanged). When both hold, try the
+  // hourly path first; resolveExposureWindowHourly itself returns null for anything ungeocodable, out
+  // of the live horizon, or lacking hourly coverage, and this falls through to the existing
+  // daily/waking-window resolution unchanged on null — no behavior changes for any slot without a
+  // time_window, or one whose day/location can't be resolved to hourly data.
+  if (slot.timeWindow && day && targetLocation && slot.statedWeather !== 'indoor') {
+    const hourly = await resolveExposureWindowHourly({
+      location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+    })
+    if (hourly) {
+      const resolvedWeatherContext = {
+        status: 'resolved',
+        location: targetLocation,
+        dateRange: { start: day, end: day },
+        temperature: {
+          highF: hourly.highF, lowF: hourly.lowF, band: null,
+          isHot: hourly.isHot, isCold: hourly.isCold, isColdSevere: false,
+          needsRemovableCoolLayer: hourly.needsRemovableCoolLayer, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+          source: hourly.weatherSource,
+        },
+        precipitation: { value: hourly.precipitation, source: hourly.weatherSource },
+        wind: { value: 'unknown', source: 'unavailable' },
+        overallSource: hourly.weatherSource,
+      }
+      return {
+        profile: {
+          isHot: hourly.isHot, isCold: hourly.isCold, isColdSevere: false,
+          needsRemovableCoolLayer: hourly.needsRemovableCoolLayer, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+          highF: hourly.highF, lowF: hourly.lowF,
+          ...wetExposureFromPrecipitation(hourly.precipitation),
+          weatherSource: hourly.weatherSource,
+          resolvedWeatherContext,
+        },
+        label: truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+      }
+    }
+  }
   const resolvedDateRange = { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
   const context = await resolveWeatherForRequest({
     location: targetLocation,
@@ -1150,6 +1214,104 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       resolvedWeatherContext: context,
     },
     label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season })
+  }
+}
+
+// Activity time windows spec (2026-09-17), §6: a slot with no stated/inferred time_window gets
+// checked for whether the OMISSION creates material physical uncertainty, before any roster or card
+// is built. This states facts and a threshold verdict only — it never asks the model a question and
+// never decides what to pack; that stays entirely the conversational model's and the roster/
+// composition stages' job respectively (tools.js's plan_outfit_set pre-check reads `status` and
+// decides whether to pause).
+//
+// Deliberately narrow, matching this file's existing hard-filter-vs-soft-score discipline: the ONLY
+// three physical boundaries below decide 'material', each already a real, existing primitive
+// (requiredThermalBand, precipitation, resolveColdLayerPresenceRequirement) -- this adds no new
+// thermal math and no new gate, only a comparison ACROSS the three canonical dayparts that nothing
+// previously ran.
+function daypartWeatherProfile(evidence = {}) {
+  return {
+    highF: evidence.highF,
+    lowF: evidence.lowF,
+    source: 'live_hourly',
+    scope: 'exposure_window',
+    // Flat isColdSevere hint resolveExposureContext's severeColdActive check reads directly
+    // (resolvedWeather?.isColdSevere) -- see that function's header for the exact field list.
+    isColdSevere: Number.isFinite(evidence.lowF) && evidence.lowF < SEVERE_COLD_THRESHOLD_F,
+  }
+}
+
+export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fetchImpl } = {}) {
+  const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+  // §8.1: an indoor destination excuses time sensitivity entirely -- outdoor swings affect only
+  // transit, already handled by the existing transit layer rules, never the indoor base.
+  if (isIndoor) return { status: 'not_material' }
+  // A slot that already states or infers its own time_window has nothing left to disambiguate --
+  // resolveSlotWeather already resolves it to the actual exposure window.
+  if (slot.timeWindow) return { status: 'not_material' }
+  const day = slot.date
+  const targetLocation = slot.location || location || ''
+  if (!day || !targetLocation) return { status: 'unknown' }
+  const evidence = await resolveDaypartHourlyEvidence({ location: targetLocation, date: day, fetchImpl })
+  if (!evidence) return { status: 'unknown' }
+
+  const exposureByPeriod = {}
+  const bands = {}
+  for (const [period, e] of Object.entries(evidence)) {
+    if (!e) continue
+    const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, daypartWeatherProfile(e))
+    exposureByPeriod[period] = exposure
+    // requiredThermalBand's single `.level` is deliberately COLD-END based (§9.1: "the cold end of
+    // the exposure window sets the requirement... a removable layer is how the warm end is
+    // handled") — comparing it alone across dayparts would miss exactly the case this spec's own
+    // stress test names (a hot afternoon), since a hiking day's cold-end demand barely moves once
+    // hiking's own exertion credit is applied, however hot the afternoon gets. Both endpoints from
+    // requiredThermalEndpointBands are compared instead, so a warm-end-only divergence (a
+    // genuinely hot afternoon against a mild morning/evening) is caught too.
+    const endpoints = requiredThermalEndpointBands(exposure)
+    bands[period] = {
+      highF: e.highF,
+      lowF: e.lowF,
+      precipitation: e.precipitation,
+      demand: requiredThermalBand(exposure)?.level || null,
+      coldEndLevel: endpoints?.cold?.level || null,
+      warmEndLevel: endpoints?.warm?.level || null,
+    }
+  }
+  const periodsWithData = Object.keys(bands)
+  if (periodsWithData.length < 2) return { status: 'unknown' }
+
+  // 1. PET thermal band shift >= 2 ordinal levels across plausible windows, checked against every
+  // period's own cold AND warm endpoint together (not just the single cold-end-based `.level`).
+  const allEndpointLevels = periodsWithData.flatMap(period => [bands[period].coldEndLevel, bands[period].warmEndLevel])
+  const levelIndexes = allEndpointLevels.map(level => WARMTH_LEVELS.indexOf(level)).filter(index => index >= 0)
+  const levelShift = levelIndexes.length ? Math.max(...levelIndexes) - Math.min(...levelIndexes) : 0
+  const shiftIsMaterial = levelShift >= 2
+
+  // 2. Precipitation/wet-exposure divergence: rain in one plausible window, dry in another.
+  const precipValues = new Set(periodsWithData.map(period => bands[period].precipitation))
+  const precipDivergence = precipValues.has('rain') && precipValues.size > 1
+
+  // 3. Cold severity requirement trigger: one window requires severe cold coverage, another does not.
+  const coldStates = periodsWithData.map(period => resolveColdLayerPresenceRequirement(exposureByPeriod[period])?.state || 'unknown')
+  const coldDivergence = coldStates.includes('required') && coldStates.some(state => state !== 'required')
+
+  if (!shiftIsMaterial && !precipDivergence && !coldDivergence) {
+    return { status: 'not_material', evidence: bands }
+  }
+
+  const reasonParts = []
+  if (shiftIsMaterial) {
+    const demandWords = [...new Set(periodsWithData.map(period => bands[period].demand).filter(Boolean))]
+    reasonParts.push(`thermal demand spans ${demandWords.join(' to ')} across the plausible windows`)
+  }
+  if (precipDivergence) reasonParts.push('rain is expected in one plausible window but not another')
+  if (coldDivergence) reasonParts.push('one plausible window requires severe cold coverage, another does not')
+
+  return {
+    status: 'material',
+    evidence: bands,
+    divergenceReason: reasonParts.join('; '),
   }
 }
 
@@ -5723,6 +5885,7 @@ export function normalizePlanSlots(rawSlots = [], {
         location,
         environment,
         date: slotDate,
+        timeWindow: normalizePlanSlotTimeWindow(slot?.time_window),
         bestFor,
         coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),

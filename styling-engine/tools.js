@@ -34,6 +34,7 @@ import {
   capsuleTotalOutfitCap,
   buildPlanSlotWorkbench,
   resolveSlotWeather,
+  resolveSlotTimeSensitivity,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
   buildRejectedCapsuleCards,
@@ -1321,6 +1322,25 @@ export const STYLIST_TOOLS = [
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
+              // Activity time windows spec (2026-09-17), owner-ruled: when the day's temperature
+              // swing is wide enough to change what a slot needs (a hot afternoon vs a cool morning
+              // hike), the app must resolve the ACTUAL exposure window rather than guess or ask by
+              // default. This field only ever carries WHEN the wearer expects to be outside — never a
+              // temperature, clothing requirement, or styling judgment; the app resolves what that
+              // means. Extract it only from what the user actually said or clearly implied ("morning
+              // hike", "dinner around 7", "walk after breakfast") — never infer a default from the
+              // activity type (a hike is not assumed to be morning) and never invent one when the
+              // user gave no timing cue at all; omit the field entirely in that case.
+              time_window: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  period: { type: "string", enum: ["morning", "midday", "afternoon", "evening"], description: "Approximate daypart, only when the user's own wording maps to one this cleanly: morning (~08:00-12:00), midday/afternoon (~12:00-17:00), evening (~17:00-21:00)." },
+                  start_local: { type: "string", description: "Explicit 24h local start time (e.g. '09:00'), only when the user stated or clearly implied one (e.g. 'dinner around 7' -> '19:00')." },
+                  end_local: { type: "string", description: "Explicit 24h local end time (e.g. '13:00')." }
+                },
+                description: "When the user stated or clearly implied when this outdoor slot happens. Omit entirely if the user gave no timing cue — do not guess a default."
+              },
               // Live thread_1785380251549: the plan's lifestyle answer listed
               // three distinct contexts — days at home, errands, weekends out —
               // and the model gave all three `occasion: casual`, so a going-out
@@ -3453,7 +3473,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
             fetchImpl: weatherFetchImpl,
             seasonIsCalendarOnly: planKind === 'seasonal_capsule',
           })
-          return { label: slot.label, status: profile?.resolvedWeatherContext?.status || 'unavailable', overallSource: profile?.resolvedWeatherContext?.overallSource || '' }
+          // Activity time windows spec (2026-09-17), §7: computed in the same pre-check pass, before
+          // any roster or card is built — resolveSlotTimeSensitivity is itself a no-op (status:
+          // 'not_material') for an indoor slot, a slot that already has its own time_window, or one
+          // missing the location/date/hourly coverage needed to compare dayparts at all.
+          const timeSensitivity = await resolveSlotTimeSensitivity(slot, {
+            location: toolContext.location || '',
+            fetchImpl: weatherFetchImpl,
+          })
+          return {
+            label: slot.label,
+            status: profile?.resolvedWeatherContext?.status || 'unavailable',
+            overallSource: profile?.resolvedWeatherContext?.overallSource || '',
+            timeSensitivity,
+          }
         }))
         // Spec §7: freeform_generation_runs.weather_source from overallSource. A
         // multi-slot plan can mix sources across slots (city day live, coast day
@@ -3473,6 +3506,25 @@ async function executeToolInternal(name, args, toolContext = {}) {
             date_range: planDateRange,
             missing: ["temperature"],
             message: `Live weather does not cover these dates for "${unresolvedSlot.label}". Re-call this tool with weather_estimate.high_f and weather_estimate.low_f (on the plan or on each affected slot) before selecting garments.`
+          }
+        }
+        // Activity time windows spec (2026-09-17), §7: a materially wide diurnal swing on a slot with
+        // no stated time_window stops the call HERE, before any roster or card is composed — the
+        // conversational model asks one natural question instead of composing against a guess, or
+        // proceeding once the user answers "morning"/"afternoon"/a specific time. Only the FIRST
+        // material slot is surfaced (asking about several at once is not "one concise question"); a
+        // plan with more than one time-sensitive slot resolves them one turn at a time as the model
+        // re-calls this tool with each answered time_window.
+        const materialSlot = weatherPreCheckSlots.find(slot => slot.timeSensitivity?.status === 'material')
+        if (materialSlot) {
+          bumpFreeformDiagnostic(toolContext, 'planTimeSensitivityClarificationRecommended')
+          return {
+            status: "clarification_recommended",
+            reason: "material_time_sensitivity",
+            slot: materialSlot.label,
+            divergence: materialSlot.timeSensitivity.divergenceReason,
+            evidence: materialSlot.timeSensitivity.evidence,
+            message: `"${materialSlot.label}" spans conditions materially different enough (${materialSlot.timeSensitivity.divergenceReason}) that packing the right thing depends on when it actually happens. Do not compose cards yet and do not call plan_outfit_set again this turn. Ask the user ONE natural, concise question about roughly what time "${materialSlot.label}" happens, then re-call plan_outfit_set with that slot's time_window set once they answer.`
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)

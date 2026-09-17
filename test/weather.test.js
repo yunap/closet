@@ -14,7 +14,7 @@ import {
   getCurrentWeatherProfile, getWeatherProfileForPlan, _clearWeatherCachesForTests, serializeWeatherProfile, restoreWeatherProfile,
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
-  COLD_F,
+  COLD_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence, DAYPARTS,
 } from '../styling-engine/weather.js'
 import { weatherProfileFromStatedText } from '../styling-engine/stylingContext.js'
 import { STYLIST_TOOLS } from '../styling-engine/tools.js'
@@ -52,6 +52,29 @@ function makeMockFetch({ geocodeResults = [{ latitude: 45.52, longitude: -122.68
     return { ok: true, json: async () => ({ daily: { temperature_2m_max: highs, temperature_2m_min: lows } }) }
   }
   fetchImpl.callCount = () => calls
+  return fetchImpl
+}
+
+// Activity time windows spec (2026-09-17): hourly series for one date, 24 local hours starting at
+// midnight, so a test can place distinct temperatures/precipitation in specific dayparts. `hours` is
+// a map of hour-of-day (0-23) to °F; any hour not named defaults to `defaultTemp`.
+function makeMockHourlyFetch({ date = '2026-09-19', hours = {}, defaultTemp = 60, rainHours = [], geocodeFails = false } = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (let h = 0; h < 24; h += 1) {
+    times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+    temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+    precip.push(rainHours.includes(h) ? 1.2 : 0)
+  }
+  const fetchImpl = async (url) => {
+    if (url.includes('geocoding-api')) {
+      return geocodeFails
+        ? { ok: true, json: async () => ({ results: [] }) }
+        : { ok: true, json: async () => ({ results: [{ latitude: 35.63, longitude: -120.69 }] }) }
+    }
+    return { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) }
+  }
   return fetchImpl
 }
 
@@ -143,6 +166,95 @@ test('getCurrentWeatherProfile stays neutral when the named-location forecast re
 test('under NODE_ENV=test, live resolution is skipped when no fetchImpl is injected (never hits real network)', async () => {
   const profile = await getCurrentWeatherProfile({ season: 'hot', location: 'Portland, OR' })
   assert.equal(profile.weatherSource, 'heuristic')
+})
+
+// ─── ACTIVITY TIME WINDOWS & HOURLY EXPOSURE SLICING (spec 2026-09-17) ──────────────────────────
+// thread_1789598100140's follow-up: a stated or inferred time_window can now be resolved against
+// genuinely sampled hourly data within the live forecast horizon, instead of the day's full envelope
+// or the waking-window estimate derived from it.
+
+test('resolveExposureWindowHourly slices a named daypart to the temperatures actually observed in it', async () => {
+  // Morning (08-11) stays cool; afternoon (12-16) spikes hot -- the exact live-incident shape
+  // (Paso Robles hike), but now resolvable to the specific window instead of the whole day.
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 58, 9: 60, 10: 63, 11: 66, 12: 78, 13: 88, 14: 94, 15: 92, 16: 85 },
+  })
+  const result = await resolveExposureWindowHourly({
+    location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl,
+  })
+  assert.equal(result.weatherSource, 'live_hourly')
+  assert.equal(result.scope, 'exposure_window')
+  assert.equal(result.highF, 66)
+  assert.equal(result.lowF, 58)
+  assert.equal(result.isHot, false, 'sanity: classify() ran on the sliced window, same as resolveLive gets for a daily range')
+})
+
+test('resolveExposureWindowHourly honors an explicit start_local/end_local pair over a named period', async () => {
+  const fetchImpl = makeMockHourlyFetch({ date: '2026-09-19', hours: { 9: 60, 10: 63, 11: 66, 12: 78 } })
+  const result = await resolveExposureWindowHourly({
+    location: 'Paso Robles, CA', date: '2026-09-19',
+    timeWindow: { start_local: '09:00', end_local: '12:00' }, fetchImpl,
+  })
+  assert.equal(result.highF, 66, 'the explicit 09:00-12:00 window excludes the 12:00 reading (end is exclusive)')
+  assert.equal(result.lowF, 60)
+})
+
+test('resolveExposureWindowHourly reports rain only when it actually occurred within the sliced window', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19', hours: { 8: 55, 17: 60 }, rainHours: [17],
+  })
+  const morning = await resolveExposureWindowHourly({
+    location: 'Seattle, WA', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl,
+  })
+  const evening = await resolveExposureWindowHourly({
+    location: 'Seattle, WA', date: '2026-09-19', timeWindow: { period: 'evening' }, fetchImpl,
+  })
+  assert.equal(morning.precipitation, 'none')
+  assert.equal(evening.precipitation, 'rain')
+})
+
+test('resolveExposureWindowHourly returns null without a resolvable time window, a location, or under NODE_ENV=test with no fetchImpl', async () => {
+  const fetchImpl = makeMockHourlyFetch({})
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: null, fetchImpl }), null, 'no time window at all')
+  assert.equal(await resolveExposureWindowHourly({ location: '', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl }), null, 'no location')
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: { period: 'morning' } }), null, 'no fetchImpl under NODE_ENV=test never hits real network')
+})
+
+test('resolveExposureWindowHourly returns null when geocoding fails or the date has no hourly coverage', async () => {
+  const geocodeFails = makeMockHourlyFetch({ geocodeFails: true })
+  assert.equal(await resolveExposureWindowHourly({ location: 'Nowhereville', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl: geocodeFails }), null)
+
+  const noHourly = async (url) => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 1, longitude: 1 }] }) }
+    : { ok: false })
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2099-01-01', timeWindow: { period: 'morning' }, fetchImpl: noHourly }), null, 'a far-future date outside the live horizon must degrade to null, never fabricate hourly certainty')
+})
+
+test('resolveDaypartHourlyEvidence slices all three canonical dayparts from one hourly fetch', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 58, 11: 66, 12: 78, 16: 94, 17: 82, 18: 80, 19: 75, 20: 68 },
+  })
+  const evidence = await resolveDaypartHourlyEvidence({ location: 'Paso Robles, CA', date: '2026-09-19', fetchImpl })
+  assert.deepEqual(Object.keys(evidence).sort(), ['afternoon', 'evening', 'morning'])
+  assert.equal(evidence.morning.lowF, 58)
+  assert.equal(evidence.morning.highF, 66)
+  assert.equal(evidence.afternoon.highF, 94, 'the afternoon window captures the day\'s heat spike')
+  assert.equal(evidence.evening.lowF, 68)
+  assert.equal(evidence.evening.highF, 82)
+})
+
+test('resolveDaypartHourlyEvidence returns null under the same degradation conditions as resolveExposureWindowHourly', async () => {
+  assert.equal(await resolveDaypartHourlyEvidence({ location: '', date: '2026-09-19', fetchImpl: makeMockHourlyFetch({}) }), null)
+  assert.equal(await resolveDaypartHourlyEvidence({ location: 'Paso Robles, CA', date: '2026-09-19' }), null, 'no fetchImpl under NODE_ENV=test never hits real network')
+})
+
+test('DAYPARTS defines exactly the three canonical waking outdoor windows, excluding night', () => {
+  assert.deepEqual(DAYPARTS.morning, { startHour: 8, endHour: 12 })
+  assert.deepEqual(DAYPARTS.afternoon, { startHour: 12, endHour: 17 })
+  assert.deepEqual(DAYPARTS.evening, { startHour: 17, endHour: 21 })
+  assert.equal(Object.keys(DAYPARTS).length, 3, 'night is deliberately not a plausible-outdoor-recreation daypart')
 })
 
 test('caching: two calls for the same date/location hit the mock fetch only once each (geocode + forecast)', async () => {

@@ -4902,3 +4902,95 @@ longer flags `missing_removable_cool_layer`/`cold_floor_infeasible`, and a genui
 estimate still under `COOL_LOW_F`) keeps flagging exactly as before, so this narrows a false positive
 without weakening the real check.
 
+### Amendment (2026-09-17) — activity time windows: a slot can carry a genuine `time_window`, resolve against sliced hourly weather instead of the day's envelope, and a materially time-ambiguous slot pauses for one clarifying question before any roster or card is built
+
+**Why.** Every prior fix in this file that touches trip weather still asks one question per slot per
+day — a single high/low, or the waking-window estimate derived from it. That is correct for a slot
+whose timing genuinely doesn't matter, but wrong the moment a slot's actual clock time would change
+what should be packed (a 6am summit push and a 2pm valley stroll are the same "hiking" activity, the
+same day, and can require materially different garments). This amendment adds a model-owned,
+optional `time_window` slot fact and a deterministic check for when its ABSENCE is itself a problem
+worth surfacing before composing.
+
+**`time_window` is model-extracted only, never inferred or defaulted by code** (`tools.js`'s
+`plan_outfit_set` schema: `{period: enum[morning, midday, afternoon, evening], start_local,
+end_local}`). Nothing in `outfitSetPlanner.js` or `weather.js` guesses a time from activity type or
+season — a slot with no stated time_window has none, full stop, matching this map's long-standing
+"structured data over text inference" principle everywhere else a slot fact is optional.
+
+**Hourly resolution (`styling-engine/weather.js`).** `resolveExposureWindowHourly({location, date,
+timeWindow, fetchImpl})` fetches Open-Meteo's hourly series (new `fetchHourlyRange`, its own
+`hourlyCache`, separate from the existing daily-series cache) and slices it to the stated window's
+canonical hours via `DAYPARTS` (`morning: 8-12, afternoon/midday: 12-17, evening: 17-21` — night is
+deliberately out of scope, no trip slot in this codebase composes for it). `resolveDaypartHourlyEvidence`
+slices all three dayparts at once for the materiality check below. Both return `null` on any failure
+(geocode miss, fetch error, date beyond Open-Meteo's ~16-day horizon) — never a fabricated estimate;
+the caller falls through to the existing waking-window path exactly as if no hourly data had been
+attempted.
+
+**`resolveSlotWeather` (`outfitSetPlanner.js`)** tries the hourly path first, only when the slot
+states a `time_window`, is not indoor, and has a resolvable date/location — an explicit opt-in, not a
+new default. On success the resolved weather's `highF`/`lowF` are the WINDOW's own extremes, not the
+day's, with `source: 'live_hourly'` surfaced through `truthfulWeatherLabel`'s new `case 'live_hourly'`
+branch so the label itself discloses the narrower basis ("...live hourly forecast, sliced to this
+activity's actual time window"). `exposure.js`'s `resolveConditions` gained a matching
+`source === 'live_hourly' && scope === 'exposure_window'` branch that sets `wakingHighF`/`wakingLowF`
+directly from the sliced values and `conditionsSource: 'explicit_hourly'` — the fourth, most-precise
+tier in the existing priority ladder (`stated_user_exposure_range` > `explicit_hourly` >
+`waking_window_estimate` > `seasonal_waking_window_estimate` > `unknown`). `test/exposureContext.test.js`
+had a deliberate tripwire test asserting this tier was unreachable ("no code path may claim
+explicit_hourly until hourly data is actually sampled... asserted so the day it becomes reachable,
+this test is what says so") — that comment named exactly this day; the test now asserts the positive
+case instead of the negative one.
+
+**The materiality check (`resolveSlotTimeSensitivity`, `outfitSetPlanner.js`) answers a narrower
+question than "what's the weather": does the slot's UNSTATED timing create enough physical
+uncertainty that packing the right thing depends on knowing when it happens.** It samples all three
+dayparts via `resolveDaypartHourlyEvidence` and returns `not_material`/`material`/`unknown` — never a
+weather verdict itself, never fired at all when the slot already states its own `time_window` (nothing
+left to disambiguate) or is indoor (climate-controlled, time never matters). Three independent,
+deterministic triggers, matched to the three ways a slot's identity can actually change across the
+day rather than one blended score:
+
+- **Thermal-band shift ≥ 2 ordinal levels.** Compares `requiredThermalEndpointBands(exposure).cold`
+  AND `.warm` (not `requiredThermalBand.level` alone, which is deliberately cold-end-only per its own
+  doc comment) across all three dayparts' endpoints flattened together, using `WARMTH_LEVELS`'
+  5-level ordinal scale. Verified against the real thermal model, not assumed: a hiking slot's `-2`
+  `EXERTION_SHIFT` credit can suppress a large real-world swing down to a 0-1 level shift (confirmed
+  via diagnostic scripts run against `requiredThermalEndpointBands` directly for a 55-89°F range,
+  which showed no material shift for `hiking` at either endpoint) — this is a real, activity-specific
+  dulling of the signal, not a bug in the comparison; a genuinely cold morning (a mountain-hike low in
+  the 30s rather than the 50s) is what actually clears the threshold for an exertion-discounted
+  activity, exactly as it should, since a milder morning genuinely doesn't need different gear.
+- **Precipitation divergence** — rain in one plausible window, dry in another.
+- **Severe-cold-requirement divergence** — `resolveColdLayerPresenceRequirement(exposure).state` is
+  `'required'` for at least one daypart and not for another (this is the one place this session's
+  trip-planning work newly INVOKES that function per-daypart on an exposure context built for the
+  purpose — unlike the trip-slot `weatherProfile.coldPresenceRequirement` field the prior amendment
+  found was never populated, this call passes a fresh `resolveExposureContext` result directly).
+
+**The conversational seam (`tools.js`'s `plan_outfit_set`).** The existing per-slot weather pre-check
+loop now also computes `timeSensitivity`; if any slot comes back `material`, `plan_outfit_set` returns
+`status: 'clarification_recommended'` before calling `chooseTripRoster` or composing anything, with
+the specific divergence reason and an instruction to ask ONE natural question about roughly what time
+the slot happens, then re-call with `time_window` set — mirroring the existing
+`unresolvedSlot`/`weather_context_required` short-circuit's shape (a status the model must react to
+conversationally, not an error) rather than inventing a new response contract.
+
+**A load-bearing test-fixture lesson, not a code bug:** three new integration tests
+(`test/activityTimeWindows.test.js`) initially failed for a reason unrelated to time-sensitivity at
+all — resolving against a genuinely-sampled hourly/waking-window low that dips under `COOL_LOW_F`
+correctly makes `missing_removable_cool_layer`/`cold_floor_infeasible` (the Issue 4 amendment above)
+fire for a roster with no outerwear piece, exactly as designed. The fix was adding a qualifying layer
+piece to those fixtures' rosters, not touching the gate — a reminder that this session's own prior
+amendment is now live on every hourly-resolved slot, not only the daily-envelope ones it was written
+against.
+
+Regression/coverage: `test/weather.test.js` (hourly fetch/slice/cache, `DAYPARTS`,
+`resolveExposureWindowHourly`/`resolveDaypartHourlyEvidence`), `test/exposureContext.test.js`
+(`explicit_hourly` tier), `test/activityTimeWindows.test.js` (12 tests: hourly slot-weather
+resolution vs. day's envelope, indoor exemption, all three materiality triggers independently, a
+stated `time_window` short-circuiting the check, far-term/no-hourly-coverage degrading to `unknown`
+rather than fabricating a verdict, and the full `clarification_recommended` → answered → `success`
+conversational round-trip through `executeTool`).
+

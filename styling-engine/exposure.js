@@ -170,6 +170,24 @@ function resolveConditions(resolvedWeather = null) {
   // the exact numbers are kept (dailyHighF/dailyLowF), never discarded to a qualitative band; only
   // the confidence changes, exactly like any other daily envelope of unknown intraday timing.
   const scope = t?.scope || 'exposure_window'
+  // Activity time windows spec (2026-09-17), closing the gap this file's own comment above named
+  // ("explicit_hourly needs the forecast query to request hourly=temperature_2m ... AND a clock fact
+  // to key it — neither exists yet"): weather.js's resolveExposureWindowHourly supplies both, for a
+  // stated or inferred time_window within the live forecast horizon. Observed, not estimated — the
+  // one genuinely non-coarse tier that isn't a user's own stated claim.
+  if (source === 'live_hourly' && scope === 'exposure_window') {
+    return {
+      dailyHighF: highF,
+      dailyLowF: lowF,
+      wakingLowF: lowF,
+      wakingHighF: highF,
+      wind,
+      source,
+      conditionsSource: 'explicit_hourly',
+      coarse: false,
+      known: true,
+    }
+  }
   if (source === 'stated_user' && scope === 'exposure_window') {
     return {
       dailyHighF: highF,
@@ -203,9 +221,8 @@ function resolveConditions(resolvedWeather = null) {
     source,
     conditionsSource,
     // TRUE for both estimate tiers: the window is inferred, not observed. A stated-user exposure
-    // range above is also non-coarse; `explicit_hourly` needs the forecast query to request
-    // `hourly=temperature_2m` (it asks for `daily=` only today) AND a clock fact to key it — neither
-    // exists yet. See spec §10.3.
+    // range and `explicit_hourly` (activity time windows spec, 2026-09-17) are also non-coarse —
+    // both are observed or user-stated, not inferred from a daily envelope.
     coarse: true,
     known: true,
   }
