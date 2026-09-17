@@ -422,7 +422,13 @@ that was a bare `---` followed by notes about looks that had been thrown away.
 
 **[default since 2026-08-19] Bounded same-context batches.** A new request for 2–5 fresh looks that share one
 occasion, activity and weather context uses `generate_outfits` once. That tool invokes the existing
-photograph-aware whole-wardrobe composer and returns the complete batch as the terminal paid step;
+photograph-aware whole-wardrobe composer and returns the complete batch. It is the terminal paid step
+for the TURN's composition, with one conditional exception inside the composer itself: a bounded
+missing-layer repair call when a delivered card lacks a removable layer the conditions require and a
+shown layer is mechanically viable on that card (docs/flows/use-my-wardrobe.md). The composer's own
+diagnostics — roster counts, `advisorFlaggedCount`, the repair record, the resolved exposure — now
+cross the nested boundary into `freeformDiagnostics.nestedComposer`; before 2026-09-13 only
+`composerUsage` did, which is why nested composer runs could not be explained from their own record;
 deterministic code supplies the short introduction and any shortfall disclosure. Named location
 and resolved date are used for weather before roster construction, with the source recorded. The
 nested call's token usage is added to the parent turn. A

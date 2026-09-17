@@ -4,6 +4,23 @@
 dialog group found by `scratch/derive_surface_skeleton.js`. Thin spots are listed at the bottom
 rather than hidden. Owner review welcome — an entry that reads wrong probably *is* wrong.
 
+
+**[amended 2026-09-12 — the Create Outfits temperature fields say what they mean]**
+The visual-composer brief's two numeric inputs read `Temperature — optional, overrides the forecast`
+with `high °F` / `low °F` placeholders, which invites the user to paste a forecast's daily envelope.
+The engine does not treat them that way: `resolveExposureContext`'s `stated_user` branch takes the
+range VERBATIM as the range the outfit will encounter, deliberately skipping the 35% waking-window
+lift it applies to live and model-estimated forecasts (that exemption exists because of
+`thread_1788767789621`, where a user stated 60°F on departure and 48°F on return and the estimator
+silently moved their low to 52.2°F). Typing a forecast's 65/46 therefore made a pre-dawn low nobody
+is outside for the temperature every outfit was judged against — measured: **10 of 10 cards across
+`thread_1789246709320` and `thread_1789246782710` flagged "carries less warmth"**, where reading the
+same numbers as a daily envelope leaves 3 of 10 flagged.
+Owner ruling: keep using the stated numbers verbatim as the exposure window — and say so in the UI.
+The field is now `Temperatures you'll be out in — optional`, placeholders `warmest °F` / `coolest °F`,
+with a hint beneath: *"The range you'll actually be outside for — not the day's forecast high and low.
+Outfits are dressed for this range, so a pre-dawn low you won't be out in makes everything read too
+cold."* No engine change; `styling-engine/exposure.js` keeps both behaviours exactly as they were.
 ## What this is for
 
 Three readers, one document:

@@ -593,6 +593,24 @@ copied board/outfit reaction prose into `styling_rules_learned` as `[feedback:<t
 Owner ruling: board critique does not belong on the garment card. Script §5 still counts the rows it
 left behind.
 
+**[amended 2026-09-15 — retired copies and saved chat replies are not sent as garment rules]**
+Every model-facing reader of `styling_rules_learned` now goes through `storedGarmentRules`
+(`styling-engine/ruleProvenance.js`): `buildPieceText` (capsule and trip roster selection and
+composition, capsule expansion, `get_garment_details`, selected-piece flows), the tool-loop plan
+workbench line (`planWorkbenchPieceLine`) and the `/ask` compact garment facts
+(`compactFreeformPieceFacts`, which previously sent the raw stored list). No stored data is changed.
+- **Authority preserved:** the owner's historical stored rules remain `RULES (authoritative)`. The
+  empty `piece_rule_receipt` ledger is not evidence that a rule was not the owner's (owner ruling
+  2026-09-15).
+- **Narrow exclusions, by source:** generated occasion receipts (existing filter); the leftover
+  `[feedback:<type>]` reaction copies (24 on 14 active pieces, covered by the ruling above); and
+  saved chat replies — an entry identical to a chat message the removed Save button marked in that
+  thread's `savedIndices`, which is its source record (1 today).
+- **Global readers unchanged:** channel C (occasion exclusions), channel E (`getOwnerRuleNotes`),
+  owner constraints and every §4 feedback-memory reader neither read stored garment rules nor call
+  the new code; `test/storedRuleProvenance.test.js` checks this by source and by behaviour, alongside
+  the same-piece owner-rule + retired-copy case.
+
 ### Into `saved_boards` — the canonical board writers
 
 Distinct from the two functions above, which only *mirror* board feedback into `stylist_feedback`.

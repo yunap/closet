@@ -137,3 +137,95 @@ universal prompt through the back door.
   flow/profile.
 - Existing cross-flow validity fixtures stay unchanged unless an owner-ratified behavior change is
   the explicit purpose of the slice.
+
+## Carried forward for the audit — categorical "never" rules with no structured owner (2026-09-12)
+
+Found during the weather-architecture branch review. **Not acted on here**: the weather work removed
+prompt rules that contradicted structured owners it had just built, which is a different claim from
+"this taste rule is wrong". These are recorded so they are examined deliberately rather than carried
+forward as ratified style authority by default.
+
+`editorialNewPiecesTemplate` (`styling-engine/prompts.js`, "Hard anti-drift rules — NEVER suggest
+these regardless of the anchor piece"):
+
+- *"No beige/cream cardigan as a layer (this is the primary catalog-drift signal)"* — a specific
+  colour-plus-category prohibition applied unconditionally. The parenthetical is the tell: it is a
+  symptom heuristic for generated-catalog drift, not a styling judgment, and it bans a garment the
+  owner's own wardrobe contains.
+- *"No scarves as a default styling element"*, *"No blazer unless the anchor piece specifically
+  calls for structure"*, *"No soft skirt + soft unstructured shoe"*, *"No all-neutral
+  cream/taupe/beige harmony without a dark grounding element"* — same shape.
+
+The questions the audit should ask of each: is this the owner's ratified taste or an incident
+patch; is it per-user (docs/feedback-and-memory-map.md: personal preference must not ship as a
+global rule); and does a structured owner already hold it — the last item on that list ("No tucking
+when the anchor piece has a design hem or is noted as wear-over-only") is simply `tuck_behavior`,
+restated in prose, and should be cited rather than duplicated.
+
+Precedent from this branch: a prompt rule is safe to delete when a structured owner can reject the
+same thing on evidence. Where none exists, the rule needs owner ratification, not quiet retention.
+
+## Measured: constitution-layer coverage across prompts (2026-09-13)
+
+Found while adding `working_style` to the missing-layer repair template, which shipped with four of
+the five ratified stylist layers. A sentinel build (each layer replaced with a unique marker, then
+matched per prompt) shows the omission is not unique to that template:
+
+| prompt | layers | missing |
+| --- | --- | --- |
+| `STYLIST_SYSTEM`, `SINGLE_OUTFIT_STYLIST_SYSTEM`, `STYLE_SELECTED_ITEM_SYSTEM` | 5/5 | — |
+| `WHOLE_WARDROBE_MISSING_LAYER_REPAIR_SYSTEM` | 5/5 | — (as of this change) |
+| `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM`, `OUTFIT_COMPOSER_SYSTEM`, `GENERATE_OUTFIT_IDEAS_SYSTEM`, `OUTFIT_BOARD_PLANNER_SYSTEM`, `EDITORIAL_NEW_PIECES_SYSTEM` | 4/5 | `working_style` |
+| `COMPARE_OUTFITS_SYSTEM`, `OUTFIT_EVALUATOR_GATE_SYSTEM`, `WHOLE_WARDROBE_EVALUATOR_SYSTEM` | 2/5 | `proven_formulas`, `aesthetic_gravity`, `working_style` |
+| `OUTFIT_EVALUATION_FOLLOWUP_SYSTEM` | 1/5 | all but `body_contract` |
+
+**Not acted on.** Whether an evaluator prompt should carry the same layers as a composition prompt is
+a real question — an evaluator arguably should not be told the wearer's working style before judging
+a submitted outfit — and widening any of these is a prompt change with its own byte deltas and its
+own review. Recorded so the next reader sees a measured table rather than assuming uniformity.
+`test/prompt_equivalence.test.js` pins the repair prompt at 5/5 with sentinels and carries a note
+pointing here; reproduce the table by building prompts with a sentinel constitution.
+
+## Carried forward for the categorical-prompt audit — coat / three-layer weather formula (2026-09-13)
+
+**Resolved 2026-09-15 (owner ruling).** The Whole Wardrobe composer prompt carried a weather formula
+in prose, from `styling-engine/prompts.js` (the shared `PHYSICAL_WEARABILITY_REALISM_RULES` block,
+used by every composer that interpolates it — Whole Wardrobe, single-outfit, propose_outfit, and the
+saved-variant composer):
+
+> *"Thermal Adequacy: Cold outdoor exposure requires real upper-body insulation: choose an insulating
+> coat over a top or base layer, or construct an intentional 3-layer system with a middle knit layer
+> (such as a cardigan or vest) beneath an outer jacket when appropriate. Standalone uninsulated
+> lightweight tops or shells are not warm enough on their own for sustained cold outdoor exposure."*
+
+This prescribed garment formulas (coat over top, or knit-under-jacket) for a question that belongs to
+the model's judgment from recorded facts, photographs, and construction — not a fixed recipe. It sat
+beside the COOL-END LAYER guidance in the same prompt (also removed, 2026-09-15, see the amendment in
+`docs/engine-behaviour-map.md`). A first replacement still named the retired formula in order to
+disclaim it ("there is no required insulating-coat-or-three-layer-system prescription") — a second
+owner pass removed that meta-negation too, since spelling out the old rule to reject it still gave it
+presence in the prompt. Final wording states only the positive task: *"Thermal Adequacy: For cold
+outdoor exposure, judge the protection of the whole worn system against the stated exposure, from
+each garment's own recorded facts, photographs, and construction. If protection looks inadequate,
+explain the concrete shortfall — what is missing and why — from what you can see and what is
+recorded."* No formula, no named category, no reference to what used to be required — the model
+states a shortfall and its reason rather than being told which categories fix it.
+
+**Resolved in the same pass, not deferred:** the whole-wardrobe feedback header ("avoid repeating
+these exact combinations, piece roles, formulas, or occasion mismatches") contradicted the
+exact-reaction lines elsewhere in the prompt ("Do not infer dislike of its formula, silhouette,
+colors, or individual garments"). It now follows the narrow evidence authority: each line is a
+reaction to one exact combination, and its formula, roles and occasion identify that combination
+rather than acting as rules. The composer's wrapper ("rejected pairings are settled — do not repeat
+them") was aligned the same way.
+
+### Resolved 2026-09-13 as a schema-contract correction — composer layer-direction wording
+
+Resolved in the same change: the composer now projects `layerDirectionPromptRule({ vocabulary: 'slots' })`.
+Original record:
+
+After atomic structured output, the visual composer prompt still projects `layerDirectionPromptRule()`
+verbatim, which explains direction in terms of "a `layer_top` role". The composer no longer emits
+roles; it names slots. The rule is shared with `propose_outfit`, so it was left unchanged here rather
+than forked into a composer-local restatement.
+

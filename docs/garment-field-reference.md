@@ -93,7 +93,7 @@ The real risk is two different validation tiers silently disagreeing:
 | `needs_base` | clothing (not shoes/accessory) | `yes \| no \| null` (conservative default: null, not "no") | yes | PieceForm, BatchAdd | `NEEDS_BASE_OPTIONS`; `pieceRequiresBaseLayer` is the runtime reader—only explicit `yes` means dependent, while unset and `no` remain false |
 | `pattern_type` | all | `solid \| floral \| botanical \| stripe \| polka_dot \| check \| plaid \| geometric \| abstract \| animal \| graphic \| paisley \| patchwork \| other` | yes | PieceForm, BatchAdd | `prompts.js` schema. **Extended 2026-08-14** — added `polka_dot`, `check`, `paisley`, `patchwork` (purely additive, nothing renamed or removed, not in a `VALID_*` Set). `check` covers gingham/windowpane; `plaid` is intersecting bands/lines; `geometric` is shape-dominant abstraction; `abstract` is nonrepresentational/painterly, explicitly including tie-dye-like motifs — there is no separate `tie_dye` value, use `abstract` + `reads_as` for that nuance; `animal` is animal-surface pattern/repeated motif, a single illustrated animal is `graphic` instead. |
 | `pattern_scale` | all | `none \| subtle \| medium \| bold` | yes | PieceForm, BatchAdd | same |
-| `pattern_complexity` | all | `solid \| quiet \| medium \| loud` | yes | PieceForm, BatchAdd | same; `loud` is what the one-loud-print-per-outfit rule keys off |
+| `pattern_complexity` | all | `solid \| quiet \| medium \| loud` | yes | PieceForm, BatchAdd | same; descriptive only — **[amended 2026-09-15]** the retired one-loud-print-per-outfit rule used to key off `loud`; prints are now judged visually, case by case, and no rule counts them. `loud` still marks a statement piece for capsule neutral/protagonist classification |
 | `reads_as` | all | Free text — "dominant visual impression"; overrides `colors` for style-read purposes | yes | PieceForm, BatchAdd | free text, no enum |
 | `background_color` | all | Free text — literal base color | yes | PieceForm, BatchAdd | free text; distinct from `colors` array, see color-taxonomy doc |
 | `formality` | all except accessory | `lounge \| everyday \| elevated \| dressy` | yes | PieceForm, BatchAdd | `FORMALITY_OPTIONS`; gate-critical |
@@ -217,10 +217,16 @@ outer garment has room to spare. This fixes the prior symmetric rule (`isVolumin
 under a bishop-style blouse" (fine) from "a bishop-style blouse under a narrow fitted blazer"
 (a real conflict). When the over/under direction cannot be resolved, or when either garment's
 sleeve shape is unrecorded, the verdict is `unknown` (sight required) rather than a guessed
-incompatibility — the only exceptions are: both garments carry fully-known zero-volume geometry
-(compatible regardless of direction) or both are tagged medium/heavy `fabric_weight` (an
-incompatible fabric-bulk conflict, which stays a direction-agnostic dimension independent of sleeve
-geometry). `layerConstructionPromptRule()` was rewritten to describe this same zone/direction
+incompatibility — the only exception is when both garments carry fully-known zero-volume geometry
+(compatible regardless of direction).
+
+**Log-only since 2026-09-14.** Every verdict this section describes is shadow evidence only. It is never a hard or advisory finding, never rejects or demotes a card, never excludes a repair or backfill candidate, and never reaches a model. Every model-facing layering rule states: "Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient." See `docs/engine-behaviour-map.md`, amendment 2026-09-14.
+
+**Correction (2026-09-14): the whole-garment-weight "fabric-bulk conflict" is no longer implemented.**
+- **What this section used to say.** It described a second exception: an incompatible, direction-agnostic "fabric-bulk conflict" whenever both garments are tagged medium or heavy `fabric_weight`.
+- **What the code does.** Current code does not implement it: no sleeve verdict reads `fabric_weight`. The sleeve evidence reader in `styling-engine/attributes.js` still computes an `isBulkyFabric` flag from whole-garment `fabric_weight`, but no verdict consumes it.
+- **Do not revive it.** Garment-level `fabric_weight` describes the whole garment, not the sleeve, and must not be treated as sleeve-specific evidence of thickness, bulk, structure or compressibility for layering compatibility. A thick knit sleeve cannot be expressed by changing the whole garment's weight, and a garment-weight rule cannot tell compressible sleeve volume from non-compressible volume.
+- **Current evidence.** The taxonomy has no sleeve-specific thickness, structure or compressibility field; see `docs/stage1-cause-matrix-2026-09-14.md` §10a. `layerConstructionPromptRule()` was rewritten to describe this same zone/direction
 mechanics instead of enumerating fashion-name shapes in prose.
 
 ## New field: bottom_subtype, and the bottomKind() rewrite (2026-08-14)
@@ -435,3 +441,64 @@ sandbox testing, not by reading the code.
   2026-08-15 hem_finish/tuck_behavior fix (see below) since it's cheap to do and a future reader
   grepping for the function shouldn't find two implementations disagreeing, but it is still dead
   code with zero callers. Worth deleting at some point, not done here.
+
+## Sleeve layering is judged across the CHAIN, not pair by pair (2026-09-13)
+
+Live `thread_1789274442146` shipped a clean card carrying a gathered/ruched turtleneck
+(`extra_long`/`gathered_ruched`), a cream open cardigan and a fitted quilted puffer
+(`long`/`straight`, fitted silhouette). Both adjacent pairs returned `compatible` and the outfit
+produced **zero** findings.
+
+**The cardigan was tagged `extra_long`/`straight` at the time of the incident.** The owner has since
+corrected it by hand to `flared` — a sleeve widening into a deep pointed cuff — through the normal
+confirmed-correction path, so the field remains in `manual_overrides` with `_confidence: manual` and
+`pathIsProtected()` keeps an automatic retag from overwriting it. That correction makes the cardigan
+fail under a narrow outer sleeve on the DIRECT pair rule, with any base. It does not remove the need
+for the chain fold: the turtleneck's volume travelling through an accommodating middle layer is a
+separate defect, and the fold is what catches it.
+
+The mechanism: `layerConstructionPair` compares one garment against one other, so accommodation read
+as **absorption**. The cardigan was judged able to contain the turtleneck's elevated arm volume, and
+that volume then vanished from the system — the puffer was evaluated against the cardigan's own
+`straight` sleeve, which presents nothing. `straight` correctly means "adds no *localized* volume of
+its own"; it was being read as "occupies no space".
+
+`chainConstructionFindings()` in `outfitValidation.js` folds the assigned wear chain inside-out and
+carries the sleeve system outward:
+
+- **Accommodation is not erasure.** A layer that can be worn over an elevated sleeve still presents
+  that volume to the next layer.
+- **Unknown propagates.** An unresolved inner system or outer sleeve is unknown at every subsequent
+  step and can never be certified compatible later.
+- **A hard conflict needs both participants known to have a sleeve** — the garment the volume came
+  from and the garment restricting it. Unknown `sleeve_length` on either is unresolved evidence.
+- **Propagated only.** A conflict with the garment directly inside is the pair rule's finding; the
+  fold speaks only for volume that travelled through an intermediate layer, so they never
+  double-report. Two-garment outfits are byte-identical to before — verified across all 3060
+  top × outerwear pairs in the owner's wardrobe.
+
+The vocabulary is unchanged: `elevated`/`none`/`null` against `accommodates`/`restricted`/`null`. No
+magnitudes, no counting of cuffed layers, no fabric-weight arithmetic.
+
+### Sleeve length is NOT a bulk proxy (rejected, 2026-09-13)
+
+A relative-length signal was proposed and **rejected during review for lack of evidence**: an inner
+sleeve longer than its container (`extra_long` inside `long`) treated as lower-arm elevation. `extra_long` describes
+**extent, not trapped volume** — a fine fitted extra-long sleeve may extend past a shorter cuff or
+fold without making the combination unwearable. The rule would have hard-rejected 59 existing
+combinations in the owner's wardrobe with no evidence that any of them fail. It is using length as a
+stand-in for the missing thickness dimension. `test/outfit_structure.test.js` carries an explicit
+negative control so it cannot be reintroduced quietly.
+
+### Open: sleeve wall thickness is an unresolved dimension
+
+`sleeve_shape` records **where** volume sits; nothing records **how thick the sleeve wall is**. A
+chunky open-knit sleeve, a quilted down sleeve and a fine jersey sleeve can all be tagged `straight`
+while occupying very different space. Garment-level `fabric_weight` is deliberately barred as sleeve
+evidence (it caused false rejections — see the `layerConstructionPair` header).
+
+**Before proposing a `sleeve_bulk` field**, audit representative straight-sleeved knits for
+recurring layering failures that are independent of shape. If the audit establishes them, add an
+orthogonal nullable field — never proxy thickness through length, and never expand the
+`sleeve_shape` vocabulary to carry it, since that would conflate two axes the 2026-08-14 split
+exists to keep apart.

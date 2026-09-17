@@ -5,7 +5,7 @@
 
 You open one garment and ask the stylist to build outfits around it. Unlike
 [Use my wardrobe](use-my-wardrobe.md), the selected piece is the **anchor**: it
-is pinned into every outfit and the candidate pool is pre-narrowed to its best
+is required in every outfit and the candidate pool is pre-narrowed to its best
 supporting pieces. The main path composes **wardrobe** outfits; a secondary
 `idealMode` path re-ranks candidates and may suggest pieces you don't own.
 
@@ -37,7 +37,7 @@ flowchart TD
     Q -->|no| S["Return explicit wardrobe shortfall<br/>dependent anchor stays Needs review"]
     Q -->|yes| D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"idealMode?<br/>set by free-text regex"}
-    M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
+    M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor required, from photos"}}
     M -->|"yes — free-typed 'ideal/missing'"| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
     E --> F{"Any outfits<br/>returned?"}
     E2 --> F
@@ -56,9 +56,15 @@ flowchart TD
 
 Three things a PM should take away:
 
-- **The anchor is non-negotiable.** The selected garment is pinned into every
-  proposed outfit (it bypasses every roster gate), and the composer is told "the
-  selected garment is the premise, not one option among many."
+- **The anchor is non-negotiable.** The selected garment is in every proposed
+  outfit's roster (it bypasses every roster gate), and the composer is told "the
+  selected garment is the premise, not one option among many." Since 2026-09-13
+  (atomic structured output, see [use my wardrobe](use-my-wardrobe.md)) the composer
+  answers in ID slots and the anchor is **validated, not inserted**: a card that
+  leaves it out is a Needs review card whose first finding is
+  `missing_selected_anchor`. The old path unshifted the anchor into any card that
+  omitted it and dropped cards that still lacked it. The requested 3–4 outfits are the
+  schema's `minItems`/`maxItems` and are checked locally as `debug.outfitCountCheck`.
 - **Two model paths.** The default is a single vision call that composes wardrobe
   outfits from photos. A secondary `idealMode` path (free-text only, see the
   routing note) first runs a vision *critic* to re-rank candidates, then a text
@@ -91,7 +97,7 @@ Same finite-pool authority (`evaluateVisualComposerPiecePool`), different framin
 | ----------------- | ---------------------------------- | ------------------------------------------------ |
 | Input pool        | whole active wardrobe              | anchor + ~32 pre-ranked supports (`ai.js:2119`)  |
 | Roster image cap  | 90                                 | 54 (`ai.js:1614`)                                |
-| Anchor            | none                               | selected piece pinned in every outfit (`ai.js:1684`) |
+| Anchor            | none                               | selected piece required in every outfit; a card without it is Needs review |
 | Memory            | lean (feedback + favorites)        | rich, garment-specific (outfits, gold feedback, saved boards, calibration) (`ai.js:2130`) |
 | Modes             | one (advisor)                      | three: wardrobe / ideal directions / ideal-only (`ai.js:2114`) |
 | Repair            | **no** (advisor mode)              | **yes** — `applyComfortFootwearRepair` (`ai.js:2226`) |
