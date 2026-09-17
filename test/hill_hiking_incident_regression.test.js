@@ -5,9 +5,11 @@
 // roster-selection prompt's "reuse... should be preferred... all else equal" framing had no
 // suitability check, so lighter hiking-only tops were dropped for cross-slot-reusable dressier ones;
 // (3) the composer had no honest way to disclose a weak/compromise fit, so it wrote confident
-// language over a real roster gap; (4) a piece's `occasion_exclusions: ["travel"]` (piece 256's real
-// shape) was silently bypassed for every slot of the trip because only the slot's own occasion was
-// ever checked, never the enclosing trip context.
+// language over a real roster gap; (4) ORIGINALLY diagnosed as a piece's `occasion_exclusions:
+// ["travel"]` being silently bypassed for every slot of the trip — that "fix" was itself wrong and
+// has since been reverted (thread_1789632137995, owner ruling 2026-09-17: 'travel' means transit,
+// never a trip's destination activities; injecting it into every slot crashed a later live run). See
+// section (e) below for the corrected behavior.
 //
 // This file pins the EVIDENCE AND PRIORITY CONTRACT the fix restores, not a specific expected
 // outfit or garment ID — per the owner's explicit correction, the five lighter tops seen upstream
@@ -98,35 +100,37 @@ test('the workbench instruction states structural_capacity is a supply fact, not
   assert.ok(!('coverage_report' in workbench.slots[0]), 'the old, suitability-conflating field name must not still be sent to the model')
 })
 
-// ─── (e) trip-level owner exclusions bind inside every slot, not just a slot literally occasioned "travel" ─
+// ─── (e) SUPERSEDED (thread_1789632137995, owner ruling 2026-09-17): `occasion_exclusions: ['travel']`
+// means TRANSIT (airport time, a long car ride) — never a trip's destination activities. Injecting
+// 'travel' into every slot's exclusion check was itself the bug: a live Sept 19-22 Paso Robles run
+// packed linen pants (#128) excluded only from travel, assigned to Winery Days/Dinners Out, but the
+// injected 'travel' entry hard-excluded it from both at composition time. Dinners Out lost its only
+// eligible bottom, collapsed to target_outfits: 0, and Stage 2 crashed on the partial-plan contract
+// when the model correctly produced no card and no slot_gaps entry for a slot it was told needed
+// zero outfits. wholeWardrobePieceTrustDecision's array-of-occasions support (still real, still used
+// by ordinary multi-occasion checks) is unchanged; only the trip-wide 'travel' injection is gone. The
+// exclusion still applies exactly when a slot's own occasion genuinely IS travel/transit.
 
-test('wholeWardrobePieceTrustDecision checks an array of occasions, matching an owner travel exclusion even when the slot occasion is something else', () => {
-  const excludedFromTravel = { id: 256, name: 'black abstract midi dress', category: 'dress', occasion_exclusions: ['travel'] }
-  // Old, buggy call shape: only the slot's own occasion, never "travel" — this must still find nothing
-  // if a caller only supplies the slot occasion (single-string callers are unaffected by the fix).
-  const slotOnly = wholeWardrobePieceTrustDecision(excludedFromTravel, { ownerExclusionOccasion: 'outdoor_daytime_social' })
-  assert.equal(slotOnly.allowed, true, 'unaffected single-occasion callers keep their existing behavior')
-  // Fixed call shape: the slot occasion AND the enclosing trip context, as an array.
-  const slotAndTrip = wholeWardrobePieceTrustDecision(excludedFromTravel, { ownerExclusionOccasion: ['outdoor_daytime_social', 'travel'] })
-  assert.equal(slotAndTrip.allowed, false)
-  assert.match(slotAndTrip.reasons.join(' '), /user-excluded for travel/)
-})
-
-test('a piece excluded from travel stays excluded from every slot of a plan_kind trip, including a slot whose own occasion is not "travel"', async () => {
+test('a piece excluded from travel is NOT excluded from an ordinary trip destination slot (Winery Days), even for plan_kind trip', async () => {
   const piece = (id, category, extra = {}) => ({ id, name: `piece ${id}`, category, status: 'active', occasions: ['casual', 'outdoor', 'evening'], ...extra })
-  const excludedDress = piece(256, 'dress', { occasion_exclusions: ['travel'] })
+  const excludedFromTravel = piece(128, 'bottom', { occasion_exclusions: ['travel'] })
   const backupTop = piece(201, 'top')
-  const backupBottom = piece(202, 'bottom')
   const shoes = piece(203, 'shoes', { heel_height: 'flat', walk_support: 'high' })
   const slots = [{ id: 's1', label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking', stylingContext: { occasion: 'outdoor_daytime_social', activity: 'walking', calendarSeason: 'fall' } }]
-  const tripWorkbench = await buildPlanSlotWorkbench(slots, { allPieces: [excludedDress, backupTop, backupBottom, shoes], question: 'trip', planKind: 'trip' })
+  const tripWorkbench = await buildPlanSlotWorkbench(slots, { allPieces: [excludedFromTravel, backupTop, shoes], question: 'trip', planKind: 'trip' })
   const tripAllowedIds = new Set(tripWorkbench.slots[0].allowed_piece_ids)
-  assert.ok(!tripAllowedIds.has(256), 'the trip context\'s travel exclusion must reach every slot, not just a slot literally occasioned "travel"')
+  assert.ok(tripAllowedIds.has(128), 'a piece excluded only from transit is perfectly wearable at the destination, including on a trip')
+})
 
-  // Same fixture, NOT a trip plan: the travel exclusion is not implicitly injected for a non-trip plan kind.
-  const nonTripWorkbench = await buildPlanSlotWorkbench(slots, { allPieces: [excludedDress, backupTop, backupBottom, shoes], question: 'a week of outfits', planKind: 'coordinated_plan' })
-  const nonTripAllowedIds = new Set(nonTripWorkbench.slots[0].allowed_piece_ids)
-  assert.ok(nonTripAllowedIds.has(256), 'a non-trip plan must not have "travel" silently injected into its exclusion check')
+test('a piece excluded from travel IS excluded from a slot whose own occasion genuinely is travel/transit', async () => {
+  const piece = (id, category, extra = {}) => ({ id, name: `piece ${id}`, category, status: 'active', occasions: ['casual', 'travel'], ...extra })
+  const excludedFromTravel = piece(128, 'bottom', { occasion_exclusions: ['travel'] })
+  const backupTop = piece(201, 'top')
+  const shoes = piece(203, 'shoes', { heel_height: 'flat', walk_support: 'high' })
+  const slots = [{ id: 's1', label: 'Flight Day', occasion: 'travel', activity: 'none', stylingContext: { occasion: 'travel', activity: 'none', calendarSeason: 'fall' } }]
+  const tripWorkbench = await buildPlanSlotWorkbench(slots, { allPieces: [excludedFromTravel, backupTop, shoes], question: 'trip', planKind: 'trip' })
+  const tripAllowedIds = new Set(tripWorkbench.slots[0].allowed_piece_ids)
+  assert.ok(!tripAllowedIds.has(128), 'a slot literally occasioned travel still honors the exclusion')
 })
 
 // ─── partial-plan contract (owner ruling 2026-09-16): every requested slot resolves to exactly one

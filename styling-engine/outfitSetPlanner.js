@@ -4435,13 +4435,16 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       season: slot.stylingContext.season,
       calendarSeason: slot.stylingContext.calendarSeason,
       currentDate: slot.stylingContext.date,
-      // thread_1789585467294: a piece the owner excluded from 'travel' (occasion_exclusions) must
-      // stay excluded from every slot of a trip plan, not just a slot literally occasioned 'travel' —
-      // wholeWardrobePieceTrustDecision checks this array for a match against any entry, so the
-      // slot's own occasion and the enclosing trip context are both checked, not just one.
-      ownerExclusionOccasion: planKind === 'trip'
-        ? [slot.eligibilityOccasion || slot.occasion, 'travel']
-        : (slot.eligibilityOccasion || slot.occasion),
+      // thread_1789632137995 (owner ruling 2026-09-17, reversing thread_1789585467294's own fix):
+      // `occasion_exclusions: ['travel']` means TRANSIT — airport time, a long car ride — never a
+      // trip's destination activities. The prior fix injected 'travel' into every slot of every trip
+      // plan, so a piece excluded only from transit (e.g. linen pants #128) was wrongly excluded from
+      // genuine destination slots (Winery Days, Dinners Out) too; when that piece was the only
+      // eligible bottom for a slot, the slot's target_outfits collapsed to 0 and Stage 2 crashed on
+      // the partial-plan contract. Destination slots evaluate against their own occasion only — the
+      // exclusion still applies exactly when a slot's own occasion/activity genuinely IS travel/
+      // transit, since that already flows through the single value below without any extra injection.
+      ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
       mood: mood || slotRequestText,

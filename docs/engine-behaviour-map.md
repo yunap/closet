@@ -5080,3 +5080,43 @@ fires unconditionally), and reaches the actual roster bench end-to-end through
 suite's dress/shoes/outerwear exclusion tests on a winter trip passing unchanged, confirming the
 override's category scope.
 
+### Amendment (2026-09-17) — a piece excluded from 'travel' is no longer excluded from a trip's own destination slots (thread_1789632137995, reverses part of thread_1789585467294)
+
+**Incident.** A live Sept 19-22 Paso Robles run: Stage 1 (roster selection) correctly packed linen
+pants (`#128`, `occasion_exclusions: ['travel']`) and assigned them to Winery Days and Dinners Out.
+Stage 2 crashed with "the bounded trip composer returned no outfits even though the packing roster
+has valid capacity." Root cause: `buildPlanSlotWorkbench` injected `'travel'` into
+`ownerExclusionOccasion` for every slot of every trip plan (the earlier Hill Hiking fix, immediately
+above), so `wholeWardrobePieceTrustDecision` hard-excluded `#128` from both Winery Days and Dinners
+Out — the two slots it had just been packed for. Dinners Out had no other eligible bottom or dress,
+so its `target_outfits` collapsed to 0 and the model was correctly told to submit zero outfits for
+it; `validateTripCompositionPartialPlan` then rejected the response because a slot told to submit
+zero outfits still needs an entry somewhere in the partial-plan contract, which nothing produces for
+a slot given `target_outfits: 0` from the workbench's own instructions — a genuine downstream gap in
+its own right, but moot once the slot never collapses to zero in the first place.
+
+**The corrected understanding (owner ruling 2026-09-17).** `occasion_exclusions: ['travel']` means
+TRANSIT — airport time, a long car ride — never a trip's destination activities. The original Hill
+Hiking fix's diagnosis (a piece excluded from `'travel'` must stay excluded from every slot of a trip
+plan) was itself wrong: a piece the owner doesn't want to wear on a flight is not thereby a piece the
+owner doesn't want to wear to dinner at the destination. Piece 256 (black abstract midi dress)
+appearing in Winery Days/Dinner Out cards, the original incident this section's earlier amendment
+was built to fix, was never actually a bug under this corrected reading — it just happened to
+motivate a fix that broke a different, later trip.
+
+**The fix.** The `'travel'` injection is removed entirely; `ownerExclusionOccasion` is now always
+just `slot.eligibilityOccasion || slot.occasion`, for every plan kind — identical to what a non-trip
+plan already did. The exclusion still applies exactly when a slot's own occasion/activity genuinely
+IS travel/transit (that value flows through unchanged); it simply no longer reaches into every OTHER
+slot of the same trip. This also closes a Stage 1 / Stage 2 asymmetry as a side effect, not a
+separate change: `slotGateEligiblePieces` (Stage 1's bench/roster gate) never passed
+`ownerExclusionOccasion` at all, so it always fell back internally to the single slot occasion —
+Stage 2 now matches that exactly, rather than Stage 2 alone carrying an extra injected value Stage 1
+never saw.
+
+Regression: `test/hill_hiking_incident_regression.test.js` §(e), rewritten — a piece excluded from
+travel is NOT excluded from an ordinary destination slot (Winery Days) even on a `plan_kind: trip`
+plan, and IS still excluded from a slot whose own occasion genuinely is `'travel'`. The prior two
+tests pinning the opposite (injection) behavior are removed, not left disabled, since they pinned the
+now-reversed understanding directly.
+
