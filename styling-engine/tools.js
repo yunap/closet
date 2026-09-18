@@ -34,7 +34,6 @@ import {
   capsuleTotalOutfitCap,
   buildPlanSlotWorkbench,
   resolveSlotWeather,
-  resolveSlotTimeSensitivity,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
   buildRejectedCapsuleCards,
@@ -1289,7 +1288,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "plan_outfit_set",
-    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — capsules, trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). Enforced capsules are composed atomically inside this tool from their fixed roster and return finished cards plus any honest gaps; do not call submit_plan_outfits afterward. Other plans return slot rosters for YOU to compose and submit once with submit_plan_outfits. Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
+    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — capsules, trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). When the user answers a pending daypart clarification, set time_window on the referenced slot before calling this tool. Enforced capsules are composed atomically inside this tool from their fixed roster and return finished cards plus any honest gaps; do not call submit_plan_outfits afterward. Other plans return slot rosters for YOU to compose and submit once with submit_plan_outfits. Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
     input_schema: {
       type: "object",
       properties: {
@@ -3467,21 +3466,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // and via .some() so a mixed plan (one resolved slot, one not) still
         // stops rather than proceeding partially gated.
         const weatherPreCheckSlots = await Promise.all(planSlots.map(async slot => {
-          const { profile } = await resolveSlotWeather(slot, {
+          const { profile, timeSensitivity } = await resolveSlotWeather(slot, {
             mood: toolContext.mood || '',
             question: toolContext.planQuestion || toolContext.question || '',
             dateRange: planDateRange,
             location: toolContext.location || '',
             fetchImpl: weatherFetchImpl,
             seasonIsCalendarOnly: planKind === 'seasonal_capsule',
-          })
-          // Activity time windows spec (2026-09-17), §7: computed in the same pre-check pass, before
-          // any roster or card is built — resolveSlotTimeSensitivity is itself a no-op (status:
-          // 'not_material') for an indoor slot, a slot that already has its own time_window, or one
-          // missing the location/date/hourly coverage needed to compare dayparts at all.
-          const timeSensitivity = await resolveSlotTimeSensitivity(slot, {
-            location: toolContext.location || '',
-            fetchImpl: weatherFetchImpl,
           })
           return {
             label: slot.label,
@@ -3517,7 +3508,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // material slot is surfaced (asking about several at once is not "one concise question"); a
         // plan with more than one time-sensitive slot resolves them one turn at a time as the model
         // re-calls this tool with each answered time_window.
-        const materialSlot = weatherPreCheckSlots.find(slot => slot.timeSensitivity?.status === 'material')
+        const materialSlot = weatherPreCheckSlots.find(slot => slot.timeSensitivity?.status === 'material_severe')
         if (materialSlot) {
           bumpFreeformDiagnostic(toolContext, 'planTimeSensitivityClarificationRecommended')
           return {
@@ -3526,7 +3517,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             slot: materialSlot.label,
             divergence: materialSlot.timeSensitivity.divergenceReason,
             evidence: materialSlot.timeSensitivity.evidence,
-            message: `"${materialSlot.label}" spans conditions materially different enough (${materialSlot.timeSensitivity.divergenceReason}) that packing the right thing depends on when it actually happens. Do not compose cards yet and do not call plan_outfit_set again this turn. Ask the user ONE natural, concise question about roughly what time "${materialSlot.label}" happens, then re-call plan_outfit_set with that slot's time_window set once they answer.`
+            message: `"${materialSlot.label}" could mean anything from a genuinely cold start to a mild one depending on timing (${materialSlot.timeSensitivity.divergenceReason}) — is this more of an early-morning/cooler outing or a warmer afternoon one? Do not compose cards yet and do not call plan_outfit_set again this turn. Ask the user ONE natural, concise question about whether "${materialSlot.label}" is more of an early-morning outing or a warmer afternoon one, then re-call plan_outfit_set with that slot's time_window set once they answer.`
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)

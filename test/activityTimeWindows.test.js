@@ -326,7 +326,7 @@ test('resolveSlotTimeSensitivity: an 89°F/35°F diurnal swing is material (the 
     date: '2026-09-19', location: 'Denver, CO',
   }])
   const result = await resolveSlotTimeSensitivity(slot, { location: 'Denver, CO', fetchImpl })
-  assert.equal(result.status, 'material')
+  assert.equal(result.status, 'material_severe')
   assert.match(result.divergenceReason, /thermal demand spans/)
   assert.ok(result.evidence.morning && result.evidence.afternoon && result.evidence.evening)
 })
@@ -393,8 +393,11 @@ test('resolveSlotTimeSensitivity: an indoor slot IS material when its genuine tr
     date: '2026-09-19', location: 'Paso Robles, CA',
   }])
   const result = await resolveSlotTimeSensitivity(slot, { location: 'Paso Robles, CA', fetchImpl })
-  assert.equal(result.status, 'material')
+  assert.equal(result.status, 'material_hedgeable')
   assert.match(result.divergenceReason, /thermal demand spans/)
+  assert.equal(result.diurnalRange.coldEndF, 55)
+  assert.equal(result.diurnalRange.warmEndF, 95)
+  assert.equal(result.diurnalRange.precipDivergence, false)
 })
 
 test('resolveSlotTimeSensitivity: a slot that already states its own time_window has nothing left to disambiguate', async () => {
@@ -430,8 +433,9 @@ test('resolveSlotTimeSensitivity: a precipitation divergence alone is material e
     date: '2026-09-19', location: 'Denver, CO',
   }])
   const result = await resolveSlotTimeSensitivity(slot, { location: 'Denver, CO', fetchImpl })
-  assert.equal(result.status, 'material')
+  assert.equal(result.status, 'material_hedgeable')
   assert.match(result.divergenceReason, /rain is expected/)
+  assert.equal(result.diurnalRange.precipDivergence, true)
 })
 
 // ─── The conversational seam: plan_outfit_set pauses before composing (spec §7) ────────────────
@@ -463,7 +467,7 @@ test('plan_outfit_set returns clarification_recommended and never calls the rost
   assert.equal(result.status, 'clarification_recommended')
   assert.equal(result.reason, 'material_time_sensitivity')
   assert.equal(result.slot, 'Mountain Hike')
-  assert.match(result.message, /ONE natural, concise question/)
+  assert.match(result.message, /early-morning outing or a warmer afternoon one/)
   assert.equal(chooseTripRosterCalled, false, 'no roster selection call may run before the user answers -- that is the entire point of pausing here')
   assert.deepEqual(toolContext.generatedOutfits, [])
 })
@@ -537,3 +541,133 @@ test('plan_outfit_set proceeds normally when no slot is materially time-sensitiv
   assert.equal(result.status, 'success')
   assert.equal(toolContext.generatedOutfits.length, 1)
 })
+
+test('plan_outfit_set proceeds without pausing for a material_hedgeable slot and exposes diurnal_range on the workbench', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trail top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trail pants' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trail shoes', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'outerwear', name: 'trail jacket', fabric_weight: 'medium' })
+
+  // Paso Robles shape: 55°F morning to 95°F afternoon. Shift is material (hedgeable), but no severe cold.
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 55, 9: 60, 12: 88, 14: 95, 17: 72, 19: 60 },
+  })
+  let capturedWorkbench = null
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a trip to Paso Robles for wineries',
+    location: 'Paso Robles, CA',
+    weatherFetchImpl: fetchImpl,
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(p => Number(p.id)) }),
+    composeTripPlanOnce: async workbench => {
+      capturedWorkbench = workbench
+      return [{
+        slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Winery Look', reason: 'r'
+      }]
+    },
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{ label: 'Winery Walk', occasion: 'casual', activity: 'walking', environment: 'outdoor', date: '2026-09-19', count: 1 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success', 'material_hedgeable must NOT block composition with clarification_recommended')
+  assert.ok(capturedWorkbench, 'workbench composition must be reached')
+  const instructionsText1 = Array.isArray(capturedWorkbench.instructions)
+    ? capturedWorkbench.instructions.join(' ')
+    : String(capturedWorkbench.instructions || '')
+  assert.match(instructionsText1, /removable or packable layer/i, 'workbench instructions must guide the model to hedge wide diurnal swings with a removable layer')
+  const slotWorkbench = capturedWorkbench.slots[0]
+  assert.ok(slotWorkbench.diurnal_range, 'workbench slot must carry diurnal_range')
+  assert.equal(slotWorkbench.diurnal_range.coldEndF, 55)
+  assert.equal(slotWorkbench.diurnal_range.warmEndF, 95)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+})
+
+test('normalizePlanSlots conversational fallback resolves "early", "early start", or "cooler" to morning when replying to a timing clarification', () => {
+  const [slotEarly] = normalizePlanSlots([{
+    label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', count: 1,
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'early',
+    history: [
+      { role: 'user', content: 'What should I pack for Denver?' },
+      { role: 'assistant', content: '"Mountain Hike" could mean anything from a genuinely cold start to a mild one — is this more of an early-morning/cooler outing or a warmer afternoon one?' }
+    ]
+  })
+  assert.deepEqual(slotEarly.timeWindow, { period: 'morning' }, 'early resolves to morning')
+
+  const [slotEarlyStart] = normalizePlanSlots([{
+    label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', count: 1,
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'we are doing an early start',
+    history: [
+      { role: 'user', content: 'What should I pack for Denver?' },
+      { role: 'assistant', content: '"Mountain Hike" could mean anything from a genuinely cold start to a mild one — is this more of an early-morning/cooler outing or a warmer afternoon one?' }
+    ]
+  })
+  assert.deepEqual(slotEarlyStart.timeWindow, { period: 'morning' }, 'early start resolves to morning')
+})
+
+test('normalizePlanSlots conversational fallback resolves "later" or "warmer" to afternoon when replying to a timing clarification', () => {
+  const [slotLater] = normalizePlanSlots([{
+    label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', count: 1,
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'later in the day',
+    history: [
+      { role: 'user', content: 'What should I pack for Denver?' },
+      { role: 'assistant', content: '"Mountain Hike" could mean anything from a genuinely cold start to a mild one — is this more of an early-morning/cooler outing or a warmer afternoon one?' }
+    ]
+  })
+  assert.deepEqual(slotLater.timeWindow, { period: 'afternoon' }, 'later in the day resolves to afternoon')
+})
+
+test('plan_outfit_set handles a slot with only weather_estimate (distant date, no hourly data) without pausing or crashing', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'trail top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'trail pants' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trail shoes', heel_height: 'flat', walk_support: 'high' })
+  const jacketId = insertPiece({ category: 'outerwear', name: 'trail jacket', fabric_weight: 'medium' })
+
+  const noHourly = async url => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 39.7392, longitude: -104.9903 }] }) }
+    : { ok: false })
+
+  let capturedWorkbench = null
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a hike in Denver in 2099',
+    location: 'Denver, CO',
+    weatherFetchImpl: noHourly,
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(p => Number(p.id)) }),
+    composeTripPlanOnce: async workbench => {
+      capturedWorkbench = workbench
+      return [{
+        slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Future Hike Look', reason: 'r'
+      }]
+    },
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [{
+      label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', environment: 'outdoor',
+      date: '2099-01-01', count: 1,
+      weather_estimate: { high_f: 80, low_f: 45 }
+    }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success', 'coarse weather_estimate must not block composition')
+  assert.ok(capturedWorkbench, 'workbench composition must be reached')
+  const instructionsText2 = Array.isArray(capturedWorkbench.instructions)
+    ? capturedWorkbench.instructions.join(' ')
+    : String(capturedWorkbench.instructions || '')
+  assert.match(instructionsText2, /removable or packable layer/i, 'workbench instructions must carry diurnal hedging guidance for a coarse estimate with a wide >=15°F swing')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+})
+

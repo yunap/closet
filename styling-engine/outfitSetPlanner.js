@@ -919,6 +919,22 @@ function textLooksLikeEveningPlanSlot(text = '') {
   return /\b(dinners?|dining|restaurants?|drinks|wine bars?|night out|date night|evenings?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
+function textLooksLikeAfternoonPlanSlot(text = '') {
+  return /\b(afternoons?|matinees?|midday)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalAfternoonAnswer(text = '') {
+  return textLooksLikeAfternoonPlanSlot(text) || /\b(later(\s+in\s+the\s+day)?|milder|warmer)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeMorningPlanSlot(text = '') {
+  return /\b(mornings?|breakfast|brunch|dawn|sunrise)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalMorningAnswer(text = '') {
+  return textLooksLikeMorningPlanSlot(text) || /\b(early(\s+start|\s+outing)?|cooler)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
 function textLooksLikeCoastalPlanSlot(text = '') {
   return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?|coast(?:al)?|seaside|oceanfront|shore|sand)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
@@ -953,22 +969,6 @@ function normalizePlanSlotTimeWindow(raw = null) {
     ...(hasValidPeriod ? { period } : {}),
     ...(hasValidClockPair ? { start_local: startLocal, end_local: endLocal } : {}),
   }
-}
-
-function textLooksLikeAfternoonPlanSlot(text = '') {
-  return /\b(afternoons?|midday|lunch|daytime|matinee)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
-}
-
-function textLooksLikeConversationalAfternoonAnswer(text = '') {
-  return textLooksLikeAfternoonPlanSlot(text) // ratchet-allow: slot-use-case classifier, not garment matching
-}
-
-function textLooksLikeMorningPlanSlot(text = '') {
-  return /\b(mornings?|breakfast|brunch|dawn|sunrise)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
-}
-
-function textLooksLikeConversationalMorningAnswer(text = '') {
-  return textLooksLikeMorningPlanSlot(text) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
 function inferPlanSlotTimeWindow({
@@ -1008,7 +1008,7 @@ function inferPlanSlotTimeWindow({
           : null)
     if (priorAssistantMsg) {
       const assistantText = String(priorAssistantMsg.content || priorAssistantMsg.text || '')
-      const isTimingQuestion = /\b(what time|time of day|roughly what time|morning|afternoon|evening|hours)\b/i.test(assistantText) && /\?/.test(assistantText)
+      const isTimingQuestion = /\b(what time|time of day|roughly what time|morning|afternoon|evening|hours|cooler|warmer|early|later)\b/i.test(assistantText) && /\?/.test(assistantText)
       if (isTimingQuestion) {
         const slotTokens = label.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !['day', 'days', 'slot', 'look', 'trip'].includes(w))
         const slotMentioned = slotTokens.length > 0 && slotTokens.some(tok => new RegExp(`\\b${tok}`, 'i').test(assistantText))
@@ -1250,7 +1250,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
             weatherSource: hourly.weatherSource,
             resolvedWeatherContext,
           },
-          label: `indoor; transit: ${hourlyLabel}`
+          label: `indoor; transit: ${hourlyLabel}`,
+          timeSensitivity: { status: 'not_material' }
         }
       }
       return {
@@ -1262,7 +1263,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
           weatherSource: hourly.weatherSource,
           resolvedWeatherContext,
         },
-        label: hourlyLabel
+        label: hourlyLabel,
+        timeSensitivity: { status: 'not_material' }
       }
     }
   }
@@ -1278,6 +1280,15 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
     ...(fetchImpl ? { fetchImpl } : {})
   })
   const t = context.temperature
+
+  let timeSensitivity = { status: 'not_material' }
+  let diurnalRange = null
+  if (!slot.timeWindow && day && targetLocation) {
+    timeSensitivity = await resolveSlotTimeSensitivity(slot, { location: targetLocation, fetchImpl })
+    if (timeSensitivity?.status === 'material_hedgeable') {
+      diurnalRange = timeSensitivity.diurnalRange || null
+    }
+  }
 
   // Spec §6.4: indoor transit projects BOTH facts instead of erasing one —
   // an indoor base may stay light/permissive, but the outside temperature
@@ -1306,6 +1317,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
         transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
         transitHighF: t.highF, transitLowF: t.lowF,
+        diurnalRange,
         // Mirrors stylingContext.js's profileFromResolvedWeatherContext, the general
         // conversational-stylist projection: wet exposure is NOT neutralized for an indoor
         // destination the way isCold is above -- rain is a hazard for the walk there and back
@@ -1316,7 +1328,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
-      label: `indoor; transit: ${transitLabel}`
+      label: `indoor; transit: ${transitLabel}`,
+      timeSensitivity
     }
   }
 
@@ -1325,6 +1338,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),
       needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
+      diurnalRange,
       // docs/README.md weather-behavior checkpoint follow-up: resolveSlotWeather never derived
       // isWetExposure/isRainy from its own resolved precipitation at all, unlike
       // stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
@@ -1336,7 +1350,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
-    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season })
+    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
+    timeSensitivity
   }
 }
 
@@ -1432,8 +1447,21 @@ export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fet
   const coldStates = periodsWithData.map(period => resolveColdLayerPresenceRequirement(exposureByPeriod[period])?.state || 'unknown')
   const coldDivergence = coldStates.includes('required') && coldStates.some(state => state !== 'required')
 
+  const minLevelIndex = levelIndexes.length ? Math.min(...levelIndexes) : -1
+  const maxLevelIndex = levelIndexes.length ? Math.max(...levelIndexes) : -1
+  const allLows = periodsWithData.map(period => bands[period].lowF).filter(Number.isFinite)
+  const allHighs = periodsWithData.map(period => bands[period].highF).filter(Number.isFinite)
+
+  const diurnalRange = {
+    coldEndF: allLows.length ? Math.min(...allLows) : null,
+    warmEndF: allHighs.length ? Math.max(...allHighs) : null,
+    coldEndLevel: minLevelIndex >= 0 ? WARMTH_LEVELS[minLevelIndex] : null,
+    warmEndLevel: maxLevelIndex >= 0 ? WARMTH_LEVELS[maxLevelIndex] : null,
+    precipDivergence,
+  }
+
   if (!shiftIsMaterial && !precipDivergence && !coldDivergence) {
-    return { status: 'not_material', evidence: bands }
+    return { status: 'not_material', evidence: bands, diurnalRange }
   }
 
   const reasonParts = []
@@ -1445,8 +1473,9 @@ export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fet
   if (coldDivergence) reasonParts.push('one plausible window requires severe cold coverage, another does not')
 
   return {
-    status: 'material',
+    status: coldDivergence ? 'material_severe' : 'material_hedgeable',
     evidence: bands,
+    diurnalRange,
     divergenceReason: reasonParts.join('; '),
   }
 }
@@ -4622,6 +4651,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
+      diurnal_range: weatherProfile?.diurnalRange || null,
       // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
       // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
       // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
@@ -4729,6 +4759,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
     'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // A 15°F swing spans across adjacent PET comfort bands (e.g. 55°F cool to 70°F mild, or 70°F mild to 85°F warm),
+    // where clothing flexibility and layering become physically necessary even when only coarse daily high/low is known.
+    slots.some(s => s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15)))
+      ? "When a slot's conditions span a real range across the day rather than one fixed temperature, compose the core outfit for the cooler/more demanding end and account for the warmer end with a removable or packable layer choice — noted explicitly in the outfit's reason text — rather than assuming a single fixed temperature."
+      : '',
     // thread_1788508369689 arc: exposure_conditions deliberately gives only a temperature range
     // (§2684's thermal_demand removal — a styling target must not be dictated), but the cold floor
     // this states below is a pass/fail structural gate (NO_WARM_LAYER_FOR_COLD), not a preference,
@@ -6119,9 +6154,9 @@ export function normalizePlanSlots(rawSlots = [], {
         // occasion field's own 2026-07-30 ratified description reserves 'evening' occasion for
         // genuinely dressier night-out cases while an ORDINARY restaurant dinner correctly resolves
         // to 'smart casual'/'city' — keying off occasion would silently miss exactly the ordinary-
-        // dinner case this fix exists for. No other period is inferred from any other occasion/
-        // activity/label, and an explicit time_window (any period, or an explicit clock range)
+        // dinner case this fix exists for. An explicit time_window (any period, or an explicit clock range)
         // always wins outright.
+        //
         // thread_1789712689892: Extended symmetrically to afternoon and morning using text cues
         // (textLooksLikeAfternoonPlanSlot, textLooksLikeMorningPlanSlot) and an immediate conversational
         // clarification fallback so that when a user answers a timing clarification, an instruction-
