@@ -271,6 +271,19 @@ test('resolveSlotTimeSensitivity: an 89°F/35°F diurnal swing is material (the 
   assert.ok(result.evidence.morning && result.evidence.afternoon && result.evidence.evening)
 })
 
+test('resolveSlotTimeSensitivity: an active coastal hike with a comfortable 55°F to 69°F swing is not material', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 55, 11: 62, 12: 67, 14: 69, 17: 64, 20: 58 },
+  })
+  const [slot] = normalizePlanSlots([{
+    label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', environment: 'outdoor',
+    date: '2026-09-19', location: 'Pismo Beach, CA',
+  }])
+  const result = await resolveSlotTimeSensitivity(slot, { location: 'Pismo Beach, CA', fetchImpl })
+  assert.equal(result.status, 'not_material')
+})
+
 test('resolveSlotTimeSensitivity: a 70°F/60°F swing is not material (normal clothing flexibility covers it)', async () => {
   const fetchImpl = makeMockHourlyFetch({
     date: '2026-09-19',

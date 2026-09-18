@@ -159,38 +159,60 @@ const MONTH_NAMES = {
 const MONTH_NAME_PATTERN = Object.keys(MONTH_NAMES).sort((a, b) => b.length - a.length).join('|')
 const trimDateComponent = date => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
 const isoDate = date => date.toISOString().slice(0, 10)
+const WEEKDAYS = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+}
+const WEEKDAY_PATTERN = Object.keys(WEEKDAYS).join('|')
 
 // A stated trip date is factual request state, not something the model should have to re-derive
 // correctly on every plan_outfit_set call (thread_1788499704803: the model's own date_range
 // drifted to the current week despite the user stating "October 12th... for a week" in the same
 // turn, and nothing caught the mismatch before it silently resolved live weather for the wrong
 // dates). Extracted once, deterministically, from the user's own words -- conservative by
-// construction: returns null rather than guessing whenever the text isn't an unambiguous month +
-// day statement, since a wrong extracted date is worse than none. No year inference beyond "the
+// construction: returns null rather than guessing whenever the text isn't an unambiguous date or
+// weekday statement, since a wrong extracted date is worse than none. No year inference beyond "the
 // next occurrence of this month/day from `currentDate`", matching how a person actually means a
-// bare "October 12th" mentioned in September.
+// bare "October 12th" mentioned in September or "on Saturday" for an upcoming trip.
 export function extractStatedTripDateRange(text = '', { currentDate = new Date() } = {}) {
   const normalized = String(text || '').toLowerCase()
-  const dateMatch = normalized.match(new RegExp(`\\b(${MONTH_NAME_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`))
-  if (!dateMatch) return null
-  const month = MONTH_NAMES[dateMatch[1]]
-  const day = Number(dateMatch[2])
-  if (!Number.isInteger(day) || day < 1 || day > 31) return null
-
   const now = currentDate instanceof Date && !Number.isNaN(currentDate.getTime()) ? currentDate : new Date()
   const today = trimDateComponent(now)
-  let year = dateMatch[3] ? Number(dateMatch[3]) : now.getUTCFullYear()
-  let startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
-  if (Number.isNaN(startDate.getTime())) return null
-  // No explicit year stated and the bare month/day already passed this year -- assume next
-  // year's occurrence (a person saying "October 12th" in September means THIS October, but the
-  // same words in November mean NEXT October, never a date already in the past).
-  if (!dateMatch[3] && startDate < today) {
-    year += 1
+
+  let startDate = null
+  const dateMatch = normalized.match(new RegExp(`\\b(${MONTH_NAME_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`))
+  if (dateMatch) {
+    const month = MONTH_NAMES[dateMatch[1]]
+    const day = Number(dateMatch[2])
+    if (!Number.isInteger(day) || day < 1 || day > 31) return null
+
+    let year = dateMatch[3] ? Number(dateMatch[3]) : now.getUTCFullYear()
     startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
+    if (Number.isNaN(startDate.getTime())) return null
+    // No explicit year stated and the bare month/day already passed this year -- assume next
+    // year's occurrence (a person saying "October 12th" in September means THIS October, but the
+    // same words in November mean NEXT October, never a date already in the past).
+    if (!dateMatch[3] && startDate < today) {
+      year += 1
+      startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
+    }
+  } else {
+    // Relative weekday / weekend matching: "on Saturday", "this weekend", "coming Friday", etc.
+    const weekendMatch = normalized.match(/\b(?:this|next|upcoming|coming)\s+weekend\b/)
+    const weekdayMatch = normalized.match(new RegExp(`\\b(?:on|this|next|upcoming|coming)\\s+(${WEEKDAY_PATTERN})\\b`))
+    if (weekendMatch || weekdayMatch) {
+      const targetDay = weekendMatch ? WEEKDAYS.saturday : WEEKDAYS[weekdayMatch[1]]
+      const currentDay = today.getUTCDay()
+      let daysAhead = (targetDay - currentDay + 7) % 7
+      if (daysAhead === 0 && !/\btoday\b/.test(normalized)) {
+        daysAhead = 7
+      }
+      startDate = new Date(today.getTime() + daysAhead * 86400000)
+    }
   }
+  if (!startDate) return null
 
   const durationMatch = normalized.match(/\bfor\s+(a|one|\d+)\s+(day|days|night|nights|week|weeks)\b/) ||
+    normalized.match(/\b(?:trip|stay|visit)\s+(?:will\s+take|takes|is|lasting|of)\s+(a|one|\d+)\s+(day|days|night|nights|week|weeks)\b/) ||
     normalized.match(/\b(a|one|\d+)\s+(day|days|night|nights|week|weeks)\s+(?:trip|stay|visit)\b/)
   let durationDays = 1
   if (durationMatch) {

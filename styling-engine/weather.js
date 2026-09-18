@@ -192,7 +192,7 @@ async function fetchHourlyRange(coords, startDate, endDate, fetchImpl) {
   return result
 }
 
-// Canonical waking outdoor dayparts (spec §5). Night (21:00-08:00) is deliberately excluded from
+// Canonical waking outdoor dayparts (spec §5). Night (23:00-08:00) is deliberately excluded from
 // "plausible outdoor recreation exposure" — this states an assumption about ORDINARY waking activity
 // timing, the same kind of stated, labelled assumption WAKING_WINDOW.troughOffsetFraction already is
 // below, not a claim about when any specific activity happens. A user who explicitly asks for a night
@@ -200,7 +200,7 @@ async function fetchHourlyRange(coords, startDate, endDate, fetchImpl) {
 export const DAYPARTS = {
   morning: { startHour: 8, endHour: 12 },
   afternoon: { startHour: 12, endHour: 17 },
-  evening: { startHour: 17, endHour: 21 },
+  evening: { startHour: 17, endHour: 23 },
 }
 
 // An explicit start_local/end_local pair wins over a named period; a bare period maps to its

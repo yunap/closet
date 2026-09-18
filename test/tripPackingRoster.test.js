@@ -536,6 +536,26 @@ test('a roster chooser that omits a required removable layer triggers exactly on
   assert.equal(validateTripRoster(result.roster, { slots: [layerRequiredSlot()] }).ok, true)
 })
 
+test('selectTripRosterViaModel reconciles repair_changes when the model declares a swap but suffers an attention slip in roster_piece_ids', async () => {
+  let attempts = 0
+  const chooseRoster = async ({ attempt }) => {
+    attempts++
+    if (attempt === 1) return { roster_piece_ids: [1, 2, 3, 7] } // top, bottom, flat shoes, extra heeled shoes
+    // The repair round declares removing piece 7 and adding JACKET (id 8),
+    // but its roster_piece_ids accidentally left out 8 (an LLM array copy slip)
+    return {
+      roster_piece_ids: [1, 2, 3, 7],
+      repair_changes: [{ removed_piece_id: 7, added_piece_id: 8, reason: 'Swap redundant shoe for required warm layer' }],
+    }
+  }
+  const result = await selectTripRosterViaModel({ pool: POOL, slots: [layerRequiredSlot()], chooseRoster })
+  assert.equal(attempts, 2)
+  assert.equal(result.source, 'model_repaired')
+  assert.ok(result.roster.some(p => Number(p.id) === 8), 'reconciled repair_changes must inject the declared added layer')
+  assert.ok(!result.roster.some(p => Number(p.id) === 7), 'reconciled repair_changes must remove the declared removed piece')
+  assert.equal(validateTripRoster(result.roster, { slots: [layerRequiredSlot()] }).ok, true)
+})
+
 test('a roster chooser that never adds a qualifying layer degrades honestly to the coverage-guaranteed bench, disclosing the real gap', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3] }) // never adds a layer, even after repair
   const result = await selectTripRosterViaModel({ pool: POOL, slots: [layerRequiredSlot()], chooseRoster })

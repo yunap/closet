@@ -4292,8 +4292,18 @@ export async function selectTripRosterViaModel({
     return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
   }
 
-  const resolve = answer => {
-    const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+  const resolve = (answer, attempt = 1) => {
+    let ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+    if (attempt > 1 && Array.isArray(answer?.repair_changes) && answer.repair_changes.length > 0) {
+      const declaredAdds = answer.repair_changes.map(c => Number(c?.added_piece_id)).filter(id => benchById.has(id))
+      const declaredRemoves = answer.repair_changes.map(c => Number(c?.removed_piece_id)).filter(Boolean)
+      if (declaredAdds.length > 0) {
+        for (const addId of declaredAdds) {
+          if (!ids.includes(addId)) ids.push(addId)
+        }
+        ids = ids.filter(id => !declaredRemoves.includes(id))
+      }
+    }
     const unique = [...new Set(ids)]
     const outsideBench = unique.filter(id => !benchById.has(id))
     const roster = unique.map(id => benchById.get(id)).filter(Boolean)
@@ -4305,7 +4315,7 @@ export async function selectTripRosterViaModel({
 
   const attemptChoose = async attemptArgs => {
     try {
-      return resolve(await chooseRoster(attemptArgs))
+      return resolve(await chooseRoster(attemptArgs), attemptArgs?.attempt || 1)
     } catch (err) {
       const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
       return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }

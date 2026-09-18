@@ -234,7 +234,7 @@ test('resolveExposureWindowHourly returns null when geocoding fails or the date 
 test('resolveDaypartHourlyEvidence slices all three canonical dayparts from one hourly fetch', async () => {
   const fetchImpl = makeMockHourlyFetch({
     date: '2026-09-19',
-    hours: { 8: 58, 11: 66, 12: 78, 16: 94, 17: 82, 18: 80, 19: 75, 20: 68 },
+    hours: { 8: 58, 11: 66, 12: 78, 16: 94, 17: 82, 18: 80, 19: 75, 20: 72, 21: 70, 22: 68 },
   })
   const evidence = await resolveDaypartHourlyEvidence({ location: 'Paso Robles, CA', date: '2026-09-19', fetchImpl })
   assert.deepEqual(Object.keys(evidence).sort(), ['afternoon', 'evening', 'morning'])
@@ -253,7 +253,7 @@ test('resolveDaypartHourlyEvidence returns null under the same degradation condi
 test('DAYPARTS defines exactly the three canonical waking outdoor windows, excluding night', () => {
   assert.deepEqual(DAYPARTS.morning, { startHour: 8, endHour: 12 })
   assert.deepEqual(DAYPARTS.afternoon, { startHour: 12, endHour: 17 })
-  assert.deepEqual(DAYPARTS.evening, { startHour: 17, endHour: 21 })
+  assert.deepEqual(DAYPARTS.evening, { startHour: 17, endHour: 23 })
   assert.equal(Object.keys(DAYPARTS).length, 3, 'night is deliberately not a plausible-outdoor-recreation daypart')
 })
 
