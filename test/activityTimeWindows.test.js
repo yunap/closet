@@ -172,6 +172,66 @@ test('normalizePlanSlots does not default a time_window for a non-evening occasi
   assert.equal(slot.timeWindow, null)
 })
 
+test('normalizePlanSlots defaults time_window to afternoon when slot text matches textLooksLikeAfternoonPlanSlot', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Winery Afternoon', occasion: 'outdoor_daytime_social', activity: 'walking', count: 2,
+    best_for: 'Winery tastings in the afternoon',
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.deepEqual(slot.timeWindow, { period: 'afternoon' })
+})
+
+test('normalizePlanSlots defaults time_window to morning when slot text matches textLooksLikeMorningPlanSlot', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Morning Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1,
+  }], { dateRange: { start: '2026-09-19' } })
+  assert.deepEqual(slot.timeWindow, { period: 'morning' })
+})
+
+test('normalizePlanSlots falls back to daypart from user reply when immediately replying to a timing clarification for that specific slot', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking', count: 2,
+    best_for: 'Winery tasting and exploring',
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'tastings during the afternoon hours',
+    history: [
+      { role: 'user', content: 'What should I pack for Paso Robles?' },
+      { role: 'assistant', content: 'For your winery days in Paso Robles, do you typically head out early in the morning when it\'s cooler, or do you mostly enjoy tastings during the warmer afternoon hours?' }
+    ]
+  })
+  assert.deepEqual(slot.timeWindow, { period: 'afternoon' }, 'conversational fallback sets afternoon for Winery Days')
+})
+
+test('normalizePlanSlots does NOT fall back to daypart from user reply if the clarification was for a different slot', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1,
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'tastings during the afternoon hours',
+    history: [
+      { role: 'user', content: 'What should I pack for Paso Robles?' },
+      { role: 'assistant', content: 'For your winery days in Paso Robles, do you typically head out early in the morning when it\'s cooler, or do you mostly enjoy tastings during the warmer afternoon hours?' }
+    ]
+  })
+  assert.equal(slot.timeWindow, null, 'Coastal Hike must NOT inherit daypart from a winery clarification')
+})
+
+test('normalizePlanSlots conversational fallback survives real transport shape ending with user message echo', () => {
+  const [slot] = normalizePlanSlots([{
+    label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking', count: 2,
+    best_for: 'Winery tasting and exploring',
+  }], {
+    dateRange: { start: '2026-09-19' },
+    currentQuestion: 'tastings during the afternoon hours',
+    history: [
+      { role: 'user', content: 'What should I pack for Paso Robles?' },
+      { role: 'assistant', content: 'For your winery days in Paso Robles, do you typically head out early in the morning when it\'s cooler, or do you mostly enjoy tastings during the warmer afternoon hours?' },
+      { role: 'user', content: 'tastings during the afternoon hours' } // real transport echo
+    ]
+  })
+  assert.deepEqual(slot.timeWindow, { period: 'afternoon' }, 'conversational fallback survives user echo in history')
+})
+
 // End-to-end: the exact live incident's own shape, both fixes together -- date inherited from the
 // plan range, occasion:'evening' defaulting its own time_window, and the hourly path now resolving
 // an indoor slot's TRANSIT numbers instead of skipping straight to the flat daily envelope.

@@ -6534,22 +6534,24 @@ router.post('/ask', async (req, res) => {
         })
       }
     }
-    const extractedWeather = req.body.weather || extractWeatherContext([
-      req.body.question || '',
+    const priorUserTexts = [...(Array.isArray(req.body.history) ? req.body.history : [])]
+      .filter(entry => entry?.role === 'user')
+      .map(entry => String(entry?.content || entry?.text || '').trim())
+      .filter(Boolean)
+    const requestAndContextText = [
+      currentQuestion,
+      ...priorUserTexts.reverse(),
       req.body.threadContext || '',
       req.body.generatedContext || ''
-    ].join('\n'))
+    ].filter(Boolean).join('\n')
+    const extractedWeather = req.body.weather || extractWeatherContext(requestAndContextText)
     // Same owner/scope as extractedWeather immediately above (this turn's question, plus recent
-    // thread context so a date stated an earlier turn still survives into a later plan_outfit_set
+    // thread context and prior user turns so a date stated in an earlier turn still survives into a later plan_outfit_set
     // call) — a stated trip date is factual request state, not something re-derived per tool call.
     // See extractStatedTripDateRange's own header comment (thread_1788499704803) for why this
     // exists: the deterministic override lives at the plan_outfit_set tool boundary in tools.js,
     // this is only the one extraction this turn computes it from.
-    const statedTripDateRange = extractStatedTripDateRange([
-      req.body.question || '',
-      req.body.threadContext || '',
-      req.body.generatedContext || ''
-    ].join('\n'), { currentDate: req.body.currentDate ? new Date(req.body.currentDate) : new Date() })
+    const statedTripDateRange = extractStatedTripDateRange(requestAndContextText, { currentDate: req.body.currentDate ? new Date(req.body.currentDate) : new Date() })
     // A capsule often spans two turns: the first names the season/palette and
     // the second answers the stylist's lifestyle clarification. The plan tool
     // used to receive only turn two, silently dropping "in yellow" before
@@ -6573,6 +6575,7 @@ router.post('/ask', async (req, res) => {
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
       statedTripDateRange,
+      history: priorStylistConversationHistory(req.body.history, currentQuestion),
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.

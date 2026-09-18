@@ -1339,7 +1339,7 @@ export const STYLIST_TOOLS = [
                   start_local: { type: "string", description: "Explicit 24h local start time (e.g. '09:00'), only when the user stated or clearly implied one (e.g. 'dinner around 7' -> '19:00')." },
                   end_local: { type: "string", description: "Explicit 24h local end time (e.g. '13:00')." }
                 },
-                description: "When the user stated or clearly implied when this slot happens — outdoor or indoor: an indoor destination's own base is climate-controlled, but the walk to and from it is not, so timing still matters for a slot like dinner or a museum visit. Omit entirely if the user gave no timing cue — do not guess a default."
+                description: "When the user stated or clearly implied when this slot happens — outdoor or indoor: an indoor destination's own base is climate-controlled, but the walk to and from it is not, so timing still matters for a slot like dinner or a museum visit. When the user is answering a prior timing or daypart question (e.g. 'afternoon', 'mornings', 'around 7'), you MUST set time_window on the referenced slot to reflect their answer before recomposing so planning can proceed without re-asking. Omit entirely only if the user gave no timing cue anywhere in conversation — do not guess a default."
               },
               // Live thread_1785380251549: the plan's lifestyle answer listed
               // three distinct contexts — days at home, errands, weekends out —
@@ -3447,6 +3447,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           maxSlots: planTotalOutfitCap,
           maxTotalOutfits: planTotalOutfitCap,
           tripSummary,
+          currentQuestion: toolContext.question || '',
+          history: toolContext.history || [],
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         if (!planSlots.length) {

@@ -955,6 +955,75 @@ function normalizePlanSlotTimeWindow(raw = null) {
   }
 }
 
+function textLooksLikeAfternoonPlanSlot(text = '') {
+  return /\b(afternoons?|midday|lunch|daytime|matinee)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalAfternoonAnswer(text = '') {
+  return textLooksLikeAfternoonPlanSlot(text) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeMorningPlanSlot(text = '') {
+  return /\b(mornings?|breakfast|brunch|dawn|sunrise)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalMorningAnswer(text = '') {
+  return textLooksLikeMorningPlanSlot(text) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function inferPlanSlotTimeWindow({
+  rawTimeWindow = null,
+  occasion = '',
+  label = '',
+  bestFor = '',
+  coverage = '',
+  planNote = '',
+  currentQuestion = '',
+  history = []
+} = {}) {
+  const explicit = normalizePlanSlotTimeWindow(rawTimeWindow)
+  if (explicit) return explicit
+
+  const slotCuesText = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
+  if (occasion === 'evening' || textLooksLikeEveningPlanSlot(slotCuesText)) {
+    return { period: 'evening' }
+  }
+  if (textLooksLikeAfternoonPlanSlot(slotCuesText)) {
+    return { period: 'afternoon' }
+  }
+  if (textLooksLikeMorningPlanSlot(slotCuesText)) {
+    return { period: 'morning' }
+  }
+
+  // Strict conversational fallback: if the immediately preceding turn was an assistant clarification
+  // asking about timing for THIS specific slot, and the user's current reply states a daypart, honor
+  // that stated daypart so an instruction-following gap in the model's tool call does not trap the
+  // user in an infinite re-clarification loop.
+  if (currentQuestion && Array.isArray(history) && history.length > 0) {
+    const lastMsg = history[history.length - 1]
+    const priorAssistantMsg = lastMsg?.role === 'assistant'
+      ? lastMsg
+      : (lastMsg?.role === 'user' && history.length > 1 && history[history.length - 2]?.role === 'assistant'
+          ? history[history.length - 2]
+          : null)
+    if (priorAssistantMsg) {
+      const assistantText = String(priorAssistantMsg.content || priorAssistantMsg.text || '')
+      const isTimingQuestion = /\b(what time|time of day|roughly what time|morning|afternoon|evening|hours)\b/i.test(assistantText) && /\?/.test(assistantText)
+      if (isTimingQuestion) {
+        const slotTokens = label.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !['day', 'days', 'slot', 'look', 'trip'].includes(w))
+        const slotMentioned = slotTokens.length > 0 && slotTokens.some(tok => new RegExp(`\\b${tok}`, 'i').test(assistantText))
+        if (slotMentioned) {
+          if (textLooksLikeConversationalAfternoonAnswer(currentQuestion)) return { period: 'afternoon' }
+          if (textLooksLikeConversationalMorningAnswer(currentQuestion)) return { period: 'morning' }
+          if (textLooksLikeEveningPlanSlot(currentQuestion)) return { period: 'evening' }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
@@ -5924,6 +5993,8 @@ export function normalizePlanSlots(rawSlots = [], {
   maxSlots = PLAN_TOTAL_OUTFIT_CAP,
   maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
   tripSummary = null,
+  currentQuestion = '',
+  history = [],
   onDiagnostic = null
 } = {}) {
   const validPlanUserWeather = validateUserWeather(fallbackUserWeather)
@@ -6051,10 +6122,20 @@ export function normalizePlanSlots(rawSlots = [], {
         // dinner case this fix exists for. No other period is inferred from any other occasion/
         // activity/label, and an explicit time_window (any period, or an explicit clock range)
         // always wins outright.
-        timeWindow: normalizePlanSlotTimeWindow(slot?.time_window)
-          || (occasion === 'evening' || textLooksLikeEveningPlanSlot([label, bestFor, coverage, planNote].filter(Boolean).join(' '))
-            ? { period: 'evening' }
-            : null),
+        // thread_1789712689892: Extended symmetrically to afternoon and morning using text cues
+        // (textLooksLikeAfternoonPlanSlot, textLooksLikeMorningPlanSlot) and an immediate conversational
+        // clarification fallback so that when a user answers a timing clarification, an instruction-
+        // following gap in the model's tool call does not trap the user in an infinite re-asking loop.
+        timeWindow: inferPlanSlotTimeWindow({
+          rawTimeWindow: slot?.time_window,
+          occasion,
+          label,
+          bestFor,
+          coverage,
+          planNote,
+          currentQuestion,
+          history,
+        }),
         bestFor,
         coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),
