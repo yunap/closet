@@ -9716,7 +9716,9 @@ test('a trip activity with no day and no time of day resolves over the whole tri
   assert.equal(wholeTrip.profile.lowF, 53, 'the coolest covered trip day, not the first day (64) and not a null read as zero')
   assert.equal(wholeTrip.profile.isCold, false)
   assert.ok(urls.some(url => url.includes('forecast_days=')), 'the rejected range is retried over the horizon')
-  assert.match(wholeTrip.label, /53–81°F across the trip — live forecast/)
+  // Prefix only: the trailing far-ahead caveat depends on the day the test runs.
+  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
+  assert.doesNotMatch(wholeTrip.label, /rain/, 'the whole-day path has no rain data and must not claim any')
 
   _clearWeatherCachesForTests()
   const firstDay = await resolveSlotWeather(dated, { dateRange, location: 'Vienna, Virginia', fetchImpl })

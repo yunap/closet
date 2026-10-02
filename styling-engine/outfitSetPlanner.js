@@ -1194,26 +1194,57 @@ function dateSpanText(dates = []) {
   if (!dates.length) return ''
   return dates.length === 1 ? shortDate(dates[0]) : `${shortDate(dates[0])}–${shortDate(dates[dates.length - 1])}`
 }
-export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, location = '', today = new Date() } = {}) {
+export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, location = '', today = new Date(), whenLabel = '', sourceLabel = 'hourly forecast' } = {}) {
   const days = Array.isArray(acrossDays.days) ? acrossDays.days : []
   if (!days.length) return ''
   const period = String(timeWindow?.period || '').toLowerCase().trim()
   const when = period === 'morning' ? 'mornings'
     : (period === 'afternoon' || period === 'midday') ? 'afternoons'
       : period === 'evening' ? 'evenings'
-        : (timeWindow?.start_local && timeWindow?.end_local) ? `${timeWindow.start_local}–${timeWindow.end_local} each day` : 'this time of day'
+        : (timeWindow?.start_local && timeWindow?.end_local) ? `${timeWindow.start_local}–${timeWindow.end_local} each day` : (whenLabel || 'this time of day')
   const coolest = days.reduce((best, day) => (day.lowF < best.lowF ? day : best))
   const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
   const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
   if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
-  const rainDays = Number(acrossDays.rainDays) || 0
-  parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+  // Rain is stated only where it was measured (the hourly slices); the whole-day path has none.
+  if (acrossDays.rainDays != null) {
+    const rainDays = Number(acrossDays.rainDays) || 0
+    parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+  }
   const uncovered = Array.isArray(acrossDays.uncoveredDates) ? acrossDays.uncoveredDates : []
   if (uncovered.length) parts.push(`${dateSpanText(uncovered)} not forecast yet`)
   const lastDay = new Date(`${days[days.length - 1].date}T00:00:00Z`)
   const daysAhead = Number.isNaN(lastDay.getTime()) ? 0 : (lastDay.getTime() - new Date(today).getTime()) / 86400000
   const farAhead = daysAhead > FAR_FORECAST_DAYS ? '; a forecast this far ahead often changes' : ''
-  return `${parts.join('; ')} — hourly forecast${location ? `, ${location}` : ''}${farAhead}`
+  return `${parts.join('; ')} — ${sourceLabel}${location ? `, ${location}` : ''}${farAhead}`
+}
+
+// The whole-day counterpart of the sentence above, for an undated trip activity with no time of day:
+// the same facts (range, coolest and warmest day, days not forecast, far-ahead caveat) from the
+// daily series, so every activity of one trip is described to the same standard. Null when the
+// temperature is not a multi-day live series; the caller then keeps truthfulWeatherLabel.
+function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '', location = '' } = {}) {
+  const series = (Array.isArray(temperature.dailySeries) ? temperature.dailySeries : [])
+    .filter(day => Number.isFinite(day?.highF) && Number.isFinite(day?.lowF))
+    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF }))
+  if (temperature.source !== 'live' || series.length < 2) return null
+  const covered = new Set(series.map(day => day.date))
+  const uncoveredDates = []
+  if (tripStart && tripEnd) {
+    const cursor = new Date(`${tripStart}T00:00:00Z`)
+    for (let i = 0; i < 31 && !Number.isNaN(cursor.getTime()); i += 1) {
+      const key = cursor.toISOString().slice(0, 10)
+      if (key > tripEnd) break
+      if (!covered.has(key)) uncoveredDates.push(key)
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    }
+  }
+  return tripWindowWeatherSentence({
+    days: series,
+    lowF: Math.min(...series.map(day => day.lowF)),
+    highF: Math.max(...series.map(day => day.highF)),
+    uncoveredDates,
+  }, { location, whenLabel: 'whole days', sourceLabel: `daily forecast${temperature.provider ? ` (${temperature.provider})` : ''}` })
 }
 
 function isGenericSeasonText(season = '') {
@@ -1368,7 +1399,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // alone communicates the setting, and status is read from
   // resolvedWeatherContext, not from a synthesized indoor_transit_* string.
   if (slot.statedWeather === 'indoor') {
-    const transitLabel = truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.transitSeason })
+    const transitLabel = (spansTripDays && tripDaysWeatherSentence(t, { tripStart, tripEnd, location: targetLocation }))
+      || truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.transitSeason })
     return {
       profile: {
         // Extreme heat must still constrain the base because a heavy main
@@ -1419,7 +1451,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
-    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
+    label: (spansTripDays && tripDaysWeatherSentence(t, { tripStart, tripEnd, location: targetLocation }))
+      || truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
     timeSensitivity
   }
 }
@@ -4859,7 +4892,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
     // was built to remove.
     planKind === 'trip'
-      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When choosing mode \'assigned_packed_layer\', you must explicitly name the assigned layer in the outfit\'s reason or styling_instructions and explain the temperature/transition rationale (e.g. bring the trench coat for cool morning transit and remove it when it warms up). mode \'not_required\' applies only when the slot\'s conditions are genuinely uniform across the day. When a slot\'s conditions span a real range (whether or not the day is overall cold) or a removable cool layer is needed, you MUST choose mode \'core_is_warm_enough\' (a genuinely warm core) or \'assigned_packed_layer\' (a genuinely adequate candidate) with the disclosure above — \'not_required\' is not a valid answer for that slot.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). Use mode \'not_required\' when the look needs nothing added for its conditions. A slot marked cold_layer_required is rejected without a real warm layer (mode \'core_is_warm_enough\' or \'assigned_packed_layer\'). Whether a layer is worth taking for the rest is your judgment from weather_used and each layer\'s recorded warmth; when you assign one, say in the reason which piece it is and when it goes on and comes off.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
