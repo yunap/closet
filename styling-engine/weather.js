@@ -296,8 +296,21 @@ export async function resolveExposureWindowHourly({ location = '', date = '', ti
 // mid-October, because one day at or above HOT_F marked the whole activity hot. A layer is what
 // comes OFF in the heat, so the hot-weather exclusions for outerwear apply only when the conditions
 // are hot throughout. Garments worn through the heat (tops, bottoms, dresses) are judged as before.
+//
+// 2026-10-02, live thread_1790984215933 (the forecast moved to 43–85°F): a COLD end is a cool end
+// too. needsRemovableCoolLayer is false once the low is cold, so this read "no cool end" for a range
+// reaching 43°F, the hot exclusions stripped the warm layers again, and four looks were then
+// rejected for having no warm layer for the cold evening walk. Owner direction the same day: weather
+// is the model's judgment; code excludes only what is wrong for the WHOLE range. So both ends count.
 export function weatherHasCoolEnd(weatherProfile = {}) {
-  return Boolean(weatherProfile?.needsRemovableCoolLayer || weatherProfile?.transitNeedsRemovableCoolLayer)
+  return Boolean(weatherProfile?.needsRemovableCoolLayer || weatherProfile?.transitNeedsRemovableCoolLayer
+    || weatherProfile?.isCold || weatherProfile?.transitIsCold)
+}
+
+// The mirror question for the cold-weather exclusions: does any part of the range reach hot?
+export function weatherHasWarmEnd(weatherProfile = {}) {
+  return Boolean(weatherProfile?.isHot || weatherProfile?.transitIsHot
+    || [weatherProfile?.highF, weatherProfile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F))
 }
 
 // A trip activity happens on SEVERAL days at one time of day ("evening dinners" across a week), not

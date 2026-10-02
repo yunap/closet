@@ -8735,9 +8735,24 @@ test('a range that is hot at the top and cool at the bottom keeps its layers; ho
     assert.deepEqual(hotReasons(layer, hotWithCoolTransit), [])
   }
 
-  // What is worn THROUGH the heat is judged exactly as before, cool end or not.
+  // Owner direction 2026-10-02 widened this from layers to every garment: weather removes a piece only
+  // when the WHOLE range is wrong for it. With a cool end, a wool turtleneck or a velvet dress is the
+  // model's call; hot throughout, they are still excluded.
   const velvetMaxi = { id: 9303, name: 'heavy velvet maxi dress', category: 'dress', fabric_weight: 'heavy', fabric_category: 'velvet', length_hits_at: 'maxi' }
-  assert.ok(hotReasons(velvetMaxi, hotWithCoolEnd).includes('hot weather: insulating piece'))
   const woolTurtleneck = { id: 9304, name: 'wool turtleneck', category: 'top', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'long', neckline: 'turtleneck' }
-  assert.ok(hotReasons(woolTurtleneck, hotWithCoolEnd).length > 0)
+  for (const garment of [velvetMaxi, woolTurtleneck]) {
+    assert.deepEqual(hotReasons(garment, hotWithCoolEnd), [], `${garment.name}: a range with a cool end is not wrong for it as a whole`)
+    assert.ok(hotReasons(garment, hotThroughout).length > 0, `${garment.name}: still excluded when it is hot throughout`)
+  }
+
+  // The mirror rule: cold exclusions need a range with no hot end. Live thread_1790984215933: 43–85°F.
+  const { weatherHasWarmEnd } = await import('../styling-engine/weather.js')
+  const coldReasons = (piece, context) => wholeWardrobePieceTrustDecision(piece, context).reasons.filter(reason => reason.startsWith('cold weather: shorts') || reason.startsWith('cold weather: bare'))
+  const coldThroughout = { occasion: 'casual', weatherProfile: { isHot: false, isCold: true, highF: 50, lowF: 30 } }
+  const coldWithHotEnd = { occasion: 'casual', weatherProfile: { isHot: false, isCold: true, highF: 85, lowF: 43 } }
+  assert.equal(weatherHasWarmEnd(coldWithHotEnd.weatherProfile), true)
+  assert.equal(weatherHasCoolEnd(coldWithHotEnd.weatherProfile), true, 'a cold end counts as a cool end')
+  const shorts = { id: 9305, name: 'linen shorts', category: 'bottom', bottom_subtype: 'shorts', fabric_weight: 'light' }
+  assert.ok(coldReasons(shorts, coldThroughout).length > 0)
+  assert.deepEqual(coldReasons(shorts, coldWithHotEnd), [], 'shorts for the 85°F days of a 43–85°F week are the model\'s call')
 })

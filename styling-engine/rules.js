@@ -3,7 +3,7 @@
 // docs/feedback-and-memory-map.md (getStylistFeedbackMemory, owner_constraints, and the
 // AUTHORITY each store carries). Intent lives there, not here — read it before deciding a
 // missing gate is a bug, and amend it in the same commit as any change. See AGENTS.md.
-import { weatherHasCoolEnd } from './weather.js'
+import { weatherHasCoolEnd, weatherHasWarmEnd } from './weather.js'
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 import { storedGarmentRules } from './ruleProvenance.js'
@@ -2882,7 +2882,10 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const decision = autoStylingTrustDecision(piece, { occasion: checkOccasion, explorationMode })
   const reasons = decision.reasons ? [...decision.reasons] : []
 
-  if (weatherProfile.isHot) {
+  // Weather exclusions remove a garment only when the WHOLE range is wrong for it (owner direction
+  // 2026-10-02: weather is the model's judgment, with each piece's facts and the range in front of
+  // it). Hot exclusions need a range with no cool or cold end; cold ones need a range with no hot end.
+  if (weatherProfile.isHot && !weatherHasCoolEnd(weatherProfile)) {
     // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer maxi dress as
     // insulating purely because length 'maxi' derives full-insulating coverage. Weight-qualified
     // now: light full-length pieces are summer clothing. Open-front layer pieces (cardigans,
@@ -2897,11 +2900,10 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
       checkBottomCoverage: true,
       openFrontExemption: true,
     })
-    // Not for a layer when the same conditions have a cool end (weatherHasCoolEnd, weather.js).
-    if (reason && !(wardrobeCategoryGroup(piece) === 'outerwear' && weatherHasCoolEnd(weatherProfile))) reasons.push(reason)
+    if (reason) reasons.push(reason)
   }
 
-  if (weatherProfile.isCold) {
+  if (weatherProfile.isCold && !weatherHasWarmEnd(weatherProfile)) {
     if (bottomKind(piece) === 'shorts') {
       reasons.push('cold weather: shorts')
     } else if (isLightweightLinenBottom(piece)) {
@@ -3338,11 +3340,12 @@ export function buildVisualComposerRoster(allowedPieces = [], {
 
   // Step 3 — Weather/register validity gate
   const afterStep3 = []
-  const isHot = weatherProfile && weatherProfile.isHot
-  const isCold = weatherProfile && weatherProfile.isCold
+  // Same rule as wholeWardrobePieceTrustDecision: weather removes a garment only when the whole range
+  // is wrong for it. A range with both ends takes neither branch below.
+  const isHot = weatherProfile && weatherProfile.isHot && !weatherHasCoolEnd(weatherProfile)
+  const isCold = weatherProfile && weatherProfile.isCold && !weatherHasWarmEnd(weatherProfile)
 
   if (isHot) {
-    const coolEnd = weatherHasCoolEnd(weatherProfile)
     const outerwearCandidates = []
     for (const p of afterSeasonGate) {
       const missingField = missingWeatherGateField(p)
@@ -3370,7 +3373,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
         ensureMetadataTodo(p, missingField)
-      } else if (insulationReason && !(isOuterwear(p) && coolEnd)) {
+      } else if (insulationReason) {
         exclude(p, insulationReason)
       } else if (isOuterwear(p)) {
         outerwearCandidates.push(p)
@@ -3379,9 +3382,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
 
-    // Cap outerwear to the 3 lightest pieces — only when it is hot throughout. With a cool end
-    // the cap kept exactly the layers least able to help at that end (weatherHasCoolEnd).
-    if (outerwearCandidates.length > 3 && !coolEnd) {
+    // Cap outerwear to the 3 lightest pieces. This branch only runs when it is hot throughout.
+    if (outerwearCandidates.length > 3) {
       const weightValues = { 'light': 1, 'medium': 2, 'heavy': 3 }
       outerwearCandidates.sort((a, b) => {
         const wa = weightValues[fabricWeight(a)] || 2
