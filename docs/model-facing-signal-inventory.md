@@ -84,7 +84,7 @@ Classification per the owner's three categories:
 | 6 | `allowed_piece_ids` | ids, **thermally ordered** | **F**/**J** | membership is F (gates); *order* is J |
 | 7 | `submission_requirements[]` | prose rules | mixed | itemised below |
 | 8 | `suppressed_note` | counts | **F** | |
-| 9 | `coverage_report` | structural | **H** | can this slot form a complete outfit |
+| 9 | `structural_capacity` (renamed 2026-09-16 from `coverage_report`; thread_1789585467294) | structural | **H** | can this slot form a complete outfit — a supply-shape fact only, never a suitability verdict for the slot's activity/register/weather (the old name invited exactly that misreading) |
 
 ### Per-piece assessments (`piece_assessments`, aligned to `allowed_piece_ids`)
 

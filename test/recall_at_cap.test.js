@@ -94,8 +94,10 @@ test('recall_at_cap replay classifies full recall, gate miss, and cap miss', asy
   insertOutfit('Cap Miss Outfit', [capTop, capBottom])
 
   const { runRecallAtCapReplay } = await import(`../scratch/recall_at_cap.js?smoke=${Date.now()}`)
-  await runRecallAtCapReplay()
-  const report = JSON.parse(fs.readFileSync('scratch/recall_at_cap_report.json', 'utf8'))
+  // Written to the test's temporary directory: the suite must never rewrite the tracked report.
+  const outputPath = path.join(tmpRoot, 'recall_at_cap_report.json')
+  await runRecallAtCapReplay({ outputPath })
+  const report = JSON.parse(fs.readFileSync(outputPath, 'utf8'))
   const misses = Object.values(report.flows).flatMap(flow => flow.misses)
   const accessoryMisses = Object.values(report.flows).flatMap(flow => flow.accessories.misses)
 

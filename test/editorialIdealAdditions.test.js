@@ -120,11 +120,20 @@ test('anchorRegisterFootwearComputedChecks flags a selected garment the canonica
   const hikingActivityProfile = resolveActivityProfile({ activity: 'hiking' })
   assert.ok(hikingActivityProfile.rules?.excluded_heel_heights?.length, 'fixture depends on hiking excluding some heel heights')
 
-  // A dressy selected piece for a casual occasion — the canonical register ceiling would exclude it.
+  // A dressy selected piece for a casual occasion. 2026-09-13: an INFERRED ceiling now ranks rather
+  // than excludes, so the computed check speaks only when the wearer stated a maximum — otherwise
+  // the anchor the wearer chose is not reported to the evaluator as register-prohibited.
   const dressyAnchor = { id: 401, name: 'silk cocktail blouse', category: 'top', formality: 'dressy' }
+  assert.equal(anchorRegisterFootwearComputedChecks({
+    selectedPiece: dressyAnchor,
+    occasion: 'casual',
+    occasionProfile: casualOccasionProfile,
+  }), '', 'an inferred ceiling does not flag the wearer\'s own selected garment')
+
   const registerFinding = anchorRegisterFootwearComputedChecks({
     selectedPiece: dressyAnchor,
     occasion: 'casual',
+    question: 'nothing dressy please',
     occasionProfile: casualOccasionProfile,
   })
   assert.match(registerFinding, /Selected garment register check \(computed\)/)

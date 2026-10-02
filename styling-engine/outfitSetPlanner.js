@@ -27,9 +27,12 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
-import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, ENVIRONMENTAL_ADEQUACY_CODES } from './outfitEnvironmentalAdequacy.js'
+import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
+
+// Rejected-card presentation only: thermal error messages collapsed out of the owner-facing reason.
+const THERMAL_DISPLAY_OMISSIONS = new WeakMap()
 import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
@@ -41,11 +44,15 @@ import {
   weatherFitForPiece,
   thermalFactsForPieceLine,
   resolveRegisterCeiling,
+  registerCeilingIsExplicit,
+  registerFitPieceAdvisory,
 } from './rules.js'
 import { resolveExposureContext } from './exposure.js'
+import { seasonFitPieceAdvisory, seasonEligibleForCalendar, OUT_OF_SEASON } from '../lib/seasonContext.js'
 import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
-import { garmentWarmthLevel } from './garmentWarmth.js'
-import { requiredThermalBand } from './thermalDemand.js'
+import { garmentWarmthLevel, WARMTH_LEVELS } from './garmentWarmth.js'
+import { SEVERE_COLD_THRESHOLD_F } from './biometeorology.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
@@ -58,6 +65,7 @@ import {
   evaluateWearableOutfit,
   layerConstructionPromptRule,
   layerDirectionPromptRule,
+  correctTuckInstruction,
   wardrobeSupportsLayeringPair,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
@@ -74,11 +82,13 @@ import {
   shoeCoverage,
   sleeveCoverage,
   pieceRequiresBaseLayer,
+  getOccasionConfidence,
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
+import { storedGarmentRules } from './ruleProvenance.js'
 import {
   COLOR_REQUEST_NAMES,
   colorFamilyLabel,
@@ -257,6 +267,45 @@ function buildWeatherLine(slotWeather = []) {
     .filter(entry => entry?.label && entry?.weather)
     .map(entry => `${entry.label} — ${entry.weather}`)
   return parts.length ? `Weather used: ${parts.join('; ')}` : ''
+}
+
+// thread_1789585467294 (owner ruling 2026-09-16): the PARTIAL-PLAN CONTRACT the atomic trip
+// composer's relaxed outfits.minItems depends on. Relaxing minItems from exactCount to 1 lets a
+// specific outfit be honestly declined via slot_gaps instead of forced into a weak card — but that
+// relaxation only stays honest if every requested slot is provably accounted for. Without this check,
+// a slot silently missing from BOTH outfits and slot_gaps (a model bug, or a provider that truncates
+// its own response) would look identical to a legitimate decline: nothing downstream would notice.
+// This runs against the model's raw structured response, before any domain validation
+// (validateSubmittedPlanOutfits) — it checks IDENTITY (does every requested slot appear exactly once,
+// in exactly one of the two arrays), not garment suitability, which stays validation's job.
+export function validateTripCompositionPartialPlan(requestedSlotIds = [], outfits = [], slotGaps = []) {
+  const requested = new Set((Array.isArray(requestedSlotIds) ? requestedSlotIds : []).map(id => String(id)))
+  const deliveredIds = new Set()
+  const gapCounts = new Map()
+  const errors = []
+  for (const outfit of Array.isArray(outfits) ? outfits : []) {
+    const id = String(outfit?.slot_id ?? '')
+    if (!requested.has(id)) errors.push(`outfits contains an unknown slot_id: "${id}"`)
+    deliveredIds.add(id)
+  }
+  for (const gap of Array.isArray(slotGaps) ? slotGaps : []) {
+    const id = String(gap?.slot_id ?? '')
+    if (!requested.has(id)) errors.push(`slot_gaps contains an unknown slot_id: "${id}"`)
+    gapCounts.set(id, (gapCounts.get(id) || 0) + 1)
+  }
+  for (const [id, count] of gapCounts) {
+    if (count > 1) errors.push(`slot_gaps contains ${count} entries for slot_id "${id}" — a slot may be declined only once`)
+  }
+  for (const id of requested) {
+    const delivered = deliveredIds.has(id)
+    const declined = gapCounts.has(id)
+    if (delivered && declined) {
+      errors.push(`slot_id "${id}" both delivered an outfit (in outfits) and declined (in slot_gaps) — a requested slot must resolve to exactly one`)
+    } else if (!delivered && !declined) {
+      errors.push(`slot_id "${id}" is missing from both outfits and slot_gaps — every requested slot must resolve to a delivered outfit or an explicit decline`)
+    }
+  }
+  return { valid: errors.length === 0, errors }
 }
 
 // Per-slot coverage gaps (capsule review Point 2): when the wardrobe can't
@@ -870,6 +919,22 @@ function textLooksLikeEveningPlanSlot(text = '') {
   return /\b(dinners?|dining|restaurants?|drinks|wine bars?|night out|date night|evenings?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
+function textLooksLikeAfternoonPlanSlot(text = '') {
+  return /\b(afternoons?|matinees?|midday)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalAfternoonAnswer(text = '') {
+  return textLooksLikeAfternoonPlanSlot(text) || /\b(later(\s+in\s+the\s+day)?|milder|warmer)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeMorningPlanSlot(text = '') {
+  return /\b(mornings?|breakfast|brunch|dawn|sunrise)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function textLooksLikeConversationalMorningAnswer(text = '') {
+  return textLooksLikeMorningPlanSlot(text) || /\b(early(\s+start|\s+outing)?|cooler)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
 function textLooksLikeCoastalPlanSlot(text = '') {
   return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?|coast(?:al)?|seaside|oceanfront|shore|sand)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
@@ -882,6 +947,81 @@ function normalizePlanSlotEnvironment({ label = '', bestFor = '', coverage = '',
 function normalizePlanEnvironment(rawEnvironment = '') {
   const value = String(rawEnvironment || '').trim().toLowerCase()
   return ['indoor', 'outdoor', 'beach_coastal'].includes(value) ? value : ''
+}
+
+// Activity time windows spec (2026-09-17): validates the tool-supplied time_window against the
+// schema's own contract rather than trusting it structurally unchecked — a malformed period or a
+// clock string that doesn't parse must not silently reach weather.js's resolveTimeWindowHours (which
+// would just as silently treat it as "no window", losing the distinction between "the user gave no
+// timing" and "the model sent something the schema doesn't allow"). Returns null for anything
+// invalid or absent, same convention validateUserWeather/validateWeatherEstimate already use.
+const PLAN_SLOT_TIME_WINDOW_PERIODS = new Set(['morning', 'midday', 'afternoon', 'evening']) // 'midday' is weather.js's afternoon daypart under the schema's other spelling
+function normalizePlanSlotTimeWindow(raw = null) {
+  if (!raw || typeof raw !== 'object') return null
+  const period = String(raw.period || '').trim().toLowerCase()
+  const startLocal = String(raw.start_local || '').trim()
+  const endLocal = String(raw.end_local || '').trim()
+  const clockPattern = /^([01]\d|2[0-3]):([0-5]\d)$/
+  const hasValidClockPair = clockPattern.test(startLocal) && clockPattern.test(endLocal)
+  const hasValidPeriod = PLAN_SLOT_TIME_WINDOW_PERIODS.has(period)
+  if (!hasValidClockPair && !hasValidPeriod) return null
+  return {
+    ...(hasValidPeriod ? { period } : {}),
+    ...(hasValidClockPair ? { start_local: startLocal, end_local: endLocal } : {}),
+  }
+}
+
+function inferPlanSlotTimeWindow({
+  rawTimeWindow = null,
+  occasion = '',
+  label = '',
+  bestFor = '',
+  coverage = '',
+  planNote = '',
+  currentQuestion = '',
+  history = []
+} = {}) {
+  const explicit = normalizePlanSlotTimeWindow(rawTimeWindow)
+  if (explicit) return explicit
+
+  const slotCuesText = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
+  if (occasion === 'evening' || textLooksLikeEveningPlanSlot(slotCuesText)) {
+    return { period: 'evening' }
+  }
+  if (textLooksLikeAfternoonPlanSlot(slotCuesText)) {
+    return { period: 'afternoon' }
+  }
+  if (textLooksLikeMorningPlanSlot(slotCuesText)) {
+    return { period: 'morning' }
+  }
+
+  // Strict conversational fallback: if the immediately preceding turn was an assistant clarification
+  // asking about timing for THIS specific slot, and the user's current reply states a daypart, honor
+  // that stated daypart so an instruction-following gap in the model's tool call does not trap the
+  // user in an infinite re-clarification loop.
+  if (currentQuestion && Array.isArray(history) && history.length > 0) {
+    const lastMsg = history[history.length - 1]
+    const priorAssistantMsg = lastMsg?.role === 'assistant'
+      ? lastMsg
+      : (lastMsg?.role === 'user' && history.length > 1 && history[history.length - 2]?.role === 'assistant'
+          ? history[history.length - 2]
+          : null)
+    if (priorAssistantMsg) {
+      const assistantText = String(priorAssistantMsg.content || priorAssistantMsg.text || '')
+      const isTimingQuestion = /\b(what time|time of day|roughly what time|morning|afternoon|evening|hours|cooler|warmer|early|later)\b/i.test(assistantText) && /\?/.test(assistantText)
+      if (isTimingQuestion) {
+        const slotTokens = label.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3 && !['day', 'days', 'slot', 'look', 'trip'].includes(w))
+        const slotMentioned = slotTokens.length > 0 && slotTokens.some(tok => new RegExp(`\\b${tok}`, 'i').test(assistantText))
+        if (slotMentioned) {
+          if (textLooksLikeConversationalAfternoonAnswer(currentQuestion)) return { period: 'afternoon' }
+          if (textLooksLikeConversationalMorningAnswer(currentQuestion)) return { period: 'morning' }
+          if (textLooksLikeEveningPlanSlot(currentQuestion)) return { period: 'evening' }
+        }
+      }
+    }
+  }
+
+  return null
 }
 
 function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
@@ -995,15 +1135,43 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // prefers the model's own descriptive season text over the coarse hot/cold/
 // mild bucket when one was given. Every other source is fully structured,
 // so there is nothing to echo.
+// thread_1789585467294: `temperature.{highF,lowF}` here is the trip-wide worst-case envelope
+// (weather.js's classify() max-of-highs/min-of-lows) when a slot has no date of its own to resolve
+// against — a legitimate gate input, but NOT one specific day's forecast. Stamping every slot in a
+// 4-day trip with that same flat "93.8°F high / 51.9°F low — live forecast" implied each of Winery
+// Days/Hill Hiking/Dinner Out individually saw both the trip's hottest high AND its coldest low,
+// when the real days ran 92.0/87.1/86.7/93.8°F. `dailySeries` (weather.js, preserved rather than
+// discarded by classify()) is what lets this be said honestly instead: when the days actually
+// varied, disclose the true range across the trip rather than a single number presented as fact.
+// Binding a slot to which specific day it covers is a separate, not-yet-solved problem (there is no
+// day-to-slot mapping to resolve against here) — this only fixes what gets SAID about an envelope
+// that already spans more than one calendar day.
+function tripEnvelopeRangeText(temperature) {
+  const series = Array.isArray(temperature.dailySeries) ? temperature.dailySeries : []
+  if (series.length < 2) return null
+  const highs = series.map(day => day.highF).filter(Number.isFinite)
+  const lows = series.map(day => day.lowF).filter(Number.isFinite)
+  if (!highs.length || !lows.length) return null
+  const maxHigh = Math.max(...highs)
+  const minLow = Math.min(...lows)
+  // Every day landed on the identical high and low: a flat single-number reading is still honest.
+  if (maxHigh === Math.min(...highs) && minLow === Math.max(...lows)) return null
+  return `${Math.round(minLow)}–${Math.round(maxHigh)}°F across the trip`
+}
+
 export function truthfulWeatherLabel(temperature, { location = '', heuristicText = '' } = {}) {
   const where = location ? `, ${location}` : ''
-  const range = Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
-    ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
-    : temperature.band
-      ? temperature.band
-      : describeWeatherProfile(temperature)
+  const tripRange = temperature.source === 'live' ? tripEnvelopeRangeText(temperature) : null
+  const range = tripRange
+    || (Number.isFinite(temperature.highF) && Number.isFinite(temperature.lowF)
+      ? `${Math.round(temperature.highF)}°F high / ${Math.round(temperature.lowF)}°F low`
+      : temperature.band
+        ? temperature.band
+        : describeWeatherProfile(temperature))
+  const provenanceTag = temperature.source === 'live' && temperature.provider ? ` (${temperature.provider})` : ''
   switch (temperature.source) {
-    case 'live': return `${range} — live forecast${where}`
+    case 'live': return `${range} — live forecast${where}${provenanceTag}`
+    case 'live_hourly': return `${range} — live hourly forecast, sliced to this activity's actual time window${where}`
     case 'stated_user': return `${range} — you said so`
     case 'model_estimate': return `${range} — seasonal estimate, not a live forecast`
     case 'heuristic': return `${isGenericSeasonText(heuristicText) ? range : heuristicText} (estimated)`
@@ -1032,6 +1200,74 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // silently disables it, which would regress the keyword pre-route's weather.
   const day = slot.date || undefined
   const targetLocation = slot.location || location || ''
+  // Activity time windows spec (2026-09-17): a stated or inferred time_window only means something
+  // for a SPECIFIC calendar day (slicing "which hours" requires knowing "which day"). When both
+  // hold, try the hourly path first; resolveExposureWindowHourly itself returns null for anything
+  // ungeocodable, out of the live horizon, or lacking hourly coverage, and this falls through to the
+  // existing daily/waking-window resolution unchanged on null — no behavior changes for any slot
+  // without a time_window, or one whose day/location can't be resolved to hourly data.
+  //
+  // thread_1789633862650: this used to skip indoor slots outright ("an indoor destination's base is
+  // climate-controlled regardless of arrival time — transit still uses the ordinary daily/waking-
+  // window path"), the same isIndoor-blanket-exemption mistake fixed elsewhere in this file
+  // (slotNeedsRemovableCoolLayer, resolveSlotTimeSensitivity) — an indoor destination's BASE is
+  // climate-controlled, but its TRANSIT is exactly the outdoor exposure hourly slicing exists for. A
+  // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
+  // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
+  const isIndoorSlot = slot.statedWeather === 'indoor'
+  if (slot.timeWindow && day && targetLocation) {
+    const hourly = await resolveExposureWindowHourly({
+      location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+    })
+    if (hourly) {
+      const resolvedWeatherContext = {
+        status: 'resolved',
+        location: targetLocation,
+        dateRange: { start: day, end: day },
+        temperature: {
+          highF: hourly.highF, lowF: hourly.lowF, band: null,
+          isHot: hourly.isHot, isCold: isIndoorSlot ? false : hourly.isCold, isColdSevere: false,
+          needsRemovableCoolLayer: hourly.needsRemovableCoolLayer, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+          source: hourly.weatherSource,
+        },
+        precipitation: { value: hourly.precipitation, source: hourly.weatherSource },
+        wind: { value: 'unknown', source: 'unavailable' },
+        overallSource: hourly.weatherSource,
+      }
+      const hourlyLabel = truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+      if (isIndoorSlot) {
+        // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
+        // instead of the flat day envelope — base stays climate-controlled/permissive, transit*
+        // carries the real, time-sliced outdoor numbers.
+        return {
+          profile: {
+            isHot: hourly.isHot, isCold: false, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+            isIndoor: true,
+            transitIsHot: hourly.isHot, transitIsCold: hourly.isCold, transitIsColdSevere: false,
+            transitNeedsRemovableCoolLayer: hourly.needsRemovableCoolLayer,
+            transitHighF: hourly.highF, transitLowF: hourly.lowF,
+            ...wetExposureFromPrecipitation(hourly.precipitation),
+            weatherSource: hourly.weatherSource,
+            resolvedWeatherContext,
+          },
+          label: `indoor; transit: ${hourlyLabel}`,
+          timeSensitivity: { status: 'not_material' }
+        }
+      }
+      return {
+        profile: {
+          isHot: hourly.isHot, isCold: hourly.isCold, isColdSevere: false,
+          needsRemovableCoolLayer: hourly.needsRemovableCoolLayer, isExtremeHeat: Boolean(hourly.isExtremeHeat),
+          highF: hourly.highF, lowF: hourly.lowF,
+          ...wetExposureFromPrecipitation(hourly.precipitation),
+          weatherSource: hourly.weatherSource,
+          resolvedWeatherContext,
+        },
+        label: hourlyLabel,
+        timeSensitivity: { status: 'not_material' }
+      }
+    }
+  }
   const resolvedDateRange = { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
   const context = await resolveWeatherForRequest({
     location: targetLocation,
@@ -1044,6 +1280,15 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
     ...(fetchImpl ? { fetchImpl } : {})
   })
   const t = context.temperature
+
+  let timeSensitivity = { status: 'not_material' }
+  let diurnalRange = null
+  if (!slot.timeWindow && day && targetLocation) {
+    timeSensitivity = await resolveSlotTimeSensitivity(slot, { location: targetLocation, fetchImpl })
+    if (timeSensitivity?.status === 'material_hedgeable') {
+      diurnalRange = timeSensitivity.diurnalRange || null
+    }
+  }
 
   // Spec §6.4: indoor transit projects BOTH facts instead of erasing one —
   // an indoor base may stay light/permissive, but the outside temperature
@@ -1072,6 +1317,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         transitIsHot: t.isHot, transitIsCold: t.isCold, transitIsColdSevere: Boolean(t.isColdSevere),
         transitNeedsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer),
         transitHighF: t.highF, transitLowF: t.lowF,
+        diurnalRange,
         // Mirrors stylingContext.js's profileFromResolvedWeatherContext, the general
         // conversational-stylist projection: wet exposure is NOT neutralized for an indoor
         // destination the way isCold is above -- rain is a hazard for the walk there and back
@@ -1082,7 +1328,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         weatherSource: t.source,
         resolvedWeatherContext: context,
       },
-      label: `indoor; transit: ${transitLabel}`
+      label: `indoor; transit: ${transitLabel}`,
+      timeSensitivity
     }
   }
 
@@ -1091,6 +1338,7 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       isHot: t.isHot, isCold: t.isCold, isColdSevere: Boolean(t.isColdSevere),
       needsRemovableCoolLayer: Boolean(t.needsRemovableCoolLayer), isExtremeHeat: t.isExtremeHeat,
       highF: t.highF, lowF: t.lowF,
+      diurnalRange,
       // docs/README.md weather-behavior checkpoint follow-up: resolveSlotWeather never derived
       // isWetExposure/isRainy from its own resolved precipitation at all, unlike
       // stylingContext.js's profileFromResolvedWeatherContext (the general conversational-stylist
@@ -1102,7 +1350,133 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
-    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season })
+    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
+    timeSensitivity
+  }
+}
+
+// Activity time windows spec (2026-09-17), §6: a slot with no stated/inferred time_window gets
+// checked for whether the OMISSION creates material physical uncertainty, before any roster or card
+// is built. This states facts and a threshold verdict only — it never asks the model a question and
+// never decides what to pack; that stays entirely the conversational model's and the roster/
+// composition stages' job respectively (tools.js's plan_outfit_set pre-check reads `status` and
+// decides whether to pause).
+//
+// Deliberately narrow, matching this file's existing hard-filter-vs-soft-score discipline: the ONLY
+// three physical boundaries below decide 'material', each already a real, existing primitive
+// (requiredThermalBand, precipitation, resolveColdLayerPresenceRequirement) -- this adds no new
+// thermal math and no new gate, only a comparison ACROSS the three canonical dayparts that nothing
+// previously ran.
+function daypartWeatherProfile(evidence = {}) {
+  return {
+    highF: evidence.highF,
+    lowF: evidence.lowF,
+    source: 'live_hourly',
+    scope: 'exposure_window',
+    // Flat isColdSevere hint resolveExposureContext's severeColdActive check reads directly
+    // (resolvedWeather?.isColdSevere) -- see that function's header for the exact field list.
+    isColdSevere: Number.isFinite(evidence.lowF) && evidence.lowF < SEVERE_COLD_THRESHOLD_F,
+  }
+}
+
+export async function resolveSlotTimeSensitivity(slot = {}, { location = '', fetchImpl } = {}) {
+  const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+  // A slot that already states or infers its own time_window has nothing left to disambiguate --
+  // resolveSlotWeather already resolves it to the actual exposure window.
+  if (slot.timeWindow) return { status: 'not_material' }
+  const day = slot.date
+  const targetLocation = slot.location || location || ''
+  if (!day || !targetLocation) return { status: 'unknown' }
+  const evidence = await resolveDaypartHourlyEvidence({ location: targetLocation, date: day, fetchImpl })
+  if (!evidence) return { status: 'unknown' }
+
+  const exposureByPeriod = {}
+  const bands = {}
+  for (const [period, e] of Object.entries(evidence)) {
+    if (!e) continue
+    const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, daypartWeatherProfile(e))
+    exposureByPeriod[period] = exposure
+    if (isIndoor) {
+      // thread_1789633862650: an indoor destination excuses the BASE, never the TRANSIT -- the walk
+      // to and from a restaurant is genuine outdoor exposure, and it's the transit's own demand that
+      // can vary by daypart even though the destination itself never does. requiredThermalBand
+      // already separates the two (`.transit.level`, sized from `exposure.transit.conditions`,
+      // distinct from the indoor-base `.level`) -- reused here rather than inventing a second
+      // transit-demand calculation. A dinner slot with no genuine transit swing (`transit` inapplicable
+      // for a non-indoor exposureMode, or a mild climate) correctly falls through to `not_material`
+      // exactly as before; a 52-95°F swing like the live incident does not.
+      const transitLevel = requiredThermalBand(exposure)?.transit?.level || null
+      bands[period] = {
+        highF: e.highF, lowF: e.lowF, precipitation: e.precipitation,
+        demand: transitLevel, coldEndLevel: transitLevel, warmEndLevel: transitLevel,
+      }
+      continue
+    }
+    // requiredThermalBand's single `.level` is deliberately COLD-END based (§9.1: "the cold end of
+    // the exposure window sets the requirement... a removable layer is how the warm end is
+    // handled") — comparing it alone across dayparts would miss exactly the case this spec's own
+    // stress test names (a hot afternoon), since a hiking day's cold-end demand barely moves once
+    // hiking's own exertion credit is applied, however hot the afternoon gets. Both endpoints from
+    // requiredThermalEndpointBands are compared instead, so a warm-end-only divergence (a
+    // genuinely hot afternoon against a mild morning/evening) is caught too.
+    const endpoints = requiredThermalEndpointBands(exposure)
+    bands[period] = {
+      highF: e.highF,
+      lowF: e.lowF,
+      precipitation: e.precipitation,
+      demand: requiredThermalBand(exposure)?.level || null,
+      coldEndLevel: endpoints?.cold?.level || null,
+      warmEndLevel: endpoints?.warm?.level || null,
+    }
+  }
+  const periodsWithData = Object.keys(bands)
+  if (periodsWithData.length < 2) return { status: 'unknown' }
+
+  // 1. PET thermal band shift >= 2 ordinal levels across plausible windows, checked against every
+  // period's own cold AND warm endpoint together (not just the single cold-end-based `.level`).
+  const allEndpointLevels = periodsWithData.flatMap(period => [bands[period].coldEndLevel, bands[period].warmEndLevel])
+  const levelIndexes = allEndpointLevels.map(level => WARMTH_LEVELS.indexOf(level)).filter(index => index >= 0)
+  const levelShift = levelIndexes.length ? Math.max(...levelIndexes) - Math.min(...levelIndexes) : 0
+  const shiftIsMaterial = levelShift >= 2
+
+  // 2. Precipitation/wet-exposure divergence: rain in one plausible window, dry in another.
+  const precipValues = new Set(periodsWithData.map(period => bands[period].precipitation))
+  const precipDivergence = precipValues.has('rain') && precipValues.size > 1
+
+  // 3. Cold severity requirement trigger: one window requires severe cold coverage, another does not.
+  const coldStates = periodsWithData.map(period => resolveColdLayerPresenceRequirement(exposureByPeriod[period])?.state || 'unknown')
+  const coldDivergence = coldStates.includes('required') && coldStates.some(state => state !== 'required')
+
+  const minLevelIndex = levelIndexes.length ? Math.min(...levelIndexes) : -1
+  const maxLevelIndex = levelIndexes.length ? Math.max(...levelIndexes) : -1
+  const allLows = periodsWithData.map(period => bands[period].lowF).filter(Number.isFinite)
+  const allHighs = periodsWithData.map(period => bands[period].highF).filter(Number.isFinite)
+
+  const diurnalRange = {
+    coldEndF: allLows.length ? Math.min(...allLows) : null,
+    warmEndF: allHighs.length ? Math.max(...allHighs) : null,
+    coldEndLevel: minLevelIndex >= 0 ? WARMTH_LEVELS[minLevelIndex] : null,
+    warmEndLevel: maxLevelIndex >= 0 ? WARMTH_LEVELS[maxLevelIndex] : null,
+    precipDivergence,
+  }
+
+  if (!shiftIsMaterial && !precipDivergence && !coldDivergence) {
+    return { status: 'not_material', evidence: bands, diurnalRange }
+  }
+
+  const reasonParts = []
+  if (shiftIsMaterial) {
+    const demandWords = [...new Set(periodsWithData.map(period => bands[period].demand).filter(Boolean))]
+    reasonParts.push(`thermal demand spans ${demandWords.join(' to ')} across the plausible windows`)
+  }
+  if (precipDivergence) reasonParts.push('rain is expected in one plausible window but not another')
+  if (coldDivergence) reasonParts.push('one plausible window requires severe cold coverage, another does not')
+
+  return {
+    status: coldDivergence ? 'material_severe' : 'material_hedgeable',
+    evidence: bands,
+    diurnalRange,
+    divergenceReason: reasonParts.join('; '),
   }
 }
 
@@ -1489,7 +1863,17 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
     mood: slotRequestText,
     activity: slot.stylingContext?.activity || slot.activity,
     request: slotRequestText,
-    ...(registerCeiling ? { registerCeiling } : {})
+    ...(registerCeiling ? { registerCeiling } : {}),
+    // A slot's `register` is a TARGET the planner set for that use case ("rehearsal dinner,
+    // dressy"), and an occasion profile's ceiling is this app's own default — neither is the wearer
+    // saying what they will not wear. Only a stated maximum in the slot's own brief is hard. Passed
+    // explicitly because `profileRuleFit` defaults to hard, so silence here would keep every plan
+    // slot treating its target as a dress code.
+    registerCeilingExplicit: registerCeilingIsExplicit({
+      occasion: slot.stylingContext?.occasion || slot.occasion,
+      activity: slot.stylingContext?.activity || slot.activity,
+      request: slotRequestText,
+    }),
   })
   return eligiblePieces
 }
@@ -2616,8 +3000,7 @@ function planWorkbenchPieceLine(piece = {}) {
   const bits = [
     `ID ${piece.id}`,
     piece.name || 'Garment',
-    groupLabel,
-    warmth ? `warmth:${warmth}` : '',
+    group,
     colors ? `colors:${colors}` : '',
     occasions ? `occasions:${occasions}` : '',
     piece.formality ? `formality:${piece.formality}` : '',
@@ -2647,12 +3030,12 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.visual_weight ? `weight:${piece.visual_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
-    piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',
     Array.isArray(piece.occasion_exclusions) && piece.occasion_exclusions.length
       ? `OWNER-EXCLUDED OCCASIONS:${piece.occasion_exclusions.join(',')}`
       : '',
-    stylingRulesForPrompt(piece.styling_rules_learned).length
-      ? `RULES (authoritative):${stylingRulesForPrompt(piece.styling_rules_learned).join(' / ')}`
+    // The owner's stored rules, minus receipts, retired reaction copies and saved chat replies (ruleProvenance.js).
+    storedGarmentRules(piece).length
+      ? `RULES (authoritative):${storedGarmentRules(piece).join(' / ')}`
       : '',
     Array.isArray(piece.tried_and_rejected) && piece.tried_and_rejected.length
       ? `REJECTED PAIRINGS:${piece.tried_and_rejected.join(' / ')}`
@@ -2700,26 +3083,10 @@ export function slotRequiresOperationalEase(slot = {}) {
 // Advisory, and deliberately one-directional: an out-of-season piece is flagged, an in-season one
 // earns nothing. A warm-season linen shirt on an unusually hot October day is still wearable — the
 // owner's ruling — so this marks it rather than removing it.
-const OUT_OF_SEASON = {
-  fall: 'warm',
-  winter: 'warm',
-  summer: 'cool',
-  // Missing until now — spring got zero mismatch advisories regardless of piece season tag. 'cold'
-  // (deep-winter heavy pieces), the same "opposite extreme" pairing summer:'cool' already uses.
-  spring: 'cold',
-}
-
-export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
-  const season = String(piece?.season || '').toLowerCase().trim()
-  const calendar = String(calendarSeason || '').toLowerCase().trim()
-  if (!season || season === 'year-round' || !calendar) return { tier: 'neutral', score: 0, reason: '' }
-  if (OUT_OF_SEASON[calendar] !== season) return { tier: 'neutral', score: 0, reason: '' }
-  return {
-    tier: 'discouraged',
-    score: -6,
-    reason: `tagged ${season}-season clothing; this is a ${calendar} trip`,
-  }
-}
+// Both moved to lib/seasonContext.js so the visual composer can use them too — rules.js cannot
+// import this module (it imports rules.js). Re-exported here because every existing caller and test
+// addresses them at this path; the implementations are byte-identical.
+export { seasonFitPieceAdvisory }
 
 // docs/trip-roster-season-eligibility-spec.md (ratified): a hard, roster-selection-time exclusion,
 // distinct from seasonFitPieceAdvisory above (which stays ranking-only, every category, unchanged).
@@ -2738,17 +3105,23 @@ export function seasonFitPieceAdvisory(piece = {}, calendarSeason = '') {
 // excluded as outerwear, on any trip -- it may be the one thing warm enough for an unexpectedly cold
 // day or evening. Same asymmetry capsuleSeasonEligiblePool already grants outerwear on a summer
 // capsule; this generalizes it to every calendar season rather than leaving it summer-specific.
-export function tripSeasonEligiblePool(pool = [], calendarSeason = '') {
+//
+// `tripHasHotWeather` (thread_1789628875203, owner ruling 2026-09-17) is a narrow, deliberate
+// supersession of the spec's own stated non-goal above: a Sept 19-22 Paso Robles trip resolves to
+// calendar `fall` (OUT_OF_SEASON.fall === 'warm'), but the live forecast ran up to 94.9°F, and the
+// hard exclusion purged every hot-weather bottom (shorts, linen hiking pants) from the candidate
+// pool before the model ever saw them -- the only casual bottom left was a floral tapestry pair the
+// model then had no choice but to reuse everywhere. Scoped to `bottom` only (the category the live
+// incident evidenced and the owner ruling named) -- `dress` and `outerwear` keep their existing hard
+// exclusion; a warm-tagged sundress or blazer question, if it comes up, is a separate ruling. This
+// is a real reversal of "season never creates a thermal finding" for this one category, not an
+// extension of it -- do not generalize this override to dress/outerwear without a fresh ruling.
+export function tripSeasonEligiblePool(pool = [], calendarSeason = '', { tripHasHotWeather = false } = {}) {
   const calendar = String(calendarSeason || '').toLowerCase().trim()
   if (!calendar) return pool
   return pool.filter(piece => {
-    const season = String(piece?.season || '').toLowerCase().trim()
-    const mismatched = season && season !== 'year-round' && OUT_OF_SEASON[calendar] === season
-    if (!mismatched) return true
-    const group = wardrobeCategoryGroup(piece)
-    if (group === 'top') return true
-    if (group === 'outerwear') return season !== 'warm'
-    return false
+    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && wardrobeCategoryGroup(piece) === 'bottom') return true
+    return seasonEligibleForCalendar(piece, calendar, wardrobeCategoryGroup(piece))
   })
 }
 
@@ -2785,16 +3158,20 @@ export function slotExposureConditions(exposure = null) {
 // ranking heuristic, not a semantic merge — the model still receives both verdicts independently
 // and can override either. Without this an out-of-season pant that happens to suit the temperature
 // still led the roster, which is exactly what the live thread produced.
-function rosterFitScore(piece, weatherProfile, exposure, calendarSeason) {
+function rosterFitScore(piece, weatherProfile, exposure, calendarSeason, registerContext = null) {
+  // Register joins weather and season as a RANKING term here (owner ruling 2026-09-13). Once an
+  // inferred ceiling stopped excluding, the plan path would otherwise have had eligibility without
+  // preference — an above-request piece would sit level with one that matches the request.
   return weatherFitForPiece(piece, weatherProfile, exposure ? { exposure } : {}).score
     + seasonFitPieceAdvisory(piece, calendarSeason).score
+    + (registerContext ? registerFitPieceAdvisory(piece, registerContext).score : 0)
 }
 
-function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null, calendarSeason = '') {
+function orderByThermalFit(pieces = [], weatherProfile = {}, exposure = null, calendarSeason = '', registerContext = null) {
   if (!weatherProfile) return pieces
   return [...pieces].sort((a, b) =>
-    rosterFitScore(b, weatherProfile, exposure, calendarSeason) -
-    rosterFitScore(a, weatherProfile, exposure, calendarSeason))
+    rosterFitScore(b, weatherProfile, exposure, calendarSeason, registerContext) -
+    rosterFitScore(a, weatherProfile, exposure, calendarSeason, registerContext))
 }
 
 export function thermalFitPieceAdvisory(piece = {}, weatherProfile = {}, exposure = null) {
@@ -3666,114 +4043,73 @@ export async function selectCapsuleRosterViaModel({
 // up (docs/search-propose-signal-inventory.md).
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-const TRIP_BENCH_SIZE = 60
+// thread_1789598100140 (owner ruling 2026-09-16): the bench used to be capped at 60 and its
+// survivors ranked by cross-slot reuse (tripReuseScore), round-robinned across construction buckets
+// only to soften truncation, not remove it. That ranking starved genuinely single-use-case-essential
+// pieces — a hiking-only pair of shorts (reuse score 1) — which got crowded out by cross-slot-
+// reusable pieces from OTHER slots before either the roster-selection model or the composer ever saw
+// them. Confirmed live: real hot-weather hiking shorts and technical outdoor layers existed in the
+// wardrobe and never reached the bench. The cap existed only because chooseTripRosterWithProvider
+// (routes/ai.js) attached a base64 photo thumbnail per bench candidate — expensive at 60 images, and
+// the reason the pruning heuristic existed at all. Roster selection is now text-only (the same
+// sparse catalog format /ask's single_outfit uses for its own whole-wardrobe candidate list), so
+// there is no cost reason to withhold any season-eligible candidate, and no reuse-worthiness taste
+// judgment needs to happen in code before the model ever sees a piece — that judgment (already
+// reworded, per the Hill Hiking fix, to state that reuse is a strength but never outranks suitability)
+// belongs entirely to the model now. tripReuseScore, tripBenchBucketKey and
+// diversityInterleavedByBucket are removed with the cap they existed to soften; nothing else called
+// them.
 
-// Ranks by how many of the trip's own requested use cases a piece could serve — "prefer pieces that
-// serve multiple jobs" as a real ranking term, not prose alone. A piece gate-eligible for 3 of 4
-// slots outranks one eligible for 1, before any per-piece taste judgment. Ties break by id for a
-// stable, arguable order (never a hidden verdict — see docs/search-propose-signal-inventory.md).
-function tripReuseScore(piece, slots, gateSlots) {
-  let count = 0
-  for (const { gateAllowedIds } of gateSlots) {
-    if (gateAllowedIds.has(Number(piece.id))) count += 1
-  }
-  return count
+// thread_1789628875203: a live Paso Robles run labeled #996782 (a collared rayon popover blouse
+// with no "outdoor" occasion tag at all) `slots: Winery Days, Hiking` -- the model then reused it
+// as its Hiking layer instead of an actual cotton tee/tank. slotGateEligiblePieces' occasion check
+// only compares against the slot's generic `occasion` field ("casual" for both Winery Days and
+// Hiking here), which every casual-tagged piece trivially passes regardless of activity; nothing in
+// that check looks at the HIKING ACTIVITY PROFILE's own `required_occasion_tags`
+// (footwear-comfort.js: `["outdoor", "outdoor active", "hiking"]`) at all. The fix stays a labeling
+// correction, not a new suppression: `capsulePiecesEligibleForAnySlot`/`slotGateEligiblePieces` still
+// decide overall bench membership unchanged (a day dress stays roster-eligible for outdoor-active,
+// per the 2026-06-12 ratification rules.js cites against ever hard-gating on `required_occasion_tags`
+// -- this never touches that). Only the per-slot LABEL this function attaches is narrowed: a slot
+// whose resolved activity profile requires an "outdoor" tag family only claims a piece for that slot
+// once the piece actually carries one of those tags and isn't recorded low-confidence for outdoor
+// (`occasion_confidence.outdoor`) -- otherwise the piece stays in the bench (still labeled for
+// whichever slots it does honestly qualify for) but the model is no longer told, as a "structurally
+// computed" fact, that it is gate-eligible for a use case it was never tagged for.
+function slotRequiresGenuineOutdoorAffinity(slot = {}) {
+  const activityProfile = resolveActivityProfile({ activity: slot.activity, occasion: slot.occasion })
+  const requiredTags = (activityProfile?.rules?.required_occasion_tags || []).map(tag => String(tag).toLowerCase().trim())
+  return requiredTags.includes('outdoor')
 }
 
-// A bench candidate's construction bucket — the same already-tagged attribute
-// (wardrobeCategoryGroup + garmentKind / shoe_type / bottomKind) outerLayerSevereColdAdequacy,
-// pieceFidelityChecklist and the rest of this file already use to distinguish real construction
-// differences, not an invented diversity taxonomy. 'top:cardigan' and 'outerwear:coat' are different
-// buckets; 'shoes:boot' and 'shoes:sneaker' are different buckets; two cardigans are the same bucket
-// regardless of color/pattern.
-function tripBenchBucketKey(piece) {
-  const group = wardrobeCategoryGroup(piece)
-  if (group === 'shoes') {
-    const shoeType = String(piece?.shoe_type || '').toLowerCase().trim()
-    return `shoes:${shoeType || garmentKind(piece) || 'other'}`
-  }
-  if (group === 'bottom') {
-    return `bottom:${bottomKind(piece) || 'other'}`
-  }
-  return `${group}:${garmentKind(piece) || 'other'}`
+function pieceHasGenuineOutdoorAffinity(piece) {
+  const tags = (Array.isArray(piece?.occasions) ? piece.occasions : []).map(tag => String(tag).toLowerCase().trim())
+  if (!tags.includes('outdoor')) return false
+  return getOccasionConfidence(piece, 'outdoor') !== 'low'
 }
 
-// thread_1788504927533: buildCoveredCandidateSet (candidateSet.js) truncates its RANKED INPUT ORDER
-// at capacity once the structural coverage requirements below are satisfied — a flat sort by
-// (tripReuseScore desc, id asc) means that whenever many pieces tie on reuse score (the common case:
-// most pieces are gate-eligible for exactly one slot), ascending id alone decides who survives
-// truncation. Measured live: a wardrobe with 16 real jackets/coats/trenches and 6 cardigans put
-// EVERY cardigan in the bench and NONE of the 16 structured pieces in it, purely because the
-// cardigans' ids happened to be lower — the roster model was never shown a real jacket to weigh
-// against a cardigan, on a category or trip-relevance basis it had no way to know was missing. This
-// is a general property of the ranking this function feeds into buildCoveredCandidateSet, not
-// something specific to outerwear: the same truncation would silently narrow tops, bottoms, shoes or
-// dresses down to whichever construction bucket happens to have the most low-id members.
-//
-// Round-robins the already-ranked list across construction buckets (one pick per bucket per round,
-// each bucket internally keeping its own tripReuseScore/id ordering) so every construction bucket
-// gate-eligible for this trip gets an early turn instead of one bucket exhausting the whole capacity
-// before any other bucket is represented. This does not favor outerwear, or any other category —
-// every bucket, including six near-identical cardigans collapsing into one bucket, gets the same one
-// turn per round. It also does not change WHICH pieces are eligible or their relative rank within
-// their own bucket, only how eligible pieces from DIFFERENT buckets interleave before truncation.
-function diversityInterleavedByBucket(rankedPieces) {
-  const buckets = new Map()
-  for (const piece of rankedPieces) {
-    const key = tripBenchBucketKey(piece)
-    if (!buckets.has(key)) buckets.set(key, [])
-    buckets.get(key).push(piece)
-  }
-  const queues = [...buckets.values()]
-  const interleaved = []
-  let remaining = true
-  while (remaining) {
-    remaining = false
-    for (const queue of queues) {
-      if (!queue.length) continue
-      interleaved.push(queue.shift())
-      remaining = true
-    }
-  }
-  return interleaved
-}
-
-// The bench: every piece gate-eligible for at least one requested use case, capped for token
-// budget. No deterministic-roster seed (there is no deterministic trip selector to seed from, by
-// design — the model owns this set-level choice) and no capsule quotas/proportional-category
-// targets (those encode "recombination breadth," a capsule objective). The one guarantee carried
-// over is coverage: buildCoveredCandidateSet ensures every requested use case keeps at least one
-// complete gate-valid core (top+bottom-or-dress, plus a shoe) within the bench, the same mechanism
-// selectCapsuleRoster's own bench uses, because "can this use case be covered at all" is structural,
-// not a taste question either abstraction should re-derive separately.
-function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE, calendarSeason = '' } = {}) {
+// The bench: every active, season-eligible, composable-group piece gate-eligible for at least one
+// requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
+// trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
+// rather than a hidden reason it was never shown a piece at all.
+function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
-  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason)
+  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather })
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
-  const gateSlots = normalizedSlots.map((slot, index) => {
-    const slotEligible = slotGateEligiblePieces(eligible, slot, {})
+  const slotLabelsById = new Map()
+  normalizedSlots.forEach((slot, index) => {
     const slotLabel = slot.slot || slot.label || `slot_${index}`
-    return {
-      slotLabel,
-      slotEligible,
-      gateAllowedIds: idSetForPieces(slotEligible),
-      requirement: restrictSupplyRequirement(
-        completeOutfitSupplyRequirement({ id: `trip_slot:${slotLabel}` }),
-        idSetForPieces(slotEligible),
-      ),
+    const requiresOutdoorAffinity = slotRequiresGenuineOutdoorAffinity(slot)
+    for (const piece of slotGateEligiblePieces(eligible, slot, {})) {
+      if (requiresOutdoorAffinity && !pieceHasGenuineOutdoorAffinity(piece)) continue
+      const id = Number(piece.id)
+      if (!slotLabelsById.has(id)) slotLabelsById.set(id, [])
+      slotLabelsById.get(id).push(slotLabel)
     }
   })
-  const ranked = [...eligible].sort((a, b) =>
-    (tripReuseScore(b, normalizedSlots, gateSlots) - tripReuseScore(a, normalizedSlots, gateSlots)) ||
-    (Number(a.id) - Number(b.id)))
-  const diversityOrdered = diversityInterleavedByBucket(ranked)
-  return buildCoveredCandidateSet({
-    rankedPieces: diversityOrdered,
-    initialSelection: [],
-    capacity: benchSize,
-    requirements: gateSlots.map(g => g.requirement),
-  }).pieces
+  const bench = [...eligible].sort((a, b) => Number(a.id) - Number(b.id))
+  return { bench, slotLabelsById }
 }
 
 // Structural failures only — see the header comment above for why. Every check here answers a
@@ -3786,6 +4122,53 @@ function buildTripBench(pool = [], { slots = [], benchSize = TRIP_BENCH_SIZE, ca
 // need to agree with the card-level check they're both standing in for.
 function rosterHasQualifyingWarmLayer(pieces = []) {
   return pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+}
+
+// thread_1789598100140 (owner ruling 2026-09-16): both roster-level layer checks below used to read
+// weatherProfile.needsRemovableCoolLayer directly — set in weather.js from the raw 24-hour daily
+// MINIMUM, the exact "Vienna failure" exposure.js's own header documents ("a 5am trough nobody is
+// dressed for"). By the time composition runs, exposure.js's estimateWakingWindow already corrects
+// this (a waking-hours estimate, not the pre-dawn low) for the exposure_conditions text and demand
+// calculation the model actually sees — but the roster-level gate never adopted that correction, so
+// it could reject a roster (and, after one repair, fall back to the whole bench) over a "cold layer"
+// need that was never real once the pre-dawn trough is excluded from the day's actual outing hours.
+// This is the one seam where that correction reaches the roster-level check too.
+//
+// Note: weatherProfile.coldPresenceRequirement (the OTHER canonical exposure-aware authority,
+// environmentalRequirements.js) is never populated for trip slots — resolveSlotWeather (this file)
+// does not compute it; only the general/freeform stylingContext.js path does. This function does not
+// branch on it for that reason: a check against a field this pipeline never sets would silently never
+// fire, which is worse than not writing it. If trip slots start carrying it, this is the place to add
+// that check back.
+//
+// Deliberately does NOT fold in `!weatherProfile.isCold` here — the two call sites need it applied
+// differently. missing_removable_cool_layer (roster has no layer AT ALL) only concerns the non-cold
+// "cool" case; an already-isCold slot is a different, more severe failure the roster-wide check
+// should not also claim. cold_floor_infeasible (this specific slot has no viable warm-enough piece)
+// must fire for an isCold slot exactly as readily as a merely-cool one — that was always the shape
+// of the original bug this check exists for (thread_1788516198449), and gating it on !isCold here
+// would have silently stopped it from ever firing for a genuinely cold slot.
+function slotNeedsRemovableCoolLayer(slot = {}) {
+  const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+  const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
+  // thread_1789633862650: an indoor destination excuses the BASE outfit, never the trip -- the walk
+  // to and from the restaurant is genuine outdoor exposure. `resolveSlotWeather` already computes
+  // exactly this, unconditionally, for every indoor slot (`transitNeedsRemovableCoolLayer`, set from
+  // the transit temperature — see its own header comment: "an indoor base may stay light/permissive,
+  // but the outside temperature that governs arrival/departure... is preserved under transit*, never
+  // discarded"). This function simply never read that field and returned `false` outright instead —
+  // a live Paso Robles evening dinner slot (52-53°F transit low) packed zero layers as a direct
+  // result. Reusing the recorded field rather than recomputing it also keeps this in step with
+  // `outfitEnvironmentalAdequacy.js`'s identical card-level check (`weather.transitNeedsRemovableCoolLayer`).
+  if (isIndoor) return Boolean(weatherProfile.transitNeedsRemovableCoolLayer)
+  const exposure = resolveExposureContext({ activity: slot.activity, environment: slot.environment }, weatherProfile)
+  const wakingLow = exposure?.conditions?.wakingLowF
+  if (Number.isFinite(wakingLow)) {
+    return wakingLow < COOL_LOW_F
+  }
+  // No numeric range to resolve a waking window from (e.g. a hand-built test fixture stating only
+  // the flag) — fall back to the flag as recorded, unchanged from before this fix.
+  return Boolean(weatherProfile.needsRemovableCoolLayer)
 }
 
 function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
@@ -3868,8 +4251,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   if (!hasRosterLayer) {
     const layerRequiredSlots = gateSlots.filter(({ slot }) => {
       const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
-      const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
-      return weatherProfile.needsRemovableCoolLayer && !weatherProfile.isCold && !isIndoor
+      return slotNeedsRemovableCoolLayer(slot) && !weatherProfile.isCold
     })
     if (layerRequiredSlots.length) {
       const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
@@ -3896,7 +4278,7 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
     const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
     if (isIndoor) continue
     const isRequired = weatherProfile.coldPresenceRequirement?.state === 'required'
-    const needsCool = Boolean(weatherProfile.needsRemovableCoolLayer)
+    const needsCool = slotNeedsRemovableCoolLayer(slot)
     if (!isRequired && !needsCool) continue
     const hasViableLayer = slotEligible.some(piece =>
       hasMinimumWarmLayer([piece]) ||
@@ -3989,22 +4371,37 @@ export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) 
 export async function selectTripRosterViaModel({
   pool = [],
   slots = [],
-  benchSize = TRIP_BENCH_SIZE,
   calendarSeason = '',
   dateRange = {},
   chooseRoster = null,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
-  const bench = buildTripBench(pool, { slots, benchSize, calendarSeason })
+  // thread_1789628875203 (owner ruling 2026-09-17): reuses weather.js's own HOT_F (80°F) threshold,
+  // already computed per slot as `weatherProfile.isHot` by the time slots reach here — no second
+  // threshold definition to drift out of sync with it. Any one slot running hot is enough: a trip
+  // roster is chosen once for the whole trip, and a genuinely hot day anywhere in it means hot-
+  // weather bottoms belong in the candidate pool regardless of the trip's overall calendar season.
+  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot))
+  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
   const benchById = pieceMapForPieces(bench)
 
   if (typeof chooseRoster !== 'function') {
     return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
   }
 
-  const resolve = answer => {
-    const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+  const resolve = (answer, attempt = 1) => {
+    let ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+    if (attempt > 1 && Array.isArray(answer?.repair_changes) && answer.repair_changes.length > 0) {
+      const declaredAdds = answer.repair_changes.map(c => Number(c?.added_piece_id)).filter(id => benchById.has(id))
+      const declaredRemoves = answer.repair_changes.map(c => Number(c?.removed_piece_id)).filter(Boolean)
+      if (declaredAdds.length > 0) {
+        for (const addId of declaredAdds) {
+          if (!ids.includes(addId)) ids.push(addId)
+        }
+        ids = ids.filter(id => !declaredRemoves.includes(id))
+      }
+    }
     const unique = [...new Set(ids)]
     const outsideBench = unique.filter(id => !benchById.has(id))
     const roster = unique.map(id => benchById.get(id)).filter(Boolean)
@@ -4016,7 +4413,7 @@ export async function selectTripRosterViaModel({
 
   const attemptChoose = async attemptArgs => {
     try {
-      return resolve(await chooseRoster(attemptArgs))
+      return resolve(await chooseRoster(attemptArgs), attemptArgs?.attempt || 1)
     } catch (err) {
       const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
       return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
@@ -4024,7 +4421,7 @@ export async function selectTripRosterViaModel({
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [] })
+  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
   let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
   if (!failures.length) {
     return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
@@ -4032,7 +4429,7 @@ export async function selectTripRosterViaModel({
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench, slots, dateRange, attempt: 2, failures,
+    bench, slots, dateRange, attempt: 2, failures, slotLabelsById,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
   const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
@@ -4194,6 +4591,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       season: slot.stylingContext.season,
       calendarSeason: slot.stylingContext.calendarSeason,
       currentDate: slot.stylingContext.date,
+      // thread_1789632137995 (owner ruling 2026-09-17, reversing thread_1789585467294's own fix):
+      // `occasion_exclusions: ['travel']` means TRANSIT — airport time, a long car ride — never a
+      // trip's destination activities. The prior fix injected 'travel' into every slot of every trip
+      // plan, so a piece excluded only from transit (e.g. linen pants #128) was wrongly excluded from
+      // genuine destination slots (Winery Days, Dinners Out) too; when that piece was the only
+      // eligible bottom for a slot, the slot's target_outfits collapsed to 0 and Stage 2 crashed on
+      // the partial-plan contract. Destination slots evaluate against their own occasion only — the
+      // exclusion still applies exactly when a slot's own occasion/activity genuinely IS travel/
+      // transit, since that already flows through the single value below without any extra injection.
       ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
@@ -4245,6 +4651,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
+      diurnal_range: weatherProfile?.diurnalRange || null,
       // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
       // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
       // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
@@ -4257,7 +4664,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       calendar_season: slot.stylingContext.calendarSeason || '',
       piece_assessments: rosterOrder.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`,
-      coverage_report: workbenchCoverage,
+      structural_capacity: workbenchCoverage,
     })
     slot._modelWorkbench = {
       weatherProfile,
@@ -4340,10 +4747,23 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // mechanically checkable without the keyword-matching this codebase has
     // repeatedly ruled out).
     'The piece_ids ARE the outfit. If you change your mind while writing the reason, update piece_ids to match — never submit a reason describing pieces you did not include.',
+    // thread_1789585467294: a slot's structural_capacity says only that a complete garment
+    // combination (top/bottom/dress + shoes, plus any required base layer) exists among its allowed
+    // pieces — it is a supply-shape check, computed with no knowledge of the slot's activity or
+    // weather. A structurally complete slot can still have no genuinely suitable combination for what
+    // it is actually for; that is a real possibility a trip composer can disclose by declining that
+    // specific outfit via slot_gaps (tripPlanCompositionSchema), not something structural_capacity
+    // being complete rules out.
+    'structural_capacity on a slot means only that a complete garment combination exists among its allowed pieces (a top/bottom or dress, shoes, and any required base layer) — it is a structural fact about supply, not a judgment that any specific combination suits the slot\'s activity, register, or weather.',
     // Part 4 (spec 24): third confirmed occurrence of cardigan+shawl stacking
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
     'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // A 15°F swing spans across adjacent PET comfort bands (e.g. 55°F cool to 70°F mild, or 70°F mild to 85°F warm),
+    // where clothing flexibility and layering become physically necessary even when only coarse daily high/low is known.
+    slots.some(s => s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15)))
+      ? "When a slot's conditions span a real range across the day rather than one fixed temperature, compose the core outfit for the cooler/more demanding end and account for the warmer end with a removable or packable layer choice — noted explicitly in the outfit's reason text — rather than assuming a single fixed temperature."
+      : '',
     // thread_1788508369689 arc: exposure_conditions deliberately gives only a temperature range
     // (§2684's thermal_demand removal — a styling target must not be dictated), but the cold floor
     // this states below is a pass/fail structural gate (NO_WARM_LAYER_FOR_COLD), not a preference,
@@ -4356,7 +4776,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
     // was built to remove.
     planKind === 'trip'
-      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When cold_layer_required is false, mode \'not_required\' (assigned_layer_piece_id null) is standard; however, if the slot notes cool transition temperatures or a removable cool layer is needed, you may include the layer in piece_ids (mode \'core_is_warm_enough\') or assign an appropriate packed outerwear layer via mode \'assigned_packed_layer\'. If neither cold nor cool layer applies, use mode \'not_required\' with assigned_layer_piece_id null.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When choosing mode \'assigned_packed_layer\', you must explicitly name the assigned layer in the outfit\'s reason or styling_instructions and explain the temperature/transition rationale (e.g. bring the trench coat for cool morning transit and remove it when it warms up). mode \'not_required\' applies only when the slot\'s conditions are genuinely uniform across the day. When a slot\'s conditions span a real range (whether or not the day is overall cold) or a removable cool layer is needed, you MUST choose mode \'core_is_warm_enough\' (a genuinely warm core) or \'assigned_packed_layer\' (a genuinely adequate candidate) with the disclosure above — \'not_required\' is not a valid answer for that slot.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
@@ -4381,7 +4801,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // 07-16 office run: shawl on Tuesday, double botanical on Wednesday).
     // Same delivery lesson as owner rules above — repeat it here, ~40k
     // tokens closer to composition-time attention.
-    'For professional/work slots (office, client, presentation): quiet, structured pieces lead; at most ONE bold print per outfit; accessory register matches the outfit; no statement wraps at work. Social slots (dinner, gallery, weekend) are where statement styling belongs.'
+    'For professional/work slots (office, client, presentation): quiet, structured pieces lead; a bold print is a deliberate accent judged against the rest of the look, not capped at a fixed count; accessory register matches the outfit; no statement wraps at work. Social slots (dinner, gallery, weekend) are where statement styling belongs.'
   ].filter(Boolean).join(' ')
   let pendingSlots = slots.map((slot, index) => ({
     ...slot,
@@ -4426,7 +4846,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
     ]
-    // Only project the sleeve-construction rule when the slot's own roster can actually form a
+    // Only project the sleeve-layering guidance (the neutral statement; the geometry verdict is log-only)
+    // when the slot's own roster can actually form a
     // layering pair — most slots cannot, and the projection is cost, not signal, when there is
     // nothing to layer. wardrobeSupportsLayeringPair is the canonical eligibility check (shared
     // with evaluateOutfitRoles' role/category map); do not reimplement it with a local top/dress
@@ -4850,14 +5271,28 @@ export function slotColdLayerPermitted(slot = {}) {
 // whose roster genuinely has no qualifying layer is excluded too (repairing toward nothing is wasted
 // cost, and cold_floor_infeasible should already have caught this before composition ever ran).
 //
-// A false core_is_warm_enough claim and a plain omission are structurally different failures
-// (validateSubmittedPlanOutfits gives them distinct messages, on purpose, for diagnostics) but
-// converge on the exact same recoverable path here — both are, at this level, "the model's stated
-// cold-layer decision for this card doesn't hold up."
+// A false core_is_warm_enough claim, a plain omission, and a positively-inadequate assigned layer
+// are structurally different failures (validateSubmittedPlanOutfits gives them distinct messages,
+// on purpose, for diagnostics) but converge on the exact same recoverable path here — all three
+// are, at this level, "the model's stated cold-layer decision for this card doesn't hold up."
+//
+// thread_1789763628463: the model named a real packed piece (a thin UPF technical hoodie) via
+// mode 'assigned_packed_layer' and explained its reasoning in styling_instructions -- the strengthened
+// disclosure instruction worked -- but the piece itself failed outerwearLayerPositivelyInadequate,
+// and this list had no pattern for that rejection shape, so the card was lost to a disclosed
+// coverage gap instead of reaching this repair round, even though a genuinely adequate candidate
+// (a reversible hooded windbreaker) sat unused in the same roster.
+//
+// thread_1789801108635: the symmetric failure -- an assigned layer substantially too WARM for the
+// slot's own thermal demand (compareThermalFit's substantial_overshoot), not too weak. Same
+// recoverable shape; identifyColdLayerRepairableFailures' own candidate filter (below) already
+// excludes overshoot candidates too, so a repair never re-offers the same class of wrong pick.
 const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
+  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
+  /^assigned layer piece \d+ \(.+\) is substantially warmer than .+'s conditions call for — its own recorded construction and insulation place it well above .+ demand; choose a lighter packed layer\.$/,
 ]
 
 export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
@@ -4870,8 +5305,11 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
     if (!isColdLayerOnly) continue
     const slot = slotById.get(failure.slot_id)
     if (!slot) continue
+    const repairExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
+    const repairDemand = requiredThermalBand(repairExposure)
     const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
       .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+      .filter(piece => !repairDemand?.level || compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit !== 'substantial_overshoot')
     if (!candidates.length) continue
     repairable.push({
       slot_id: failure.slot_id,
@@ -5073,7 +5511,24 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // NOT gated on category/garmentKind here — the assigned relation can legitimately name a
           // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
           // evidence positively contradict the cold-layer claim," not "is it a coat."
-          if (outerwearLayerPositivelyInadequate(layerPiece)) {
+          //
+          // thread_1789801108635: the under-dressing side above has always been a hard gate; the
+          // over-dressing side never was. A navy quilted puffer ("designed as a true cold-weather
+          // outer layer with substantial insulation" per its own notes) was assigned as the
+          // removable layer for an 86°F-peak day and passed cleanly, because nothing checked
+          // whether the claimed layer was too WARM for the slot, only whether it was too weak.
+          // compareThermalFit already classifies this correctly (garmentWarmthLevel 'warm' against
+          // a 'light' demand is a 2-level substantial_overshoot) and is already trusted elsewhere in
+          // this file for ranking -- reused here as a hard gate, symmetric with the inadequacy
+          // check above, and held to the same conservative bar (2+ levels, not 1) so a merely
+          // borderline pick (moderate against a light target, e.g. a plain fleece coat) still
+          // passes as a defensible edge case rather than being rejected outright.
+          const layerExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
+          const layerDemand = requiredThermalBand(layerExposure)
+          const layerFit = layerDemand?.level ? compareThermalFit(garmentWarmthLevel(layerPiece), layerDemand) : { fit: 'unknown' }
+          if (layerFit.fit === 'substantial_overshoot') {
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) is substantially warmer than ${label}'s conditions call for — its own recorded construction and insulation place it well above ${layerDemand.level} demand; choose a lighter packed layer.`)
+          } else if (outerwearLayerPositivelyInadequate(layerPiece)) {
             reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
           } else {
             assignedLayers.push(layerPiece)
@@ -5100,6 +5555,15 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         ? { resolvedWeatherContext: serializeResolvedWeatherContext(slot.weatherProfile.resolvedWeatherContext) }
         : {}),
     }
+    // Garment-fact integrity (thread_1789508440573): the instructions may not tuck a base top recorded
+    // wear_over_only. Mechanically fixable (the recorded fact always wins, there is exactly one
+    // correction), same shape as the cold_layer_decision correction the atomic composer already
+    // applies before validation -- so it is corrected here rather than rejecting the whole card over
+    // one contradicted clause. thread_1789801108635: the atomic path has no resubmission round, so a
+    // hard reject here permanently lost an otherwise-valid Coastal Hike card to a one-clause fix
+    // routes/ai.js's single_outfit path already applies silently via correctTuckInstruction.
+    const tuckCorrection = correctTuckInstruction({ pieces, stylingInstructions: outfit.stylingInstructions })
+    if (tuckCorrection.conflict) outfit.stylingInstructions = tuckCorrection.corrected
     if (outfit.reason && reasonRevisesMidSentence(outfit.reason)) {
       reasons.push(REASON_REVISION_MESSAGE)
     }
@@ -5111,7 +5575,10 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // [O2]/[R2]: the plan slot owns a resolved weather profile, so it passes it and the shared
         // Contract C stage produces the cold/transit/hazard findings that used to be duplicated in
         // validateSlotOutfitConstraints below.
-        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment, packingRosterHasLayer },
+        // `slot.activity` is structured slot truth and belongs in the exposure context for the same
+        // reason `environment` does: without it exertion resolves to `unknown`, no shift applies,
+        // and a hiking slot is graded against sedentary demand two levels away.
+        weatherContext: { weatherProfile: slot.weatherProfile || {}, environment: slot.environment, activity: slot.activity, packingRosterHasLayer },
         // Only the environmental-adequacy stage sees assignedLayers — structure, required-base,
         // layer-direction and layer-construction all stay core-only. A shared packed layer is not
         // claimed to be visually shown with this look (that is exactly what "core outfit, not a
@@ -5119,12 +5586,16 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
       })
       if (Array.isArray(wearableValidation.advisoryFindings) && wearableValidation.advisoryFindings.length) {
-        outfit.systemFlags = wearableValidation.advisoryFindings.map(finding => ({
-          type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
-          message: finding.message
-        }))
+        outfit.systemFlags = advisoryFindingsToSystemFlags(wearableValidation.advisoryFindings)
       }
+      // The model receives every typed finding. The rejected card shown to the owner gets one primary
+      // thermal explanation: the messages the collapse drops are remembered against this reasons list.
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
+      {
+        const shown = new Set(collapseThermalErrorFindings(wearableValidation.hardFindings))
+        const omitted = wearableValidation.hardFindings.filter(finding => !shown.has(finding)).map(finding => finding.message)
+        if (omitted.length) THERMAL_DISPLAY_OMISSIONS.set(reasons, new Set(omitted))
+      }
       if (wearableValidation.hardValid && wearableValidation.reviewRequired) {
         reasons.push(`this outfit has a visual relationship that saved garment facts cannot resolve — call view_pieces on [${wearableValidation.unresolvedSightPieceIds.join(', ')}] first, then resubmit after judging it from sight`)
       }
@@ -5218,6 +5689,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         slot_id: slot.id,
         label,
         reasons,
+        displayReasons: reasons.filter(reason => !THERMAL_DISPLAY_OMISSIONS.get(reasons)?.has(reason)),
         outfit,
         blockedPieceIds: [...new Set(unresolvedPieceIds)]
       })
@@ -5377,10 +5849,10 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
       label: slot?.label || failure.label || 'Needs review',
       title: String(failure.outfit?.title || '').trim() || slot?.label || failure.label || 'Needs review',
       broken: true,
-      rejectionReason: (failure.reasons || []).join('; '),
+      rejectionReason: (failure.displayReasons || failure.reasons || []).join('; '),
       brokenPieces: pieces
         .filter(piece => blockedIds.has(Number(piece?.id)))
-        .map(piece => ({ name: piece?.name || `Piece ${piece?.id}`, reason: (failure.reasons || []).join('; ') })),
+        .map(piece => ({ name: piece?.name || `Piece ${piece?.id}`, reason: (failure.displayReasons || failure.reasons || []).join('; ') })),
       source,
       tripSlot: slot?.id || failure.slot_id || '',
       bestFor: slot?.bestFor || '',
@@ -5596,6 +6068,8 @@ export function normalizePlanSlots(rawSlots = [], {
   maxSlots = PLAN_TOTAL_OUTFIT_CAP,
   maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
   tripSummary = null,
+  currentQuestion = '',
+  history = [],
   onDiagnostic = null
 } = {}) {
   const validPlanUserWeather = validateUserWeather(fallbackUserWeather)
@@ -5669,6 +6143,21 @@ export function normalizePlanSlots(rawSlots = [], {
         normalizedWeatherLocationIdentity(location) === normalizedWeatherLocationIdentity(fallbackLocation)
       const dateCompatibleWithPlan = planSlotDateCompatibleWithRange(slotDate, dateRange)
       const inheritsPlanWeather = locationMatchesPlan && dateCompatibleWithPlan
+      // thread_1789633862650: the schema's own `date` field description tells the model to "omit
+      // to inherit the plan date_range" -- the normal, expected shape for a multi-day trip's
+      // activity slots (Winery Days, Nice Dinners) -- but nothing ever actually performed that
+      // inheritance for the value resolveSlotWeather/resolveSlotTimeSensitivity key hourly
+      // resolution off. An omitted slot.date produced date: '' on the normalized slot, so both
+      // functions' `if (!day...) return` guard fired immediately and unconditionally for every
+      // trip activity slot that followed the schema's own guidance -- the hourly resolver, and the
+      // materiality check that pauses for a genuinely time-sensitive slot, were both silently dead
+      // for exactly the shape a real multi-day trip takes. dateRange.start is a single representative
+      // day for the whole range, the same simplification tripSeasonEligiblePool's own header comment
+      // already documents making for calendar season ("the first slot's resolved calendarSeason
+      // stands in for the whole trip... a documented simplification, not solved here, for the rare
+      // trip whose slots span a season boundary") -- a real day's forecast to resolve against, not a
+      // fabricated one.
+      const resolvedSlotDate = slotDate || String(dateRange?.start || '').trim()
       const slotUserWeather = validateUserWeather(slot?.user_weather)
       const userWeather = slotUserWeather || (inheritsPlanWeather ? validPlanUserWeather : null)
       const slotWeatherEstimate = validateWeatherEstimate(slot?.weather_estimate)
@@ -5695,7 +6184,33 @@ export function normalizePlanSlots(rawSlots = [], {
           : '',
         location,
         environment,
-        date: slotDate,
+        date: resolvedSlotDate,
+        // thread_1789633862650 (owner correction, 2026-09-17, narrowing the Activity Time Windows
+        // spec's "never inferred or defaulted by code" rule): a slot typed occasion:'evening', or
+        // whose own label/best_for names a dinner/wine bar/evening use case, has already declared
+        // when it happens — reading that as evidence for its own daypart is reading a fact already
+        // given, not guessing one. Deliberately keyed on textLooksLikeEveningPlanSlot rather than the
+        // slot's FINAL resolved `occasion`: occasion is a REGISTER axis, not a timing one, and the
+        // occasion field's own 2026-07-30 ratified description reserves 'evening' occasion for
+        // genuinely dressier night-out cases while an ORDINARY restaurant dinner correctly resolves
+        // to 'smart casual'/'city' — keying off occasion would silently miss exactly the ordinary-
+        // dinner case this fix exists for. An explicit time_window (any period, or an explicit clock range)
+        // always wins outright.
+        //
+        // thread_1789712689892: Extended symmetrically to afternoon and morning using text cues
+        // (textLooksLikeAfternoonPlanSlot, textLooksLikeMorningPlanSlot) and an immediate conversational
+        // clarification fallback so that when a user answers a timing clarification, an instruction-
+        // following gap in the model's tool call does not trap the user in an infinite re-asking loop.
+        timeWindow: inferPlanSlotTimeWindow({
+          rawTimeWindow: slot?.time_window,
+          occasion,
+          label,
+          bestFor,
+          coverage,
+          planNote,
+          currentQuestion,
+          history,
+        }),
         bestFor,
         coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),

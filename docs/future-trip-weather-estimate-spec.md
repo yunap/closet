@@ -132,10 +132,31 @@ statement would instead be `{"high_f":65,"low_f":45}`; a qualitative one would b
 - It may contain a numeric range (`high_f` and `low_f`) or a qualitative
   `temperature_band`, but not both.
 - `temperature_band` enum: `hot | cold | mild`.
-- Numeric temperature requires both `high_f` and `low_f`; a single stated temperature is
-  represented by setting both to the same value.
+- A numeric temperature carries `high_f`, `low_f`, or both — never neither. A single stated
+  temperature ("it's 46 out") is represented by setting both to the same value. A genuinely
+  one-sided forecast ("highs near 85") sets only that endpoint and leaves the other unset; the
+  executor must not manufacture the missing side. (2026-09-15 amendment: this previously required
+  both endpoints, which forced a one-sided statement to either be dropped or silently collapsed
+  into a point temperature. `weather.validateUserWeather` and `classifyTemperatureRange` now carry
+  a genuinely null endpoint end to end — see `docs/engine-behaviour-map.md` for the downstream
+  consumers this changed.)
 - Convert a user-stated Celsius value to Fahrenheit in the tool argument. Do not pass raw Celsius
   text to the executor.
+- `scope` enum: `exposure_window | daily_forecast`, required alongside any numeric `high_f`/`low_f`
+  (2026-09-16 amendment, thread_1789526496845). The same two numbers can mean two different things:
+  `exposure_window` (default when omitted, the only behavior before this field existed) means the
+  numbers ARE the temperature the wearer will personally be outside in — a statement scoped to the
+  activity/outing itself, a single point statement, or two distinct timed observations ("60°F when I
+  leave, 48°F after sunset"). `daily_forecast` means the user gave the day's overall high/low
+  ("the forecast is a high of 50 and a low of 40"), stated separately from a narrower outing window
+  ("walking 1-6pm") — the two endpoints are NOT a claim about what happens during that narrower
+  window. The executor (`exposure.js`'s `resolveConditions`) treats `exposure_window` as certain,
+  verbatim (`stated_user_exposure_range`, unchanged, per the 2026-09-12 UI ruling in
+  `docs/app-surface-map.md`); `daily_forecast` gets the SAME waking-window estimate a live or
+  model-estimated daily envelope already receives (`stated_user_daily_forecast`, `coarse: true`) —
+  the real numbers are kept, never discarded to a qualitative band, only the certainty changes. Do
+  not guess which endpoint applies to a narrower stated window; that invents timing data this
+  codebase has no source for (no hourly forecast exists anywhere here).
 - `precipitation` enum: `none | rain | snow | mixed | unknown`.
 - `wind` enum: `calm | breezy | windy | unknown`.
 - Omitted fields mean the user did not state that dimension. `unknown` means the user explicitly

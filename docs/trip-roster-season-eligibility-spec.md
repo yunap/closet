@@ -10,6 +10,18 @@ and the owner ruling behind it. Does **not** touch capsule roster selection
 (`capsuleSeasonEligiblePool`, already a hard filter — see §2) or per-outfit ranking within a slot
 (`seasonFitPieceAdvisory` stays exactly as it is for every category).
 
+**Amendment (2026-09-17, thread_1789628875203):** §5's "known, documented simplification... not
+solved here" turned out to need solving — a live Sept 19-22 Paso Robles trip (calendar `fall`, so
+`OUT_OF_SEASON.fall === 'warm'`) ran up to 94.9°F and this spec's hard exclusion purged every
+warm-tagged bottom before the model ever saw one. Owner ruling: for `bottom` only, the exclusion
+now has one override — `tripHasHotWeather` (derived from `weather.js`'s own `HOT_F`/80°F threshold,
+already computed per slot as `weatherProfile.isHot`) lets a warm-tagged bottom through on a
+fall/winter-calendar trip that is genuinely, physically hot. `dress` and `outerwear` are unchanged
+and keep the unconditional exclusion below — this is not a general "weather overrides season"
+reversal, only the one category and one direction (hot day, cold-calendar trip) the incident
+evidenced. See `docs/engine-behaviour-map.md`'s matching amendment and
+`tripSeasonEligiblePool` in `outfitSetPlanner.js` for the implementation.
+
 ## 1. The problem, evidenced
 
 Live thread `thread_1788650429394`: "plan my outfits for a Christmas week trip to Vienna, Virginia,"

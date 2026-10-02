@@ -54,7 +54,12 @@ test('genuinely cold 30/20 — the ordering reverses', () => {
 test('excessive undershoot floors at the same magnitude as excessive overshoot, never inverts', () => {
   // Neither direction should escape the -8 floor, and the floor must not silently favor one
   // direction over the other merely because it clamped first.
-  const veryLightPiece = { category: 'outerwear', fabric_weight: 'ultralight', fiber_content: ['polyester'], insulating_layer_materials: [], sleeve_length: 'sleeveless' }
+  // 2026-09-12: this fixture used to be sleeveless OUTERWEAR. The layering-vest ruling charges a
+  // sleeveless outer layer the bare cut once rather than twice (its arms are covered by the base),
+  // so that shape is now a -6 rather than a floor — a consequence of the ruling, not a weakening of
+  // this property. The property itself is unchanged and is shown here on a bare BASE garment, which
+  // is what "excessive undershoot" actually looks like: a tank in 20/5 weather.
+  const veryLightPiece = { category: 'top', fabric_weight: 'ultralight', fiber_content: ['polyester'], insulating_layer_materials: [], sleeve_length: 'sleeveless' }
   const genuinelyCold = W(20, 5)
   const undershootFit = weatherFitForPiece(veryLightPiece, genuinelyCold)
   assert.equal(undershootFit.score, -8, 'a very light piece in genuinely cold conditions floors, not just scores low')

@@ -162,6 +162,22 @@ test('extractStructuredUserWeather preserves a literal falling Fahrenheit range 
   assert.equal(extractStructuredUserWeather('It was 60°F yesterday and should be mild tonight'), null)
 })
 
+// 2026-09-15: an explicitly one-sided forecast states one endpoint and leaves the other genuinely
+// unknown — it must not fall through to the point-temperature branch and manufacture a low/high the
+// user never gave. Regression: the qualifier-adjacency check used a trailing \b, which never
+// matches between a digit and the immediately-following unit letter ("85F", "40F" — both word
+// characters, no boundary), so "highs near 85F" silently failed the statedHigh test and fell
+// through to {high_f:85, low_f:85} anyway.
+test('extractStructuredUserWeather preserves a genuinely one-sided stated endpoint, unit directly adjacent to the number', () => {
+  assert.deepEqual(extractStructuredUserWeather('highs near 85F this week'), { high_f: 85 })
+  assert.deepEqual(extractStructuredUserWeather('down to 40F overnight'), { low_f: 40 })
+  assert.deepEqual(extractStructuredUserWeather('up to 90 degrees Fahrenheit'), { high_f: 90 })
+  assert.deepEqual(extractStructuredUserWeather('no lower than 35°F'), { low_f: 35 })
+  // A genuine point temperature is unaffected: no high/low qualifier at all keeps the ratified
+  // equal-endpoint representation.
+  assert.deepEqual(extractStructuredUserWeather("it's 46°F out"), { high_f: 46, low_f: 46 })
+})
+
 test('extractExplicitActivity requires affirmative request evidence for hard activity gates', () => {
   assert.equal(extractExplicitActivity('An afternoon and early-evening outing in Santa Fe; outside from 3–8 p.m.'), 'none')
   assert.equal(extractExplicitActivity('I will be walking around Santa Fe all afternoon.'), 'walking')
@@ -326,14 +342,17 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
 // rule, delivered via Part 2's workbench mechanism, not hard-coded here).
 test('stylist prompt has professional-context competence as a system-side default', () => {
   assert.ok(STYLIST_SYSTEM.includes('Professional and work contexts (office days, client meetings, presentations) default to quiet, structured, low-print styling'))
-  assert.ok(STYLIST_SYSTEM.includes('at most ONE bold print per outfit as a deliberate accent'))
+  // 2026-09-15: the fixed count is retired (owner ruling — print judgment is case-by-case).
+  // The professional-register default survives; only the numeric cap is gone.
+  assert.ok(STYLIST_SYSTEM.includes('any bold print earns its place as a deliberate accent judged against the rest of the look rather than by a fixed count'))
+  assert.ok(!/at most ONE bold print/i.test(STYLIST_SYSTEM), 'the retired fixed print count must not come back')
   assert.ok(STYLIST_SYSTEM.includes('every accessory\'s register must match the outfit\'s register'))
   assert.ok(STYLIST_SYSTEM.includes('Save artisan, botanical, and statement styling for social contexts'))
   assert.ok(STYLIST_SYSTEM.includes('This is the default, not a rule the user must state'))
   // Judged wording (#68/#86 owner rulings): constrains print count/context,
   // never bans a specific print by name, and never hard-codes the owner's
   // own maxi-skirt/shawl rule (that's her stored rule, Part 2's job).
-  const bullet = 'Professional and work contexts (office days, client meetings, presentations) default to quiet, structured, low-print styling: solid or subtle pieces lead, at most ONE bold print per outfit as a deliberate accent, and every accessory\'s register must match the outfit\'s register (no dressy shawls or statement wraps over casual pieces at work). Save artisan, botanical, and statement styling for social contexts — dinners, galleries, weekends — unless the user asks for it at work. This is the default, not a rule the user must state.'
+  const bullet = 'Professional and work contexts (office days, client meetings, presentations) default to quiet, structured, low-print styling: solid or subtle pieces lead, any bold print earns its place as a deliberate accent judged against the rest of the look rather than by a fixed count, and every accessory\'s register must match the outfit\'s register (no dressy shawls or statement wraps over casual pieces at work). Save artisan, botanical, and statement styling for social contexts — dinners, galleries, weekends — unless the user asks for it at work. This is the default, not a rule the user must state.'
   assert.ok(STYLIST_SYSTEM.includes(bullet))
   assert.ok(!/\bhemline\b/i.test(bullet), 'must not hard-code the owner\'s own hemline (maxi-skirt) rule')
   assert.ok(!/\bmaxi\b/i.test(bullet), 'must not hard-code "maxi" — that is the owner\'s stored rule, not system doctrine')

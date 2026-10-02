@@ -191,3 +191,32 @@ test('two concrete pattern signals still activate visual clash review', () => {
   }])
   assert.equal(wholeWardrobeOutfitLooksQuestionable(outfit), true)
 })
+
+// thread_1789526496845: an olive deep-armhole top under a fitted straight-sleeve puffer — both
+// solid-colored — had a genuine `layer_construction_sleeve_conflict` shadow finding (confirmed
+// against the real stored pieces) but never reached the visual critic, because this pattern-count
+// check was the ONLY signal deciding whether a card was "questionable" enough to review. The shadow
+// signal now also triggers a review request — used only to ask for a look, never as a verdict.
+test('a shape-only sleeve construction conflict also activates visual review, on its own, with no pattern signal present', () => {
+  const outfit = {
+    pieces: [
+      piece(140, {
+        id: 140, name: 'olive textured mock neck top', category: 'top', pattern_complexity: 'solid',
+        sleeve_length: '3/4', sleeve_shape: 'deep_armhole', fabric_weight: 'medium', role: 'primary_top',
+      }),
+      piece(996866, {
+        id: 996866, name: 'navy quilted puffer jacket', category: 'outerwear', pattern_complexity: 'solid',
+        sleeve_length: 'long', sleeve_shape: 'straight', fabric_weight: 'medium', silhouette: 'fitted', role: 'outerwear',
+      }),
+      piece(602, { id: 602, name: 'corduroy pants', category: 'bottom', pattern_complexity: 'solid', role: 'primary_bottom' }),
+    ],
+  }
+
+  const findings = wholeWardrobeOutfitVisualReviewFindings(outfit)
+  const sleeveFinding = findings.find(f => f.code === 'layer_construction_sleeve_conflict')
+  assert.ok(sleeveFinding, `sleeve-construction finding requests a review: ${JSON.stringify(findings)}`)
+  assert.deepEqual(sleeveFinding.pieceIds.sort((a, b) => a - b), [140, 996866])
+  // The finding requests attention; it never states a verdict of its own for the critic to parrot.
+  assert.doesNotMatch(sleeveFinding.reason, /incompatible|conflict is real|confirmed/)
+  assert.equal(wholeWardrobeOutfitLooksQuestionable(outfit), true)
+})

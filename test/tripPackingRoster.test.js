@@ -7,8 +7,15 @@ import assert from 'node:assert'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { selectTripRosterViaModel, tripSeasonEligiblePool, buildTripPackingLines } from '../styling-engine/outfitSetPlanner.js'
+import { selectTripRosterViaModel, tripSeasonEligiblePool, buildTripPackingLines, truthfulWeatherLabel } from '../styling-engine/outfitSetPlanner.js'
 import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
+import { resolveWeatherContext, validateUserWeather } from '../styling-engine/weather.js'
+
+// The exact finding texts, so a flow test pins WHICH finding fired rather than matching prose that
+// several different findings would satisfy. Codes do not survive into `systemFlags`/`reasons` (both
+// carry messages only), so the message is the identity available at this layer.
+const SEVERE_CAPACITY_MESSAGE = 'the outer layer is outdoor-capable, but the layers under it are light enough that this outfit carries little insulation for sustained cold — if no owned piece can satisfy this, say so as a wardrobe gap rather than resubmitting — re-plan at a milder context or accept the disclosed shortfall'
+const COLD_END_SHORTFALL_MESSAGE = 'no way of wearing this outfit carries enough warmth for the cold end of these conditions'
 
 // docs/database-safety.md: routes/ai.js reaches db.js on import, so this must isolate
 // WARDROBE_DB_PATH before that import or it runs db.js's migrations against the real wardrobe.db.
@@ -28,7 +35,12 @@ const {
   tripRosterRepairText,
   tripRosterSelectionUserText,
   tripRosterSelectionContent,
+  tripPlanCompositionSystemPrompt,
 } = await import('../routes/ai.js')
+const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+const registerFieldDescription = STYLIST_TOOLS
+  .find(tool => tool.name === 'plan_outfit_set')
+  .input_schema.properties.slots.items.properties.register.description
 
 const piece = (id, category, extra = {}) => ({ id, name: `piece ${id}`, category, status: 'active', occasions: ['city'], ...extra })
 
@@ -145,44 +157,74 @@ test('no fixed budget: the model may choose fewer or more pieces than any capsul
   assert.ok(!result.failures.some(f => f.code === 'roster_size'), 'trip rosters have no size contract, unlike capsules')
 })
 
-// ─── BENCH CONSTRUCTION DIVERSITY (thread_1788504927533) ────────────────────────────────────────
-// The cardigan-only Vienna roster traced back to the bench the roster model was shown, not to its
-// judgment: buildTripBench ranked candidates by (tripReuseScore desc, id asc), and once many pieces
-// tie on reuse score (the common case), ascending id alone decided who survived capacity truncation.
-// A wardrobe with 16 real jackets/coats and 6 cardigans put every cardigan in the bench and NONE of
-// the 16 structured pieces in it, purely because the cardigans happened to have lower ids -- the
-// model was never shown a real jacket to weigh against a cardigan. This is a property of the bench's
-// own ranking, not anything specific to outerwear: the same truncation can silently narrow any
-// category down to whichever construction bucket has the most low-id members. These reproduce that
-// exact shape and prove the fix (diversityInterleavedByBucket) without asserting "a jacket must be
-// present" anywhere -- only that every construction bucket gate-eligible for the trip gets a turn
-// before capacity truncates, the same guarantee for every category, not a special case for outerwear.
+// ─── BENCH HAS NO CAP (thread_1788504927533, superseded by thread_1789598100140) ────────────────
+// The cardigan-only Vienna roster traced back to a bench cap + reuse ranking that silently narrowed
+// candidates before the model ever saw them: buildTripBench used to rank by (tripReuseScore desc, id
+// asc), truncate at a 60-piece cap, and round-robin across construction buckets only to soften that
+// truncation, not remove it. Owner ruling 2026-09-16: removed the cap and the ranking entirely
+// (thread_1789598100140 found the same mechanism starving single-use-case-essential pieces, not just
+// disadvantaging low-id ones) -- roster selection is now text-only, so there is no cost reason to
+// withhold any season-eligible candidate. These fixtures reproduce the original Vienna shape and now
+// assert the stronger guarantee: every gate-eligible piece survives, construction bucket or id
+// notwithstanding, because nothing truncates the bench at all.
 const manyLowIdCardigans = [10, 11, 12, 13, 14, 15].map(id => piece(id, 'outerwear', { name: `cardigan ${id}` }))
 const oneLowIdVest = piece(16, 'outerwear', { name: 'vest 16' })
 const fewHighIdJackets = [900, 901, 902].map(id => piece(id, 'outerwear', { name: `jacket ${id}` }))
 const fewHighIdCoats = [903, 904].map(id => piece(id, 'outerwear', { name: `coat ${id}` }))
 const DIVERSITY_POOL = [CITY_TOP, CITY_BOTTOM, CITY_SHOES, ...manyLowIdCardigans, oneLowIdVest, ...fewHighIdJackets, ...fewHighIdCoats]
 
-test('a bench capped well below total supply still contains every gate-eligible construction bucket, not just the lowest-id one', async () => {
-  const result = await selectTripRosterViaModel({ pool: DIVERSITY_POOL, slots: [SLOTS[0]], chooseRoster: null, benchSize: 10 })
+test('the bench contains every gate-eligible construction bucket, with no cap to truncate any of them', async () => {
+  const result = await selectTripRosterViaModel({ pool: DIVERSITY_POOL, slots: [SLOTS[0]], chooseRoster: null })
   const benchIds = new Set(result.bench.map(p => Number(p.id)))
-  assert.ok([...benchIds].some(id => id >= 900 && id <= 902), 'a jacket-bucket piece must survive truncation even though every jacket id is higher than every cardigan id')
-  assert.ok([...benchIds].some(id => id >= 903 && id <= 904), 'a coat-bucket piece must survive truncation for the same reason')
-  assert.ok([...benchIds].some(id => id >= 10 && id <= 15), 'the cardigan bucket must still be represented -- this is diversity, not exclusion of the low-id bucket')
-  assert.ok(benchIds.has(16), 'the single-member vest bucket must also get its turn')
-  assert.equal(result.bench.length, 10, 'sanity: the cap was actually binding')
+  assert.ok([900, 901, 902].every(id => benchIds.has(id)), 'every jacket must survive -- there is no cap to truncate at')
+  assert.ok([903, 904].every(id => benchIds.has(id)), 'every coat must survive for the same reason')
+  assert.ok([10, 11, 12, 13, 14, 15].every(id => benchIds.has(id)), 'every cardigan must also survive -- inclusion, not a diversity quota')
+  assert.ok(benchIds.has(16), 'the single-member vest bucket must survive too')
+  assert.equal(result.bench.length, DIVERSITY_POOL.length, 'sanity: nothing was excluded from the gate-eligible pool')
 })
 
-test('bench diversity applies to any category with many tied candidates, not only outerwear', async () => {
+test('bench inclusion applies to any category with many candidates, not only outerwear', async () => {
   // Six low-id tops, one high-id top of a materially different construction (garmentKind 'button-
   // shirt' vs the default 'tee'-adjacent bucket the plain fixtures fall into) -- same shape as the
   // outerwear case, a different category, to prove the fix is not outerwear-special-cased.
   const manyLowIdTees = [20, 21, 22, 23, 24, 25].map(id => piece(id, 'top', { name: `tee ${id}` }))
   const oneHighIdShirt = piece(950, 'top', { name: 'button-up shirt 950' })
   const pool = [CITY_BOTTOM, CITY_SHOES, ...manyLowIdTees, oneHighIdShirt]
-  const result = await selectTripRosterViaModel({ pool, slots: [SLOTS[0]], chooseRoster: null, benchSize: 4 })
+  const result = await selectTripRosterViaModel({ pool, slots: [SLOTS[0]], chooseRoster: null })
   const benchIds = new Set(result.bench.map(p => Number(p.id)))
-  assert.ok(benchIds.has(950), 'a materially different top construction must survive truncation even at high id, same guarantee as outerwear')
+  assert.ok(benchIds.has(950), 'a materially different top construction must survive, same guarantee as outerwear')
+  assert.ok([20, 21, 22, 23, 24, 25].every(id => benchIds.has(id)), 'every tee must also survive -- no cap to truncate any bucket')
+})
+
+// thread_1789598100140 (owner ruling 2026-09-16): the exact live shape. A wardrobe where most
+// gate-eligible pieces are reusable across several slots (so the old tripReuseScore ranking put them
+// first) and one piece is only ever useful for a single narrow use case (a hot-weather hiking bottom,
+// reuse score 1) -- confirmed live, real hiking-appropriate shorts and technical pants existed in the
+// wardrobe and never reached the old 60-piece bench because 60+ cross-slot-reusable pieces
+// outranked them before the round-robin's bucket-processing order (itself reuse-score-driven) ever
+// gave the hiking-only bucket an early turn. With no cap and no reuse ranking, the single-use piece
+// must survive alongside every reusable one, not despite them.
+test('a single-use-case-only piece survives the bench even when 60+ cross-slot-reusable pieces would have out-scored it under the old reuse ranking', async () => {
+  const slots = [
+    { id: 'winery', label: 'Winery Days', occasion: 'outdoor_daytime_social', activity: 'walking' },
+    { id: 'hiking', label: 'Hiking', occasion: 'casual', activity: 'hiking', environment: 'outdoor' },
+    { id: 'dinner', label: 'Dinner Out', occasion: 'evening' },
+  ]
+  // Each reusable piece is gate-eligible for winery AND dinner (occasions: outdoor_daytime_social +
+  // evening) -- reuse score 2, same shape as a cross-slot-versatile dress or blouse. 70 of them, well
+  // past the old 60-piece cap, so under the old ranking none of them would ever have been at risk of
+  // truncation -- the single-use hiking piece, scoring only 1, would have been pushed out first.
+  const reusablePieces = Array.from({ length: 70 }, (_, i) =>
+    piece(2000 + i, i % 2 === 0 ? 'top' : 'bottom', { name: `reusable ${i}`, occasions: ['outdoor_daytime_social', 'evening'] }))
+  const hotWeatherHikingShorts = piece(9999, 'bottom', { name: 'lightweight technical hiking shorts', occasions: ['casual', 'outdoor'] })
+  const shoes = piece(3, 'shoes', { occasions: ['outdoor_daytime_social', 'evening', 'casual', 'outdoor'], heel_height: 'flat', walk_support: 'high' })
+  const pool = [...reusablePieces, hotWeatherHikingShorts, shoes]
+
+  const result = await selectTripRosterViaModel({ pool, slots, chooseRoster: null })
+  const benchIds = new Set(result.bench.map(p => Number(p.id)))
+  assert.equal(result.bench.length, pool.length, 'sanity: nothing was excluded from the gate-eligible pool')
+  assert.ok(benchIds.has(9999), 'the single-use-case hiking piece must survive alongside every cross-slot-reusable one')
+  assert.ok(reusablePieces.every(p => benchIds.has(Number(p.id))), 'sanity: the reusable pieces are still present too')
 })
 
 // ─── SEASON ELIGIBILITY (docs/trip-roster-season-eligibility-spec.md, ratified) ─────────────────
@@ -253,6 +295,33 @@ test('bench diversity applies to any category with many tied candidates, not onl
     assert.ok(!benchIds.has(101) && !benchIds.has(102), 'warm-tagged bottom/shoes must not reach the roster bench on a winter trip')
     assert.ok(benchIds.has(103), 'the warm-tagged top stays eligible')
   })
+
+  // thread_1789628875203 (owner ruling 2026-09-17): a live Sept 19-22 Paso Robles trip resolved to
+  // calendar `fall` (OUT_OF_SEASON.fall === 'warm') but ran up to 94.9°F -- the hard exclusion above
+  // purged every warm-tagged bottom before the model ever saw one, leaving a single non-hiking
+  // fallback pair to cover every casual/outdoor slot. This narrow override reuses weather.js's own
+  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Deliberately
+  // scoped to `bottom` only -- dress/outerwear keep the unconditional exclusion from the tests above.
+  test('tripSeasonEligiblePool keeps a warm-tagged bottom on a fall/winter trip when tripHasHotWeather is true', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR], 'fall', { tripHasHotWeather: true })
+    assert.deepEqual(result, [WARM_BOTTOM], 'only the bottom is spared -- shoes/dress/outerwear stay excluded even on a hot day')
+  })
+
+  test('tripSeasonEligiblePool still excludes a warm-tagged bottom on a fall/winter trip when the trip is not actually hot', () => {
+    const result = tripSeasonEligiblePool([WARM_BOTTOM], 'fall', { tripHasHotWeather: false })
+    assert.deepEqual(result, [], 'the override never fires without a genuinely hot day -- this stays the ratified default')
+  })
+
+  test('selectTripRosterViaModel: a warm-tagged bottom reaches the bench on a calendar-fall trip whose slot weather is genuinely hot', async () => {
+    const hotHikingSlot = { ...SLOTS[1], weatherProfile: { isHot: true } }
+    const warmHikingBottom = piece(110, 'bottom', { season: 'warm', occasions: ['casual', 'outdoor'] })
+    const pool = [warmHikingBottom, HIKE_TOP, HIKE_SHOES]
+    const result = await selectTripRosterViaModel({
+      pool, slots: [hotHikingSlot], chooseRoster: null, calendarSeason: 'fall',
+    })
+    const benchIds = new Set(result.bench.map(p => Number(p.id)))
+    assert.ok(benchIds.has(110), 'the warm-tagged bottom reaches the bench once the trip is confirmed genuinely hot')
+  })
 }
 
 // ─── ROSTER-LEVEL FEASIBILITY (thread_1788501349296) ────────────────────────────────────────────
@@ -285,9 +354,12 @@ test('tripRosterFailures flags a roster with zero outerwear against a slot that 
   assert.doesNotMatch(gap.message, /stylish|cardigan|fashionable|cute/i)
 })
 
-test('tripRosterFailures does not flag missing removable coverage when no slot actually needs it (indoor, or already isCold)', () => {
+test('tripRosterFailures does not flag missing removable coverage when no slot actually needs it (indoor with no recorded transit need, or already isCold)', () => {
   const indoorSlot = layerRequiredSlot({
     id: 's_indoor', label: 'Museum', environment: 'indoor',
+    // No transitNeedsRemovableCoolLayer recorded -- an indoor slot with no evidence its own
+    // transit is genuinely cool must not fabricate a requirement (see the next test for the case
+    // where that evidence IS recorded).
     stylingContext: { weatherProfile: { needsRemovableCoolLayer: true, isCold: false } },
   })
   const alreadyColdSlot = layerRequiredSlot({
@@ -296,6 +368,61 @@ test('tripRosterFailures does not flag missing removable coverage when no slot a
   })
   const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [indoorSlot, alreadyColdSlot] })
   assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'an all-indoor or already-cold trip is never required to carry outerwear just because it is a trip')
+})
+
+// thread_1789633862650: a live Paso Robles evening dinner slot (indoor, 52-53°F transit low) packed
+// zero layers because slotNeedsRemovableCoolLayer returned false outright for every indoor slot,
+// never consulting resolveSlotWeather's own transitNeedsRemovableCoolLayer field -- already computed,
+// unconditionally, for every indoor slot (see outfitSetPlanner.js's resolveSlotWeather header
+// comment: "the outside temperature that governs arrival/departure... is preserved under transit*,
+// never discarded"). An indoor destination still excuses the BASE outfit -- this does not reopen
+// that -- it only stops ignoring evidence the engine already has about the walk there and back.
+test('tripRosterFailures flags missing removable coverage for an indoor slot whose own recorded transit is genuinely cool', () => {
+  const coldTransitDinnerSlot = layerRequiredSlot({
+    id: 's_dinner', label: 'Nice Dinners', environment: 'indoor',
+    stylingContext: {
+      occasion: 'evening', activity: 'none',
+      weatherProfile: { isIndoor: true, isCold: false, transitNeedsRemovableCoolLayer: true, transitLowF: 53, transitHighF: 95 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [coldTransitDinnerSlot] })
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'),
+    'a recorded cold transit need must not be excused just because the destination itself is indoor')
+})
+
+// thread_1789598100140 (owner ruling 2026-09-16): the exact live shape. A 52°F/94°F trip day's
+// removable-cool-layer flag was set from the raw 24-hour minimum (52°F, an overnight trough) — the
+// "Vienna failure" exposure.js's own header documents. The waking-window estimate
+// (52 + (94-52)*0.35 = 66.7°F) is well above COOL_LOW_F (64°F), so a genuinely hot hiking/winery day
+// must not fail roster selection over a layer it was never really going to need during actual outing
+// hours, even though the legacy needsRemovableCoolLayer/isCold flags (still set the old way on this
+// same weatherProfile) say otherwise.
+test('tripRosterFailures does not flag missing removable coverage when the waking-window estimate clears the cool threshold, even though the raw daily low would not have', () => {
+  const hotDaySlot = layerRequiredSlot({
+    id: 's_hot', label: 'Hiking', activity: 'hiking', environment: 'outdoor',
+    stylingContext: {
+      occasion: 'casual', activity: 'hiking',
+      weatherProfile: { needsRemovableCoolLayer: true, isCold: false, isHot: true, highF: 94, lowF: 52 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [hotDaySlot] })
+  assert.ok(!result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'the waking-window estimate (66.7°F) clears COOL_LOW_F -- no cool layer is genuinely needed for this slot\'s actual outing hours')
+  assert.ok(!result.failures.some(f => f.code === 'cold_floor_infeasible'))
+})
+
+// Sanity check the other direction: a genuinely cool day (waking-window estimate still under
+// COOL_LOW_F) must keep failing exactly as before -- this fix narrows a false positive, it does not
+// weaken the real check.
+test('tripRosterFailures still flags missing removable coverage when the waking-window estimate itself is genuinely cool', () => {
+  const coolDaySlot = layerRequiredSlot({
+    id: 's_cool', label: 'Coastal Walk', activity: 'walking', environment: 'outdoor',
+    stylingContext: {
+      occasion: 'casual', activity: 'walking',
+      weatherProfile: { needsRemovableCoolLayer: true, isCold: false, highF: 63, lowF: 46 },
+    },
+  })
+  const result = validateTripRoster([CITY_TOP, CITY_BOTTOM, CITY_SHOES], { slots: [coolDaySlot] })
+  assert.ok(result.failures.some(f => f.code === 'missing_removable_cool_layer'), 'waking-window estimate here (46 + (63-46)*0.35 = 51.95°F) is still well under COOL_LOW_F -- the check must still fire')
 })
 
 test('tripRosterFailures does not flag a roster that already has an outerwear piece, whatever its job', () => {
@@ -328,7 +455,24 @@ test('tripRosterFailures still flags the roster when its only "outerwear" is pos
 // occasions alone do not strictly gate a piece out (a live-earlier lesson) -- what excluded the real
 // trench from the real hiking slot was its formality ('elevated'), which the register-ceiling gate
 // does enforce. Matches the real piece's own tagged formality, not an invented exclusion mechanism.
-const CITY_ONLY_TRENCH = piece(11, 'outerwear', { occasions: ['city', 'smart-casual'], formality: 'elevated' })
+// 2026-09-13: this fixture used to be slot-ineligible because its `elevated` formality exceeded
+// hiking's register ceiling. Formality no longer gates — it ranks — so the fixture now carries the
+// property that genuinely makes it unable to answer a COLD slot: it is a thin, unlined layer. The
+// test's subject is unchanged (a roster whose only outerwear cannot legally reach the slot); only
+// the reason it cannot is now one the engine can actually prove.
+const THIN_UNLINED_SHELL = piece(11, 'outerwear', {
+  occasions: ['city', 'smart-casual'],
+  formality: 'elevated',
+  // Two independent negative warmth signals — non-insulating construction and an unlined interior —
+  // which is what `outerwearLayerPositivelyInadequate` requires. A provable thermal claim, unlike
+  // the formality label this fixture used to lean on.
+  fabric_weight: 'light',
+  fiber_content: ['polyester'],
+  fabric_category: 'nylon',
+  insulating_layer_materials: [],
+  interior_construction: 'unlined',
+  sleeve_length: 'long',
+})
 
 const coldHikingSlot = (overrides = {}) => ({
   id: 's_hike', label: 'Nature Walks', occasion: 'casual', activity: 'hiking',
@@ -340,7 +484,7 @@ const coldHikingSlot = (overrides = {}) => ({
 })
 
 test('tripRosterFailures flags a roster whose only outerwear is gate-ineligible for an isCold slot -- the exact live-run shape', () => {
-  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH], { slots: [coldHikingSlot()] })
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, THIN_UNLINED_SHELL], { slots: [coldHikingSlot()] })
   assert.equal(result.ok, false)
   const gap = result.failures.find(f => f.code === 'cold_floor_infeasible')
   assert.ok(gap, 'a roster whose only layer cannot legally reach this slot must fail this check, even though the roster is not empty of outerwear')
@@ -355,7 +499,7 @@ test('tripRosterFailures does not flag an isCold slot whose roster contains a sl
 test('tripRosterFailures does not flag a slot the cold floor does not apply to (not isCold, or indoor)', () => {
   const notColdSlot = coldHikingSlot({ id: 's_mild', stylingContext: { occasion: 'casual', activity: 'hiking', weatherProfile: { isCold: false } } })
   const indoorSlot = coldHikingSlot({ id: 's_indoor', environment: 'indoor', stylingContext: { occasion: 'casual', activity: 'hiking', weatherProfile: { isCold: true, isIndoor: true } } })
-  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH], { slots: [notColdSlot, indoorSlot] })
+  const result = validateTripRoster([HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, THIN_UNLINED_SHELL], { slots: [notColdSlot, indoorSlot] })
   assert.ok(!result.failures.some(f => f.code === 'cold_floor_infeasible'))
 })
 
@@ -364,7 +508,7 @@ test('selectTripRosterViaModel: a chooser that picks the city-only trench over t
   // bench-eligible at all: buildTripBench only offers a piece that is gate-eligible for at least ONE
   // requested slot, and the trench's elevated formality excludes it from the hiking slot alone.
   const citySlot = { id: 's_city', label: 'City Walking', occasion: 'city', activity: 'walking' }
-  const pool = [HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, CITY_ONLY_TRENCH, JACKET]
+  const pool = [HIKE_TOP, HIKE_BOTTOM, HIKE_SHOES, THIN_UNLINED_SHELL, JACKET]
   let attempts = 0
   const chooseRoster = async ({ attempt }) => {
     attempts++
@@ -389,6 +533,26 @@ test('a roster chooser that omits a required removable layer triggers exactly on
   assert.equal(attempts, 2, 'the schema-valid but layer-less first roster must be rejected and trigger exactly one repair attempt')
   assert.equal(result.source, 'model_repaired')
   assert.ok(result.roster.some(p => Number(p.id) === 8), 'the repaired roster must include the added layer')
+  assert.equal(validateTripRoster(result.roster, { slots: [layerRequiredSlot()] }).ok, true)
+})
+
+test('selectTripRosterViaModel reconciles repair_changes when the model declares a swap but suffers an attention slip in roster_piece_ids', async () => {
+  let attempts = 0
+  const chooseRoster = async ({ attempt }) => {
+    attempts++
+    if (attempt === 1) return { roster_piece_ids: [1, 2, 3, 7] } // top, bottom, flat shoes, extra heeled shoes
+    // The repair round declares removing piece 7 and adding JACKET (id 8),
+    // but its roster_piece_ids accidentally left out 8 (an LLM array copy slip)
+    return {
+      roster_piece_ids: [1, 2, 3, 7],
+      repair_changes: [{ removed_piece_id: 7, added_piece_id: 8, reason: 'Swap redundant shoe for required warm layer' }],
+    }
+  }
+  const result = await selectTripRosterViaModel({ pool: POOL, slots: [layerRequiredSlot()], chooseRoster })
+  assert.equal(attempts, 2)
+  assert.equal(result.source, 'model_repaired')
+  assert.ok(result.roster.some(p => Number(p.id) === 8), 'reconciled repair_changes must inject the declared added layer')
+  assert.ok(!result.roster.some(p => Number(p.id) === 7), 'reconciled repair_changes must remove the declared removed piece')
   assert.equal(validateTripRoster(result.roster, { slots: [layerRequiredSlot()] }).ok, true)
 })
 
@@ -442,7 +606,7 @@ test('planKind coordinated_plan is unaffected by the trip roster wiring', async 
 // ─── SET LEVEL vs CARD LEVEL, through the real submission path ─────────────────────────────────
 import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
 
-test('a card with no layer of its own is accepted when the packing roster already has one, rejected when it does not', async () => {
+test('a card with no layer of its own is accepted cleanly when the packing roster already has one, and carries an advisory weather note when it does not', async () => {
   const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3, 8] }) // includes JACKET (id 8)
   const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
   const workbench = await buildPlanSlotWorkbench([slots[0]], {
@@ -457,15 +621,20 @@ test('a card with no layer of its own is accepted when the packing roster alread
   const withRoster = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
   assert.equal(withRoster.failures.length, 0, 'the packed jacket covers it even though this card does not show it')
   assert.equal(withRoster.accepted.length, 1)
+  assert.ok(!withRoster.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'packed jacket suppresses the removable-layer advisory note')
 
   // Same card, same weather, but the packing roster is empty (the un-wired, pre-existing behavior)
-  // — the per-card requirement must still apply exactly as before.
+  // — the cool layer finding is advisory (severity: 'warning'), so the card is accepted with an advisory flag in systemFlags.
   const noRosterPlan = { ...workbench.pendingPlan, packingRoster: [], heldOutfits: [] }
   const withoutRoster = validateSubmittedPlanOutfits(noRosterPlan, [cityCard])
-  assert.ok(withoutRoster.failures.length > 0, 'without a packing roster, the card must still carry its own layer')
+  assert.equal(withoutRoster.failures.length, 0, 'advisory warning does not hard-fail the card')
+  assert.equal(withoutRoster.accepted.length, 1)
+  assert.ok(withoutRoster.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'without a packing roster, the card receives an advisory weather note')
 })
 
-test('a card with no layer of its own is still rejected when the packing roster\'s only "layer" is positively inadequate', async () => {
+test('a card with no layer of its own still receives an advisory weather note when the packing roster\'s only "layer" is positively inadequate', async () => {
   // Same shape as the test above, JACKET (id 8) swapped for USELESS_HOODIE (id 12) — an ultralight,
   // explicitly non-insulating, explicitly unlined piece that is category 'outerwear' but not a real
   // layer. packingRosterHasLayer must read false here, the same way hasRosterLayer must at roster
@@ -479,9 +648,10 @@ test('a card with no layer of its own is still rejected when the packing roster\
 
   const cityCard = { slot_id: workbench.pendingPlan.slots[0].id, piece_ids: [1, 2, 3] } // no layer on the card itself
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [cityCard])
-  assert.equal(result.accepted.length, 0)
-  assert.ok(result.failures.some(f => f.reasons.some(r => r.includes('no layer to put on for the cooler part of the day'))),
-    'a useless hoodie sitting in the roster must not suppress the per-card removable-layer finding')
+  assert.equal(result.failures.length, 0, 'advisory warning does not hard-fail the card')
+  assert.equal(result.accepted.length, 1)
+  assert.ok(result.accepted[0].systemFlags?.some(f => f.message.includes('no layer to put on for the cooler part of the day')),
+    'a useless hoodie sitting in the roster must not suppress the per-card removable-layer advisory finding')
 })
 
 // ─── COLD FLOOR: cold_layer_decision (thread_1788508369689 arc, product ruling "use B"; enum shape
@@ -778,7 +948,11 @@ test('the trip roster schema has no fixed size, unlike the capsule roster', () =
 
 test('the trip roster system prompt asks for cross-use-case reuse, not capsule palette/shape judgment', () => {
   const brief = tripRosterSelectionSystemPrompt()
-  assert.match(brief, /REUSE ACROSS USE CASES IS THE POINT/)
+  // thread_1789585467294: reworded so reuse never outranks a use case's own strongest fit -- the old
+  // "should be preferred... all else equal" framing had no suitability check attached, and let the
+  // model pick a cross-use-case piece over a purpose-suited one just for its versatility.
+  assert.match(brief, /REUSE ACROSS USE CASES IS A STRENGTH, NOT AN AUTOMATIC WIN/)
+  assert.match(brief, /Never prefer a cross-use-case piece over a narrower, purpose-suited candidate/)
   assert.match(brief, /no fixed count/i)
   assert.doesNotMatch(brief, /PALETTE CONTRACT/)
   assert.doesNotMatch(brief, /category_shape_reason/)
@@ -819,7 +993,7 @@ test('the trip roster user text lists use cases and candidates with no budget/pa
   const text = tripRosterSelectionUserText({ bench, slots })
   assert.match(text, /USE CASES THIS TRIP MUST COVER/)
   assert.match(text, /sightseeing around town/)
-  assert.match(text, /^ID 1: /m)
+  assert.match(text, /^#1 city top \| top \| /m)
   assert.doesNotMatch(text, /CAPSULE SIZE/)
 })
 
@@ -829,6 +1003,18 @@ test('the trip roster user text lists use cases and candidates with no budget/pa
 // case needs, only that it must be "covered" at all, so it had no way to reason about whether its
 // piece counts (e.g. one bottom) could actually supply that many non-repeating cores. targetOutfits
 // was already tracked on every slot object reaching this function; it just never reached the text.
+// Owner ruling 2026-08-08: retired `[feedback:<type>]` outfit-reaction copies are not garment rules. Trip roster selection
+// printed them as `RULES (authoritative)` through buildPieceText. Regression: not presented; the owner's other stored rules still are, as authoritative.
+test('REGRESSION: trip roster selection does not present retired outfit-reaction copies as garment rules', () => {
+  const stored = ['[feedback:works] (usable variation) This pairing offers a clean silhouette.', 'Wear open over knits']
+  const bench = [{ id: 1, name: 'city coat', category: 'outerwear', styling_rules_learned: stored }]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const text = tripRosterSelectionUserText({ bench, slots })
+  assert.doesNotMatch(text, /\[feedback:|clean silhouette/)
+  assert.match(text, /RULES \(authoritative\): Wear open over knits/, 'the owner\'s stored rule keeps its authority')
+  assert.deepEqual(bench[0].styling_rules_learned, stored, 'the stored garment data is untouched')
+})
+
 test('the trip roster user text states each use case\'s required distinct-outfit count, not just that it must be covered', () => {
   const bench = [{ id: 1, name: 'city top', category: 'top' }]
   const slots = [
@@ -856,67 +1042,49 @@ test('the trip roster system prompt distinguishes making a use case wearable onc
   assert.match(brief, /without repeating the same core piece-for-piece/)
 })
 
-// Same reasoning as plan_outfit_set.test.js's capsule equivalent: the repair call must reuse the
-// initial call's cache prefix (images included) instead of re-paying for every thumbnail, since the
-// repair is the only point in a single run where a prompt-cache read is possible.
-test('the trip roster repair call reuses the initial call cache prefix instead of re-paying for every thumbnail', () => {
+// thread_1789598100140 (owner ruling 2026-09-16): roster selection is now text-only (no thumbnails),
+// so there is only ever one text block to cache -- the repair call must still reuse it verbatim
+// (byte-identical) rather than rebuilding it, so the repair round reads the cache the initial call
+// wrote instead of re-paying for the whole catalog.
+test('the trip roster repair call reuses the initial call cache prefix instead of rebuilding the catalog', () => {
   const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
-  const imageParts = bench.flatMap(piece => ([
-    { type: 'text', text: `ID ${piece.id}: ${piece.name}` },
-    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: `fake-${piece.id}` } }
-  ]))
   const failures = [{ code: 'use_case_uncoverable', message: 'City Walking has 0 eligible top(s)' }]
 
-  const initial = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 1, failures: [], previousRosterIds: [] })
-  const repair = tripRosterSelectionContent({ bench, slots, imageParts, attempt: 2, failures, previousRosterIds: [1] })
+  const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, failures: [], previousRosterIds: [] })
+  const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures, previousRosterIds: [1] })
 
-  const lastBreakpoint = content => content.reduce((last, part, index) => (part?.cache_control ? index : last), -1)
-  const initialBreak = lastBreakpoint(initial)
-  const repairBreak = lastBreakpoint(repair)
-  assert.ok(initialBreak > 0)
-  assert.equal(initialBreak, repairBreak)
-  assert.deepEqual(repair.slice(0, repairBreak + 1), initial.slice(0, repairBreak + 1))
-  assert.match(repair[repair.length - 1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.equal(initial.length, 1, 'sanity: text-only content has exactly one part with nothing to attach images to')
+  assert.equal(initial[0].cache_control?.type, 'ephemeral')
+  assert.deepEqual(repair[0], initial[0], 'the cached catalog block must be byte-identical between the initial call and the repair')
+  assert.equal(repair.length, 2, 'the repair appends exactly one additional block, not more')
+  assert.match(repair[1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
 })
 
-// ─── VISUAL-ROLE EVIDENCE SPLIT (thread_1788518048013 arc) ──────────────────────────────────────
+// ─── VISUAL-ROLE EVIDENCE (thread_1788518048013 arc, superseded by thread_1789598100140) ────────
 // hero_piece/color_accent/sharpener_piece are a capsule-era STYLING-ROLE judgment (which garment
 // should carry an outfit's visual weight for that planning objective), not a garment fact with any
-// trip-specific meaning. Both channels that could shape trip roster selection through it -- image
-// fidelity (pieceVisualDetailPolicy) and catalog text (buildPieceText/tripRosterSelectionUserText)
-// -- must stop granting it special treatment there, while a capsule caller (or any other default
-// caller) keeps the original behavior unchanged.
+// trip-specific meaning. This arc originally gave pieceVisualDetailPolicy a useVisualRoles:false
+// opt-out so trip roster selection's (then image-based) fidelity allocation would not grant a
+// capsule-era role special treatment. Roster selection is now text-only (no thumbnails at all,
+// thread_1789598100140), so that opt-out's only caller is gone -- removed along with it, restoring
+// pieceVisualDetailPolicy to one behavior for every caller. The sparse catalog format
+// (tripRosterSelectionUserText now uses) never carried visual roles in the first place.
 const COLOR_ACCENT_PLAIN = piece(40, 'top', {
   pattern_complexity: 'solid', fabric_category: 'cotton',
   style_profile_json: { visual_roles: ['color_accent'] },
 })
-const LOUD_PATTERN_PIECE = piece(41, 'top', { pattern_complexity: 'loud' })
 
-test('pieceVisualDetailPolicy: color_accent alone earns 800px by default (capsule-unchanged), but not with useVisualRoles:false', () => {
-  const withRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN)
-  assert.deepEqual(withRoles, { maxPx: 800, detail: 'auto' }, 'default behavior (capsule roster selection) must be unchanged')
-
-  const withoutRoles = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN, { useVisualRoles: false })
-  assert.deepEqual(withoutRoles, { maxPx: 448, detail: 'low' }, 'a styling-role tag with no trip-specific meaning must not earn higher fidelity when disabled')
+test('pieceVisualDetailPolicy: color_accent alone earns 800px, one behavior for every caller', () => {
+  const result = pieceVisualDetailPolicy(COLOR_ACCENT_PLAIN)
+  assert.deepEqual(result, { maxPx: 800, detail: 'auto' })
 })
 
-test('pieceVisualDetailPolicy: genuine garment-intrinsic signals (pattern, texture) still earn 800px with useVisualRoles:false', () => {
-  const result = pieceVisualDetailPolicy(LOUD_PATTERN_PIECE, { useVisualRoles: false })
-  assert.deepEqual(result, { maxPx: 800, detail: 'auto' }, 'a genuinely hard-to-read garment must still get higher fidelity regardless of the visual-roles flag')
-})
-
-test('tripRosterSelectionUserText excludes visual roles from candidate text even when the piece carries them', () => {
+test('tripRosterSelectionUserText carries no visual-role prose -- the sparse catalog format never did', () => {
   const bench = [COLOR_ACCENT_PLAIN]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
   const text = tripRosterSelectionUserText({ bench, slots })
-  assert.doesNotMatch(text, /visual roles/i, 'hero_piece/color_accent must not shape the trip roster model through text either')
-})
-
-test('buildPieceText keeps surfacing visual roles by default -- only the trip roster path opts out', async () => {
-  const { buildPieceText } = await import('../styling-engine/rules.js')
-  const text = buildPieceText(COLOR_ACCENT_PLAIN)
-  assert.match(text, /visual roles: color_accent/, 'every other caller (capsule roster selection included) must be unaffected')
+  assert.doesNotMatch(text, /visual roles/i, 'hero_piece/color_accent must not shape the trip roster model through text')
 })
 
 test('tripRosterSelectionUserText includes destination, date, and forecast weather when available', () => {
@@ -942,6 +1110,38 @@ test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion r
   assert.match(prompt, /STYLE CONSTITUTION — BODY CONTRACT:/)
   assert.match(prompt, /OCCASION REALISM & PRACTICAL UTILITY:/)
   assert.match(prompt, /Never rely solely on dressy, elevated, or high-maintenance outerwear/)
+})
+
+// thread_1789628875203: the model packed a collared rayon popover blouse and reasoned it would
+// "serve as a lightweight layer for varied outdoor temps" -- a real garment-category confusion, not
+// a fabric/neckline hard-gate question (that fix stays a labeling correction above; this is the
+// companion prompt clarification, per the owner's own Fix 2b).
+test('tripRosterSelectionSystemPrompt clarifies that a button-up/popover blouse is a base top, not a layering substitute', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /button-up, popover, or collared woven blouse is a base top, not a layering garment/)
+})
+
+// thread_1789633862650: Run 1442 packed 10 of 13 suitcase slots on shoes and bottoms -- 0 hike
+// tops, 0 layers, 5 pairs of shoes. Advisory judgment guidance, not a fixed quota (this codebase's
+// long-standing "not a formula" principle, tested above and in outfit_structure.test.js) -- a hard
+// numeric ceiling was proposed and rejected for exactly that reason.
+test('tripRosterSelectionSystemPrompt guides tops coverage for active/outdoor slots and footwear-pair discipline, without a fixed numeric quota', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /TOPS VARIETY & FUNCTIONAL COVERAGE/)
+  assert.match(prompt, /active or outdoor use case.*needs a top that is actually suited to it/)
+  assert.match(prompt, /weigh each additional pair against whether its job is truly distinct/)
+  assert.doesNotMatch(prompt, /\b[2-9]-[2-9] (tops|bottoms|shoes|layers)\b/, 'guidance stays judgment-based, not a numeric allocation formula')
+})
+
+test('register field description reserves dressy/formal for genuine escalation events, not standard vacation dining', () => {
+  assert.match(registerFieldDescription, /ordinary vacation dinner\/wine bar\/nice restaurant.*'elevated'/)
+  assert.match(registerFieldDescription, /Reserve 'dressy'\/'formal' for genuine escalation events/)
+  assert.doesNotMatch(registerFieldDescription, /rehearsal dinner 'dressy'/, 'the old example that nudged ordinary dining toward the dressy floor must be gone')
+})
+
+test('tripPlanCompositionSystemPrompt reinforces that every separates outfit needs a top', () => {
+  const prompt = tripPlanCompositionSystemPrompt()
+  assert.match(prompt, /Every separates outfit needs a top/)
 })
 
 test('buildTripPackingLines recognizes assignedLayerIds as shown in the travel system', () => {
@@ -981,8 +1181,9 @@ test('tripRosterFailures flags an outdoor cool/cold slot when the only candidate
   assert.ok(gap, 'a sun hoodie that is positively inadequate for cool/cold outdoor weather cannot satisfy the cold floor')
 })
 
-test('buildTripBench round-robins across distinct shoe construction buckets', async () => {
-  // Create candidate shoes with lower IDs for sneakers and higher IDs for boots/loafers
+test('buildTripBench includes every distinct shoe construction, with no cap to round-robin against', async () => {
+  // Lower IDs for sneakers, higher IDs for boots/loafers -- previously the exact shape a bench cap's
+  // ascending-id tiebreak would have silently narrowed down to sneakers alone.
   const sneaker1 = piece(10, 'shoes', { shoe_type: 'sneaker', name: 'white sneaker' })
   const sneaker2 = piece(11, 'shoes', { shoe_type: 'sneaker', name: 'black sneaker' })
   const sneaker3 = piece(12, 'shoes', { shoe_type: 'sneaker', name: 'grey sneaker' })
@@ -1002,14 +1203,13 @@ test('buildTripBench round-robins across distinct shoe construction buckets', as
   const { bench } = await selectTripRosterViaModel({
     pool,
     slots: [slot],
-    benchSize: 5, // Truncate tightly to ensure diversity interleaving matters
     chooseRoster: null
   })
 
   const shoeBenchTypes = bench.filter(p => p.category === 'shoes').map(p => p.shoe_type)
   assert.ok(shoeBenchTypes.includes('boot'), 'boots must not be crowded out by lower-ID sneakers')
   assert.ok(shoeBenchTypes.includes('loafer'), 'loafers must not be crowded out by lower-ID sneakers')
-  assert.ok(shoeBenchTypes.includes('sneaker'), 'sneakers must also be present')
+  assert.equal(shoeBenchTypes.filter(t => t === 'sneaker').length, 3, 'all three sneakers must also survive -- nothing truncates the bench')
 })
 
 test('tripRosterSelectionSystemPrompt includes footwear occasion register guidance', () => {
@@ -1019,3 +1219,188 @@ test('tripRosterSelectionSystemPrompt includes footwear occasion register guidan
   assert.match(prompt, /polished boots, loafers, or elevated flats for evening dining/i)
 })
 
+
+// ─── the endpoint evaluator, through the trip-slot path ────────────────────────────────────────
+//
+// Concern 3 review: the shared primitive's semantics are pinned in test/thermalAdequacyMigration.
+// What this asserts is the WIRING — that a trip slot passes its resolved weather profile and
+// environment into the shared Contract C stage, and that the endpoint evaluator's amount verdict
+// comes back out as a card annotation rather than being computed and dropped.
+
+const THERMAL_POOL = [
+  piece(40, 'top', { name: 'light cotton tee', occasions: ['city', 'casual', 'outdoor'], fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'long' }),
+  piece(41, 'top', { name: 'wool sweater', occasions: ['city', 'casual', 'outdoor'], fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' }),
+  piece(42, 'bottom', { name: 'denim', occasions: ['city', 'casual', 'outdoor'], fabric_weight: 'medium', fabric_category: 'denim', fiber_content: ['denim'], length_hits_at: 'ankle' }),
+  piece(43, 'shoes', { name: 'trail boots', occasions: ['city', 'casual', 'outdoor'], shoe_type: 'boot', heel_height: 'flat', walk_support: 'high', fabric_category: 'leather' }),
+  piece(44, 'outerwear', { name: 'rain shell', occasions: ['city', 'casual', 'outdoor'], fabric_weight: 'light', fiber_content: ['polyester'], sleeve_length: 'long', weather_protection: ['rain'] }),
+]
+
+test('TRIP SLOT: the endpoint evaluator runs on the slot weather and its verdict reaches the card', async () => {
+  const slots = [{
+    id: 'cold1', label: 'Cold city day', occasion: 'city', activity: 'none', environment: 'outdoor', count: 1,
+    stylingContext: { occasion: 'city', activity: 'none', calendarSeason: 'winter' },
+  }]
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces: THERMAL_POOL, question: 'a cold city trip', planKind: 'trip',
+    chooseTripRoster: async () => ({ roster_piece_ids: THERMAL_POOL.map(p => p.id) }),
+  })
+  const slot = workbench.pendingPlan.slots[0]
+  // The slot's own resolved profile is set directly so the scenario does not depend on live weather
+  // resolution — everything after this is the production path.
+  // Both halves of the profile together, the way resolveSlotWeather builds it: `resolveConditions`
+  // reads the nested resolved context in preference to the flat fields, so merging only the flat
+  // highF/lowF onto a heuristic profile leaves the demand unresolved and this test would assert
+  // nothing.
+  const resolved = resolveWeatherContext({ userWeather: validateUserWeather({ high_f: 35, low_f: 25 }) })
+  slot.weatherProfile = { ...slot.weatherProfile, ...resolved.temperature, resolvedWeatherContext: resolved }
+
+  const tooLight = validateSubmittedPlanOutfits(workbench.pendingPlan, [{ slot_id: slot.id, piece_ids: [40, 42, 43, 44] }])
+
+  // DISPOSITION AND FINDING BOTH PINNED. 35/25 with a light base under a light shell is a known
+  // substantial severe-cold shortfall, which is an ERROR — so the card must be REFUSED, not
+  // annotated. Accepting "rejected or annotated" would let a future severity downgrade keep this
+  // test green while the flow quietly started shipping the card.
+  assert.equal(tooLight.accepted.length, 0, 'a hard severe-cold shortfall is refused, not annotated')
+  assert.equal(tooLight.failures.length, 1)
+  const reasons = tooLight.failures[0].reasons || [tooLight.failures[0].message]
+  assert.ok(reasons.includes(SEVERE_CAPACITY_MESSAGE),
+    `the refusal carries the severe-cold capacity finding verbatim: ${JSON.stringify(reasons)}`)
+
+  // The control, and the part that proves this is the ENDPOINT evaluator rather than any surviving
+  // presence rule: identical slot, identical weather, identical shell — only the base changes, from
+  // a light tee to a wool sweater — and the card comes back clean.
+  const adequate = validateSubmittedPlanOutfits(workbench.pendingPlan, [{ slot_id: slot.id, piece_ids: [41, 42, 43, 44] }])
+  assert.deepEqual(adequate.failures, [])
+  assert.equal(adequate.accepted.length, 1)
+  const adequateFlags = (adequate.accepted[0]?.systemFlags || []).map(flag => flag.message)
+  assert.ok(!adequateFlags.includes(SEVERE_CAPACITY_MESSAGE) && !adequateFlags.includes(COLD_END_SHORTFALL_MESSAGE),
+    `an adequate card carries neither thermal finding: ${JSON.stringify(adequateFlags)}`)
+})
+
+test('TRIP SLOT: slot.activity reaches the evaluator — same weather, same garments, hiking is not sedentary', async () => {
+  // `slot.activity` is structured slot truth that the validation call used to drop, so a hiking
+  // slot was graded against sedentary demand. At 45/35 the cold endpoint moves two taxonomy levels
+  // between the two — `very warm` sedentary, `moderate` hiking — so this is a verdict change, not
+  // a ranking change.
+  const resolved = resolveWeatherContext({ userWeather: validateUserWeather({ high_f: 45, low_f: 35 }) })
+  const verdictFor = async activity => {
+    const workbench = await buildPlanSlotWorkbench([{
+      id: `act-${activity}`, label: 'Day out', occasion: 'casual', activity, environment: 'outdoor', count: 1,
+      stylingContext: { occasion: 'casual', activity, calendarSeason: 'fall' },
+    }], {
+      allPieces: THERMAL_POOL, question: 'a trip', planKind: 'trip',
+      chooseTripRoster: async () => ({ roster_piece_ids: THERMAL_POOL.map(p => p.id) }),
+    })
+    const slot = workbench.pendingPlan.slots[0]
+    slot.weatherProfile = { ...slot.weatherProfile, ...resolved.temperature, resolvedWeatherContext: resolved }
+    return validateSubmittedPlanOutfits(workbench.pendingPlan, [{ slot_id: slot.id, piece_ids: [40, 42, 43, 44] }])
+  }
+
+  const sedentary = await verdictFor('none')
+  assert.equal(sedentary.accepted.length, 0, 'sedentary at 45/35: refused outright')
+  assert.ok((sedentary.failures[0]?.reasons || []).includes(SEVERE_CAPACITY_MESSAGE))
+
+  const hiking = await verdictFor('hiking')
+  assert.equal(hiking.failures.length, 0, 'the same card, the same weather, accepted for hiking')
+  const hikingFlags = (hiking.accepted[0]?.systemFlags || []).map(flag => flag.message)
+  assert.ok(!hikingFlags.includes(SEVERE_CAPACITY_MESSAGE) && !hikingFlags.includes(COLD_END_SHORTFALL_MESSAGE),
+    `and with no thermal note either: ${JSON.stringify(hikingFlags)}`)
+})
+
+// thread_1789585467294: a trip-wide envelope (weather.js's classify() max-of-highs/min-of-lows,
+// inherited by any slot with no date of its own to resolve against) is a real, useful gate input,
+// but it is NOT one specific day's forecast — every slot in a 4-day trip previously got stamped with
+// the identical flat "X°F high / Y°F low — live forecast" even though the real days varied by 7°F+.
+// This pins truthfulWeatherLabel's honest-range behavior directly, with synthetic numbers (the
+// incident's own 94°F figure is incidental to the bug, not its subject).
+test('truthfulWeatherLabel discloses an honest range across the trip when the days actually varied', () => {
+  const varyingTemperature = {
+    source: 'live', highF: 72, lowF: 38, provider: 'Open-Meteo',
+    dailySeries: [
+      { date: '2026-09-19', highF: 72, lowF: 50 },
+      { date: '2026-09-20', highF: 58, lowF: 38 },
+      { date: '2026-09-21', highF: 65, lowF: 44 },
+    ],
+  }
+  const label = truthfulWeatherLabel(varyingTemperature, { location: 'Paso Robles, CA' })
+  assert.equal(label, '38–72°F across the trip — live forecast, Paso Robles, CA (Open-Meteo)')
+  // It must not read as one day's own reading: the flat single-number phrasing is gone entirely.
+  assert.ok(!label.includes('72°F high / 38°F low'))
+})
+
+test('truthfulWeatherLabel keeps the plain single-number phrasing when every day in the series agrees', () => {
+  const flatTemperature = {
+    source: 'live', highF: 70, lowF: 50, provider: 'Open-Meteo',
+    dailySeries: [
+      { date: '2026-09-19', highF: 70, lowF: 50 },
+      { date: '2026-09-20', highF: 70, lowF: 50 },
+    ],
+  }
+  assert.equal(
+    truthfulWeatherLabel(flatTemperature, { location: 'Paso Robles, CA' }),
+    '70°F high / 50°F low — live forecast, Paso Robles, CA (Open-Meteo)'
+  )
+})
+
+test('truthfulWeatherLabel keeps the plain single-number phrasing for a single-day slot (no series variation possible)', () => {
+  const singleDayTemperature = { source: 'live', highF: 72, lowF: 50, provider: 'Open-Meteo', dailySeries: [{ date: '2026-09-19', highF: 72, lowF: 50 }] }
+  assert.equal(
+    truthfulWeatherLabel(singleDayTemperature, { location: 'Paso Robles, CA' }),
+    '72°F high / 50°F low — live forecast, Paso Robles, CA (Open-Meteo)'
+  )
+})
+
+test('truthfulWeatherLabel is unaffected by dailySeries variation for non-live sources', () => {
+  const statedUser = { source: 'stated_user', highF: 60, lowF: 48, band: null, dailySeries: [
+    { date: '2026-09-19', highF: 72, lowF: 50 },
+    { date: '2026-09-20', highF: 58, lowF: 38 },
+  ] }
+  assert.equal(truthfulWeatherLabel(statedUser, { location: 'Paso Robles, CA' }), '60°F high / 48°F low — you said so')
+})
+
+// thread_1789628875203: a live Paso Robles run labeled a collared rayon popover blouse with NO
+// "outdoor" occasion tag at all `slots: Winery Days, Hiking` -- the model then reused it as its
+// Hiking layer over actual cotton tees/tanks. The slot's generic `occasion: 'casual'` trivially
+// matched the piece's `casual` tag, and nothing checked the Hiking activity profile's own
+// `required_occasion_tags` (footwear-comfort.js: outdoor/outdoor active/hiking). Fixed as a labeling
+// correction only -- the piece stays roster-eligible (still labeled for Winery Days, still
+// selectable), it just stops being told to the model as gate-eligible for a use case it was never
+// tagged for. Reached through the real path (selectTripRosterViaModel -> buildTripBench), not by
+// calling an unexported helper directly.
+test('a piece with no outdoor occasion tag is never labeled eligible for a Hiking slot, even though it shares the slot\'s generic occasion', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  const blouse = piece(20, 'top', { occasions: ['casual', 'city', 'smart-casual'] })
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [20, 4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: [...POOL, blouse], slots: [hikingSlot], chooseRoster })
+  assert.ok(!(capturedLabels.get(20) || []).includes('Hiking'), 'a piece never tagged outdoor must not claim the Hiking slot')
+})
+
+test('a piece tagged outdoor but recorded low-confidence for it is never labeled eligible for a Hiking slot', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  const lowConfidencePiece = piece(21, 'top', {
+    occasions: ['casual', 'outdoor'],
+    style_profile_json: { garment_intelligence: { occasion_confidence: { outdoor: 'low' } } },
+  })
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [21, 4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: [...POOL, lowConfidencePiece], slots: [hikingSlot], chooseRoster })
+  assert.ok(!(capturedLabels.get(21) || []).includes('Hiking'), 'low-confidence outdoor affinity must not claim the Hiking slot either')
+})
+
+test('a piece genuinely tagged outdoor, with no low-confidence marker, still gets the Hiking label (no over-suppression)', async () => {
+  const hikingSlot = { id: 's1', label: 'Hiking', occasion: 'casual', activity: 'hiking' }
+  let capturedLabels = null
+  const chooseRoster = async ({ slotLabelsById }) => {
+    capturedLabels = slotLabelsById
+    return { roster_piece_ids: [4, 5, 6] }
+  }
+  await selectTripRosterViaModel({ pool: POOL, slots: [hikingSlot], chooseRoster })
+  assert.ok((capturedLabels.get(4) || []).includes('Hiking'), 'a genuinely outdoor-tagged piece must keep its Hiking label')
+})

@@ -1,0 +1,677 @@
+{
+  "experiment": "Stage 2: construction probe (A), payload completeness (B), controlled count (C)",
+  "status": "SEALED — awaiting owner approval of this file's sha256. No provider call may be made until the owner approves it (--approved-prereg-sha).",
+  "authority": "docs/stage1-cause-matrix-2026-09-14.md §4–10",
+  "registeredOn": "2026-09-14",
+  "snapshot": {
+    "policy": "One frozen snapshot, taken after the owner's metadata review, serves A, B and C. Its six database-file sha256 values are written here before approval. Every call runs on a fresh copy.",
+    "finalSnapshotSha256": {
+      "wardrobe.db": "7fbf27c8023c742dc12b5847df60a1ca83e0bfc9b2a23973cbdccd2e21743be2",
+      "wardrobe.db-wal": "233cd6c175f96c147984183f677cb7afea28ff9a86e1bc7a7466cc29fd8975a6",
+      "wardrobe.db-shm": "a8ab8c6c28c715ec641d9f252e93e7612bfc882d30f251a4e8672369b9a45ca9",
+      "system.db": "d5d3373e9936295fb8fda63365135db4d4b3058f7a857d74fe59495263da7d03",
+      "system.db-wal": "a2d64a5c4134a42a92208780af154d6712585a38010f06ee304a0547e9511c20",
+      "system.db-shm": "f058c0019c273839a0e893027ce8fc2dacd99b06ae671b91afa5363dadd50355"
+    },
+    "preflightSnapshot": "provisional WAL-safe copy of the current wardrobe and data/system.db, used only for the offline preflight",
+    "finalSnapshotTakenAt": "2026-09-14 17:13:34 PDT, WAL-safe copy of wardrobe.db and data/system.db after the owner's metadata review; durable copy in scratch/ab_stage2_runs/2026-09-14/final_snapshot"
+  },
+  "source": "Every manifest records git HEAD, the sha256 of `git diff --binary HEAD` and untracked files; live mode refuses while any untracked file exists.",
+  "provider": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "thinkingLevel": "low"
+  },
+  "capture": "Every paid call must have normalized input, wire input and raw output under one callId; an incomplete capture on a technically successful call is a reported capture-integrity failure. No reruns or replacements; failures are outcomes.",
+  "requestDate": "2026-09-13 (the Stage 1 request date, held for comparability); location is the snapshot's home location",
+  "neutralVerdictWordsFlag": "WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS=true in every B and C call, both arms. This is an experimental prompt condition, not production identity: the experiment tests what the model does with garment and weather evidence, not whether it follows engine labels.",
+  "sleeve": {
+    "categoricalRule": "withheld in A; replaced in B and C by the neutral sentence, in both arms",
+    "neutralSentence": "Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient.",
+    "deterministicFinding": "log-only, computed offline on frozen raw outputs, hidden from every model; no effect on eligibility, ranking, delivery, critic or repair"
+  },
+  "contracts": {
+    "A": {
+      "harness": "scratch/ab_stage2_construction_probe.mjs",
+      "pairs": [
+        {
+          "inner": 144,
+          "outer": 996866
+        },
+        {
+          "inner": 184,
+          "outer": 996866
+        },
+        {
+          "inner": 238,
+          "outer": 996866
+        }
+      ],
+      "replicatesPerPair": 3,
+      "calls": 9,
+      "executionOrder": [
+        "r3:238",
+        "r1:184",
+        "r1:238",
+        "r2:238",
+        "r1:144",
+        "r3:144",
+        "r2:184",
+        "r2:144",
+        "r3:184"
+      ],
+      "systemPrompt": "You are judging whether one garment can be worn under another. For each garment you are given its complete recorded facts and two photographs, a hanger photo and a worn photo. The inner garment is worn under the outer garment with both sleeves on. Judge only the physical layering relationship of the two garments from the evidence shown. Classify the relationship as workable, unworkable, or genuinely_uncertain. Base every piece of construction evidence on a recorded fact or on something visible in a photograph, and say which garment and which source it comes from. When the relationship is workable, describe how the inner garment's sleeve would sit inside the outer garment's sleeve. When it is genuinely uncertain, say what evidence is missing. Do not state construction details that are neither recorded nor visible. Use an empty string for sleeve_treatment or uncertainty_reason when it does not apply. Return only JSON.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "workable",
+              "unworkable",
+              "genuinely_uncertain"
+            ]
+          },
+          "construction_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "garment": {
+                  "type": "string",
+                  "enum": [
+                    "inner",
+                    "outer"
+                  ]
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "photo",
+                    "fact"
+                  ]
+                },
+                "observation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "garment",
+                "source",
+                "observation"
+              ]
+            }
+          },
+          "sleeve_treatment": {
+            "type": "string"
+          },
+          "uncertainty_reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "construction_evidence",
+          "sleeve_treatment",
+          "uncertainty_reason"
+        ]
+      },
+      "shown": "for inner then outer garment: the same superset B1 line (production composer line plus appended structured facts, no role vocabulary), then a labelled hanger photo and a labelled worn photo (768 px); then the question",
+      "withheld": [
+        "weather",
+        "occasion",
+        "engine verdicts",
+        "the categorical sleeve rule",
+        "the neutral sleeve sentence",
+        "rotation and feedback memory",
+        "the truth table"
+      ],
+      "truthTable": {
+        "144": "workable — soft, compressible ruching; an intentionally visible longer cuff is legitimate",
+        "184": "workable — voluminous sleeve soft enough to compress",
+        "238": "unworkable — substantial non-compressible sleeve volume, not merely a voluminous shape tag"
+      },
+      "scoring": {
+        "primary": "verdict agreement per call, reported per pair; genuinely_uncertain reported separately and never counted as correct",
+        "secondary": "grounding: owner marks each construction_evidence item supported or unsupported by what was shown; unsupported construction claims are grounding failures; a 238 'unworkable' reasoned only from the shape tag is a correct verdict with incorrect grounding",
+        "schemaCompliance": "sleeve_treatment non-empty when workable; uncertainty_reason non-empty when genuinely_uncertain — violations reported",
+        "threshold": "none; descriptive"
+      }
+    },
+    "B": {
+      "harness": "scratch/ab_stage2_composer_only.mjs --contract B",
+      "question": "Is the Whole Wardrobe composer's thin garment payload itself causing selection failures?",
+      "arms": {
+        "B0": {
+          "garmentLine": "production",
+          "sleeveGuidance": "neutral",
+          "holdOutComparisonSet": false,
+          "maxTokensForCount": null,
+          "limit": 5
+        },
+        "B1": {
+          "garmentLine": "complete",
+          "sleeveGuidance": "neutral",
+          "holdOutComparisonSet": false,
+          "maxTokensForCount": null,
+          "limit": 5
+        }
+      },
+      "onlyDifference": "the garment line: B0 is the production line; B1 is superset: the exact production B0 line, byte-for-byte, followed by appended structured facts in the composer's own '; field: value' vocabulary — colors, pattern_type, pattern_scale, pattern_complexity, silhouette, formality, season; for tops/dresses/outerwear length_hits_at, neckline, sleeve_length, sleeve_shape, stretch; for bottoms bottom_shape, leg_opening, length_hits_at; for shoes shoe_type, toe_shape, walk_support, heel_height; for accessories accessory_subtype, jewelry_type, necklace_length; for outerwear interior_construction; tag_state when provisional. Nothing is dropped or reinterpreted (hem finish, do-not-pair, reads_as, tuck, fit and explicit opacity stay), no sparse convention is assumed, and no role vocabulary (layer_top, primary_top, primary_bottom) is added. Regression: B1 line = exact B0 line + appended fields.",
+      "notAReplayOfProduction": "both arms substitute the neutral sleeve sentence and stop before production's downstream stages",
+      "boundary": "complete upstream production (context resolution, eligibility, suppression, ranking, caps, roster order, photograph selection, prompt assembly); stop immediately after the composer response; skipped: slot repair, local gate, backfill, critic, repair",
+      "photographs": "production selection (worn first) in both arms; source file and sha256 of every sent image recorded",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "replicatesPerCell": 2,
+      "calls": 12,
+      "executionOrder": [
+        "r1:S1:B0",
+        "r1:S1:B1",
+        "r1:S2:B0",
+        "r1:S2:B1",
+        "r1:S3:B0",
+        "r1:S3:B1",
+        "r2:S2:B1",
+        "r2:S2:B0",
+        "r2:S3:B1",
+        "r2:S3:B0",
+        "r2:S1:B1",
+        "r2:S1:B0"
+      ],
+      "ratedObject": "raw composer cards on blind hanger-first sheets",
+      "outcomes": [
+        "per-card owner ratings (weather adequacy, style and intent, would wear): per-attempt means primary, best-of secondary",
+        "construction acknowledgement per non-obvious sleeve or hem interaction: grounded intentional treatment in styling_instructions / silent / unsupported claim",
+        "truth-table coding wherever 131, 142, 144, 184, 238 or 349 appears",
+        "S3 warm-end coding, not an automatic failure: lightest realistic configuration; its warmth evidence at the warm endpoint (level and signed distance); whether the model explained the layer's endpoint purpose; owner rating",
+        "avoidance scored only when the model explicitly shows it considered and rejected the relationship"
+      ]
+    },
+    "C": {
+      "harness": "scratch/ab_stage2_composer_only.mjs --contract C",
+      "label": "controlled count experiment — not a replay of the production five-card flow",
+      "arms": {
+        "N1": {
+          "garmentLine": "complete",
+          "sleeveGuidance": "neutral",
+          "holdOutComparisonSet": true,
+          "maxTokensForCount": 5,
+          "limit": 1
+        },
+        "N5": {
+          "garmentLine": "complete",
+          "sleeveGuidance": "neutral",
+          "holdOutComparisonSet": true,
+          "maxTokensForCount": 5,
+          "limit": 5
+        }
+      },
+      "garmentLine": "always the superset B1 line (B0 line + appended facts), regardless of Contract B's result; a small B experiment cannot establish that incomplete facts are sufficient",
+      "onlyDifferences": [
+        "the count in 'Compose N outfits.'",
+        "schema minItems/maxItems (1 or 5)"
+      ],
+      "heldOutOfBothArms": "the five-card-only COMPARISON SET CONTRACT and THERMAL & SEASONAL COHERENCE paragraph",
+      "tokenBudget": "structuredResponseMaxTokens(5) in both arms",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "replicatesPerCell": 2,
+      "calls": 12,
+      "executionOrder": [
+        "r1:S1:N1",
+        "r1:S1:N5",
+        "r1:S2:N1",
+        "r1:S2:N5",
+        "r1:S3:N1",
+        "r1:S3:N5",
+        "r2:S2:N5",
+        "r2:S2:N1",
+        "r2:S3:N5",
+        "r2:S3:N1",
+        "r2:S1:N5",
+        "r2:S1:N1"
+      ],
+      "outcome1_perCardQuality": {
+        "primary": "per-attempt mean weather, mean style and would-wear proportion across all raw cards",
+        "secondaryEqualCard": "the single card against the five-card output's card at the pre-registered seeded position for the same scenario and replicate (balanced across positions 1–5; no strongest-first instruction is added)",
+        "equalCardPositions": {
+          "r1:S1": 2,
+          "r2:S1": 1,
+          "r1:S2": 3,
+          "r2:S2": 4,
+          "r1:S3": 5,
+          "r2:S3": 4
+        }
+      },
+      "outcome2_productUtility": "best weather and best style of the attempt, and whether it produced at least one would-wear card — never presented as evidence that each card is better",
+      "codingAsInB": true
+    }
+  },
+  "totalPaidCalls": 33,
+  "downstreamCalls": 0,
+  "costEstimate": {
+    "basis": "input tokens measured from the offline preflight requests (text chars/4 + 1,080 tokens per image); output assumed from Stage 1 (5-card composer ~1,250, 1-card ~350, probe ~400); Gemini 3.5 Flash-Lite $0.30/M input, $0.03/M cached input, $2.50/M output",
+    "A": {
+      "calls": 9,
+      "inputTokensPerCall": 4915,
+      "uncachedUSD": 0.02
+    },
+    "B": {
+      "calls": 12,
+      "inputTokensPerCall": {
+        "B0": 100170,
+        "B1": 104600
+      },
+      "uncachedUSD": 0.41,
+      "stage1LikeCachingUSD": 0.08
+    },
+    "C": {
+      "calls": 12,
+      "inputTokensPerCall": 104400,
+      "uncachedUSD": 0.4,
+      "stage1LikeCachingUSD": 0.07
+    },
+    "totalPaidCalls": 33,
+    "downstreamCalls": 0,
+    "totalUSD": {
+      "lowWithCaching": 0.17,
+      "highNoCaching": 0.83
+    }
+  },
+  "openDecisions": [],
+  "infrastructure": {
+    "sourceHashStability": "npm test no longer rewrites any tracked file (recall_at_cap.test.js writes its report to a temporary directory); the working-tree source hash is shown unchanged before and after the full suite.",
+    "captureIntegration": "test/composerOnlyCaptureIntegration.test.js drives the experiment route through the real provider path with only the Gemini SDK request method stubbed: one composer call, normalized/wire/output records under one callId, no downstream call.",
+    "boundaryTests": "COMPOSER-ONLY EXPERIMENT tests in test/aiEndpointContracts.test.js"
+  },
+  "sealed": {
+    "sealedAt": "2026-09-15T00:16:12.254Z",
+    "source": {
+      "gitHead": "7e153265f648f9e58636e96db5a9e87c89750828",
+      "diffBinaryHeadSha256": "7aca78400e117498ff5e419b2b299281385224b3a6268592c5308d3b148b7826",
+      "excludedFromDiff": [
+        "scratch/ab_stage2_preregistration.json"
+      ]
+    },
+    "snapshot": {
+      "wardrobe.db": "7fbf27c8023c742dc12b5847df60a1ca83e0bfc9b2a23973cbdccd2e21743be2",
+      "wardrobe.db-wal": "233cd6c175f96c147984183f677cb7afea28ff9a86e1bc7a7466cc29fd8975a6",
+      "wardrobe.db-shm": "a8ab8c6c28c715ec641d9f252e93e7612bfc882d30f251a4e8672369b9a45ca9",
+      "system.db": "d5d3373e9936295fb8fda63365135db4d4b3058f7a857d74fe59495263da7d03",
+      "system.db-wal": "a2d64a5c4134a42a92208780af154d6712585a38010f06ee304a0547e9511c20",
+      "system.db-shm": "f058c0019c273839a0e893027ce8fc2dacd99b06ae671b91afa5363dadd50355"
+    },
+    "cells": {
+      "A": {
+        "r3:238": {
+          "requestIdentitySha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "d5ba1598cd9386b38365863468e2968ce453cc1b76582f0d2d0d61994de1186e",
+          "imagesSha256": "a8aa4d6ad8512c4d5dfc48e5e0cb2d4f8754640e972660b7cac909ecfffbdf68",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584"
+        },
+        "r1:184": {
+          "requestIdentitySha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "99339607a5dd15dcf80bdcf2fa23d684305a8d2d73e407bb5eaf22842efcccc1",
+          "imagesSha256": "c6da2fab0a9aa6c957369afaee328c714af26928d519b9278c843cf515b4be7f",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91"
+        },
+        "r1:238": {
+          "requestIdentitySha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "d5ba1598cd9386b38365863468e2968ce453cc1b76582f0d2d0d61994de1186e",
+          "imagesSha256": "a8aa4d6ad8512c4d5dfc48e5e0cb2d4f8754640e972660b7cac909ecfffbdf68",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584"
+        },
+        "r2:238": {
+          "requestIdentitySha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "d5ba1598cd9386b38365863468e2968ce453cc1b76582f0d2d0d61994de1186e",
+          "imagesSha256": "a8aa4d6ad8512c4d5dfc48e5e0cb2d4f8754640e972660b7cac909ecfffbdf68",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "ef8685a754c005394611d62ad9b628e067bc271c218a5409a187a77f61770584"
+        },
+        "r1:144": {
+          "requestIdentitySha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "8e3a6304c4ed3b00bd362909659a3911b8377c8dcbae7eabb88424d60ad7b024",
+          "imagesSha256": "0f387978c4380e2102143162fab064af8ea84730110577501718d9e7d9c37212",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb"
+        },
+        "r3:144": {
+          "requestIdentitySha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "8e3a6304c4ed3b00bd362909659a3911b8377c8dcbae7eabb88424d60ad7b024",
+          "imagesSha256": "0f387978c4380e2102143162fab064af8ea84730110577501718d9e7d9c37212",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb"
+        },
+        "r2:184": {
+          "requestIdentitySha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "99339607a5dd15dcf80bdcf2fa23d684305a8d2d73e407bb5eaf22842efcccc1",
+          "imagesSha256": "c6da2fab0a9aa6c957369afaee328c714af26928d519b9278c843cf515b4be7f",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91"
+        },
+        "r2:144": {
+          "requestIdentitySha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "8e3a6304c4ed3b00bd362909659a3911b8377c8dcbae7eabb88424d60ad7b024",
+          "imagesSha256": "0f387978c4380e2102143162fab064af8ea84730110577501718d9e7d9c37212",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "40736999ad449558c016032a3648eac56e7306ff18beac93447d0966660166eb"
+        },
+        "r3:184": {
+          "requestIdentitySha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91",
+          "systemSha256": "5cea426ca3053be52843355e2b7532d20d86f6d47672a789474c5dc22b1e3798",
+          "textPartsSha256": "99339607a5dd15dcf80bdcf2fa23d684305a8d2d73e407bb5eaf22842efcccc1",
+          "imagesSha256": "c6da2fab0a9aa6c957369afaee328c714af26928d519b9278c843cf515b4be7f",
+          "schemaSha256": "99d77c6c6290bcbb0a464d9dc2ee5e271b78b76e8ec450d0eebf9d48be3df19d",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 1200,
+          "sha256": "fbfaf91eaa636846700da1ff56cae60643240f4775402cf22e6a139997a0ef91"
+        }
+      },
+      "B": {
+        "r1:S1:B0": {
+          "requestIdentitySha256": "16556be57321e7bc962fbe5c7dc70768d7b714088c403089863fa488b6007b2c",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "637ef9c99b313ad061a6aee62b5e3aec61394a0730049b5e22cb85d8f5dd385b",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "16556be57321e7bc962fbe5c7dc70768d7b714088c403089863fa488b6007b2c"
+        },
+        "r1:S1:B1": {
+          "requestIdentitySha256": "c59c9eecc90c811bf76462871fbdf15cc7e42c7d50f28e0b576036959a572ff0",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6806880a2ff26455b0086786b3bcf025b58c5015993d24bf9f6529133220f676",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "c59c9eecc90c811bf76462871fbdf15cc7e42c7d50f28e0b576036959a572ff0"
+        },
+        "r1:S2:B0": {
+          "requestIdentitySha256": "6c7ed70a12451e7407e9aebfb44754e0b995c3f5bb809f34c663b1ce8e91304e",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6168a89958cc18153baea5e5731d86d11f549c1ae8fb7b66bbb6f2615041f8bb",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "6c7ed70a12451e7407e9aebfb44754e0b995c3f5bb809f34c663b1ce8e91304e"
+        },
+        "r1:S2:B1": {
+          "requestIdentitySha256": "48b8f7142b8cb754bb2c8e9d9a29a57dba5e53edde22ea2f512723c3e4526efc",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "4ae51ce5073ed3078522a169f8d95be838fa230d82841d4df627552bcefd1941",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "48b8f7142b8cb754bb2c8e9d9a29a57dba5e53edde22ea2f512723c3e4526efc"
+        },
+        "r1:S3:B0": {
+          "requestIdentitySha256": "73b1ace4dc0ac1273864b0e82845a25d4aca680d54688ee15c42ba7209111c2b",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "41d27f73806ef5bbd00bcd9fa02be77d4317655b400b3556b4473adf0292c812",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "73b1ace4dc0ac1273864b0e82845a25d4aca680d54688ee15c42ba7209111c2b"
+        },
+        "r1:S3:B1": {
+          "requestIdentitySha256": "01af221179b07f9026a213a6f13fcf56cc90ec24c23436c29b42d7fd589f43ca",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "8bebd12d3bfd0db04bc47afc88862cc5f1aaed28bfb4a88f2c10235be6ba161b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "01af221179b07f9026a213a6f13fcf56cc90ec24c23436c29b42d7fd589f43ca"
+        },
+        "r2:S2:B1": {
+          "requestIdentitySha256": "48b8f7142b8cb754bb2c8e9d9a29a57dba5e53edde22ea2f512723c3e4526efc",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "4ae51ce5073ed3078522a169f8d95be838fa230d82841d4df627552bcefd1941",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "48b8f7142b8cb754bb2c8e9d9a29a57dba5e53edde22ea2f512723c3e4526efc"
+        },
+        "r2:S2:B0": {
+          "requestIdentitySha256": "6c7ed70a12451e7407e9aebfb44754e0b995c3f5bb809f34c663b1ce8e91304e",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6168a89958cc18153baea5e5731d86d11f549c1ae8fb7b66bbb6f2615041f8bb",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "6c7ed70a12451e7407e9aebfb44754e0b995c3f5bb809f34c663b1ce8e91304e"
+        },
+        "r2:S3:B1": {
+          "requestIdentitySha256": "01af221179b07f9026a213a6f13fcf56cc90ec24c23436c29b42d7fd589f43ca",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "8bebd12d3bfd0db04bc47afc88862cc5f1aaed28bfb4a88f2c10235be6ba161b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "01af221179b07f9026a213a6f13fcf56cc90ec24c23436c29b42d7fd589f43ca"
+        },
+        "r2:S3:B0": {
+          "requestIdentitySha256": "73b1ace4dc0ac1273864b0e82845a25d4aca680d54688ee15c42ba7209111c2b",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "41d27f73806ef5bbd00bcd9fa02be77d4317655b400b3556b4473adf0292c812",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "73b1ace4dc0ac1273864b0e82845a25d4aca680d54688ee15c42ba7209111c2b"
+        },
+        "r2:S1:B1": {
+          "requestIdentitySha256": "c59c9eecc90c811bf76462871fbdf15cc7e42c7d50f28e0b576036959a572ff0",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6806880a2ff26455b0086786b3bcf025b58c5015993d24bf9f6529133220f676",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "c59c9eecc90c811bf76462871fbdf15cc7e42c7d50f28e0b576036959a572ff0"
+        },
+        "r2:S1:B0": {
+          "requestIdentitySha256": "16556be57321e7bc962fbe5c7dc70768d7b714088c403089863fa488b6007b2c",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "637ef9c99b313ad061a6aee62b5e3aec61394a0730049b5e22cb85d8f5dd385b",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "16556be57321e7bc962fbe5c7dc70768d7b714088c403089863fa488b6007b2c"
+        }
+      },
+      "C": {
+        "r1:S1:N1": {
+          "requestIdentitySha256": "870636f3c005fd5e55634b0a600119c707a30d518ba34e200da4f4ed7756e0f9",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "4802acc45584c8a21aa7e4974f90220aaa90ec3ccb96613d43697c2ba9481fc4",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "870636f3c005fd5e55634b0a600119c707a30d518ba34e200da4f4ed7756e0f9"
+        },
+        "r1:S1:N5": {
+          "requestIdentitySha256": "3166d8e2cca815b7196c5ef6d83c76acb407e4dba2bfdca0b0d097a8e4a6b23a",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6755e1973e886c7958ebb8c9f1d1648874e1aef3b51ff1af39718555216ea3c2",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "3166d8e2cca815b7196c5ef6d83c76acb407e4dba2bfdca0b0d097a8e4a6b23a"
+        },
+        "r1:S2:N1": {
+          "requestIdentitySha256": "6602f3d45aad2bcf7fda2becb7bcecc718715ca5a9a3a37e25a2080efd9b4945",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "614b1c2b1ffbfe82fbccb82bc24decbc1a0066f63868a1a5eb411903fd466d11",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "6602f3d45aad2bcf7fda2becb7bcecc718715ca5a9a3a37e25a2080efd9b4945"
+        },
+        "r1:S2:N5": {
+          "requestIdentitySha256": "fd85d521b774afd35a82a12df498d613f869f1741b7a69ddcd777258b8423a11",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "1fefba033efd6429a3bfca0135fcefb455a7aec904bb65bbc0dab12a9a450cd0",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "fd85d521b774afd35a82a12df498d613f869f1741b7a69ddcd777258b8423a11"
+        },
+        "r1:S3:N1": {
+          "requestIdentitySha256": "4f76117ee7be59b3976b633840abe7f98fd5d02b051b270268e5e31a43dc0511",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "c4b057057f25d871a0c28fb840bde4b93a20c6767ee7a3138067550a753a822a",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "4f76117ee7be59b3976b633840abe7f98fd5d02b051b270268e5e31a43dc0511"
+        },
+        "r1:S3:N5": {
+          "requestIdentitySha256": "0f73e3fe829dcfdc98033d5a545e48eec87f3fd3a3dd534eead8ccf7bc65c831",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "ceff200004e85da7e977ffd556ae9ea003db2551783cfc3c68d1912f7dddc614",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "0f73e3fe829dcfdc98033d5a545e48eec87f3fd3a3dd534eead8ccf7bc65c831"
+        },
+        "r2:S2:N5": {
+          "requestIdentitySha256": "fd85d521b774afd35a82a12df498d613f869f1741b7a69ddcd777258b8423a11",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "1fefba033efd6429a3bfca0135fcefb455a7aec904bb65bbc0dab12a9a450cd0",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "fd85d521b774afd35a82a12df498d613f869f1741b7a69ddcd777258b8423a11"
+        },
+        "r2:S2:N1": {
+          "requestIdentitySha256": "6602f3d45aad2bcf7fda2becb7bcecc718715ca5a9a3a37e25a2080efd9b4945",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "614b1c2b1ffbfe82fbccb82bc24decbc1a0066f63868a1a5eb411903fd466d11",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "6602f3d45aad2bcf7fda2becb7bcecc718715ca5a9a3a37e25a2080efd9b4945"
+        },
+        "r2:S3:N5": {
+          "requestIdentitySha256": "0f73e3fe829dcfdc98033d5a545e48eec87f3fd3a3dd534eead8ccf7bc65c831",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "ceff200004e85da7e977ffd556ae9ea003db2551783cfc3c68d1912f7dddc614",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "0f73e3fe829dcfdc98033d5a545e48eec87f3fd3a3dd534eead8ccf7bc65c831"
+        },
+        "r2:S3:N1": {
+          "requestIdentitySha256": "4f76117ee7be59b3976b633840abe7f98fd5d02b051b270268e5e31a43dc0511",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "c4b057057f25d871a0c28fb840bde4b93a20c6767ee7a3138067550a753a822a",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "4f76117ee7be59b3976b633840abe7f98fd5d02b051b270268e5e31a43dc0511"
+        },
+        "r2:S1:N5": {
+          "requestIdentitySha256": "3166d8e2cca815b7196c5ef6d83c76acb407e4dba2bfdca0b0d097a8e4a6b23a",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "6755e1973e886c7958ebb8c9f1d1648874e1aef3b51ff1af39718555216ea3c2",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "483afc54835a5bb0d14f9c00984175d2a342fa7b5ee538523b1b25adc4c3ec22",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "3166d8e2cca815b7196c5ef6d83c76acb407e4dba2bfdca0b0d097a8e4a6b23a"
+        },
+        "r2:S1:N1": {
+          "requestIdentitySha256": "870636f3c005fd5e55634b0a600119c707a30d518ba34e200da4f4ed7756e0f9",
+          "systemSha256": "b8317a720fdf68b98fb3144a98989bebb240f1aac9c146a73fc9a572757db998",
+          "textPartsSha256": "4802acc45584c8a21aa7e4974f90220aaa90ec3ccb96613d43697c2ba9481fc4",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 3400,
+          "sha256": "870636f3c005fd5e55634b0a600119c707a30d518ba34e200da4f4ed7756e0f9"
+        }
+      }
+    }
+  },
+  "sealing": {
+    "tool": "scratch/ab_stage2_seal.mjs",
+    "what": "git HEAD; sha256 of `git diff --binary HEAD` excluding this pre-registration file (approved separately by its own sha256); the six database-file sha256 values of the final frozen snapshot; and, for every pre-registered cell, the complete request identity sha256 over system text, user text parts, image bytes (with media type and detail), schema, resolved model and token budget",
+    "enforcement": "Live runners refuse before any child process or provider call unless the approval hash, HEAD, tracked-file diff hash, untracked-file absence and snapshot hashes all match; each fresh snapshot copy is re-verified; the route (B, C) and the probe child (A) compare the cell's request identity immediately before the provider call and refuse on mismatch. Photographs are covered by the image-bytes hash of what is actually sent.",
+    "tests": "test/stage2_live_guard.test.js; COMPOSER-ONLY EXPERIMENT sealed-request test in test/aiEndpointContracts.test.js"
+  },
+  "experimentVsProduction": {
+    "measuredBy": "scratch/ab_stage2_composer_only.mjs --contract B --production-diff: actual production (no manifest, WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS off) versus experimental B0 replicate 1, per scenario, on the same snapshot",
+    "identical": [
+      "every garment line",
+      "every image, byte for byte, in order",
+      "token budget",
+      "all other request text"
+    ],
+    "intentionalDeltas": [
+      "system prompt: the categorical sleeve-layering rule is replaced by the neutral sleeve sentence (manifest sleeveGuidance)",
+      "user text: the outerwear heading loses '(ordered for these conditions)' (neutral verdict words)",
+      "user text: the occasion taste list 'For this occasion, lean toward: …' is removed (neutral verdict words)",
+      "user text: the activity taste list 'For this activity, use sparingly and justify in watchFor: …' is removed where the scenario has an activity (S2) (neutral verdict words)",
+      "the run stops immediately after the composer response: no slot repair, local gate, backfill, critic or repair (manifest stopAfterComposer)"
+    ],
+    "notReachedByComposerOnlyRuns": "the neutral-verdict flag's other effects (repair payload '(acceptable)' wording, search_wardrobe ruleFit fields, search photo-label tiers, the warm-layer advisory wording) act only on stages these runs never execute",
+    "B1AndCAdditionally": "B1 and both C arms append structured facts to every garment line; C additionally holds out the comparison-set paragraph and fixes the five-card token budget"
+  }
+}

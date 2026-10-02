@@ -68,6 +68,8 @@ So the model knows the rule; the rule is not reaching footwear and accessories. 
 
 **Ruling (owner, 2026-07-25): ACCEPTED — fix.** **Implemented 2026-07-27** — `styling-engine/prompts.js`'s pattern-discipline and PATTERN MIXING instructions now explicitly state the one-loud-print budget covers shoes and accessories, not just top/bottom.
 
+**[superseded 2026-09-15 — owner ruling]** The categorical one-loud-print rule is retired from the composer, stylist and shared hierarchy prompts: prints anywhere in the outfit, shoes and accessories included, are judged visually, case by case, with no fixed count. The part of this finding that survives is that shoes and accessories are part of the pattern relationship. Pinned by `test/patternJudgment.test.js`.
+
 ### A2 — Under scarcity the model writes confident rationale for a violated brief
 **Source:** styling.
 

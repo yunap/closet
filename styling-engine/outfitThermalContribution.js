@@ -125,12 +125,29 @@ export function outfitThermalContribution(pieces = []) {
     : base == null ? removable
     : bothReal ? stepUp(warmer(base, removable)) : warmer(base, removable)
 
+  // UPPER-BODY LAYERING CREDIT (owner ruling 2026-09-12, Concern 1 of the shared thermal model).
+  //
+  // A layered upper body sits at least one level above its WEAKER half, and never below its
+  // stronger half. One expression, no threshold and no ceiling:
+  //     moderate + moderate -> warm        two mid pieces do add up
+  //     moderate + warm     -> warm        a mid piece under a coat adds nothing the coat lacks
+  //     warm     + warm     -> very warm   two substantial layers reach the filled-coat tier
+  //     light    + warm     -> warm        unchanged
+  //
+  // It replaces `weaker >= warm`, which said a `moderate` fleece over a `moderate` knit adds
+  // NOTHING — the verdict that made the owner's wardrobe unable to dress a 50F morning in anything
+  // but a quilted puffer (audit: scratch/audit_ensemble_thermal_calibration.js). The trousers are
+  // deliberately not in this calculation: `upperBase` is upper-body only, so a moderate trouser can
+  // no longer unlock credit for a light blouse.
+  //
+  // SCOPE: this slice changes the UPPER calculation alone. `withLayer` (the aggregate, which
+  // production adequacy still reads) keeps the shipped rule until the endpoint/configuration
+  // evaluator replaces that consumer in Concern 2.
   const upperWeaker = upperBase == null || upperRemovable == null ? null
     : (IDX.get(upperBase) <= IDX.get(upperRemovable) ? upperBase : upperRemovable)
-  const upperBothReal = upperWeaker != null && IDX.get(upperWeaker) >= IDX.get('warm')
   let upperWithLayer = upperRemovable == null ? upperBase
     : upperBase == null ? upperRemovable
-    : upperBothReal ? stepUp(warmer(upperBase, upperRemovable)) : warmer(upperBase, upperRemovable)
+    : warmer(warmer(upperBase, upperRemovable), stepUp(upperWeaker))
 
   const orderedStack = orderedSubstantialUpperStackContribution(list)
   if (orderedStack) {

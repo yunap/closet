@@ -290,7 +290,7 @@ Audit separately:
 5. prompt/tool/UI serialization.
 
 `styling-engine/attributes.js` is the only allowed place to interpret piece text. Functions such
-as `composerPieceLineSuffix()`, `buildPieceText()`, wardrobe manifest builders, and tool result rows
+as `sharedGarmentEvidenceLine()` (which replaced the composer's old line builder, composerPieceLineSuffix, on 2026-09-15), `buildPieceText()`, wardrobe manifest builders, and tool result rows
 are projections; they must not independently define piece meaning.
 
 Include the known live split between `attributePieceTextBlob()` and `pieceTextBlob()`, already

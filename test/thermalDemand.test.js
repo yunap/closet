@@ -123,6 +123,38 @@ test('very warm is a bounded ceiling — no tier above it, no numeric distance',
   assert.equal(compareThermalFit('very warm', d).fit, 'adequate')
 })
 
+// thread_1789526496845 (reopened a second time): converting the ambiguous daily-forecast case into
+// a qualitative temperature_band threw away real numeric evidence — the demand went completely
+// silent (level: null everywhere), which is not the same thing as fixing the timing defect. The
+// corrected design keeps the exact numbers and adds `scope` (weather.js's validateUserWeather,
+// carried through resolveTemperatureField into exposure.js's resolveConditions): 'exposure_window'
+// (the default, and the only prior behavior) keeps the certain, verbatim treatment: 'daily_forecast'
+// routes the SAME numbers through the identical waking-window estimate a live/model-estimated daily
+// envelope already gets — real numeric demand, explicitly uncertain (`certain: false`, a WIDENED
+// acceptable range around the level, not a narrowed single-value one).
+//
+// Demonstrated for the wardrobe's shearling coat (996868), which the roster's category-cap reserve
+// (styling-engine/rules.js) sorts and cuts by thermal DISTANCE from the demand: under the certain
+// exposure_window scope, `very warm` measurably overshoots a narrow `[warm, warm]` demand — exactly
+// the mechanism that excluded it. Under daily_forecast scope, the demand level is still `warm` (the
+// numeric evidence is not discarded), but the uncertainty widens the acceptable range to
+// `[moderate, very warm]`, so the very warm coat now reads `adequate` — it is no longer penalized as
+// though the daily low were a certain temperature during the outing.
+test('daily_forecast scope keeps real numeric thermal demand but widens the acceptable range instead of certifying a narrow one', () => {
+  const exposureWindow = demandFor(OUTDOOR('walking'), { temperature: { highF: 50, lowF: 40, source: 'stated_user', scope: 'exposure_window' }, wind: { value: 'calm' } })
+  assert.equal(exposureWindow.level, 'warm', 'an exposure-window-scoped stated range resolves a real demand level')
+  assert.equal(exposureWindow.certain, true, 'and the exposure/ranking engine treats it as certain, per the ratified verbatim contract for a genuinely outing-scoped statement')
+  assert.equal(compareThermalFit('very warm', exposureWindow).fit, 'overshoot',
+    'a very warm coat measurably overshoots this certain, narrow demand — the mechanism behind 996868\'s exclusion, correct when the range really is the outing\'s own temperature')
+
+  const dailyForecast = demandFor(OUTDOOR('walking'), { temperature: { highF: 50, lowF: 40, source: 'stated_user', scope: 'daily_forecast' }, wind: { value: 'calm' } })
+  assert.equal(dailyForecast.level, 'warm', 'the SAME real numeric demand level is preserved — this is not "no thermal opinion"')
+  assert.equal(dailyForecast.certain, false, 'but not certified as certain, exactly like a live/model-estimated daily envelope')
+  assert.deepEqual(dailyForecast.range, ['moderate', 'very warm'], 'uncertainty widens the acceptable range rather than narrowing to a single value')
+  assert.equal(compareThermalFit('very warm', dailyForecast).fit, 'adequate',
+    'the very warm coat is no longer overshoot-excluded — the daily low is no longer treated as a certain outing temperature')
+})
+
 test('exposure is a named required input, not a weather blob', () => {
   // §9.1. Passing a bare forecast here is how a 5am trough came to size a museum visit.
   const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/thermalDemand.js'), 'utf8')

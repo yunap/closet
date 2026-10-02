@@ -928,6 +928,92 @@ test('a positively-inadequate assigned layer is rejected even when the base outf
   )
 })
 
+// thread_1789801108635: the symmetric gap to the test above. A navy quilted puffer ("designed as a
+// true cold-weather outer layer with substantial insulation" per its own real notes) was assigned
+// as the removable layer for an 86°F-peak day and passed cleanly, because outerwearLayerPositivelyInadequate
+// only ever asks whether a layer is too WEAK -- nothing asked whether it was too WARM. compareThermalFit
+// already classifies a heavy, fully-lined, insulated coat against a warm slot's 'light'/'very light'
+// demand as a 2-level substantial_overshoot; this pins that as a hard rejection, not just a ranking signal.
+test('an assigned layer substantially warmer than the slot demands is rejected, even though it easily passes the inadequacy check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'hike top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'hike bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'hike shoes', heel_height: 'flat', walk_support: 'high' })
+  const puffyId = insertPiece({ category: 'outerwear', name: 'insulated puffer coat', fabric_weight: 'heavy' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('["down"]', 'full_lining', puffyId)
+  // A genuinely adequate alternative in the same roster (mirroring the real reversible windbreaker
+  // that sat unused in thread_1789801108635) so the repair round has something to offer.
+  const windbreakerId = insertPiece({ category: 'outerwear', name: 'reversible windbreaker', fabric_weight: 'light' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  // The real thread_1789801108635 shape: a mild (not hot) real high/low range on an outdoor
+  // activity, where needsRemovableCoolLayer legitimately unlocks mode 'assigned_packed_layer' and
+  // the layer is gate-eligible on its own merits -- a genuinely hot slot instead excludes a heavy
+  // insulated piece from gateAllowedIds entirely before this check is ever reached, which is a
+  // different, already-correct exclusion and not what this test isolates.
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.needsRemovableCoolLayer), true, 'fixture needs a slot where an assigned layer is a legitimate claim')
+  assert.ok(slot.gateAllowedIds.has(Number(puffyId)), 'fixture needs the coat to otherwise be gate-eligible, isolating the new overshoot check')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(puffyId) },
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('substantially warmer')),
+    'the substantial-overshoot rejection must fire even though the coat easily clears the inadequacy check'
+  )
+
+  const repairable = identifyColdLayerRepairableFailures(workbench.pendingPlan, result.failures)
+  assert.equal(repairable.length, 1, 'this failure shape must reach the existing repair round')
+  assert.ok(!repairable[0].candidates.some(c => c.id === Number(puffyId)), 'the rejected overshoot piece must never be re-offered as its own repair candidate')
+  assert.ok(repairable[0].candidates.some(c => c.id === Number(windbreakerId)), 'a genuinely adequate alternative in the same roster must be offered')
+})
+
+// The boundary this fix must not cross: a merely borderline pick (one PET level above target, the
+// same shape as a real plain fleece coat measured directly against a light-demand slot) is still a
+// defensible edge case, not an objective mismatch, and must continue to pass.
+test('an assigned layer only one PET level above the slot demand is accepted, not treated as substantial overshoot', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'hike top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'hike bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'hike shoes', heel_height: 'flat', walk_support: 'high' })
+  // The real cream and taupe plaid fleece coat's own facts (thread_1789801108635): medium weight,
+  // unlined, no recorded insulating fill -- garmentWarmthLevel 'moderate', one level above this
+  // slot's own 'very light' target, which compareThermalFit classifies as adequate, not overshoot.
+  const fleeceId = insertPiece({ category: 'outerwear', name: 'plain fleece coat', fabric_weight: 'medium', fiber_content: ['fleece', 'polyester'] })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('[]', 'unlined', fleeceId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.needsRemovableCoolLayer), true, 'fixture needs a slot where an assigned layer is a legitimate claim')
+  assert.ok(slot.gateAllowedIds.has(Number(fleeceId)), 'fixture needs the coat to otherwise be gate-eligible')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(fleeceId) },
+  }])
+
+  assert.equal(result.failures.length, 0, 'a one-level overshoot is a defensible edge case, not a hard rejection')
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(fleeceId)])
+})
+
 test('a medium/insulating cardigan continues to satisfy an ordinary cold slot\'s assigned-layer check', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
@@ -1284,6 +1370,33 @@ test('identifyColdLayerRepairableFailures never sends a slot with no qualifying 
   assert.equal(repairable.length, 0, 'repairing toward a roster with nothing that could ever qualify is wasted cost -- must stay a disclosed failure')
 })
 
+// thread_1789763628463: the model named a real packed piece via mode 'assigned_packed_layer' and
+// explained its choice in styling_instructions -- the disclosure instruction worked -- but the named
+// piece (a thin UPF technical hoodie) failed outerwearLayerPositivelyInadequate, and this failure
+// shape had no pattern in COLD_LAYER_ONLY_FAILURE_PATTERNS, so the card was lost to a disclosed
+// coverage gap instead of reaching Part B's repair round, even though a genuinely adequate candidate
+// (a reversible hooded windbreaker) sat unused in the same roster.
+test('identifyColdLayerRepairableFailures recognizes a positively-inadequate assigned layer as repairable, offering only adequate candidates', () => {
+  const inadequateLayer = { id: 902, name: 'thin UPF technical hoodie', category: 'outerwear', fabric_weight: 'ultralight', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const qualifyingLayer = { id: 903, name: 'reversible hooded windbreaker', category: 'outerwear' }
+  const pendingPlan = {
+    slots: [{ id: 'pismo_coast_hike', label: 'Pismo Coast Hike', allowedPieces: [inadequateLayer, qualifyingLayer] }]
+  }
+  const failures = [{
+    slot_id: 'pismo_coast_hike', label: 'Pismo Coast Hike',
+    reasons: ["assigned layer piece 902 (thin UPF technical hoodie) has evidence it cannot serve as a cold layer for Pismo Coast Hike — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer."],
+    outfit: { title: 'Ditsy Floral Blouse & Utility Pants', pieceIds: [10, 11, 12] },
+  }]
+
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 1, 'the positively-inadequate-assigned-layer rejection must now be recognized as repairable')
+  assert.deepEqual(repairable[0].piece_ids, [10, 11, 12])
+  assert.equal(repairable[0].title, 'Ditsy Floral Blouse & Utility Pants')
+  const candidateIds = repairable[0].candidates.map(c => c.id)
+  assert.ok(candidateIds.includes(903), 'the genuinely adequate windbreaker must be offered as a repair candidate')
+  assert.ok(!candidateIds.includes(902), 'the rejected inadequate hoodie must never be re-offered as its own repair candidate')
+})
+
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md §6 -- the repair prompt's own wording
 // must actually carry the "fix only the decision, do not restyle" instruction, not just be
 // inferable from the schema shape.
@@ -1437,6 +1550,11 @@ test('capsule-only palette/budget/rotation semantics do not leak into trip compo
   const schema = tripPlanCompositionSchema(3)
   const outfitProps = Object.keys(schema.properties.outfits.items.properties)
   assert.deepEqual(outfitProps.sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title'])
+  // thread_1789585467294: a declined outfit is a top-level slot_gaps entry, not a per-card field —
+  // owner ruling 2026-09-16 explicitly rejected a required per-card self-rating (risk of confident
+  // post-hoc justification, same failure family as the day-wear explanation experiment).
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['outfits', 'slot_gaps'])
+  assert.deepEqual(schema.properties.slot_gaps.items.properties.gap_reason.type, 'string')
   assert.ok(!('palette' in schema.properties), 'trip composition has no palette contract, unlike capsule')
 
   // Prompt: trip's composition-only prompt states its own objective, not capsule's job-demonstration
@@ -1472,6 +1590,82 @@ test('capsule-only palette/budget/rotation semantics do not leak into trip compo
   assert.doesNotMatch(result.message, /requested colour may serve any visual role/)
 })
 
+// thread_1789585467294 (owner ruling 2026-09-16): a composer that honestly declines one outfit within
+// a slot (via slot_gaps) rather than manufacturing a weak card must still produce a usable result for
+// the other, credibly-composed slot, and the decline reason must reach the coverage disclosure the
+// same way an under-supplied slot's generic message already does — with no per-card confidence field
+// anywhere on the accepted outfit.
+test('a trip composer that honestly declines one outfit via slot_gaps still accepts the other slot, and the decline reason reaches coverage disclosure', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'city shoes', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a city day and a hike',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => {
+      const citySlot = workbench.slots.find(slot => slot.occasion === 'city')
+      const hikeSlot = workbench.slots.find(slot => slot.occasion !== 'city')
+      // Mirrors composeTripPlanOnce's real toolContext.tripCompositionSlotGaps wiring (routes/ai.js) —
+      // the mock sets it directly since it stands in for the whole function, not just its schema call.
+      toolContext.tripCompositionSlotGaps = [{ slot_id: hikeSlot.id, gap_reason: 'no genuinely hot-weather-suited top or bottom was available in the allowed roster for this hike' }]
+      return [{ slot_id: citySlot.id, piece_ids: [topId, bottomId, shoeId], title: 'City Look', reason: 'r' }]
+    }
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [
+      { label: 'City Days', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'Hill Hiking', occasion: 'casual', activity: 'hiking', count: 1 },
+    ],
+  }, toolContext)
+  assert.equal(result.status, 'success', 'the declined hike must not sink the whole trip response')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  const [cityCard] = toolContext.generatedOutfits
+  assert.equal(cityCard.label, 'City Days')
+  assert.ok(!('fit_confidence' in cityCard) && !('fitConfidence' in cityCard), 'an accepted card carries no confidence rating of any kind')
+  assert.match(cityCard.watchFor || '', /^$|^none$/i, 'a card the composer did not flag must not be given a caveat it never wrote')
+  const coverageText = (result.plan_lines || []).join(' ')
+  assert.match(coverageText, /Hill Hiking/)
+  assert.match(coverageText, /no genuinely hot-weather-suited top or bottom was available/)
+})
+
+test('atomic trip truth catalog is the shared garment fact line, with owner rules and rejections in piece_notes', async () => {
+  const { tripPlanTruthCatalog, tripPlanPieceNotes } = await import('../routes/ai.js')
+  const { sharedGarmentEvidenceLine, garmentNotesEntry } = await import('../styling-engine/garmentEvidenceLine.js')
+  const pieces = [
+    { id: 501, name: 'navy wool coat', category: 'outerwear', reads_as: 'tailored coat', fabric_category: 'wool', fabric_weight: 'heavy', sleeve_length: 'long', styling_rules_learned: ['Wear open over knits'] },
+    { id: 502, name: 'cream silk blouse', category: 'top', reads_as: 'soft blouse', fabric_category: 'silk', tried_and_rejected: ['with the floral skirt'] },
+  ]
+  // thread_1789585467294: trip's catalog line is the shared fact line PLUS each piece's recorded
+  // occasions -- the one addition trip needs since its roster spans multiple slot occasions, unlike
+  // every other fact-line consumer (docs/garment-evidence-parity-2026-09-15.md's stated occasion-
+  // omission rationale is "every row already survived this request's occasion gate", which does not
+  // hold for a multi-occasion trip roster).
+  assert.deepEqual(tripPlanTruthCatalog(pieces), pieces.map(piece => `${sharedGarmentEvidenceLine(piece)} | occasions: unknown`))
+  assert.deepEqual(tripPlanPieceNotes(pieces), pieces.map(piece => garmentNotesEntry(piece)))
+  assert.match(tripPlanPieceNotes(pieces)[0], /RULES \(authoritative\): Wear open over knits/)
+  assert.match(tripPlanPieceNotes(pieces)[1], /REJECTED: with the floral skirt/)
+})
+
+// Owner ruling 2026-08-08 retired the writer that copied board/outfit reactions onto each reacted garment as
+// `[feedback:<type>] …`: a reaction to a combination is not a garment rule. Regression: trip composition never presents the
+// copies; the owner's other stored rules and rejections still reach it with their authority, and stored data is not modified.
+test('REGRESSION: trip composition does not present retired outfit-reaction copies as garment rules', async () => {
+  const { tripPlanTruthCatalog, tripPlanPieceNotes } = await import('../routes/ai.js')
+  const stored = ['[feedback:works] (usable variation) This pairing offers a clean silhouette.', 'Wear open over knits', '[feedback:not_me] (not me) The fitted black knit top complements the bold skirt.']
+  const coat = { id: 501, name: 'navy wool coat', category: 'outerwear', fabric_category: 'wool', styling_rules_learned: stored, tried_and_rejected: ['with the floral skirt'] }
+  const text = [...tripPlanTruthCatalog([coat]), ...tripPlanPieceNotes([coat])].join('\n')
+  assert.doesNotMatch(text, /\[feedback:|clean silhouette|complements the bold skirt/)
+  assert.match(text, /RULES \(authoritative\): Wear open over knits/, 'the owner\'s stored rule on the same piece keeps its authority')
+  assert.match(text, /REJECTED: with the floral skirt/)
+  assert.deepEqual(coat.styling_rules_learned, stored, 'the stored garment data is untouched')
+  const onlyCopies = { ...coat, styling_rules_learned: [stored[0]], tried_and_rejected: [] }
+  assert.deepEqual(tripPlanPieceNotes([onlyCopies]), [], 'a garment whose only stored rules are retired copies gets no notes entry')
+})
+
 test('atomic trip composition receives roster thumbnails and full authoritative garment truth, per its own dedicated function', () => {
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   assert.match(routeSrc, /export function tripPlanCompositionSystemPrompt\(\)/)
@@ -1487,7 +1681,10 @@ test('atomic trip composition receives roster thumbnails and full authoritative 
   const fnEnd = routeSrc.indexOf(fnEndMarker, fnStart)
   assert.ok(fnEnd > -1)
   const fnBody = routeSrc.slice(fnStart, fnEnd + fnEndMarker.length)
-  assert.match(fnBody, /truthCatalog = rosterPieces\.map\(piece => `ID \$\{piece\.id\}: \$\{buildPieceText\(piece\)\}`\)/)
+  // 2026-09-15: the truth catalog is the shared garment fact line (docs/garment-evidence-parity-2026-09-15.md §7), checked
+  // behaviourally in the test above; owner rules and rejections travel in piece_notes.
+  assert.match(fnBody, /const truthCatalog = tripPlanTruthCatalog\(rosterPieces\)/)
+  assert.match(fnBody, /piece_notes: tripPlanPieceNotes\(rosterPieces\)/)
   assert.doesNotMatch(fnBody, /planWorkbenchPieceLine\(/, 'must not CALL the compact line builder (the bare name appears only in an explanatory comment)')
   assert.match(fnBody, /content\.push\(\{\s*type: 'image'/)
   assert.match(fnBody, /maxPx: 800/)
@@ -1932,7 +2129,10 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
   const wordedWorkbench = await buildPlanSlotWorkbench(wordedSlots, { allPieces, question: 'a desert day' })
   assert.equal(wordedWorkbench.slots[0].weather_used, 'hot, highs 100-105F, sunny (estimated)', 'model-guessed weather text must also be marked as an estimate')
 
-  // A real live forecast still gets its own distinct marker, not "(estimated)".
+  // A real live forecast still gets its own distinct marker, not "(estimated)". thread_1789585467294:
+  // it now also carries a trailing "(Open-Meteo)" provenance tag — which provider a number came
+  // from must survive to wherever it's displayed, not just live in memory for the turn that fetched
+  // it.
   const liveSlots = normalizePlanSlots([{ label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1, location: 'Cambria, CA' }])
   const liveWorkbench = await buildPlanSlotWorkbench(liveSlots, {
     allPieces,
@@ -1940,7 +2140,7 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
     dateRange: { start: '2026-08-01', end: '2026-08-01' },
     fetchImpl: makePlanFetch()
   })
-  assert.match(liveWorkbench.slots[0].weather_used, /— live forecast, Cambria, CA$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
+  assert.match(liveWorkbench.slots[0].weather_used, /— live forecast, Cambria, CA \(Open-Meteo\)$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
   assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
 })
 
@@ -2026,13 +2226,19 @@ test('plan_outfit_set: a future named-destination trip with weather_estimate exc
 // because the stricter activity ceiling never entered the computation. Fixed by having
 // effectiveSlotRegisterCeilingRank reuse resolveRegisterCeiling's own occasion+activity
 // strictest-wins combination (rules.js) instead of an occasion-only one.
-test('an elevated trench coat is excluded from a hiking slot even when its occasion alone permits elevated pieces', async () => {
+// 2026-09-13 owner ruling, superseding the register half of this fixture: FORMALITY DOES NOT
+// ESTABLISH PHYSICAL CAPABILITY. Hiking suitability belongs to movement allowance, footwear
+// support, maintenance/delicacy, construction and weather protection — each of which has its own
+// gate and keeps it. An elevated FLEECE is the case that settles it: nothing about its register
+// stops it working on a trail, so register cannot be the thing that excludes a garment from a hike.
+//
+// The consequence, stated plainly rather than hidden: with only these tags, nothing HARD excludes an
+// elevated city trench from a hiking slot any more. `required_occasion_tags` is deliberately
+// `discouraged, never prohibited` (ratified 2026-06-12, so a day dress stays allowed for
+// outdoor-active) and applies only to top/bottom/dress. The trench is now eligible and must be
+// beaten on ranking.
+test('an elevated trench is ELIGIBLE for a hiking slot — register ranks it, it does not gate it', async () => {
   db.prepare('DELETE FROM pieces').run()
-  // occasions deliberately does NOT include 'outdoor_daytime_social' -- matching the real live
-  // trench coat's own tags (["city","smart-casual"]). registerCeilingVerdict (rules.js) grants an
-  // explicit-occasion-tag exemption of up to one rank above the ceiling; including the slot's own
-  // occasion here would trigger that unrelated, pre-existing exemption (elevated is exactly one
-  // rank above hiking's everyday ceiling) and mask the fix under test.
   const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
   const everydayJacket = insertPiece({ category: 'outerwear', name: 'everyday zip jacket', formality: 'everyday', occasions: ['outdoor_daytime_social', 'city'] })
   insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
@@ -2046,8 +2252,49 @@ test('an elevated trench coat is excluded from a hiking slot even when its occas
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
   const slot = workbench.pendingPlan.slots[0]
 
-  assert.equal(slot.gateAllowedIds.has(Number(trenchCoat)), false, 'an elevated coat must not be eligible for a hiking slot')
-  assert.ok(slot.gateAllowedIds.has(Number(everydayJacket)), 'an everyday-formality coat remains eligible')
+  assert.equal(slot.gateAllowedIds.has(Number(trenchCoat)), true,
+    'an inferred activity register ceiling ranks the piece down; it does not exclude it')
+  assert.ok(slot.gateAllowedIds.has(Number(everydayJacket)), 'and the matching-register coat remains eligible')
+})
+
+test('a TRUE activity gate still excludes hard — footwear support, not formality', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Same slot, same register question removed from the picture: this shoe fails hiking's
+  // `excluded_walk_support`/`excluded_heel_heights`, which is a physical claim about the activity.
+  const heeledShoe = insertPiece({ category: 'shoes', name: 'city heel', formality: 'everyday', occasions: ['outdoor_daytime_social'], heel_height: 'high', walk_support: 'low' })
+  const trailShoe = insertPiece({ category: 'shoes', name: 'trail sneakers', formality: 'everyday', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(heeledShoe)), false,
+    'the footwear gate owns this exclusion, and it is a physical claim')
+  assert.ok(slot.gateAllowedIds.has(Number(trailShoe)))
+})
+
+test('an explicit MAXIMUM still excludes hard, on the same slot', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const trenchCoat = insertPiece({ category: 'outerwear', name: 'cream trench coat', formality: 'elevated', occasions: ['city'] })
+  insertPiece({ category: 'outerwear', name: 'everyday zip jacket', formality: 'everyday', occasions: ['outdoor_daytime_social', 'city'] })
+  insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'hiking sneakers', occasions: ['outdoor_daytime_social'], heel_height: 'flat', walk_support: 'high' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Nature Walks', occasion: 'outdoor_daytime_social', activity: 'hiking', count: 1, best_for: 'nothing above casual' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk, nothing above casual' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  assert.equal(slot.gateAllowedIds.has(Number(trenchCoat)), false,
+    'a stated maximum is a constraint, and it binds')
 })
 
 // The control: the SAME elevated coat, on a slot sharing the identical occasion but an activity
@@ -2075,10 +2322,10 @@ test('the same elevated trench coat remains eligible for a non-hiking outdoor-so
 // hiking's discouraged_pieces (dress) is a separate, deliberately-unenforced-here policy question
 // (flagged, not fixed) -- but the dress is ALSO elevated-formality, so the register ceiling alone
 // must already exclude it, independent of that open question.
-test('an elevated dress is also excluded from a hiking slot by the same register-ceiling fix', async () => {
+test('an elevated dress on a hiking slot is a RANKING question, not a gate', async () => {
+  // Its companion above. Hiking's `discouraged_pieces` already carries "dress" as a soft signal, and
+  // that — not formality — is the honest owner of the concern.
   db.prepare('DELETE FROM pieces').run()
-  // Same tag choice as the trench coat test above, and for the same reason: excluding the slot's
-  // own occasion from the piece's tags avoids the pre-existing one-rank explicit-tag exemption.
   const dress = insertPiece({ category: 'dress', name: 'elevated sheath dress', formality: 'elevated', occasions: ['city'] })
   insertPiece({ category: 'top', name: 'hike top', occasions: ['outdoor_daytime_social'] })
   insertPiece({ category: 'bottom', name: 'hike pants', occasions: ['outdoor_daytime_social'] })
@@ -2090,8 +2337,8 @@ test('an elevated dress is also excluded from a hiking slot by the same register
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a nature walk' })
   const slot = workbench.pendingPlan.slots[0]
-
-  assert.equal(slot.gateAllowedIds.has(Number(dress)), false, 'an elevated dress must not be eligible for a hiking slot')
+  assert.equal(slot.gateAllowedIds.has(Number(dress)), true,
+    'formality does not establish that a dress cannot be worn on a trail')
 })
 
 // Weather-behavior checkpoint follow-up: resolveSlotWeather (this file) never derived
@@ -3056,6 +3303,42 @@ test('submit_plan_outfits carries styling_instructions through to the accepted o
   assert.equal(withoutMechanics.accepted[0].stylingInstructions, '')
 })
 
+// thread_1789801108635: a Coastal Hike card was hard-rejected and lost entirely (no repair round on
+// the atomic path) because styling_instructions said to tuck a base top recorded tuck_behavior:
+// 'wear_over_only' -- a mechanically fixable one-clause contradiction the single_outfit path
+// (routes/ai.js) already silently corrects via correctTuckInstruction. validateSubmittedPlanOutfits
+// must apply the identical correction rather than reject the whole card over it, the same shape as
+// the existing cold_layer_decision pre-validation correction.
+test('submit_plan_outfits corrects a tuck instruction that contradicts a wear_over_only base top instead of rejecting the card', async () => {
+  // insertPiece's fixed INSERT column list does not include tuck_behavior (it is silently dropped),
+  // so this uses plain piece objects directly, the same pattern as "model plan workbench exposes
+  // authoritative garment construction without special-case rules" above.
+  const topId = 9201
+  const bottomId = 9202
+  const shoesId = 9203
+  const allPieces = [
+    { id: topId, name: 'wear-over-only top', category: 'top', occasions: ['casual'], formality: 'everyday', tuck_behavior: 'wear_over_only', status: 'active' },
+    { id: bottomId, name: 'joggers', category: 'bottom', occasions: ['casual'], formality: 'everyday', status: 'active' },
+    { id: shoesId, name: 'sneakers', category: 'shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', status: 'active' },
+  ]
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'coastal hike outfit' })
+  const slotId = workbench.pendingPlan.slots[0].id
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slotId,
+    piece_ids: [topId, bottomId, shoesId],
+    styling_instructions: 'Tuck the top into the joggers.',
+  }])
+
+  assert.equal(result.failures.length, 0, 'a mechanically fixable tuck contradiction must not fail the card')
+  assert.equal(result.accepted.length, 1)
+  assert.doesNotMatch(result.accepted[0].stylingInstructions, /\btuck(?:ed|s|ing)?\b/i, 'the contradicting tuck clause must be removed')
+  assert.match(result.accepted[0].stylingInstructions, /worn untucked \(recorded wear over only\)/)
+})
+
 test('submit_plan_outfits rejects gate-suppressed pieces with the gate reason', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'hot gate top', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
@@ -3286,6 +3569,29 @@ test('plan use-case advisories keep movement and home-play tradeoffs visible wit
   assert.equal(activeMovementPieceAdvisory({ category: 'bottom', formality: 'everyday' }, true).tier, 'preferred')
   assert.equal(operationalEasePieceAdvisory({ category: 'shoes', heel_height: 'mid' }, true).tier, 'discouraged')
   assert.equal(operationalEasePieceAdvisory({ category: 'shoes', heel_height: 'flat' }, true).tier, 'preferred')
+})
+
+test('plan workbench line: historical owner rules stay authoritative without receipts; retired reaction copies and saved chat replies are not rules', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  db.prepare("DELETE FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").run()
+  db.prepare("DELETE FROM chat_threads").run()
+  const { _clearRuleProvenanceCacheForTests } = await import('../styling-engine/ruleProvenance.js')
+  const reply = '![Board](sandbox:/uploads/generated-boards/b.png)\n\nThe orange tank does exactly what we wanted.'
+  db.prepare('INSERT INTO chat_threads (id, title, payload) VALUES (?, ?, ?)').run('thread_saved', 't', JSON.stringify({ messages: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: reply }], savedIndices: [1] }))
+  _clearRuleProvenanceCacheForTests()
+  const topId = insertPiece({ category: 'top', name: 'emerald shell top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'city trousers', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'flat sandals', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?').run(JSON.stringify(['Tuck only the front', 'Keep sleeves pushed', '[feedback:works] (nice) Lovely with the trousers.', reply]), topId)
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Indoor City', occasion: 'city', activity: 'none', count: 1 }])
+  const catalog = (await buildPlanSlotWorkbench(slots, { allPieces })).piece_catalog.join('\n')
+  assert.match(catalog, /RULES \(authoritative\):Tuck only the front \/ Keep sleeves pushed/)
+  assert.doesNotMatch(catalog, /author not recorded/)
+  assert.doesNotMatch(catalog, /\[feedback:|Lovely with the trousers|orange tank|sandbox:/)
+  db.prepare("DELETE FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").run()
+  db.prepare("DELETE FROM chat_threads").run()
+  _clearRuleProvenanceCacheForTests()
 })
 
 test('an owner-rejected garment pairing reaches the composer and cannot pass plan validation', async () => {
@@ -4900,7 +5206,9 @@ test('workbench instructions carry the professional-slot styling line unconditio
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
-  assert.match(workbench.instructions, /at most ONE bold print per outfit/)
+  // 2026-09-15: the workbench carried the second copy of the retired fixed print count.
+  assert.match(workbench.instructions, /a bold print is a deliberate accent judged against the rest of the look, not capped at a fixed count/)
+  assert.doesNotMatch(workbench.instructions, /at most ONE bold print/i)
   assert.match(workbench.instructions, /no statement wraps at work/)
 })
 
@@ -7689,8 +7997,10 @@ test('no universal layer floor is declared for either roster path', () => {
 // base even valid where the dependent piece is offered — is checkable for free.
 const dependentBaseWardrobe = () => ([
   { id: 1, name: 'geometric crop top', category: 'top', colors: ['black'], formality: 'everyday', occasions: ['casual'], needs_base: 'yes' },
-  // Standalone, but too formal to clear a casual slot's ceiling — so it exists
-  // in the roster and is unusable in the slot the dependent piece is offered in.
+  // Standalone, but excluded from the slot below by its STATED maximum ("nothing dressy") — so it
+  // exists in the roster and is unusable in the slot the dependent piece is offered in. 2026-09-13:
+  // an inferred ceiling no longer makes a piece slot-invalid, so the fixture states the constraint
+  // rather than leaning on the occasion default. The subject of the test is unchanged.
   { id: 2, name: 'silk evening blouse', category: 'top', colors: ['ivory'], formality: 'dressy', occasions: ['casual'] },
   { id: 3, name: 'straight jeans', category: 'bottom', colors: ['black'], formality: 'everyday', occasions: ['casual'] },
   { id: 4, name: 'canvas sneakers', category: 'shoes', colors: ['white'], formality: 'everyday', occasions: ['casual'] },
@@ -7699,7 +8009,7 @@ const dependentBaseWardrobe = () => ([
 test('a dependent top needs a standalone base valid in the slot that offers it, not merely somewhere in the roster', () => {
   const roster = dependentBaseWardrobe()
   const availableBase = { id: 5, name: 'cotton tank', category: 'top', colors: ['orange'], formality: 'everyday', occasions: ['casual'] }
-  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2, best_for: 'at home, nothing dressy' }])
 
   // The roster-level guarantee is satisfied — piece 2 can be worn alone — which
   // is precisely the loophole.
@@ -7732,7 +8042,9 @@ test('a sheer or open-weave top in the same slot does not clear the slot-level d
     ...dependentBaseWardrobe(),
     { id: 5, name: 'sheer chiffon cami', category: 'top', colors: ['ivory'], formality: 'everyday', occasions: ['casual'], opacity: 'sheer' },
   ]
-  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  // Same stated maximum as its companion above: the shared fixture's dressy blouse must stay
+  // slot-invalid for this test's subject (a SHEER top is not a base) to be the thing under test.
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2, best_for: 'at home, nothing dressy' }])
   // The supply-attribution guard needs a genuinely available base OUTSIDE the
   // roster to blame the roster at all — same pattern as "a dependent top
   // needs a standalone base valid in the slot..." above. Without one, "the

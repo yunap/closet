@@ -1,0 +1,268 @@
+{
+  "experiment": "stage3-day-wear-pilot",
+  "status": "registered — sealed only after preflight; not approved; no provider call is permitted",
+  "label": "Incremental pilot of the CURRENT, weather-guided Whole Wardrobe composer at count 1. It does NOT test neutral model judgment (production verdict words and weather guidance stay on), the actual /ask one-outfit tool loop, or bundle (five-card) quality. A pilot result is never carried into chat flows on its own.",
+  "supersedes": {
+    "withdrawn": "the 24-call Stage 3 protocol sealed as d406d3d2566be9d0397abc196b4fc1385db4c42f4e2fd82ce632a8bef9b3d620",
+    "by": "owner, 2026-09-15: not approved; replaced by this 12-call pilot"
+  },
+  "authority": {
+    "ownerRequest": "2026-09-15: small staged pilot — the three existing weather scenarios, control versus day-wear treatment, count 1, two replicates, 12 calls, at most 12 cards to rate. After the blinded card ratings are locked, the explanation-validity review is REQUIRED: does wear_through_day reflect a physically believable plan or rationalize a poor garment choice. No warmth-score, tolerance, gate or garment-field changes. If the pilot gives a useful signal, propose a separate small bundle follow-up with a stated rating burden; otherwise investigate the raw choices before another prompt change.",
+    "inspectionRecord": "scratch/endpoint_audit_runs/2026-09-15/request-inspection.md",
+    "design": "docs/day-wear-explanation-experiment-2026-09-15.md"
+  },
+  "registeredOn": "2026-09-15",
+  "snapshot": {
+    "dir": "scratch/ab_stage2_runs/2026-09-14/final_snapshot",
+    "note": "the frozen Stage 2 final snapshot; the live database is never opened. The pending 144 stretch retag is not in it."
+  },
+  "source": "current working tree (uncommitted), sealed by git HEAD + tracked-file diff hash, excluding this file",
+  "provider": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "thinkingLevel": "low",
+    "routeTimeoutMs": 120000
+  },
+  "requestDate": "2026-09-13",
+  "verdictWords": "production (WARDROBE_EXPERIMENT_NEUTRAL_VERDICTS not set): the weather-guided production request",
+  "change": {
+    "description": "one appended system instruction plus one required output string wear_through_day in the composer schema; no garment field, tolerance, warmth score, verdict, layer requirement or garment category",
+    "instructionVerbatim": "WEARING IT THROUGH THE STATED CONDITIONS: for each outfit, fill `wear_through_day` with how you intend it to be worn across the stated conditions. Describe the warmest part and the coolest part separately; when the conditions do not change, describe the whole period once. For each, name which of the outfit's pieces are worn and how (for example open, closed, zipped or carried), and what that leaves covered or uncovered: arms, neck, torso and legs. Say what changes between the two, or that nothing changes. This describes your intention; say where the photographs and facts do not show something, and do not present warmth as certain.",
+    "outputField": {
+      "name": "wear_through_day",
+      "type": "string",
+      "note": "an output explanation slot, not a garment/taxonomy field. If the owner counts it under the paused new-field changes, the alternative is to ask for the same explanation inside reason; that would be a different change and needs re-registration."
+    },
+    "boundaryTests": [
+      "test/aiEndpointContracts.test.js: COMPOSER-ONLY EXPERIMENT: the day-wear substitution appends only …",
+      "DAY-WEAR EXPLANATION: the instruction asks for intention and coverage …"
+    ]
+  },
+  "contracts": {
+    "D": {
+      "harness": "scratch/ab_stage3_day_wear.mjs",
+      "arms": {
+        "control-N1": {
+          "limit": 1,
+          "dayWearGuidance": "production"
+        },
+        "explain-N1": {
+          "limit": 1,
+          "dayWearGuidance": "explain"
+        }
+      },
+      "everyArm": "garmentLine production, sleeveGuidance production, holdOutComparisonSet false, maxTokensForCount null — the exact production composer request at count 1; preflight proves control equals the actual production request byte for byte",
+      "onlyDifferences": [
+        "explain: the appended instruction at the end of the system prompt",
+        "explain: schema property wear_through_day (string, required)"
+      ],
+      "scenarios": {
+        "S1": "65/50 sedentary, 4–8 p.m. (the 50°F scenario)",
+        "S2": "46°F brisk walk",
+        "S3": "72/62, noon–5 p.m."
+      },
+      "replicatesPerCell": 2,
+      "calls": 12,
+      "executionOrder": [
+        "r1:S1:control-N1",
+        "r1:S1:explain-N1",
+        "r1:S2:explain-N1",
+        "r1:S2:control-N1",
+        "r1:S3:control-N1",
+        "r1:S3:explain-N1",
+        "r2:S3:explain-N1",
+        "r2:S3:control-N1",
+        "r2:S2:control-N1",
+        "r2:S2:explain-N1",
+        "r2:S1:explain-N1",
+        "r2:S1:control-N1"
+      ],
+      "noReruns": "each cell runs exactly once in this order; no reruns, substitutions or replacement cards. A timeout or error is a recorded technical failure with no cards."
+    }
+  },
+  "totalPaidCalls": 12,
+  "downstreamCalls": 0,
+  "ratingBurden": {
+    "stage1Cards": "at most 12 (one per successful call)",
+    "stage2Explanations": "at most 6 (one per successful explain call)"
+  },
+  "review": {
+    "stage1_blindedCards": "one sheet, at most 12 raw cards exactly as returned, hanger photo first, conditions on every card, seeded random order with a sealed key; arm and replicate hidden; wear_through_day NOT shown. Fields: weather adequacy 1–5, style and intent 1–5, would wear yes/no, notes. Export locked (sha256 recorded) before stage 2 is built.",
+    "stage2_explanationValidity_REQUIRED": "built only after the stage-1 export is locked; every explain card with its photos, its own stage-1 rating shown, and its wear_through_day text verbatim. For each: (a) physically believable plan for these conditions — yes / partly / no; (b) coverage statements accurate for these garments (arms, neck, torso, legs; open/closed) — yes / partly / no; (c) the explanation rationalizes a poor garment choice rather than describing a sound plan — yes / no / unsure; notes. Control cards have no explanation and are not shown."
+  },
+  "outcomes": {
+    "primary": "per-card owner weather adequacy, explain − control, over the (up to) 6 + 6 cards",
+    "guards": [
+      "style and intent",
+      "would-wear",
+      "technical failures"
+    ],
+    "reportedDescriptively": [
+      "each scenario × replicate pair",
+      "the explanation-validity marks, card by card, beside that card’s rating"
+    ],
+    "usefulSignalRequiresAll": [
+      "pooled mean weather: explain − control ≥ +0.5",
+      "no scenario (both replicates) where explain mean weather is lower than control",
+      "pooled mean style: explain − control ≥ −0.5",
+      "would-wear count: explain not lower than control",
+      "explanation validity: at least 4 of the explain plans marked physically believable (yes), and at most 1 marked as rationalizing a poor choice (yes)",
+      "technical failures: at most 1 of 12; otherwise inconclusive"
+    ],
+    "ifUsefulSignal": "propose a separate, small bundle follow-up with its own pre-registration and stated rating burden; nothing is carried into production or chat flows on the pilot alone",
+    "ifNoUsefulSignal": "no further prompt change; investigate the raw choices and explanations (especially plans marked believable on cards rated inadequate, and rationalizations) before proposing anything",
+    "caveat": "6 cards per arm: a descriptive pilot signal, not evidence of general improvement"
+  },
+  "costEstimate": {
+    "basis": "offline preflight input ≈100.0k–100.2k tokens per one-card call (83 photographs); explain adds ≈160 system tokens; one-card output 0.28k–0.34k tokens in Stage 2, explain estimated +≈120; token budget 2,200 in both arms; Gemini 3.5 Flash-Lite $0.30/M input, $0.03/M cached input, $2.50/M output",
+    "uncachedUSD": 0.38,
+    "stage2LikeCachingUSD": 0.1,
+    "rangeUSD": {
+      "low": 0.1,
+      "high": 0.4
+    },
+    "latency": "one-card composer calls took 15–97 s in Stage 2; a call over the 120 s route timeout is a technical failure"
+  },
+  "sealed": {
+    "sealedAt": "2026-09-15T07:31:38.087Z",
+    "source": {
+      "gitHead": "7e153265f648f9e58636e96db5a9e87c89750828",
+      "diffBinaryHeadSha256": "e5879e5f1d8d4602ac7cdff09be7ae76a3c02cd158969f0973c3cd63c8f253a8",
+      "excludedFromDiff": [
+        "scratch/ab_stage3_preregistration.json"
+      ]
+    },
+    "snapshot": {
+      "wardrobe.db": "7fbf27c8023c742dc12b5847df60a1ca83e0bfc9b2a23973cbdccd2e21743be2",
+      "wardrobe.db-wal": "233cd6c175f96c147984183f677cb7afea28ff9a86e1bc7a7466cc29fd8975a6",
+      "wardrobe.db-shm": "a8ab8c6c28c715ec641d9f252e93e7612bfc882d30f251a4e8672369b9a45ca9",
+      "system.db": "d5d3373e9936295fb8fda63365135db4d4b3058f7a857d74fe59495263da7d03",
+      "system.db-wal": "a2d64a5c4134a42a92208780af154d6712585a38010f06ee304a0547e9511c20",
+      "system.db-shm": "f058c0019c273839a0e893027ce8fc2dacd99b06ae671b91afa5363dadd50355"
+    },
+    "cells": {
+      "D": {
+        "r1:S1:control-N1": {
+          "requestIdentitySha256": "2f3821fa897e355630f756a311518cf6093214776e8529a2b2d326fa0bede3ff",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "138fdd0a9f23d4e463d8eb407b80ebd4fb33fcd40d1fac045943ea5e09af3024",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "2f3821fa897e355630f756a311518cf6093214776e8529a2b2d326fa0bede3ff"
+        },
+        "r1:S1:explain-N1": {
+          "requestIdentitySha256": "3cbc8127af75f69c9c2ee29ac60ec738391c0b11eeef6e0d740d7e9fcedc4b37",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "138fdd0a9f23d4e463d8eb407b80ebd4fb33fcd40d1fac045943ea5e09af3024",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "3cbc8127af75f69c9c2ee29ac60ec738391c0b11eeef6e0d740d7e9fcedc4b37"
+        },
+        "r1:S2:explain-N1": {
+          "requestIdentitySha256": "af47198d0bbbfdb984efc7ae49aeb315d60e57bd0119d6e63a871deef7f0f720",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "03a89f5c73f5608664c9d7fdc38d87b8421afd94ed3a7d15c2ee3c9642cce7a2",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "af47198d0bbbfdb984efc7ae49aeb315d60e57bd0119d6e63a871deef7f0f720"
+        },
+        "r1:S2:control-N1": {
+          "requestIdentitySha256": "9fa66976a7c33feb0e8113e6d9d10688ebf6fbf3816af6c37cf8ab32c1ebfd06",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "03a89f5c73f5608664c9d7fdc38d87b8421afd94ed3a7d15c2ee3c9642cce7a2",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "9fa66976a7c33feb0e8113e6d9d10688ebf6fbf3816af6c37cf8ab32c1ebfd06"
+        },
+        "r1:S3:control-N1": {
+          "requestIdentitySha256": "178e1caf11679bf3e36b35b06f71e16b563d37fd42abee01834efba06f1dfa32",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "64b069b372bfd0793e6db3aac7565c833e484bea882f5d2a0f74b637e995e33b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "178e1caf11679bf3e36b35b06f71e16b563d37fd42abee01834efba06f1dfa32"
+        },
+        "r1:S3:explain-N1": {
+          "requestIdentitySha256": "ff1debf7860dc86e439f10f6e60ad3334d49082f9e4a78fa66c8fcbe2e3f9f48",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "64b069b372bfd0793e6db3aac7565c833e484bea882f5d2a0f74b637e995e33b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "ff1debf7860dc86e439f10f6e60ad3334d49082f9e4a78fa66c8fcbe2e3f9f48"
+        },
+        "r2:S3:explain-N1": {
+          "requestIdentitySha256": "ff1debf7860dc86e439f10f6e60ad3334d49082f9e4a78fa66c8fcbe2e3f9f48",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "64b069b372bfd0793e6db3aac7565c833e484bea882f5d2a0f74b637e995e33b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "ff1debf7860dc86e439f10f6e60ad3334d49082f9e4a78fa66c8fcbe2e3f9f48"
+        },
+        "r2:S3:control-N1": {
+          "requestIdentitySha256": "178e1caf11679bf3e36b35b06f71e16b563d37fd42abee01834efba06f1dfa32",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "64b069b372bfd0793e6db3aac7565c833e484bea882f5d2a0f74b637e995e33b",
+          "imagesSha256": "19680fbcf786ceb69ef25fc041ed6cd73f99bc8340165d0122c6a0fd03d32400",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "178e1caf11679bf3e36b35b06f71e16b563d37fd42abee01834efba06f1dfa32"
+        },
+        "r2:S2:control-N1": {
+          "requestIdentitySha256": "9fa66976a7c33feb0e8113e6d9d10688ebf6fbf3816af6c37cf8ab32c1ebfd06",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "03a89f5c73f5608664c9d7fdc38d87b8421afd94ed3a7d15c2ee3c9642cce7a2",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "9fa66976a7c33feb0e8113e6d9d10688ebf6fbf3816af6c37cf8ab32c1ebfd06"
+        },
+        "r2:S2:explain-N1": {
+          "requestIdentitySha256": "af47198d0bbbfdb984efc7ae49aeb315d60e57bd0119d6e63a871deef7f0f720",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "03a89f5c73f5608664c9d7fdc38d87b8421afd94ed3a7d15c2ee3c9642cce7a2",
+          "imagesSha256": "f002223cfdc36d247852e2bed915d0c304c4d0ed93413c08e1b1f35e3e39b6e8",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "af47198d0bbbfdb984efc7ae49aeb315d60e57bd0119d6e63a871deef7f0f720"
+        },
+        "r2:S1:explain-N1": {
+          "requestIdentitySha256": "3cbc8127af75f69c9c2ee29ac60ec738391c0b11eeef6e0d740d7e9fcedc4b37",
+          "systemSha256": "0eefa8018fdf25df57d606a1371a2468e661c588329b8a1f86f4251282319a66",
+          "textPartsSha256": "138fdd0a9f23d4e463d8eb407b80ebd4fb33fcd40d1fac045943ea5e09af3024",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "f654b968a0ccf8b26fcfff96009d322f5db8ce6bbeeac2a971086394a574ebce",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "3cbc8127af75f69c9c2ee29ac60ec738391c0b11eeef6e0d740d7e9fcedc4b37"
+        },
+        "r2:S1:control-N1": {
+          "requestIdentitySha256": "2f3821fa897e355630f756a311518cf6093214776e8529a2b2d326fa0bede3ff",
+          "systemSha256": "81516cf94672bbca689c84e0633eafff580b459c5cfb488b4a6d4d164b037e36",
+          "textPartsSha256": "138fdd0a9f23d4e463d8eb407b80ebd4fb33fcd40d1fac045943ea5e09af3024",
+          "imagesSha256": "3ffe459301f2f0488362e7390e623287ad5a8f698d014b4bd437b1523143728d",
+          "schemaSha256": "eae652b842e324231c1ac40140bd58bc8a49272a9f2d53a18a58dd24f34c9ed6",
+          "model": "gemini-3.5-flash-lite",
+          "maxTokens": 2200,
+          "sha256": "2f3821fa897e355630f756a311518cf6093214776e8529a2b2d326fa0bede3ff"
+        }
+      }
+    }
+  }
+}

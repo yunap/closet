@@ -2,12 +2,22 @@ process.env.NODE_ENV = 'test'
 
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// tools.js (imported below for STYLIST_TOOLS) reaches db.js transitively — isolate before any import
+// resolves, per docs/database-safety.md and test/hermeticity_guard.test.js.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'closet-weather-test-'))
+process.env.WARDROBE_DB_PATH = path.join(tempRoot, 'wardrobe.db')
 import {
   getCurrentWeatherProfile, getWeatherProfileForPlan, _clearWeatherCachesForTests, serializeWeatherProfile, restoreWeatherProfile,
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
-  COLD_F,
+  COLD_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence, DAYPARTS,
 } from '../styling-engine/weather.js'
+import { weatherProfileFromStatedText } from '../styling-engine/stylingContext.js'
+import { STYLIST_TOOLS } from '../styling-engine/tools.js'
 
 test('resolved weather physics round-trips independently from display season text', () => {
   const stored = serializeWeatherProfile({ weatherSource: 'live', highF: 78, lowF: 56, isHot: false, isCold: false, isExtremeHeat: false })
@@ -32,16 +42,39 @@ beforeEach(() => {
   _clearWeatherCachesForTests()
 })
 
-function makeMockFetch({ geocodeResults = [{ latitude: 45.52, longitude: -122.68 }], highs = [85], lows = [60] } = {}) {
+function makeMockFetch({ geocodeResults = [{ latitude: 45.52, longitude: -122.68 }], highs = [85], lows = [60], dates = [] } = {}) {
   let calls = 0
   const fetchImpl = async (url) => {
     calls += 1
     if (url.includes('geocoding-api')) {
       return { ok: true, json: async () => ({ results: geocodeResults }) }
     }
-    return { ok: true, json: async () => ({ daily: { temperature_2m_max: highs, temperature_2m_min: lows } }) }
+    return { ok: true, json: async () => ({ daily: { time: dates, temperature_2m_max: highs, temperature_2m_min: lows } }) }
   }
   fetchImpl.callCount = () => calls
+  return fetchImpl
+}
+
+// Activity time windows spec (2026-09-17): hourly series for one date, 24 local hours starting at
+// midnight, so a test can place distinct temperatures/precipitation in specific dayparts. `hours` is
+// a map of hour-of-day (0-23) to °F; any hour not named defaults to `defaultTemp`.
+function makeMockHourlyFetch({ date = '2026-09-19', hours = {}, defaultTemp = 60, rainHours = [], geocodeFails = false } = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (let h = 0; h < 24; h += 1) {
+    times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+    temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+    precip.push(rainHours.includes(h) ? 1.2 : 0)
+  }
+  const fetchImpl = async (url) => {
+    if (url.includes('geocoding-api')) {
+      return geocodeFails
+        ? { ok: true, json: async () => ({ results: [] }) }
+        : { ok: true, json: async () => ({ results: [{ latitude: 35.63, longitude: -120.69 }] }) }
+    }
+    return { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) }
+  }
   return fetchImpl
 }
 
@@ -135,6 +168,95 @@ test('under NODE_ENV=test, live resolution is skipped when no fetchImpl is injec
   assert.equal(profile.weatherSource, 'heuristic')
 })
 
+// ─── ACTIVITY TIME WINDOWS & HOURLY EXPOSURE SLICING (spec 2026-09-17) ──────────────────────────
+// thread_1789598100140's follow-up: a stated or inferred time_window can now be resolved against
+// genuinely sampled hourly data within the live forecast horizon, instead of the day's full envelope
+// or the waking-window estimate derived from it.
+
+test('resolveExposureWindowHourly slices a named daypart to the temperatures actually observed in it', async () => {
+  // Morning (08-11) stays cool; afternoon (12-16) spikes hot -- the exact live-incident shape
+  // (Paso Robles hike), but now resolvable to the specific window instead of the whole day.
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 58, 9: 60, 10: 63, 11: 66, 12: 78, 13: 88, 14: 94, 15: 92, 16: 85 },
+  })
+  const result = await resolveExposureWindowHourly({
+    location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl,
+  })
+  assert.equal(result.weatherSource, 'live_hourly')
+  assert.equal(result.scope, 'exposure_window')
+  assert.equal(result.highF, 66)
+  assert.equal(result.lowF, 58)
+  assert.equal(result.isHot, false, 'sanity: classify() ran on the sliced window, same as resolveLive gets for a daily range')
+})
+
+test('resolveExposureWindowHourly honors an explicit start_local/end_local pair over a named period', async () => {
+  const fetchImpl = makeMockHourlyFetch({ date: '2026-09-19', hours: { 9: 60, 10: 63, 11: 66, 12: 78 } })
+  const result = await resolveExposureWindowHourly({
+    location: 'Paso Robles, CA', date: '2026-09-19',
+    timeWindow: { start_local: '09:00', end_local: '12:00' }, fetchImpl,
+  })
+  assert.equal(result.highF, 66, 'the explicit 09:00-12:00 window excludes the 12:00 reading (end is exclusive)')
+  assert.equal(result.lowF, 60)
+})
+
+test('resolveExposureWindowHourly reports rain only when it actually occurred within the sliced window', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19', hours: { 8: 55, 17: 60 }, rainHours: [17],
+  })
+  const morning = await resolveExposureWindowHourly({
+    location: 'Seattle, WA', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl,
+  })
+  const evening = await resolveExposureWindowHourly({
+    location: 'Seattle, WA', date: '2026-09-19', timeWindow: { period: 'evening' }, fetchImpl,
+  })
+  assert.equal(morning.precipitation, 'none')
+  assert.equal(evening.precipitation, 'rain')
+})
+
+test('resolveExposureWindowHourly returns null without a resolvable time window, a location, or under NODE_ENV=test with no fetchImpl', async () => {
+  const fetchImpl = makeMockHourlyFetch({})
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: null, fetchImpl }), null, 'no time window at all')
+  assert.equal(await resolveExposureWindowHourly({ location: '', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl }), null, 'no location')
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2026-09-19', timeWindow: { period: 'morning' } }), null, 'no fetchImpl under NODE_ENV=test never hits real network')
+})
+
+test('resolveExposureWindowHourly returns null when geocoding fails or the date has no hourly coverage', async () => {
+  const geocodeFails = makeMockHourlyFetch({ geocodeFails: true })
+  assert.equal(await resolveExposureWindowHourly({ location: 'Nowhereville', date: '2026-09-19', timeWindow: { period: 'morning' }, fetchImpl: geocodeFails }), null)
+
+  const noHourly = async (url) => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 1, longitude: 1 }] }) }
+    : { ok: false })
+  assert.equal(await resolveExposureWindowHourly({ location: 'Paso Robles, CA', date: '2099-01-01', timeWindow: { period: 'morning' }, fetchImpl: noHourly }), null, 'a far-future date outside the live horizon must degrade to null, never fabricate hourly certainty')
+})
+
+test('resolveDaypartHourlyEvidence slices all three canonical dayparts from one hourly fetch', async () => {
+  const fetchImpl = makeMockHourlyFetch({
+    date: '2026-09-19',
+    hours: { 8: 58, 11: 66, 12: 78, 16: 94, 17: 82, 18: 80, 19: 75, 20: 72, 21: 70, 22: 68 },
+  })
+  const evidence = await resolveDaypartHourlyEvidence({ location: 'Paso Robles, CA', date: '2026-09-19', fetchImpl })
+  assert.deepEqual(Object.keys(evidence).sort(), ['afternoon', 'evening', 'morning'])
+  assert.equal(evidence.morning.lowF, 58)
+  assert.equal(evidence.morning.highF, 66)
+  assert.equal(evidence.afternoon.highF, 94, 'the afternoon window captures the day\'s heat spike')
+  assert.equal(evidence.evening.lowF, 68)
+  assert.equal(evidence.evening.highF, 82)
+})
+
+test('resolveDaypartHourlyEvidence returns null under the same degradation conditions as resolveExposureWindowHourly', async () => {
+  assert.equal(await resolveDaypartHourlyEvidence({ location: '', date: '2026-09-19', fetchImpl: makeMockHourlyFetch({}) }), null)
+  assert.equal(await resolveDaypartHourlyEvidence({ location: 'Paso Robles, CA', date: '2026-09-19' }), null, 'no fetchImpl under NODE_ENV=test never hits real network')
+})
+
+test('DAYPARTS defines exactly the three canonical waking outdoor windows, excluding night', () => {
+  assert.deepEqual(DAYPARTS.morning, { startHour: 8, endHour: 12 })
+  assert.deepEqual(DAYPARTS.afternoon, { startHour: 12, endHour: 17 })
+  assert.deepEqual(DAYPARTS.evening, { startHour: 17, endHour: 23 })
+  assert.equal(Object.keys(DAYPARTS).length, 3, 'night is deliberately not a plausible-outdoor-recreation daypart')
+})
+
 test('caching: two calls for the same date/location hit the mock fetch only once each (geocode + forecast)', async () => {
   const fetchImpl = makeMockFetch({ highs: [90], lows: [65] })
   const date = new Date('2026-08-01')
@@ -159,6 +281,44 @@ test('getWeatherProfileForPlan falls back to the heuristic without a start date'
   const fetchImpl = makeMockFetch()
   const profile = await getWeatherProfileForPlan({ dateRange: {}, location: 'Denver, CO', season: 'cold', fetchImpl })
   assert.equal(profile.weatherSource, 'heuristic')
+})
+
+// thread_1789585467294: a multi-day range's collapsed max-of-highs/min-of-lows envelope is a
+// legitimate gate input, but the per-day series it was collapsed from must survive alongside it —
+// not be discarded — so a caller can tell "the trip's worst case" apart from "any single day's
+// actual forecast". Provider/retrieval time ride along for the same reason: two forecast sources can
+// disagree, and that needs to be traceable to wherever the number is used.
+test('getWeatherProfileForPlan preserves the daily series and fetch provenance behind the collapsed envelope', async () => {
+  const fetchImpl = makeMockFetch({
+    dates: ['2026-03-01', '2026-03-02', '2026-03-03'],
+    highs: [70, 55, 62],
+    lows: [40, 28, 35],
+  })
+  const profile = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-03') },
+    location: 'Denver, CO',
+    fetchImpl
+  })
+  assert.equal(profile.highF, 70, 'the collapsed envelope high is unchanged')
+  assert.equal(profile.lowF, 28, 'the collapsed envelope low is unchanged')
+  assert.equal(profile.provider, 'Open-Meteo')
+  assert.equal(typeof profile.retrievedAt, 'string')
+  assert.ok(!Number.isNaN(Date.parse(profile.retrievedAt)))
+  assert.deepEqual(profile.dailySeries, [
+    { date: '2026-03-01', highF: 70, lowF: 40 },
+    { date: '2026-03-02', highF: 55, lowF: 28 },
+    { date: '2026-03-03', highF: 62, lowF: 35 },
+  ])
+})
+
+test('a cached forecast reports the real original fetch time, not the time of the cache hit', async () => {
+  const fetchImpl = makeMockFetch({ dates: ['2026-03-01'], highs: [70], lows: [40] })
+  const date = new Date('2026-03-01')
+  const first = await getCurrentWeatherProfile({ date, location: 'Denver, CO', fetchImpl })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const second = await getCurrentWeatherProfile({ date, location: 'Denver, CO', fetchImpl })
+  assert.equal(fetchImpl.callCount(), 2, 'the second call must be a cache hit (geocode + forecast fetched once each)')
+  assert.equal(second.retrievedAt, first.retrievedAt, 'a cache hit must report the original fetch time')
 })
 
 // ============================================================================
@@ -186,15 +346,36 @@ test('validateWeatherEstimate: 65/45 validates; invalid shapes are rejected', ()
 })
 
 test('validateUserWeather: numeric range, single temperature, and qualitative band all validate', () => {
-  assert.deepEqual(validateUserWeather({ high_f: 65, low_f: 45 }), { temperature: { highF: 65, lowF: 45, band: null }, precipitation: null, wind: null })
-  assert.deepEqual(validateUserWeather({ high_f: 70, low_f: 70 }), { temperature: { highF: 70, lowF: 70, band: null }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ high_f: 65, low_f: 45 }), { temperature: { highF: 65, lowF: 45, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ high_f: 70, low_f: 70 }), { temperature: { highF: 70, lowF: 70, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
   assert.deepEqual(validateUserWeather({ temperature_band: 'cold' }), { temperature: { highF: null, lowF: null, band: 'cold' }, precipitation: null, wind: null })
   assert.deepEqual(validateUserWeather({ precipitation: 'rain' }), { temperature: null, precipitation: 'rain', wind: null })
 })
 
-test('validateUserWeather rejects range+band together, incomplete ranges, empty objects, and invalid enums', () => {
+// thread_1789526496845 (reopened): `scope` defaults to 'exposure_window' — the only behavior that
+// existed before this field — so any caller that predates it (the dedicated "Temperatures you'll be
+// out in" UI numeric fields, docs/app-surface-map.md 2026-09-12) is completely unaffected. Only a
+// caller that explicitly says `scope: 'daily_forecast'` gets the new, less-certain treatment.
+test('validateUserWeather: scope defaults to exposure_window; an explicit daily_forecast scope is preserved', () => {
+  assert.deepEqual(validateUserWeather({ high_f: 50, low_f: 40, scope: 'daily_forecast' }),
+    { temperature: { highF: 50, lowF: 40, band: null, scope: 'daily_forecast' }, precipitation: null, wind: null })
+  assert.equal(validateUserWeather({ high_f: 50, low_f: 40 }).temperature.scope, 'exposure_window', 'no scope stated defaults to the prior, only behavior')
+  assert.equal(validateUserWeather({ high_f: 50, low_f: 40, scope: 'not_a_real_scope' }).temperature.scope, 'exposure_window', 'an invalid scope value falls back to the default rather than rejecting the whole statement')
+})
+
+// 2026-09-15 (spec §4.1 amended): a genuinely one-sided forecast ("highs near 85") states one
+// endpoint and leaves the other unknown. The unknown side stays null rather than being rejected or
+// manufactured equal to the stated one — see weather.js's validateUserWeather and
+// classifyTemperatureRange, and stylingIntent.js's extractStructuredUserWeather.
+test('validateUserWeather: a one-sided stated range keeps the unknown endpoint null, not rejected or manufactured', () => {
+  assert.deepEqual(validateUserWeather({ high_f: 85 }), { temperature: { highF: 85, lowF: null, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.deepEqual(validateUserWeather({ low_f: 40 }), { temperature: { highF: null, lowF: 40, band: null, scope: 'exposure_window' }, precipitation: null, wind: null })
+  assert.equal(validateUserWeather({ high_f: 'warm' }), null, 'a stated-but-non-finite high is still rejected')
+  assert.equal(validateUserWeather({ low_f: '40' }), null, 'a numeric string is not a number even one-sided')
+})
+
+test('validateUserWeather rejects range+band together, empty objects, and invalid enums', () => {
   assert.equal(validateUserWeather({ high_f: 65, low_f: 45, temperature_band: 'cold' }), null, 'range and band together')
-  assert.equal(validateUserWeather({ high_f: 65 }), null, 'incomplete numeric range')
   assert.equal(validateUserWeather({}), null, 'empty object')
   assert.equal(validateUserWeather(null), null)
   assert.equal(validateUserWeather({ temperature_band: 'freezing' }), null, 'invalid band enum')
@@ -220,6 +401,64 @@ test('classifyTemperatureRange: exclusive vs non-exclusive, and a 90/40 range is
   const wideExclusive = classifyTemperatureRange({ highF: 90, lowF: 40 }, { exclusive: true })
   assert.equal(wideExclusive.isHot, false)
   assert.equal(wideExclusive.isCold, false, 'exclusive mode still collapses a genuinely wide single-context range — callers must opt into non-exclusive for a range')
+})
+
+// 2026-09-15: a one-sided stated range ("highs near 85") must classify off the endpoint it has
+// rather than falling back to {isHot:false, isCold:false} as though the weather were unresolved —
+// that used to indistinguishably mean "unavailable" and "half-stated".
+test('classifyTemperatureRange: a one-sided range classifies from the known endpoint only', () => {
+  assert.deepEqual(classifyTemperatureRange({ highF: 85, lowF: null }), { isHot: true, isCold: false })
+  assert.deepEqual(classifyTemperatureRange({ highF: null, lowF: 30 }), { isHot: false, isCold: true })
+  assert.deepEqual(classifyTemperatureRange({ highF: 60, lowF: null }), { isHot: false, isCold: false })
+  assert.deepEqual(classifyTemperatureRange({ highF: undefined, lowF: undefined }), { isHot: false, isCold: false })
+})
+
+// 2026-09-15: statedTemperatures (stylingContext.js), the prose-parsing sibling behind
+// weatherProfileFromStatedText, previously took every 2-3 digit number in the text and set
+// high_f/low_f to their max/min — so "highs near 85" (one number) collapsed to 85/85, inventing a
+// low the text never stated. It now recognizes the same high/low qualifiers as the structured
+// extractor and leaves the unstated side unresolved.
+test('weatherProfileFromStatedText: a one-sided statement does not manufacture the missing endpoint', () => {
+  const highOnly = weatherProfileFromStatedText({ statedWeather: 'highs near 85F this week' })
+  assert.equal(highOnly.highF, 85)
+  assert.equal(highOnly.lowF, null, 'the low was never stated and must stay unresolved, not equal to 85')
+  assert.equal(highOnly.isHot, true)
+
+  const lowOnly = weatherProfileFromStatedText({ statedWeather: 'down to 30F overnight' })
+  assert.equal(lowOnly.lowF, 30)
+  assert.equal(lowOnly.highF, null)
+  assert.equal(lowOnly.isCold, true)
+
+  const range = weatherProfileFromStatedText({ statedWeather: '50/40°F and walking around the city' })
+  assert.equal(range.highF, 50)
+  assert.equal(range.lowF, 40)
+
+  const point = weatherProfileFromStatedText({ statedWeather: "it's 46°F out" })
+  assert.equal(point.highF, 46)
+  assert.equal(point.lowF, 46, 'a genuine point temperature keeps the ratified equal-endpoint representation')
+})
+
+// 2026-09-16 (thread_1789526496845, reopened a second time): converting an ambiguous daily-forecast
+// statement into a qualitative temperature_band threw away real numeric evidence — the evaluator
+// went completely silent (no demand level at all), which is not the same thing as a fixed timing
+// defect. The corrected design keeps the exact numbers and adds a `scope` field distinguishing the
+// two claims the same two numbers can make: 'exposure_window' (certain — what the wearer will
+// actually be outside in) vs 'daily_forecast' (real numbers, but not a claim about a narrower stated
+// outing). The engine (exposure.js) treats a daily_forecast-scoped range exactly like a live/
+// model-estimated daily envelope — same waking-window estimate, same uncertainty — never a band and
+// never a certain claim about the outing. See its own pinned tests in exposureContext.test.js and
+// thermalDemand.test.js.
+test('generate_outfits\' user_weather schema requires scope alongside a numeric range, and does not ask the model to convert real numbers into a band', () => {
+  const tool = STYLIST_TOOLS.find(t => t.name === 'generate_outfits')
+  assert.ok(tool, 'generate_outfits tool exists')
+  const schema = tool.input_schema.properties.user_weather
+  assert.ok(schema.properties.scope, 'scope is a real schema field')
+  assert.deepEqual(schema.properties.scope.enum, ['exposure_window', 'daily_forecast'])
+  assert.match(schema.properties.scope.description, /'exposure_window'.*wearer will personally be outside in/)
+  assert.match(schema.properties.scope.description, /'daily_forecast'.*separately from a narrower/)
+  assert.match(schema.properties.temperature_band.description, /do not throw away real numbers by converting them to a band yourself/)
+  assert.doesNotMatch(schema.description + schema.properties.high_f.description + schema.properties.low_f.description,
+    /translate.*into temperature_band/, 'the model is never told to convert a numeric statement into a band')
 })
 
 test('resolveWeatherContext: user temperature overrides live temperature', () => {
@@ -348,6 +587,40 @@ test('resolveWeatherContext round-trips through serialize/restore', () => {
   const stored = serializeResolvedWeatherContext(context)
   const restored = restoreResolvedWeatherContext(stored)
   assert.deepEqual(restored, context)
+})
+
+test('resolveWeatherForRequest: a varying multi-day live forecast carries its daily series and provenance into the resolved context, and round-trips through serialize/restore', async () => {
+  const fetchImpl = makeMockFetch({
+    dates: ['2026-09-19', '2026-09-20', '2026-09-21'],
+    highs: [72, 58, 65],
+    lows: [50, 38, 44],
+  })
+  const context = await resolveWeatherForRequest({
+    location: 'Paso Robles, CA',
+    dateRange: { start: '2026-09-19', end: '2026-09-21' },
+    fetchImpl,
+  })
+  assert.equal(context.temperature.source, 'live')
+  assert.equal(context.temperature.highF, 72, 'the flat envelope is unchanged')
+  assert.equal(context.temperature.lowF, 38, 'the flat envelope is unchanged')
+  assert.equal(context.temperature.provider, 'Open-Meteo')
+  assert.equal(typeof context.temperature.retrievedAt, 'string')
+  assert.deepEqual(context.temperature.dailySeries, [
+    { date: '2026-09-19', highF: 72, lowF: 50 },
+    { date: '2026-09-20', highF: 58, lowF: 38 },
+    { date: '2026-09-21', highF: 65, lowF: 44 },
+  ])
+
+  const stored = serializeResolvedWeatherContext(context)
+  assert.equal(stored.temperature.provider, 'Open-Meteo')
+  assert.equal(stored.temperature.retrieved_at, context.temperature.retrievedAt)
+  assert.deepEqual(stored.temperature.daily_series, [
+    { date: '2026-09-19', high_f: 72, low_f: 50 },
+    { date: '2026-09-20', high_f: 58, low_f: 38 },
+    { date: '2026-09-21', high_f: 65, low_f: 44 },
+  ])
+  const restored = restoreResolvedWeatherContext(stored)
+  assert.deepEqual(restored, context, 'provenance and the daily series must survive a full serialize/restore round trip')
 })
 
 test('resolveWeatherForRequest: plan weather inherits only to matching-location/date slots (binding lives in the caller, this proves the primitive)', async () => {

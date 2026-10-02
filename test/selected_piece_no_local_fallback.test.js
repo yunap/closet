@@ -167,11 +167,11 @@ test('composeStructuredOutfitsForPiece (closet-only branch): 2 real model outfit
 
 // 2026-08-27 follow-up: validateSelectedRecoveryOutfit() used to run only evaluateOutfitStructure +
 // evaluateRequiredBaseLayers — a weaker parallel contract than the canonical evaluateWearableOutfit
-// gate every other flow uses, missing layer direction and layer construction entirely. It's now a
-// thin adapter around evaluateWearableOutfit(). This proves a model-composed outfit with a real
-// sleeve-construction conflict (the same class of defect the sleeve-taxonomy work fixed elsewhere)
-// is rejected in this closet-only selected-piece path too, not just in the visual composer path.
-test('composeStructuredOutfitsForPiece (closet-only branch): a model-composed outfit that fails canonical layer construction is rejected, not just structure/base-layer checks', async () => {
+// gate every other flow uses. It's now a thin adapter around evaluateWearableOutfit().
+// 2026-09-14 (owner ruling): sleeve geometry is log-only across production, so a look whose only issue is a
+// sleeve-shape verdict is no longer rejected in this closet-only selected-piece path either. The shared
+// evaluator still computes the verdict as shadow evidence (pinned in test/sleeveGeometryLogOnly.test.js).
+test('composeStructuredOutfitsForPiece (closet-only branch): a look whose only issue is a sleeve-geometry verdict is not rejected (log-only)', async () => {
   const conflictingLook = { label: 'Conflicting layered look', strength: 'signature', pieceIds: [700601, 700602, 700502], pieces: [{ id: 700601, name: 'voluminous-sleeve wrap dress', category: 'dress' }, { id: 700602, name: 'structured cardigan layer', category: 'top' }, { id: 700502, name: 'white leather sneakers', category: 'shoes' }], reason: 'r1' }
   const compatibleLook = { label: 'Compatible layered look', strength: 'usable', pieceIds: [700601, 700603, 700502], pieces: [{ id: 700601, name: 'voluminous-sleeve wrap dress', category: 'dress' }, { id: 700603, name: 'roomy cardigan layer', category: 'top' }, { id: 700502, name: 'white leather sneakers', category: 'shoes' }], reason: 'r2' }
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({ outfits: [conflictingLook, compatibleLook] })
@@ -192,9 +192,10 @@ test('composeStructuredOutfitsForPiece (closet-only branch): a model-composed ou
       memoryText: '',
     })
 
-    assert.equal(result.outfits.length, 1, 'only the sleeve-compatible look should survive')
-    assert.equal(result.outfits[0].label, 'Compatible layered look')
-    assert.ok(!result.outfits.some(o => o.label === 'Conflicting layered look'), 'the sleeve-construction conflict must be rejected, not merely deprioritized')
+    assert.equal(result.outfits.length, 2, 'both looks survive: sleeve geometry cannot reject a card')
+    assert.ok(result.outfits.some(o => o.label === 'Conflicting layered look'), 'the sleeve-geometry-only look is not rejected')
+    assert.ok(result.outfits.some(o => o.label === 'Compatible layered look'))
+    assert.doesNotMatch(JSON.stringify(result.outfits.map(o => [o.rejectionReason, o.systemFlags])), /sleeve|layer_construction/i, 'no sleeve verdict is surfaced')
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
   }

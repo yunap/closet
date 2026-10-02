@@ -248,14 +248,16 @@ const SUN_HOODIE = {
 test('the catalog line carries the facts needed to judge the sun hoodie', async () => {
   const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
   const { thermalFactsForPieceLine } = await import('../styling-engine/rules.js')
-  // The five facts that separate a UPF shell from a transitional jacket. Without them the model is
-  // told a warmth level and cannot tell which garment produced it. Behavioral, not a source grep —
+  // The facts that separate a UPF shell from a transitional jacket. Without them the model cannot tell
+  // which garment is which. Behavioral, not a source grep —
   // this function is shared with search_wardrobe (docs/search-propose-signal-inventory.md), so a
   // source-text check against outfitSetPlanner.js would no longer even find its definition.
   const line = thermalFactsForPieceLine(SUN_HOODIE)
-  for (const fact of ['warmth:', 'insulating layer:', 'season:', 'removable:']) {
+  for (const fact of ['insulating layer:', 'season:', 'removable:']) {
     assert.ok(line.includes(fact), `the fact channel must state ${fact}`)
   }
+  // The recorded construction is the evidence; a derived warmth level is not sent (2026-09-15).
+  assert.ok(!line.includes('warmth:'), 'no derived warmth level in the fact channel')
   assert.ok(typeof buildPlanSlotWorkbench === 'function')
 })
 

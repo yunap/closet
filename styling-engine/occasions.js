@@ -156,3 +156,24 @@ export function runOccasionStartupAssertions() {
 }
 
 runOccasionStartupAssertions();
+
+// 2026-09-15: occasion and activity profiles are serialized into model-facing prompts as
+// RULES-AS-DATA on more than one path (the shared /ask system prompt; the selected-piece visual
+// composer). Their `preferred_*` / `discouraged_*` keys are ratified SOFT roster scoring — "score
+// penalty, never suppression", with the preferred lists as "soft bonuses"
+// (docs/occasion_profiles_ratification.md) — so publishing them as rules turned a ranking
+// preference into a model instruction, and did it differently on each path.
+//
+// This strips exactly those keys from any profile list. Every hard key (prohibited_*, required_*,
+// register_ceiling, required_occasion_tags) and every classification field (id, label, keywords,
+// vibe) survives, because those are what the engine actually enforces. Scoring keeps reading the
+// unmodified profiles: this is a prompt-serialization filter, not a policy change.
+const SOFT_RANKING_RULE_KEYS = /^(preferred|discouraged)_/
+export function stripSoftRankingRules(profiles = []) {
+  return (profiles || []).map(profile => ({
+    ...profile,
+    rules: Object.fromEntries(
+      Object.entries(profile?.rules || {}).filter(([key]) => !SOFT_RANKING_RULE_KEYS.test(key))
+    ),
+  }))
+}

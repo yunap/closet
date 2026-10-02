@@ -89,10 +89,13 @@ import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from
 import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
-import { projectStylingApplicabilityContext } from './stylingContext.js'
+import { projectStylingApplicabilityContext, weatherProfileFromStatedText } from './stylingContext.js'
 
-import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
-import { extractWeatherContext, extractStructuredUserWeather } from './stylingIntent.js'
+// 2026-09-15: the /ask system prompt serializes the occasion profiles as RULES-AS-DATA, and the
+// selected-piece composer serializes both profile lists the same way. One shared filter keeps the
+// two paths from publishing different taste instructions — see stripSoftRankingRules.
+import { OCCASION_PROFILES, resolveOccasionProfile, stripSoftRankingRules } from './occasions.js'
+import { extractWeatherContext, extractStructuredUserWeather, extractExplicitActivity, normalizeActivity, ACTIVITY_VALUES } from './stylingIntent.js'
 
 import {
   parsePiece,
@@ -114,6 +117,7 @@ import {
   weatherProfileFromContext,
   footwearComfortVerdict,
   registerCeilingVerdict,
+  registerCeilingIsExplicit,
   resolveRegisterCeiling,
 } from './rules.js'
 
@@ -156,12 +160,41 @@ export function structuredResponseMaxTokens(itemCount = 4, { tokensPerItem = 500
   return Math.max(floor, Math.min(ceiling, base + count * tokensPerItem))
 }
 
-export function withTimeout(promise, ms, label = 'operation') {
+// 2026-09-16 (owner review, thread_1789546295700): the previous shape — `withTimeout(promise, ms)`
+// — accepted an already-in-flight promise, so there was never a signal to hand the request before
+// it started; the timeout branch losing the race did not stop anything, it only stopped this app
+// from waiting. A real incident showed the concrete cost: the composer's own provider call kept
+// running for another ~500s after the 120s timeout "gave up" on it, valid output and all, fully
+// billed and silently discarded, while the route moved on to local-fill and then a second paid
+// repair call that ALSO timed out — two paid calls in flight for work one call was already doing.
+//
+// `operation` is now a FUNCTION of the signal, called only once the AbortController already exists,
+// so there is no window where an uncancellable promise is created and only handed a signal
+// afterward. Requesting cancellation is not a guarantee of provider-side termination or that
+// billing stops — that is on the SDK/provider, and callers should record what usage/logging the
+// SDK actually reports for an aborted call, not assume zero cost. What this DOES guarantee: the
+// app stops waiting on (and starting downstream work on top of) a call it has already given up on.
+//
+// The abandoned operation promise can still resolve or reject after the timeout has already won
+// the race — cancellation is requested, not synchronous — so it is given its own no-op `.catch`
+// here. Without it, a late rejection from the orphaned call (a provider abort error, or any other
+// failure) becomes an unhandled promise rejection with no route left to catch it.
+export function withTimeout(operation, ms, label = 'operation') {
+  const controller = new AbortController()
   let timer
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(Object.assign(new Error(`${label} timed out after ${ms}ms`), {
+        isTimeout: true,
+        timeoutLabel: label,
+        timeoutMs: ms,
+      }))
+    }, ms)
   })
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+  const operationPromise = Promise.resolve().then(() => operation(controller.signal))
+  operationPromise.catch(() => {})
+  return Promise.race([operationPromise, timeoutPromise]).finally(() => clearTimeout(timer))
 }
 
 export function normalizeForMatch(value) {
@@ -1003,7 +1036,12 @@ export function anchorRegisterFootwearComputedChecks({ selectedPiece, occasion, 
   const registerCeilingRank = formalityRank(resolveRegisterCeiling({
     occasion, activity, mood, request: question, occasionProfile, activityProfile,
   }))
-  const registerVerdict = registerCeilingVerdict(selectedPiece, registerCeilingRank, { occasion })
+  // Explicit, like every other consumer: an occasion-derived ceiling is a preference, so the one
+  // piece this check exists for is not reported as register-prohibited unless the wearer said so.
+  const registerVerdict = registerCeilingVerdict(selectedPiece, registerCeilingRank, {
+    occasion,
+    explicitCeiling: registerCeilingIsExplicit({ occasion, activity, mood, request: question, occasionProfile, activityProfile }),
+  })
   const footwearVerdict = footwearComfortVerdict(
     selectedPiece,
     activityProfile?.rules?.excluded_heel_heights || [],
@@ -1297,7 +1335,7 @@ export async function makeSelectedPieceCandidateContactSheet(selectedPiece, rank
 
 // providerOverride: same gap and fix as composeStructuredOutfitsForPiece above -- absent by
 // default, only forwarded from the freeform-chat idealMode/idealOnlyMode path.
-export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '', providerOverride = stylistProviderOverride }) {
+export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '', providerOverride = stylistProviderOverride, signal = null }) {
   const candidatesWithPhotos = rankedCandidates.filter(r => r?.piece && (r.piece.photo || r.piece.worn_photo))
   const reviewCandidates = (candidatesWithPhotos.length >= 8 ? candidatesWithPhotos : rankedCandidates).slice(0, 18)
   if (!selectedPiece || !reviewCandidates.length || !(selectedPiece.photo || selectedPiece.worn_photo || reviewCandidates.some(r => r.piece?.photo || r.piece?.worn_photo))) return null
@@ -1334,7 +1372,8 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
         ].filter(Boolean).join('\n\n') }
       ]
     }],
-    providerOverride
+    providerOverride,
+    signal
   })
   const parsed = parseModelJson(raw, { context: 'visual support critic', maxTokens: 900 })
   const rejectMap = new Map((parsed.rejectedPieceIds || []).map(item => {
@@ -1412,7 +1451,7 @@ export async function makeComposedOutfitClashContactSheet(outfits = [], maxOutfi
   return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCount: shown.length }
 }
 
-export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '', providerOverride = stylistProviderOverride } = {}) {
+export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [], occasion, season, mood, memoryText = '', providerOverride = stylistProviderOverride, signal = null } = {}) {
   const reviewable = outfits.filter(outfit => (outfit.pieces || []).some(piece => piece.photo || piece.worn_photo))
   if (reviewable.length < 1) return null
 
@@ -1424,29 +1463,57 @@ export async function reviewComposedWholeWardrobeOutfitsForClash({ outfits = [],
     system: prompts.WHOLE_WARDROBE_OUTFIT_CLASH_CRITIC_SYSTEM,
     maxTokens: 700,
     providerOverride,
+    signal,
     messages: [{
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: sheet.mime, data: sheet.base64 } },
+        // NO TASTE-SUPPRESSION MEMORY (owner ruling 2026-09-13). This is an independent visual check;
+        // handing it prior not_me / bad_occasion feedback framed as "combinations to suppress"
+        // primed it to reject — live thread_1789346300319 restored a conventional navy-stripe /
+        // olive-cargo / grey-cardigan repair on a tone-harmony opinion. `memoryText` is still
+        // accepted so existing callers do not break, and deliberately not sent.
         { type: 'text', text: [
           `Occasion: ${occasion || 'casual'}`,
           `Season: ${season || 'current season'}`,
           mood ? `Mood: ${mood}` : '',
-          memoryText ? `Taste memory:\n${memoryText.slice(0, 3000)}` : ''
         ].filter(Boolean).join('\n') }
       ]
     }]
   })
   const parsed = parseModelJson(raw, { context: 'whole wardrobe outfit clash critic', maxTokens: 700 })
   const flagged = Array.isArray(parsed.flagged) ? parsed.flagged : []
+  // THREE OUTCOMES, CONSERVATIVE BY CONSTRUCTION. Only an explicit "reject" removes or restores a
+  // card; a "note" annotates it. Anything that is not literally "reject" — a missing verdict, an
+  // unfamiliar word, the legacy shape with no verdict at all — is read as a note, so uncertainty in
+  // the response can never become a rejection.
   const flaggedByOutfit = new Map()
+  const notedByOutfit = new Map()
   for (const item of flagged) {
     const index = Number(item?.index)
     if (!Number.isInteger(index) || index < 0 || index >= reviewable.length) continue
-    flaggedByOutfit.set(reviewable[index], String(item?.reason || 'visual critic flagged a clash in the photos').trim())
+    const reason = String(item?.reason || 'visual critic noted something in the photos').trim()
+    if (String(item?.verdict || '').toLowerCase().trim() === 'reject') flaggedByOutfit.set(reviewable[index], reason)
+    else notedByOutfit.set(reviewable[index], reason)
   }
-  return { flaggedByOutfit, reviewedCount: reviewable.length, usage }
+  return { flaggedByOutfit, notedByOutfit, reviewedCount: reviewable.length, usage }
 }
+
+// ONE corrective pass for the whole-wardrobe composer (owner ruling 2026-09-12, capped at a single
+// pass). Every other composition flow in this app closes the loop — the trip planner returns slot
+// failures through submit_plan_outfits and freeform returns them as retryPending cards — while this
+// one was "a single model call, no tools, no in-call retry". So the engine computed
+// THERMAL_UNDERSHOOT on four of five live cards across three different prompt wordings and printed
+// it on the card, because there was no channel to tell the composer anything.
+//
+// The contact sheet, not the manifest: the first call already spent ~40k tokens on 83 garment
+// photos, and re-sending them to change one garment per outfit would double the cost of the turn to
+// answer a much narrower question. Rows are the affected outfits, plus one row of the layers that
+// actually answer the conditions — which is the whole of what this pass needs to see.
+//
+// Images, not a text list, for the same reason the first pass gets photos: a layer swap is a
+// composition decision (docs: visual grounding), and a stylist choosing a coat for an outfit it has
+// not seen is the failure mode this app was built around.
 
 export function getOpenAIImageModel() {
   const configured = String(process.env.OPENAI_IMAGE_MODEL || '').trim()
@@ -3197,7 +3264,12 @@ export async function evaluateOutfitThroughSharedPipeline({
         visuallySeenPieceIds: new Set(imageRefs.filter(Boolean).map(ref => Number(ref.piece.id)).filter(Boolean)),
         providerOverride,
       }
-      const followupResult = await withTimeout(askStylistWithTools({
+      // askStylistWithTools's own multi-iteration tool loop is out of scope for signal propagation
+      // here (a real cancellation-aware rework of that loop is a separate, larger change) — this
+      // call site is only updated to the new operation-function calling convention so withTimeout's
+      // shared timer/cleanup/classification behavior still applies; the unused `signal` parameter
+      // is accepted but not yet forwarded into the loop's own provider calls.
+      const followupResult = await withTimeout(() => askStylistWithTools({
         system,
         maxTokens,
         messages,
@@ -3233,11 +3305,12 @@ export async function evaluateOutfitThroughSharedPipeline({
       // Sized from observed truncation: the full critique JSON reached ~7.9k
       // chars (~2000 tokens) before being cut off, so 1400 and even 2000
       // truncated real responses mid-string. 3000 leaves headroom.
-      const evaluationResult = await withTimeout(askStylistWithUsage({
+      const evaluationResult = await withTimeout(signal => askStylistWithUsage({
         system,
         maxTokens,
         messages,
         providerOverride,
+        signal,
       }), 90000, 'Whole-wardrobe outfit evaluator')
       usage = evaluationResult.usage
       parsed = parseModelJson(evaluationResult.text, { context: 'whole-wardrobe outfit evaluator', maxTokens, stopReason: usage?.stopReason })
@@ -4231,7 +4304,11 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
         JSON.stringify(context, null, 2),
         '',
         userWeather
-          ? 'The numeric user_weather range above is a literal fact from the current request. Preserve both endpoints unchanged on every composition tool call.'
+          ? `The user_weather above is a literal fact from the current request. ${
+              Number.isFinite(userWeather.high_f) && Number.isFinite(userWeather.low_f)
+                ? 'Preserve both endpoints unchanged on every composition tool call.'
+                : 'Only one endpoint was stated; preserve it unchanged and do not supply the other — it is genuinely unknown, not zero and not equal to the stated one.'
+            }`
           : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
       ].join('\n')
     }],
@@ -4311,7 +4388,26 @@ export async function buildStylistConversationPayload(body) {
     ? restoreWeatherProfile(restoredState.weather_profile)
     : null
   const effectiveOccasion = occasion || restoredEstablished.occasion || ''
-  const effectiveActivity = activity || restoredEstablished.activity || ''
+  // 2026-09-15: the chat activity picker defaults to "No special activity" and sends
+  // `activity: 'none'` on every turn, so treating the body value as authority recorded
+  // `activity: none` in THREAD STATE for a request whose words said "walking around the city".
+  // Same ruling as the execution router (provider.js): a structured activity is authority only
+  // when it is a real choice; otherwise the user's own words decide. A literal "none" is never
+  // recorded as established context — not chosen is not the same as chosen none.
+  const structuredActivity = normalizeActivity(activity)
+  const statedActivity = ACTIVITY_VALUES.includes(structuredActivity) && structuredActivity !== 'none'
+    ? structuredActivity
+    : extractExplicitActivity(question || '')
+  const effectiveActivity = (statedActivity && statedActivity !== 'none' ? statedActivity : '')
+    || restoredEstablished.activity
+    || ''
+  // Did that activity come from THIS turn's sentence, rather than from the picker or thread state?
+  // It belongs in established context either way — the model has to see it — but it is not evidence
+  // that the thread already had context. See establishedStylingContextText below.
+  const activityFromThisTurnsWords =
+    !(ACTIVITY_VALUES.includes(structuredActivity) && structuredActivity !== 'none') &&
+    statedActivity !== 'none' &&
+    effectiveActivity === statedActivity
   const effectiveSeason = season || restoredEstablished.season || ''
   const effectiveMood = mood || restoredEstablished.mood || ''
   const effectiveMission = mission || restoredEstablished.mission || ''
@@ -4322,7 +4418,24 @@ export async function buildStylistConversationPayload(body) {
   // Weather precedence: explicit body value, then this turn's text, then the
   // established value from thread state, then (last resort) a coarse guess from
   // season/mood words — so a restored "hot, highs 85F" beats a "warm"-season guess.
-  const explicitTurnWeather = weather || extractWeatherContext(question || '')
+  // 2026-09-15: preserve BOTH stated endpoints. extractWeatherContext is display prose and yields
+  // a single number ("50/40°F" -> "40°"), so a stated range reached THREAD STATE as one
+  // temperature. The conservative structured extractor owns the numbers — it recognizes only an
+  // explicit Fahrenheit range, never climate knowledge — and the display text is rebuilt from them
+  // in the same wording the rest of the app uses for a resolved range.
+  const structuredTurnWeather = extractStructuredUserWeather([weather, question].filter(Boolean).join(' '))
+  // Only when the user actually stated BOTH endpoints. "hot, highs 85F" states a high and no low;
+  // the extractor's single-value branch collapses that to 85/85, which is fine for the profile
+  // (the same thing every composer path's stated-weather resolution does) but must never be
+  // written back as the user's own words — that would invent a low they never gave, and discard
+  // the qualifier they did give. A one-sided statement keeps its original prose.
+  const statedRangeText = structuredTurnWeather &&
+    Number.isFinite(structuredTurnWeather.high_f) &&
+    Number.isFinite(structuredTurnWeather.low_f) &&
+    structuredTurnWeather.high_f !== structuredTurnWeather.low_f
+    ? `a forecast high of ${structuredTurnWeather.high_f}°F and low of ${structuredTurnWeather.low_f}°F`
+    : ''
+  const explicitTurnWeather = statedRangeText || weather || extractWeatherContext(question || '')
   const contextualTurnWeather = extractWeatherContext([
     threadContextText,
     generatedOutfitContextText
@@ -4330,7 +4443,20 @@ export async function buildStylistConversationPayload(body) {
   const turnWeather = explicitTurnWeather || contextualTurnWeather
   // A new explicit weather statement owns this turn. Otherwise retain resolved numeric physics
   // separately from display season text so "summer; mild; 78/56" cannot be reparsed as hot.
-  const effectiveWeatherProfile = explicitTurnWeather ? null : restoredWeatherProfile
+  // 2026-09-15: a new explicit statement still owns the turn — but it must REPLACE the stored
+  // physics, not delete them. Nulling the profile here is why a request that stated 50/40°F left
+  // THREAD STATE with no high, no low and no hot/cold reading at all, leaving the one-number
+  // display prose as the only weather the model could see. Composed through the same stated-weather
+  // function the composer paths use, so there is one such heuristic in the codebase, not two.
+  const statedTurnWeatherProfile = explicitTurnWeather
+    ? weatherProfileFromStatedText({
+        statedWeather: explicitTurnWeather,
+        mood: effectiveMood,
+        requestText: question || '',
+        date: currentDate ? new Date(currentDate) : new Date(),
+      })
+    : null
+  const effectiveWeatherProfile = explicitTurnWeather ? statedTurnWeatherProfile : restoredWeatherProfile
   const extractedWeather = turnWeather
     || restoredEstablished.weather
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
@@ -4348,7 +4474,14 @@ export async function buildStylistConversationPayload(body) {
     ...(effectiveMission ? { mission: effectiveMission } : {}),
     ...(effectiveLocation ? { location: effectiveLocation } : {}),
   }
-  const establishedStylingContextText = Object.keys(establishedStylingContext).length
+  // `hasThreadContext` below asks whether context existed BEFORE this turn — it is one of the
+  // inputs that decides whether a turn is a correction. An activity read out of this turn's own
+  // sentence is not that kind of context: counting it flipped a fresh request into 'correction'
+  // ("Give me one complete outfit. This is ordinary sightseeing and walking, not exercise."),
+  // because a negation plus apparent thread context reads as a correction to an earlier answer.
+  const establishedContextKeysFromThread = Object.keys(establishedStylingContext)
+    .filter(key => !(key === 'activity' && activityFromThisTurnsWords))
+  const establishedStylingContextText = establishedContextKeysFromThread.length
     ? 'established styling context present'
     : ''
 
@@ -4735,8 +4868,8 @@ export async function buildStylistConversationPayload(body) {
   const system = prompts.STYLIST_SYSTEM + [
     '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
-    'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud. Each profile\'s `keywords` are illustrative examples of the kind of request it covers, not an exhaustive or literal match list — real requests will use wording none of them anticipated. Classify by the social register and setting the request actually implies, not by matching a surface noun: the same noun can describe very different registers (e.g. "market" spans a routine grocery/farmers-market errand, which is casual/city, versus a craft fair, wine festival, or artisan market outing, which is outdoor_daytime_social). When a request is a plain errand or everyday task with no festival/social/event framing, default to the permissive casual or city profiles rather than a narrower one.',
-    JSON.stringify(OCCASION_PROFILES, null, 2),
+    'Classify the user\'s event/activity and weather description into one of the profiles below. A profile\'s prohibited_materials and prohibited_footwear are hard constraints and you MUST apply them. The profile\'s vibe describes the social register it covers; it is not a list of required garments, and no garment category is banned by season. Each profile\'s `keywords` are illustrative examples of the kind of request it covers, not an exhaustive or literal match list — real requests will use wording none of them anticipated. Classify by the social register and setting the request actually implies, not by matching a surface noun: the same noun can describe very different registers (e.g. "market" spans a routine grocery/farmers-market errand, which is casual/city, versus a craft fair, wine festival, or artisan market outing, which is outdoor_daytime_social). When a request is a plain errand or everyday task with no festival/social/event framing, default to the permissive casual or city profiles rather than a narrower one.',
+    JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES), null, 2),
     '',
     'CURRENT WARDROBE TRUTH:',
     activeWardrobeText,

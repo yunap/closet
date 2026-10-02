@@ -54,11 +54,11 @@ test('gate 3 — the pinned orderings are supportable', () => {
   // by absolute warmth. Which one wins on a given day is the demand mapping's job, not this one's.
   assert.ok(at(garmentWarmthLevel(G.puffer)) > at(garmentWarmthLevel(G.cardigan)),
     'a down puffer is absolutely warmer than a knit cardigan')
-  // An uninsulated cotton jacket places at 'light' (capped shell), while an insulating wool cardigan places at 'moderate'.
+  // No blanket outerwear ceiling (2026-09-13): a medium cotton jacket places by substance and coverage
+  // like any garment, in the same named bucket as a medium wool cardigan, and the insulating fibre
+  // still separates them in raw terms.
   assert.equal(garmentWarmthLevel(G.cardigan), 'moderate')
-  assert.equal(garmentWarmthLevel(G.unlinedJacket), 'light')
-  assert.ok(at(garmentWarmthLevel(G.cardigan)) > at(garmentWarmthLevel(G.unlinedJacket)),
-    'an insulating cardigan sits above an unlined cotton jacket in named level')
+  assert.equal(garmentWarmthLevel(G.unlinedJacket), 'moderate')
   assert.ok(garmentWarmthScore(G.cardigan) > garmentWarmthScore(G.unlinedJacket),
     'an insulating cardigan still scores above an unlined cotton jacket in raw terms')
 
@@ -121,8 +121,8 @@ test('outerwear with a known face but unrecorded interior stays UNKNOWN', () => 
   assert.equal(garmentWarmthLevel(shellCoat), null)
 
   // But an outerwear piece whose interior question IS answered places normally — `[]` makes the
-  // verdict non_insulating, so an uninsulated shell coat places at 'light', while a named fill makes it 'very warm'.
-  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: [] }), 'light')
+  // verdict non_insulating, so an uninsulated heavy coat places by substance and coverage, while a named fill makes it 'very warm'.
+  assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: [] }), 'moderate')
   assert.equal(garmentWarmthLevel({ ...shellCoat, insulating_layer_materials: ['down'] }), 'very warm')
 })
 
@@ -149,69 +149,73 @@ test('ordinary clothing with a recorded face fabric places — it cannot conceal
   assert.equal(garmentWarmthLevel(B('medium', '', ['unknown'])), null)
 })
 
-test('uninsulated outerwear shells stay capped at light (docs/garment-warmth-calibration.md §3.1)', () => {
-  // A classic cotton trench coat: medium weight, long sleeves, knee length, but uninsulated cotton shell
+test('uninsulated outerwear is not capped, and lining and coat length add no warmth magnitude yet', () => {
+  // The retired ceiling clamped every outerwear garment without insulating evidence to `light`,
+  // placing a lined knee-length trench below a long-sleeved cotton tee — an inversion the clo
+  // anchors do not support (thin coat 0.36 > thin long-sleeve shirt 0.25). Wind protection proves
+  // exposure protection and lining proves construction substance; neither is a warmth magnitude
+  // without an anchor, so a lined knee-length trench and an unlined hip-length jacket of the same
+  // weight still score alike.
   const trench = {
-    category: 'outerwear',
-    fabric_weight: 'medium',
-    fabric_category: 'cotton',
-    fiber_content: ['cotton', 'polyester'],
-    interior_construction: 'full_lining',
-    insulating_layer_materials: [],
-    sleeve_length: 'long',
-    length_hits_at: 'knee',
+    category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton', 'polyester'],
+    interior_construction: 'full_lining', insulating_layer_materials: [], weather_protection: ['wind'], sleeve_length: 'long', length_hits_at: 'knee',
   }
-  assert.equal(garmentWarmthLevel(trench), 'light')
-  assert.ok(garmentWarmthScore(trench) <= 0.5)
-
-  // Unlined utility jacket: cropped, medium cotton
   const utilityJacket = {
-    category: 'outerwear',
-    fabric_weight: 'medium',
-    fabric_category: 'cotton',
-    fiber_content: ['cotton'],
-    interior_construction: 'unlined',
-    insulating_layer_materials: [],
-    sleeve_length: 'long',
-    length_hits_at: 'hip',
+    category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'],
+    interior_construction: 'unlined', insulating_layer_materials: [], sleeve_length: 'long', length_hits_at: 'hip',
   }
-  assert.equal(garmentWarmthLevel(utilityJacket), 'light')
-  assert.ok(garmentWarmthScore(utilityJacket) <= 0.5)
-
-  // Uninsulated leather jacket (e.g. piece #207 - soft unlined lambskin zip jacket)
-  const leatherJacket = {
-    category: 'outerwear',
-    fabric_weight: 'medium',
-    fabric_category: 'leather',
-    fiber_content: ['leather'],
-    interior_construction: 'unlined',
-    insulating_layer_materials: [],
-    sleeve_length: 'long',
-    length_hits_at: 'hip',
-  }
-  assert.equal(garmentWarmthLevel(leatherJacket), 'light')
-  assert.ok(garmentWarmthScore(leatherJacket) <= 0.5)
-
-  // Real cold weather outerwear with insulating fiber or fill places higher:
-  const woolFunnelCoat = {
-    category: 'outerwear',
-    fabric_weight: 'heavy',
-    fabric_category: 'wool',
-    fiber_content: ['wool'],
-    interior_construction: 'full_lining',
-    sleeve_length: 'long',
-    length_hits_at: 'low_hip',
-  }
-  assert.ok(['warm', 'very warm'].includes(garmentWarmthLevel(woolFunnelCoat)))
-
-  const shearlingJacket = {
-    category: 'outerwear',
-    fabric_weight: 'heavy',
-    fabric_category: 'suede',
-    fiber_content: ['suede'],
-    insulating_layer_materials: ['shearling'],
-    sleeve_length: 'long',
-  }
-  assert.equal(garmentWarmthLevel(shearlingJacket), 'very warm')
+  const tee = { category: 'top', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'long' }
+  assert.equal(garmentWarmthLevel(trench), 'moderate')
+  assert.equal(garmentWarmthScore(trench), garmentWarmthScore(tee), 'no longer below a long-sleeved cotton tee')
+  assert.equal(garmentWarmthScore(trench), garmentWarmthScore(utilityJacket), 'lining and length carry no unanchored magnitude')
 })
 
+
+// --- layering vests and high-loft fibres (owner rulings 2026-09-12) -----------------------------
+
+const vest = (extra = {}) => ({
+  id: 900, name: 'open front vest', category: 'outerwear',
+  sleeve_length: 'sleeveless', sleeve_type: 'sleeveless', fabric_weight: 'medium',
+  fiber_content: ['cashmere'], ...extra,
+})
+
+test('VEST: a sleeveless OUTERWEAR layer is charged the bare cut once, not twice', () => {
+  // The owner's two near-identical medium cashmere open vests landed two levels apart (`very light`
+  // vs `moderate`) on nothing but `sleeveless` vs `cap` — a swing wider than the entire
+  // ultralight-to-heavy substance span. A vest worn over a sleeved base leaves nothing bare.
+  assert.equal(garmentWarmthLevel(vest()), 'light')
+})
+
+test('VEST: a sleeveless BASE garment keeps the full bare-cut correction', () => {
+  // The failure the penalty exists to prevent: "sleeveless wool shell → warm".
+  const shell = { id: 901, name: 'wool shell', category: 'top', sleeve_length: 'sleeveless', fabric_weight: 'medium', fiber_content: ['wool'] }
+  assert.equal(garmentWarmthLevel(shell), 'very light')
+  // And `tuck_behavior: wear_over_only` must NOT buy the relief — it means "not tucked in", and it
+  // is carried by sleeveless dresses and tank tops throughout a real wardrobe.
+  assert.equal(garmentWarmthLevel({ ...shell, tuck_behavior: 'wear_over_only' }), 'very light')
+})
+
+test('VEST: capped at `light` — the verified table puts a thick vest at 0.17, below a long-sleeve shirt', () => {
+  assert.equal(garmentWarmthLevel(vest({ fabric_weight: 'heavy' })), 'light')
+})
+
+test('VEST: a recorded fill escapes the cap — a down gilet is not a knit vest', () => {
+  const gilet = vest({ id: 902, name: 'down gilet', fabric_weight: 'heavy', fiber_content: ['nylon'], insulating_layer_materials: ['down'] })
+  assert.notEqual(garmentWarmthLevel(gilet), 'light')
+})
+
+test('HIGH LOFT: cashmere outranks cotton at the same weight and cut', () => {
+  const base = { id: 903, category: 'top', sleeve_length: 'long', fabric_weight: 'medium' }
+  const cashmere = garmentWarmthScore({ ...base, fiber_content: ['cashmere'] })
+  const wool = garmentWarmthScore({ ...base, fiber_content: ['wool'] })
+  const cotton = garmentWarmthScore({ ...base, fiber_content: ['cotton'] })
+  assert.ok(cashmere > wool, `cashmere ${cashmere} must outrank generic wool ${wool}: warmth per unit weight is the point`)
+  assert.ok(wool > cotton, 'and every insulating fibre still outranks a non-insulating one')
+})
+
+test('HIGH LOFT: a recorded insulating layer still dominates any fibre-name credit', () => {
+  const filled = { id: 904, category: 'outerwear', sleeve_length: 'long', fabric_weight: 'medium', fiber_content: ['polyester'], insulating_layer_materials: ['down'] }
+  const cashmereKnit = { id: 905, category: 'outerwear', sleeve_length: 'long', fabric_weight: 'medium', fiber_content: ['cashmere'] }
+  assert.ok(garmentWarmthScore(filled) > garmentWarmthScore(cashmereKnit),
+    'engineered fill is stronger evidence than a fibre name — the source-sensitivity ruling stands')
+})

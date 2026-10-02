@@ -56,13 +56,18 @@ test('locallyGateWholeWardrobeOutfits rehydrates trimmed pieces so register-ceil
 
   // Mirrors the real /evaluate-piece call: mode 'advisor', no repair override, candidatePieces is
   // the full allowed-pieces pool.
+  // 2026-09-13: the subject here is REHYDRATION — that a trimmed card's pieces get their formality
+  // and heel_height back so the gates can see them at all. An inferred ceiling now ranks instead of
+  // gating, so the register half is driven with a stated maximum; otherwise this would be asserting
+  // the old gate semantics rather than the rehydration it exists for.
   const gated = locallyGateWholeWardrobeOutfits([registerViolation, footwearViolation], 5, {
     mode: 'advisor',
     requireShoes: true,
     applyDiversity: false,
     candidatePieces,
     occasion: 'casual',
-    activity: 'walking'
+    activity: 'walking',
+    request: 'nothing dressy please'
   })
 
   const registerOutfit = gated.outfits.find(o => o.label === 'Register violation')
@@ -194,3 +199,197 @@ test('composer prose integrity preserves legitimate imperative wear instructions
   }
   assert.equal(sanitizeWholeWardrobeOutfitProse(outfit), outfit)
 })
+
+// ─── the endpoint evaluator, through the whole-wardrobe gate ───────────────────────────────────
+//
+// Concern 3 review: the shared primitive's semantics live in test/thermalAdequacyMigration. What
+// this pins is the WIRING of the Whole Wardrobe flow — that `locallyGateWholeWardrobeOutfits`
+// passes its resolved weatherProfile into the shared Contract C stage, that rehydration restores
+// the thermal facts the trimmed card lost, and that the verdict comes back as a card annotation.
+import { resolveWeatherContext, validateUserWeather } from '../styling-engine/weather.js'
+
+// Exact finding texts, so these pin WHICH finding fired rather than prose several findings satisfy.
+// Codes do not survive into `systemFlags` or the gate's rejection reasons — both carry messages —
+// so the message is the identity available at this layer.
+const SEVERE_CAPACITY_MESSAGE = 'the outer layer is outdoor-capable, but the layers under it are light enough that this outfit carries little insulation for sustained cold — if no owned piece can satisfy this, say so as a wardrobe gap rather than resubmitting — re-plan at a milder context or accept the disclosed shortfall'
+const COLD_END_SHORTFALL_MESSAGE = 'no way of wearing this outfit carries enough warmth for the cold end of these conditions'
+
+test('WHOLE WARDROBE: the endpoint evaluator runs on the gate weather and its verdict reaches the card', () => {
+  const lightTee = { ...base, id: 401, name: 'light cotton tee', category: 'top', formality: 'everyday', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'long' }
+  const woolSweater = { ...base, id: 402, name: 'wool sweater', category: 'top', formality: 'everyday', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' }
+  const denim = { ...base, id: 403, name: 'denim trousers', category: 'bottom', formality: 'everyday', fabric_weight: 'medium', fabric_category: 'denim', fiber_content: ['denim'], length_hits_at: 'ankle' }
+  const boots = { ...base, id: 404, name: 'leather boots', category: 'shoes', formality: 'everyday', shoe_type: 'boot', heel_height: 'flat', walk_support: 'high', fabric_category: 'leather' }
+  const shell = { ...base, id: 405, name: 'rain shell', category: 'outerwear', formality: 'everyday', fabric_weight: 'light', fiber_content: ['polyester'], sleeve_length: 'long', weather_protection: ['rain'] }
+  const candidatePieces = [lightTee, woolSweater, denim, boots, shell]
+
+  const weatherProfile = resolveWeatherContext({ userWeather: validateUserWeather({ high_f: 35, low_f: 25 }) }).temperature
+  const gateFor = topId => {
+    const card = normalizeWholeWardrobeOutfitObject({ label: `card ${topId}`, pieceIds: [topId, 403, 404, 405] }, candidatePieces)
+    // The trim is the whole reason rehydration matters here: the card the gate receives carries no
+    // fabric_weight at all, so a gate that judged the card as given would see no thermal facts.
+    assert.equal(card.pieces.every(piece => piece.fabric_weight === undefined), true)
+    const gated = locallyGateWholeWardrobeOutfits([card], 5, {
+      mode: 'advisor', requireShoes: true, applyDiversity: false,
+      candidatePieces, occasion: 'casual', weatherProfile,
+    })
+    const outfit = gated.outfits.find(o => o.label === `card ${topId}`)
+    return { outfit, rejected: gated.rejected, flags: (outfit?.systemFlags || []).map(f => f.message) }
+  }
+
+  // DISPOSITION AND FINDING BOTH PINNED. 35/25 with a light base under a light shell is a known
+  // substantial severe-cold shortfall — an ERROR, so this card must be REJECTED by the gate rather
+  // than shipped with a note. "Rejected or annotated" would let a later severity downgrade keep
+  // this test green while the flow quietly started delivering the card.
+  const tooLight = gateFor(401)
+  assert.equal(tooLight.outfit, undefined, 'a hard severe-cold shortfall is rejected, not annotated')
+  const rejection = JSON.stringify(tooLight.rejected)
+  assert.ok(rejection.includes(SEVERE_CAPACITY_MESSAGE),
+    `the rejection carries the severe-cold capacity finding verbatim: ${rejection}`)
+
+  // The control: same weather, same shell, a base that answers the cold end — delivered, and with
+  // neither thermal finding attached.
+  const adequate = gateFor(402)
+  assert.ok(adequate.outfit, 'the adequate card survives the gate')
+  assert.ok(!adequate.flags.includes(SEVERE_CAPACITY_MESSAGE) && !adequate.flags.includes(COLD_END_SHORTFALL_MESSAGE),
+    `an adequate card carries neither thermal finding: ${JSON.stringify(adequate.flags)}`)
+})
+
+test('WHOLE WARDROBE: the structured activity reaches the evaluator — same weather, same garments, hiking is not sedentary', () => {
+  // The gate already receives `activity`; it used to drop it on the way into the weather context,
+  // so exertion resolved to `unknown` and no shift applied. At 45/35 that is not a ranking nudge:
+  // the cold endpoint moves from `very warm` (sedentary) to `moderate` (hiking), two taxonomy
+  // levels, which is the difference between a substantial shortfall and a comfortable fit.
+  const lightTee = { ...base, id: 411, name: 'light cotton tee', category: 'top', formality: 'everyday', fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'long' }
+  const denim = { ...base, id: 412, name: 'denim trousers', category: 'bottom', formality: 'everyday', fabric_weight: 'medium', fabric_category: 'denim', fiber_content: ['denim'], length_hits_at: 'ankle' }
+  const boots = { ...base, id: 413, name: 'trail boots', category: 'shoes', formality: 'everyday', shoe_type: 'boot', heel_height: 'flat', walk_support: 'high', fabric_category: 'leather' }
+  const shell = { ...base, id: 414, name: 'rain shell', category: 'outerwear', formality: 'everyday', fabric_weight: 'light', fiber_content: ['polyester'], sleeve_length: 'long', weather_protection: ['rain'] }
+  const candidatePieces = [lightTee, denim, boots, shell]
+  const weatherProfile = resolveWeatherContext({ userWeather: validateUserWeather({ high_f: 45, low_f: 35 }) }).temperature
+
+  const gateWith = activity => {
+    const card = normalizeWholeWardrobeOutfitObject({ label: 'Trail card', pieceIds: [411, 412, 413, 414] }, candidatePieces)
+    const gated = locallyGateWholeWardrobeOutfits([card], 5, {
+      mode: 'advisor', requireShoes: true, applyDiversity: false,
+      candidatePieces, occasion: 'casual', weatherProfile, activity,
+    })
+    const outfit = gated.outfits.find(o => o.label === 'Trail card')
+    return {
+      delivered: Boolean(outfit),
+      text: ((outfit?.systemFlags || []).map(f => f.message).join(' | ')) + JSON.stringify(gated.rejected),
+    }
+  }
+
+  const sedentary = gateWith('none')
+  assert.equal(sedentary.delivered, false, 'sedentary at 45/35: a light base under a shell is rejected outright')
+  assert.ok(sedentary.text.includes(SEVERE_CAPACITY_MESSAGE),
+    `and rejected for the severe-cold capacity finding specifically: ${sedentary.text}`)
+
+  const hiking = gateWith('hiking')
+  assert.equal(hiking.delivered, true, 'the same card, the same weather, delivered for hiking')
+  assert.ok(!hiking.text.includes(SEVERE_CAPACITY_MESSAGE) && !hiking.text.includes(COLD_END_SHORTFALL_MESSAGE),
+    `and with neither thermal finding attached: ${hiking.text}`)
+})
+
+// USER-FACING PRIMARY (owner ruling 2026-09-13). A Whole Wardrobe card the gate rejects becomes a
+// diagnostic card whose `rejectionReason` is this reason. Several typed thermal errors can describe
+// one shortfall; the owner reads the approved primary, and the typed findings stay on the validation.
+test('locallyGateWholeWardrobeOutfits rejects with one primary thermal explanation', async () => {
+  const { resolveWeatherContext, validateUserWeather } = await import('../styling-engine/weather.js')
+  const { evaluateWearableOutfit } = await import('../styling-engine/outfitValidation.js')
+  const { ENVIRONMENTAL_ADEQUACY_CODES: C } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const weatherProfile = {
+    ...resolveWeatherContext({ userWeather: validateUserWeather({ high_f: 45, low_f: 35 }) }).temperature,
+    coldPresenceRequirement: { state: 'required' },
+  }
+  const tee = { ...base, id: 401, name: 'cotton long sleeve tee', category: 'top', formality: 'everyday', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'long' }
+  const trousers = { ...base, id: 402, name: 'cotton trousers', category: 'bottom', formality: 'everyday', fabric_weight: 'medium', fiber_content: ['cotton'] }
+  const boots = { ...base, id: 403, name: 'leather boots', category: 'shoes', formality: 'everyday', heel_height: 'flat', walk_support: 'high' }
+  const jacket = { ...base, id: 404, name: 'unlined cotton jacket', category: 'outerwear', formality: 'everyday', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', weather_protection: ['wind'], sleeve_length: 'long', opacity: 'opaque' }
+  const candidatePieces = [tee, trousers, boots, jacket]
+
+  const typed = evaluateWearableOutfit(
+    [{ ...tee, role: 'primary_top' }, { ...trousers, role: 'primary_bottom' }, { ...boots, role: 'shoes' }, { ...jacket, role: 'outerwear' }],
+    { requireShoes: true, weatherContext: { weatherProfile, activity: 'none' } },
+  )
+  const typedCodes = typed.hardFindings.map(finding => finding.code)
+  assert.ok(typedCodes.includes(C.NO_WARM_LAYER_FOR_COLD) && typedCodes.includes(C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE),
+    `both typed errors exist: ${JSON.stringify(typedCodes)}`)
+
+  const card = normalizeWholeWardrobeOutfitObject({ label: 'Cotton jacket card', pieceIds: [401, 402, 403, 404] }, candidatePieces)
+  const gated = locallyGateWholeWardrobeOutfits([card], 1, { mode: 'advisor', applyDiversity: false, candidatePieces, occasion: 'casual', weatherProfile, activity: 'none' })
+  assert.equal(gated.outfits.length, 0)
+  const noWarm = typed.hardFindings.find(finding => finding.code === C.NO_WARM_LAYER_FOR_COLD).message
+  const adjacent = typed.hardFindings.find(finding => finding.code === C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE).message
+  assert.equal(gated.rejected[0].reason, noWarm, 'the owner-facing reason is the approved primary')
+  assert.ok(!gated.rejected[0].reason.includes(adjacent), 'the lower-precedence thermal error is not repeated to the owner')
+})
+
+// thread_1789526496845, card "Olive Mock Neck and Corduroy Pants": watchFor read "Mixing olive and
+// emerald requires confidence in saturated earth tones" — a color-boldness remark, not body-shape
+// framing — and the body-shape-language check fired anyway on the bare word "confidence", then
+// claimed "Removed body-shape framing from the explanation" while the scrub function only ever
+// touched `reason`, which had nothing to scrub. Two bugs: an over-broad trigger word, and a flag
+// whose claim did not match what (if anything) actually changed.
+test('language-flag check: a color-confidence remark is not body-shape framing, and the flag never claims a removal that did not happen', () => {
+  const olive = { ...base, id: 601, name: 'olive textured mock neck top', category: 'top', formality: 'everyday' }
+  const corduroy = { ...base, id: 602, name: 'emerald corduroy straight pants', category: 'bottom', formality: 'everyday' }
+  const shoe = { ...base, id: 603, name: 'suede wedge ankle boot', category: 'shoes', formality: 'everyday', heel_height: 'low', walk_support: 'high' }
+  const candidatePieces = [olive, corduroy, shoe]
+
+  const card = normalizeWholeWardrobeOutfitObject({
+    label: 'Olive Mock Neck and Corduroy Pants',
+    pieceIds: [601, 602, 603],
+    reason: 'Olive textured mock neck top provides cozy warmth paired with emerald corduroy straight pants, creating a rich tonal autumn palette.',
+    watchFor: 'Mixing olive and emerald requires confidence in saturated earth tones.',
+  }, candidatePieces)
+
+  const gated = locallyGateWholeWardrobeOutfits([card], 1, {
+    mode: 'advisor', applyDiversity: false, candidatePieces, occasion: 'casual', activity: 'none',
+  })
+  const outfit = gated.outfits.find(o => o.label === 'Olive Mock Neck and Corduroy Pants')
+  assert.ok(outfit, 'the card survives advisor mode')
+  assert.equal(outfit.watchFor, 'Mixing olive and emerald requires confidence in saturated earth tones.',
+    'a color-confidence remark is not body-shape framing and must not be scrubbed')
+  assert.equal(outfit.reason, card.reason, 'reason is untouched')
+  assert.ok(!(outfit.systemFlags || []).some(f => f.type === 'language'),
+    `no language flag fires on a non-body-shape remark: ${JSON.stringify(outfit.systemFlags)}`)
+
+  // Second half: when the pattern DOES genuinely appear, but only in watchFor (not reason or the
+  // label), the flag must scrub the field that actually contains it and only claim removal when
+  // one occurred. (The label deliberately avoids the trigger words themselves — this test is about
+  // watchFor-only detection, not about the label-emptying edge case a self-matching label would add.)
+  const flattering = normalizeWholeWardrobeOutfitObject({
+    label: 'Ribbed Column',
+    pieceIds: [601, 602, 603],
+    reason: 'Olive textured mock neck top provides cozy warmth paired with emerald corduroy straight pants.',
+    watchFor: 'This silhouette is very flattering and elongating for city walking.',
+  }, candidatePieces)
+  const gatedFlattering = locallyGateWholeWardrobeOutfits([flattering], 1, {
+    mode: 'advisor', applyDiversity: false, candidatePieces, occasion: 'casual', activity: 'none',
+  })
+  const flatteringOutfit = gatedFlattering.outfits.find(o => o.label === 'Ribbed Column')
+  assert.ok(flatteringOutfit, 'the card survives advisor mode')
+  assert.equal(flatteringOutfit.reason, flattering.reason, 'reason had nothing to scrub and is untouched')
+  assert.equal(flatteringOutfit.watchFor, '', 'the offending sentence is removed from the field that actually carried it')
+  assert.ok((flatteringOutfit.systemFlags || []).some(f => f.type === 'language' && f.message.includes('Removed body-shape framing')),
+    'the flag fires only now, when a sentence was genuinely removed')
+
+  // Third half (item 4, consistency): the SAME pattern landing in `label` alone is now scrubbed
+  // too, not just detected-and-ignored — detection and scrub cover the same field set.
+  const labelOnly = normalizeWholeWardrobeOutfitObject({
+    label: 'A flattering column look',
+    pieceIds: [601, 602, 603],
+    reason: 'Olive textured mock neck top provides cozy warmth paired with emerald corduroy straight pants.',
+    watchFor: 'Great for a casual afternoon.',
+  }, candidatePieces)
+  const gatedLabelOnly = locallyGateWholeWardrobeOutfits([labelOnly], 1, {
+    mode: 'advisor', applyDiversity: false, candidatePieces, occasion: 'casual', activity: 'none',
+  })
+  const labelOnlyOutfit = gatedLabelOnly.outfits[0]
+  assert.ok(labelOnlyOutfit, 'the card survives advisor mode')
+  assert.equal(labelOnlyOutfit.label, '', 'the label itself is scrubbed when it is the field that carried the flagged language')
+  assert.equal(labelOnlyOutfit.watchFor, labelOnly.watchFor, 'an untouched field is left alone')
+  assert.ok((labelOnlyOutfit.systemFlags || []).some(f => f.type === 'language'),
+    'the flag fires because the label genuinely changed')
+})
+

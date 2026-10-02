@@ -148,12 +148,36 @@ function heuristicWeather({ mood, requestText, season, date }) {
 // synthesis — it is the temperature the user gave, and exposure.js's waking-window offset is a
 // no-op across a zero span, so nothing is invented. No numbers at all means no structured weather
 // and the band stays unknown, which is the correct answer rather than a guessed envelope.
+// 2026-09-15: mirrors stylingIntent.extractStructuredUserWeather's sided-endpoint contract — a
+// one-sided statement ("highs near 85") must not collapse into an invented equal low. Kept as a
+// narrower, unit-agnostic sibling here (rather than calling that extractor directly) because this
+// function reads already-classified weather prose (extractWeatherContext's display string, or a
+// raw stated-weather field passed by a non-chat caller), which is not guaranteed to carry an
+// explicit "F" the way a user's literal sentence does.
 function statedTemperatures(statedWeather = '') {
-  const text = String(statedWeather || '').toLowerCase()
-  const values = [...text.matchAll(/\b(\d{2,3})(?!-[a-z])\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
-    .flatMap(m => [Number(m[1]), Number(m[2])].filter(n => Number.isFinite(n)))
+  const normalized = String(statedWeather || '').toLowerCase()
+  // (?!\d) rather than a trailing \b: "85f"/"40°f" has no word-boundary between the digit and the
+  // unit letter that follows it (both are word characters), so a plain \b...\b match silently
+  // failed on exactly the units this text always carries.
+  const rangeMatch = normalized.match(/\b(\d{2,3})(?!\d)\s*(?:°|degrees?)?\s*(?:f(?:ahrenheit)?)?\s*(?:-|–|\/|to)\s*(\d{2,3})(?!\d)/)
+  if (rangeMatch) {
+    const a = Number(rangeMatch[1])
+    const b = Number(rangeMatch[2])
+    if (a >= -60 && a <= 140 && b >= -60 && b <= 140) return { high_f: Math.max(a, b), low_f: Math.min(a, b) }
+  }
+  const values = [...normalized.matchAll(/\b(\d{2,3})(?!\d)/g)]
+    .map(m => Number(m[1]))
     .filter(n => n >= -60 && n <= 140)
   if (!values.length) return null
+  if (values.length === 1) {
+    const value = values[0]
+    const near = `[^0-9]{0,12}${value}(?!\\d)`
+    const statedHigh = new RegExp(`\\b(?:highs?|up\\s+to|no\\s+higher\\s+than)${near}`).test(normalized)
+    const statedLow = new RegExp(`\\b(?:lows?|overnight|down\\s+to|no\\s+lower\\s+than)${near}`).test(normalized)
+    if (statedHigh && !statedLow) return { high_f: value }
+    if (statedLow && !statedHigh) return { low_f: value }
+    return { high_f: value, low_f: value }
+  }
   return { high_f: Math.max(...values), low_f: Math.min(...values) }
 }
 
@@ -193,6 +217,17 @@ function statedWeatherProfile({ statedWeather, mood, requestText, date }) {
     weatherSource: 'stated',
     statedWeather,
   }
+}
+
+// 2026-09-15: exported so the /ask conversation payload composes a stated-weather profile through
+// THIS function rather than growing a second one. The shared chat path was dropping the structured
+// profile whenever the turn stated weather, leaving only display prose that carries one endpoint —
+// so a "50/40°F" request reached THREAD STATE as a single temperature. Precedence is unchanged and
+// nothing here consults a forecast; it turns text the user wrote into the same stated profile the
+// composer paths already build.
+export function weatherProfileFromStatedText({ statedWeather = '', mood = '', requestText = '', date = null } = {}) {
+  if (!String(statedWeather || '').trim()) return null
+  return statedWeatherProfile({ statedWeather, mood, requestText, date })
 }
 
 // Spec docs/future-trip-weather-estimate-spec.md §6.1/§6.5: a named

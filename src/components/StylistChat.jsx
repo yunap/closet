@@ -3290,6 +3290,165 @@ export default function StylistChat({
             })
           )
 
+          const assignedLayerPieces = (() => {
+            const rawIds = Array.isArray(outfit.assignedLayerIds) ? outfit.assignedLayerIds : []
+            if (!rawIds.length) return []
+            const supplied = Array.isArray(tripPackingContext?.roster_pieces)
+              ? tripPackingContext.roster_pieces
+              : (Array.isArray(outfit?.tripPlanContext?.roster_pieces) ? outfit.tripPlanContext.roster_pieces : [])
+            const suppliedById = new Map(supplied.map(p => [Number(p?.id), p]))
+            return rawIds
+              .map(id => hydrateDisplayPiece(suppliedById.get(Number(id)) || { id: Number(id) }))
+              .filter(p => Number(p?.id))
+          })()
+
+          const renderPieceItem = (rawPiece, pieceIdx, { isLayer = false } = {}) => {
+            const piece = hydrateDisplayPiece(rawPiece)
+            const photo = piece?.photo || piece?.worn_photo
+            const keySuffix = isLayer ? `layer-${piece?.id || pieceIdx}` : `${piece?.id || pieceIdx}`
+            return (
+              <div key={`${keySuffix}-${pieceIdx}`} title={piece?.name || (isLayer ? 'Assigned layer' : 'Garment')} className={isLayer ? 'stylist-outfit-piece stylist-outfit-layer-piece' : 'stylist-outfit-piece'}>
+                <button
+                  type="button"
+                  disabled={!photo}
+                  onClick={event => {
+                    if (!photo) return
+                    previewReturnFocusRef.current = event.currentTarget
+                    setPreviewImage({
+                      src: `/uploads/${photo}`,
+                      title: piece?.name || (isLayer ? 'Layer' : 'Garment'),
+                      meta: piece?.category || '',
+                      pieceId: piece?.id || null
+                    })
+                  }}
+                  className="stylist-outfit-piece-photo"
+                  style={{ cursor: photo ? 'zoom-in' : 'default' }}
+                  aria-label={photo ? `Open ${piece?.name || (isLayer ? 'layer' : 'garment')} preview` : undefined}
+                >
+                  {photo ? (
+                    <img
+                      src={resolveUploadThumbnailSrc(photo, 'chat-garment')}
+                      alt={piece?.name || (isLayer ? 'Layer' : 'Garment')}
+                      loading="lazy"
+                      decoding="async"
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                    />
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.2, padding: 4 }}>
+                      <span style={{ display: 'block', color: 'var(--accent)', fontWeight: 650 }}>needs photo</span>
+                      <span style={{ display: 'block', marginTop: 2 }}>{piece?.category || 'piece'}</span>
+                    </span>
+                  )}
+                </button>
+                <div className="stylist-outfit-piece-name">{piece?.name || 'Garment'}</div>
+                {isLayer && <div className="stylist-outfit-piece-role-badge">Packed layer</div>}
+                {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (() => {
+                  const swapKey = isLayer
+                    ? `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:layer:${WRONG_PIECE_FOR_OUTFIT_FEEDBACK}`
+                    : `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:${WRONG_PIECE_FOR_OUTFIT_FEEDBACK}`
+                  const isSwapped = feedbackSaved.has(swapKey)
+                  const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
+                  const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+                  const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+                  const isExcluded = exclusions.includes(normMsgOccasion)
+                  const exclusionDisplaySource = isTripCard
+                    ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
+                    : msgOccasion
+                  const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                  const weatherContext = String(
+                    outfit?.weatherContext || outfit?.occasionContext ||
+                    (typeof outfit?.weather === 'string' ? outfit.weather : '') ||
+                    message?.queryOptions?.weatherContext ||
+                    (typeof message?.queryOptions?.weather === 'string' ? message.queryOptions.weather : '') || ''
+                  ).trim()
+                  const wrongChoiceArgs = {
+                    key: swapKey,
+                    feedbackType: WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
+                    targetType: 'whole_wardrobe_outfit',
+                    label: isLayer ? `Wrong layer choice: ${piece?.name || 'Garment'}` : `Wrong choice: ${piece?.name || 'Garment'}`,
+                    note: isLayer
+                      ? `${piece?.name || 'This layer'} was the wrong choice for ${outfit.label || `outfit ${idx + 1}`}.`
+                      : `${piece?.name || 'This piece'} was the wrong choice for ${outfit.label || `outfit ${idx + 1}`}.`,
+                    payload: {
+                      outfit,
+                      messageIndex,
+                      outfitIndex: idx,
+                      pieceId: piece?.id || null,
+                      pieceName: piece?.name || '',
+                      pieceCategory: piece?.category || '',
+                      pieceIds: outfit.pieceIds || [],
+                      pieces: outfit.pieces || [],
+                      ...(isLayer ? { pieceRole: 'assigned_layer' } : {}),
+                      formulaFamily: outfit.formulaFamily || '',
+                      archetypeId: outfit.archetypeId || '',
+                      occasion: outfit?.occasion || wardrobeOutfitOccasion,
+                      activity: outfit?.activity || wardrobeOutfitActivity || 'none',
+                      season: outfit?.season || wardrobeOutfitSeason,
+                      mood: outfit?.mood || wardrobeOutfitMood,
+                      weatherContext,
+                    },
+                    contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                  }
+                  return (
+                    <PieceActionMenu label={`Actions for ${piece?.name || (isLayer ? 'this layer' : 'this piece')}`}>
+                      {({ close }) => (<>
+                        <div className="piece-action-menu-group-label">Piece information</div>
+                        <button
+                          type="button"
+                          onClick={() => { close(); openPieceEditor(piece) }}
+                          className="piece-action-menu-item"
+                        >
+                          <PieceActionEditIcon />
+                          <span className="piece-action-menu-item-body">
+                            <span className="piece-action-menu-item-label">Edit piece details</span>
+                            <span className="piece-action-menu-item-hint">Update fabric, color, fit, or other details — future recommendations use the corrected information.</span>
+                          </span>
+                        </button>
+                        <div className="piece-action-menu-divider" />
+                        <div className="piece-action-menu-group-label">Outfit pairing</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            close()
+                            if (isSwapped) toggleStylistFeedback(wrongChoiceArgs)
+                            else {
+                              setWrongChoiceReason('')
+                              setPendingWrongChoice({
+                                outfitKey: `${messageIndex}:${idx}`,
+                                pieceName: piece?.name || (isLayer ? 'this layer' : 'this garment'),
+                                args: wrongChoiceArgs
+                              })
+                            }
+                          }}
+                          className={isSwapped ? 'piece-action-menu-item piece-action-menu-item-quiet-active' : 'piece-action-menu-item'}
+                        >
+                          <PieceActionSwapIcon />
+                          <span className="piece-action-menu-item-body">
+                            <span className="piece-action-menu-item-label">{isSwapped ? '✓ Wrong choice for this outfit' : 'Wrong choice for this outfit'}</span>
+                            <span className="piece-action-menu-item-hint">Records that this piece was wrong for this look. Your stylist keeps it as contextual feedback rather than avoiding the garment everywhere.</span>
+                          </span>
+                        </button>
+                        <div className="piece-action-menu-divider" />
+                        <div className="piece-action-menu-group-label">Occasion rule</div>
+                        <button
+                          type="button"
+                          onClick={() => { close(); toggleOccasionExclusion(piece.id, msgOccasion, isExcluded) }}
+                          className={isExcluded ? 'piece-action-menu-item piece-action-menu-item-hard piece-action-menu-item-quiet-active' : 'piece-action-menu-item piece-action-menu-item-hard'}
+                        >
+                          <PieceActionRuleIcon />
+                          <span className="piece-action-menu-item-body">
+                            <span className="piece-action-menu-item-label">{isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}</span>
+                            <span className="piece-action-menu-item-hint">Never suggest this piece for {displayOccasionName} again — applies everywhere, not just this card. Undo anytime in Style profile.</span>
+                          </span>
+                        </button>
+                      </>)}
+                    </PieceActionMenu>
+                  )
+                })()}
+              </div>
+            )
+          }
+
           return (
             <div
               key={idx}
@@ -3419,131 +3578,13 @@ export default function StylistChat({
                   <strong>Pieces:</strong> {pieces.join(' + ')}
                 </div>
               )}
-              {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
+              {((Array.isArray(outfit.pieces) && outfit.pieces.length > 0) || assignedLayerPieces.length > 0) && (
                 <div
                   className="stylist-outfit-piece-list"
                   aria-label={`Pieces in ${cardDisplayTitle}`}
                 >
-                  {outfit.pieces.map((rawPiece, pieceIdx) => {
-                    const piece = hydrateDisplayPiece(rawPiece)
-                    const photo = piece?.photo || piece?.worn_photo
-                    return (
-                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} className="stylist-outfit-piece">
-                        <button
-                          type="button"
-                          disabled={!photo}
-                          onClick={event => { if (!photo) return; previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '', pieceId: piece?.id || null }) }}
-                          className="stylist-outfit-piece-photo"
-                          style={{ cursor: photo ? 'zoom-in' : 'default' }}
-                          aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
-                        >
-                          {photo ? (
-                            <img src={resolveUploadThumbnailSrc(photo, 'chat-garment')} alt={piece?.name || 'Garment'} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                          ) : (
-                            <span style={{ fontSize: 12, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.2, padding: 4 }}>
-                              <span style={{ display: 'block', color: 'var(--accent)', fontWeight: 650 }}>needs photo</span>
-                              <span style={{ display: 'block', marginTop: 2 }}>{piece?.category || 'piece'}</span>
-                            </span>
-                          )}
-                        </button>
-                        <div className="stylist-outfit-piece-name">{piece?.name || 'Garment'}</div>
-                        {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (() => {
-                            const swapKey = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:${WRONG_PIECE_FOR_OUTFIT_FEEDBACK}`
-                            const isSwapped = feedbackSaved.has(swapKey)
-                            const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
-                            const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
-                            const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
-                            const isExcluded = exclusions.includes(normMsgOccasion)
-                            const exclusionDisplaySource = isTripCard
-                              ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
-                              : msgOccasion
-                            const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-                            const weatherContext = String(
-                              outfit?.weatherContext || outfit?.occasionContext ||
-                              (typeof outfit?.weather === 'string' ? outfit.weather : '') ||
-                              message?.queryOptions?.weatherContext ||
-                              (typeof message?.queryOptions?.weather === 'string' ? message.queryOptions.weather : '') || ''
-                            ).trim()
-                            const wrongChoiceArgs = {
-                              key: swapKey,
-                              feedbackType: WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
-                              targetType: 'whole_wardrobe_outfit',
-                              label: `Wrong choice: ${piece?.name || 'Garment'}`,
-                              note: `${piece?.name || 'This piece'} was the wrong choice for ${outfit.label || `outfit ${idx + 1}`}.`,
-                              payload: {
-                                outfit,
-                                messageIndex,
-                                outfitIndex: idx,
-                                pieceId: piece?.id || null,
-                                pieceName: piece?.name || '',
-                                pieceCategory: piece?.category || '',
-                                pieceIds: outfit.pieceIds || [],
-                                pieces: outfit.pieces || [],
-                                formulaFamily: outfit.formulaFamily || '',
-                                archetypeId: outfit.archetypeId || '',
-                                occasion: outfit?.occasion || wardrobeOutfitOccasion,
-                                activity: outfit?.activity || wardrobeOutfitActivity || 'none',
-                                season: outfit?.season || wardrobeOutfitSeason,
-                                mood: outfit?.mood || wardrobeOutfitMood,
-                                weatherContext,
-                              },
-                              contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-                            }
-                            return (
-                              <PieceActionMenu label={`Actions for ${piece?.name || 'this piece'}`}>
-                                {({ close }) => (<>
-                                  <div className="piece-action-menu-group-label">Piece information</div>
-                                  <button
-                                    type="button"
-                                    onClick={() => { close(); openPieceEditor(piece) }}
-                                    className="piece-action-menu-item"
-                                  >
-                                    <PieceActionEditIcon />
-                                    <span className="piece-action-menu-item-body">
-                                      <span className="piece-action-menu-item-label">Edit piece details</span>
-                                      <span className="piece-action-menu-item-hint">Update fabric, color, fit, or other details — future recommendations use the corrected information.</span>
-                                    </span>
-                                  </button>
-                                  <div className="piece-action-menu-divider" />
-                                  <div className="piece-action-menu-group-label">Outfit pairing</div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      close()
-                                      if (isSwapped) toggleStylistFeedback(wrongChoiceArgs)
-                                      else {
-                                        setWrongChoiceReason('')
-                                        setPendingWrongChoice({ outfitKey: `${messageIndex}:${idx}`, pieceName: piece?.name || 'this garment', args: wrongChoiceArgs })
-                                      }
-                                    }}
-                                    className={isSwapped ? 'piece-action-menu-item piece-action-menu-item-quiet-active' : 'piece-action-menu-item'}
-                                  >
-                                    <PieceActionSwapIcon />
-                                    <span className="piece-action-menu-item-body">
-                                      <span className="piece-action-menu-item-label">{isSwapped ? '✓ Wrong choice for this outfit' : 'Wrong choice for this outfit'}</span>
-                                      <span className="piece-action-menu-item-hint">Records that this piece was wrong for this look. Your stylist keeps it as contextual feedback rather than avoiding the garment everywhere.</span>
-                                    </span>
-                                  </button>
-                                  <div className="piece-action-menu-divider" />
-                                  <div className="piece-action-menu-group-label">Occasion rule</div>
-                                  <button
-                                    type="button"
-                                    onClick={() => { close(); toggleOccasionExclusion(piece.id, msgOccasion, isExcluded) }}
-                                    className={isExcluded ? 'piece-action-menu-item piece-action-menu-item-hard piece-action-menu-item-quiet-active' : 'piece-action-menu-item piece-action-menu-item-hard'}
-                                  >
-                                    <PieceActionRuleIcon />
-                                    <span className="piece-action-menu-item-body">
-                                      <span className="piece-action-menu-item-label">{isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}</span>
-                                      <span className="piece-action-menu-item-hint">Never suggest this piece for {displayOccasionName} again — applies everywhere, not just this card. Undo anytime in Style profile.</span>
-                                    </span>
-                                  </button>
-                                </>)}
-                              </PieceActionMenu>
-                            )
-                        })()}
-                      </div>
-                    )
-                  })}
+                  {Array.isArray(outfit.pieces) && outfit.pieces.map((rawPiece, pieceIdx) => renderPieceItem(rawPiece, pieceIdx))}
+                  {assignedLayerPieces.map((piece, layerIdx) => renderPieceItem(piece, (outfit.pieces?.length || 0) + layerIdx, { isLayer: true }))}
                 </div>
               )}
               {pendingWrongChoice?.outfitKey === `${messageIndex}:${idx}` && (
@@ -3571,15 +3612,22 @@ export default function StylistChat({
                   </div>
                 </form>
               )}
-              {outfit.reason && !isTripCard && (
+              {(outfit.reason || assignedLayerPieces.length > 0) && (
                 <details className="stylist-outfit-reason">
                   <summary>
                     Why this outfit
                   </summary>
                   <div className="stylist-outfit-reason-body">
-                    <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
-                    </div>
+                    {outfit.reason && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
+                      </div>
+                    )}
+                    {assignedLayerPieces.length > 0 && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: outfit.reason ? 8 : 0 }}>
+                        <strong>{assignedLayerPieces.length > 1 ? 'Packed layers:' : 'Packed layer:'}</strong> Packed for cooler transitions / temperature drops
+                      </div>
+                    )}
                     {outfit.stylingInstructions && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>
                         <strong>How to wear it:</strong> {outfit.stylingInstructions}
@@ -6010,9 +6058,15 @@ export default function StylistChat({
         />
       </div>
 
+      {/* These numbers are used VERBATIM as the range the outfit is dressed for — the engine
+          deliberately does not treat a stated range as a daily envelope and lift its low the way it
+          does for a forecast (styling-engine/exposure.js, the stated_user branch). The old copy
+          said "overrides the forecast" with high/low placeholders, so a forecast's numbers were the
+          natural thing to type — and a 46°F pre-dawn low nobody is outside for became the
+          temperature every outfit was judged against. The field now says what it actually means. */}
       <div className="wardrobe-builder-weather">
         <div style={wardrobeBuilderFieldLabelStyle}>
-          Temperature <span style={{ fontWeight: 400, opacity: 0.7 }}>— optional, overrides the forecast</span>
+          Temperatures you'll be out in <span style={{ fontWeight: 400, opacity: 0.7 }}>— optional</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
@@ -6020,8 +6074,8 @@ export default function StylistChat({
             inputMode="numeric"
             value={wardrobeOutfitHighF}
             onChange={e => setWardrobeOutfitHighF(e.target.value)}
-            placeholder="high °F"
-            aria-label="High temperature in Fahrenheit"
+            placeholder="warmest °F"
+            aria-label="Warmest temperature you will be out in, Fahrenheit"
             style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
           />
           <input
@@ -6029,10 +6083,14 @@ export default function StylistChat({
             inputMode="numeric"
             value={wardrobeOutfitLowF}
             onChange={e => setWardrobeOutfitLowF(e.target.value)}
-            placeholder="low °F"
-            aria-label="Low temperature in Fahrenheit"
+            placeholder="coolest °F"
+            aria-label="Coolest temperature you will be out in, Fahrenheit"
             style={{ ...wardrobeBuilderControlStyle, width: '50%' }}
           />
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+          The range you'll actually be outside for — not the day's forecast high and low. Outfits are
+          dressed for this range, so a pre-dawn low you won't be out in makes everything read too cold.
         </div>
       </div>
       </fieldset>

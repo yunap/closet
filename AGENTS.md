@@ -36,7 +36,9 @@ tension vs incoherent competition; hero / support / grounding garments; operatio
 and maintenance burden matter; realistic movement matters; "different" does not equal "better".
 Hierarchy means one element leads — not that only one element may be expressive. Multiple
 expressive pieces sharing a register are richness; the failure mode is competition for the
-same job. Pattern discipline (one loud print per outfit) is a separate, stricter rule.
+same job. Prints and patterns are judged visually, case by case, across the whole outfit (shoes and
+accessories included) — there is no fixed print count (owner ruling 2026-09-15; the earlier "one loud
+print per outfit" rule is retired).
 
 Outfit generation modes — Similar Variants: preserve style DNA, maintenance level, silhouette
 logic, emotional tone (same person, different day). Creative Alternatives: allow silhouette

@@ -7,9 +7,47 @@ import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES } from '../styling-engine/prompts.js'
+import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES, STYLIST_COMPETENCE_CONTRACT } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
+
+const SLOT_JSON_SHAPE = `JSON shape:
+{
+  "outfits": [
+    {
+      "label": "short evocative outfit name",
+      "strength": "signature | strong | usable | experimental",
+      "dominantDirection": "short style lane",
+      "silhouette": "one clear silhouette idea",
+      "bestFor": "occasion fit",
+      "base_top_id": 12,
+      "bottom_id": 45,
+      "dress_id": null,
+      "middle_layer_id": null,
+      "outer_layer_id": null,
+      "shoes_id": 9,
+      "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "",
+      "watchFor": "one real risk or none"
+    },
+    {
+      "label": "example of a layered outfit",
+      "strength": "usable",
+      "dominantDirection": "short style lane",
+      "silhouette": "one clear silhouette idea",
+      "bestFor": "occasion fit",
+      "base_top_id": 21,
+      "bottom_id": 33,
+      "dress_id": null,
+      "middle_layer_id": 58,
+      "outer_layer_id": 72,
+      "shoes_id": 9,
+      "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "cardigan open over the blouse, coat over both and left unbuttoned; no belt or tuck involved here",
+      "watchFor": "one real risk or none"
+    }
+  ],
+`
 
 const snapshot = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'test/fixtures/prompts_yuna_snapshot.json'), 'utf8'))
 
@@ -57,6 +95,57 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         `${PHYSICAL_WEARABILITY_REALISM_RULES}\n\nBefore finalizing each outfit, check its 'pieces' array:`
       )
     }
+    // 2026-09-12: the composer's structure rule stops banning the middle layer. The ban was
+    // load-bearing only because nothing else enforced it — evaluateOutfitStructure counted tops
+    // solely when a bottom was missing and never counted outerwear at all — so the bound moved into
+    // that validator (too_many_upper_layers / multiple_outerwear / multiple_tops) and this text now
+    // describes a rule the gate holds. It also unbans the owner's own Layer 2 formula ("open shirt
+    // or vest over a fitted base is almost always better than the top alone"), which had been
+    // forbidden by the same sentence: 0 of 27 saved outfits carried a middle layer. The layered
+    // JSON example gains the third garment for the same reason — the example is what gets imitated.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.',
+        'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and outerwear never replaces the required top. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer worn over the base (a cardigan, vest, or overshirt) and at most one OUTER layer over that (a coat or jacket). Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. List the pieces in wear order, base first and outermost last, and name the relationship in styling_instructions. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
+      )
+      expected = expected.replace(
+        `        {"id": 21, "name": "linen blouse top"},\n        {"id": 33, "name": "wide-leg trouser bottom"},\n        {"id": 58, "name": "open cardigan outerwear"},\n        {"id": 9, "name": "casual sneakers shoes"}`,
+        `        {"id": 21, "name": "linen blouse top"},\n        {"id": 58, "name": "open cardigan outerwear"},\n        {"id": 72, "name": "wool coat outerwear"},\n        {"id": 33, "name": "wide-leg trouser bottom"},\n        {"id": 9, "name": "casual sneakers shoes"}`
+      )
+      expected = expected.replace(
+        'leave the cardigan open over the blouse; no belt or tuck involved here',
+        'cardigan open over the blouse, coat over both and left unbuttoned; no belt or tuck involved here'
+      )
+      // 2026-09-12 (same day, second slice): wear order becomes DATA. The composer states a `role`
+      // per upper piece so orderedSubstantialUpperStackContribution can credit a real three-layer
+      // system — without it the composer was permitted to build the stack that clears a `warm`
+      // demand and the engine could not tell that it had, flagging the card anyway.
+      expected = expected.replace(
+        '- If no suitable shoe (or any required slot) exists among the shown pieces',
+        '- Layer roles: when an outfit layers, mark the upper pieces with "role" — "primary_top" (or "dress") for the base, "layer_top" for a middle layer worn over it, "outerwear" for the outermost coat or jacket. A cardigan or vest worn UNDER a coat is "layer_top" even though it is an outerwear garment; the role says what job it does in this outfit. Bottoms and shoes need no role. This is how the wear order you describe becomes usable rather than decorative — state it for every layered outfit.\n- If no suitable shoe (or any required slot) exists among the shown pieces'
+      )
+      expected = expected.replace(
+        '        {"id": 12, "name": "floral tunic top"},',
+        '        {"id": 12, "name": "floral tunic top", "role": "primary_top"},'
+      )
+      expected = expected.replace(
+        `        {"id": 21, "name": "linen blouse top"},\n        {"id": 58, "name": "open cardigan outerwear"},\n        {"id": 72, "name": "wool coat outerwear"},`,
+        `        {"id": 21, "name": "linen blouse top", "role": "primary_top"},\n        {"id": 58, "name": "open cardigan outerwear", "role": "layer_top"},\n        {"id": 72, "name": "wool coat outerwear", "role": "outerwear"},`
+      )
+    }
+    // 2026-09-13: ATOMIC STRUCTURED OUTPUT. The composer answers in six ID slots under a
+    // provider-enforced schema (styling-engine/composerSlots.js). The `pieces` array, the per-piece
+    // name, the optional role, the '[missing wardrobe gap]' placeholder and the pre-JSON shoe
+    // self-check all described a free-form shape that no longer exists; atomicity is owned by the
+    // schema plus local validation, not by instruction text.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(/- Layer roles: [^\n]*\n- If no suitable shoe \(or any required slot\)[^\n]*\n/,
+        '- Outfit slots: name every garment by its ID in the slot for the job it does. Separates: `base_top_id` + `bottom_id`. A dress: `dress_id`; a `base_top_id` beside a `dress_id` is a top worn under that dress. `middle_layer_id` is a layer worn over the base — a top or an outerwear garment such as a cardigan or vest; `outer_layer_id` is the outermost coat or jacket. `shoes_id` is the pair of shoes. Use null for a slot the outfit does not use.\n')
+      expected = expected.replace('- Reference pieces ONLY by the exact IDs and names shown in the labels.', '- Reference pieces ONLY by the IDs shown in the labels.')
+      expected = expected.replace('List the pieces in wear order, base first and outermost last, and name the relationship', 'Put each garment in the slot for the job it does in the outfit, and name the relationship')
+      expected = expected.replace(/\n\nBefore finalizing each outfit, check its 'pieces' array:[^\n]*/, '')
+      expected = expected.replace(/JSON shape:\n\{\n  "outfits": \[[\s\S]*?\n  \],\n/, SLOT_JSON_SHAPE)
+    }
     // 2026-09-06: single-card composition gains one structured intent fact for an explicit
     // removable-layer request. The accepted delta keeps the original fixture frozen while making
     // this additive routing/contract instruction visible at the byte-level prompt rail.
@@ -68,6 +157,52 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         'Keep the existing rule that relative timing ("this weekend", "next month", "in a few days") is valid on its own and never by itself triggers a "when" question. For styling',
         'Keep the existing rule that relative timing ("this weekend", "next month", "in a few days") is valid on its own and never by itself triggers a "when" question. When the user specifies a day of the week or relative date (e.g. "Friday", "tomorrow", "this Friday"), resolve that relative date against CURRENT DATE / DAY OF WEEK in your context to an explicit YYYY-MM-DD date and pass it as `date` on \'search_wardrobe\', \'propose_outfit\', or \'generate_outfits\'. If the user\'s message explicitly states qualitative weather (e.g. "mild weather", "chilly evening", "warm afternoon"), translate those conditions into `user_weather` (`temperature_band: \'mild\' | \'cold\' | \'hot\'`) rather than omitting structured weather. Explicit user-stated conditions must never be discarded to fall back to an unconstrained seasonal heuristic. For styling'
+      )
+    }
+    // 2026-09-15: TWO RETIRED CATEGORICAL RULES LEAVE THE SHARED STYLIST SYSTEM.
+    //
+    // 1. Professional-Context Competence carried the second live copy of the "at most ONE bold
+    //    print" cap the owner retired (the first was outfitSetPlanner's workbench line; the
+    //    patternJudgment regex never covered this phrasing). The professional register default
+    //    stays — only the fixed count goes, replaced by the same case-by-case judgment the
+    //    composer and critic already use.
+    // 2. Occasion Realism banned dressy/silk/structured tops outright for outdoor and beach walks.
+    //    The engine's own authority for that claim is hiking's `discouraged_materials` /
+    //    `discouraged_pieces`, ratified SOFT — "score penalty, never suppression"
+    //    (docs/occasion_profiles_ratification.md) — so the prompt asserted a prohibition the
+    //    engine does not hold, on the path where `/ask` composes walking outfits.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        'Do not suggest dressy, formal, or high-maintenance tops (like asymmetrical tops, silk blouses, or structured evening vests) for beach walks or outdoor walks.',
+        'No garment category is banned from these outings: judge a dressy or delicate top against its recorded fabric, care and construction facts, and if you choose one, say in watchFor why it holds up.'
+      )
+      expected = expected.replace(
+        'at most ONE bold print per outfit as a deliberate accent',
+        'any bold print earns its place as a deliberate accent judged against the rest of the look rather than by a fixed count'
+      )
+    }
+    // 2026-09-12 (branch review): TWO PROMPT RULES THE STRUCTURED LAYER NOW OWNS.
+    //
+    // 1. STYLIST_SYSTEM forbade layering "two vests, two cardigans, or two sleeveless shells" and
+    //    prescribed "a single functional top with a single outerwear piece". The second half
+    //    directly contradicted the `primary_top + layer_top + outerwear` structure this same file
+    //    teaches three paragraphs later with a cardigan-under-a-coat example — the model was told
+    //    to build and to avoid the same configuration. Whether two garments physically layer is
+    //    owned by roles and wear order, the structural caps in evaluateOutfitStructure, required-
+    //    base evidence and evaluateLayerPairConstruction; those can reject an actually incompatible
+    //    pair without declaring a category combination inherently unreasonable.
+    // 2. SINGLE_OUTFIT_STYLIST_SYSTEM's workbench step published its own weather classifier in
+    //    prose — "sub-50F / breezy" plus a prescribed count and category of garments to pull. A
+    //    Fahrenheit cutoff in a prompt bypasses the PET endpoint, the waking-exposure window, the
+    //    activity shift and the configuration evaluator, and "breezy" has no thermal authority at
+    //    all: wind is carried as evidence and does not shift demand. It is replaced by a workflow
+    //    instruction tied to the structured evidence the tool already returns.
+    // Delta (1) is applied further down, inside the 2026-09-10 STYLIST_SYSTEM block — it edits a
+    // sentence that block creates, so it cannot run before it.
+    if (key === 'SINGLE_OUTFIT_STYLIST_SYSTEM') {
+      expected = expected.replace(
+        ' When conditions call for substantial warmth (sub-50°F / breezy), pull 2–3 insulating coats (warmth:warm or very warm) OR middle layer knits (cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench so you have the visual pieces required for an appropriately warm system.',
+        " When the search result's thermal_guidance indicates a substantial cold-side need, bring enough plausible layer candidates onto the workbench to judge their construction and compatibility from their photographs, rather than settling on the first one."
       )
     }
     // 2026-09-01: the shoes `fabric_category` enum had no `knit` value, so a knitted/flyknit upper
@@ -246,7 +381,8 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
       expected = expected.replace(
         `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`,
-        `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n${layerDirectionPromptRule()}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
+        // 2026-09-13: projected in the slot vocabulary the composer emits (atomic structured output).
+        `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n${layerDirectionPromptRule({ vocabulary: 'slots' })}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
       )
     }
     // 2026-08-26 verification pass: traced OUTFIT_EVALUATOR_GATE_SYSTEM's actual call chain
@@ -360,7 +496,7 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       )
       expected = expected.replace(
         'results are already filtered to what is wearable for the requested occasion/activity — `prohibited` pieces are removed for you, so compose freely from what comes back without self-rejecting anything; treat `discouraged` pieces as legitimate judgment calls (permitted, not preferred), favor `preferred`, and note that `unknown` means the piece lacks the metadata to judge.',
-        'results are already filtered to what is wearable for the requested occasion/activity — `prohibited` pieces are removed for you, so compose freely from what comes back without self-rejecting anything. `ruleFit` states the engine\'s own occasion/register read (`discouraged` is a legitimate, permitted choice, not a piece to avoid by default; `unknown` means the piece lacks the metadata to judge, not that it fails) — weigh it as one input alongside the garment\'s own facts and the outfit\'s visual thesis, the way you would any other piece of evidence, rather than defaulting to whichever piece the tier ranks highest.'
+        'results are already filtered by the occasion/activity gates — `prohibited` pieces are removed for you, so you need not re-check those gates; what comes back is eligible, which is not a judgment that any piece — or any combination of them — suits the conditions. `ruleFit` states the engine\'s own occasion/register read (`discouraged` is a legitimate, permitted choice, not a piece to avoid by default; `unknown` means the piece lacks the metadata to judge, not that it fails) — weigh it as one input alongside the garment\'s own facts and the outfit\'s visual thesis, the way you would any other piece of evidence, rather than defaulting to whichever piece the tier ranks highest.'
       )
       // 2026-09-11: vacation dining defaults to smart casual and indoor environment without evening/dressy over-escalation.
       expected = expected.replace(
@@ -377,11 +513,41 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'Layer a single functional top (like a tee, knit top, or sweater) with a single outerwear piece (like a jacket, cardigan, vest, or explicitly saved overlay tank/shell) as appropriate for the temperature.',
         'Layer a single functional top (like a tee, knit top, or sweater) with a single outerwear piece (like a jacket, cardigan, coat, vest, or explicitly saved overlay tank/shell) as appropriate for the temperature. When conditions call for substantial warmth, select appropriately insulating coats or knit layers to construct a warm, cohesive system.'
       )
+      // 2026-09-12 (branch review), part 1 of the pair described above: the garment-category
+      // prohibition and the single-outerwear formula come out. This must run AFTER the 2026-09-10
+      // delta directly above, which is what puts the sentence it replaces into `expected`.
+      expected = expected.replace(
+        'Layering Logic & No Double-Vests:',
+        'Layering Logic:'
+      )
+      expected = expected.replace(
+        ' Never recommend layering two vests, two cardigans, or two sleeveless shells together as the top/outerwear layer. Layer a single functional top (like a tee, knit top, or sweater) with a single outerwear piece (like a jacket, cardigan, coat, vest, or explicitly saved overlay tank/shell) as appropriate for the temperature. When conditions call for substantial warmth, select appropriately insulating coats or knit layers to construct a warm, cohesive system.',
+        ' Whether two specific garments actually layer together is a physical question with structured owners — outfit roles and wear order, the structural layer caps, required-base evidence, and the sleeve-construction check — so compose the system the conditions and the wardrobe call for, including a middle layer under outerwear when that is the right answer, and let those facts reject a genuinely incompatible pair.'
+      )
       expected = expected.replace(
         'TUCK COMPATIBILITY (two-piece check before every tuck suggestion):',
         `${PHYSICAL_WEARABILITY_REALISM_RULES}\n\nTUCK COMPATIBILITY (two-piece check before every tuck suggestion):`
       )
     }
+    }
+    // 2026-09-15: `search_wardrobe` stops returning soft taste tiers, so the two bullets that
+    // taught the model to read them stop promising a field it will not normally see. Runs AFTER the
+    // 2026-09-03 deltas above, which are what put these sentences into `expected`.
+    //
+    // What the model still needs from `ruleFit`, and therefore what it still carries: `prohibited`
+    // (a hard gate excluded the piece — the answer to "why can't I wear this", returned in explain
+    // mode with its reason) and `unknown` (a field the gate reads is untagged). `preferred` /
+    // `discouraged` / `neutral` are the ratified soft ranking lists; they add no fact about the
+    // garment that its own recorded facts do not already carry, and they read as verdicts.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        'each result carries its own thermal facts (warmth, insulation, season) and `ruleFit` for occasion/register fit — judge the replacement\'s suitability yourself from those facts',
+        'each result carries its own thermal facts (warmth, insulation, season) — judge the replacement\'s suitability yourself from those facts'
+      )
+      expected = expected.replace(
+        '`ruleFit` states the engine\'s own occasion/register read (`discouraged` is a legitimate, permitted choice, not a piece to avoid by default; `unknown` means the piece lacks the metadata to judge, not that it fails) — weigh it as one input alongside the garment\'s own facts and the outfit\'s visual thesis, the way you would any other piece of evidence, rather than defaulting to whichever piece the tier ranks highest.',
+        'Results carry no taste ranking: `ruleFit` appears only when a hard gate excluded the piece (`prohibited`, returned with its reason in `intent:\'explain\'`) or when a field that gate reads is untagged (`unknown` — the piece lacks the metadata to judge, not that it fails). Judge every returned piece from its own facts, the conditions established this turn, and the outfit\'s visual thesis.'
+      )
     }
     // 2026-08-26: sleeve taxonomy rewrite — sleeve_shape's fashion-name enum
     // (fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown) replaced with a
@@ -403,6 +569,39 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace(
         '  pintucked body with volumed (bishop/puff) sleeves and a finished back detail — executed\n  in quality fabric, not jersey.\n  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "bishop",',
         '  pintucked body with volumed (bishop-style) sleeves and a finished back detail — executed\n  in quality fabric, not jersey.\n  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "voluminous",'
+      )
+    }
+    // 2026-09-15 (owner ruling: unverified tagger prose is not stylist authority): the tagger's read is labelled an unverified
+    // visual read to check against the photograph, no longer "the definitive visual impression".
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        '- Use reads_as field as the definitive visual impression — it overrides color tags.',
+        '- A tagger impression ("reads as" or tagger_notes) is an unverified visual read, not a recorded fact: check it against the photograph, and let the photograph and recorded colours decide.'
+      )
+    }
+    // 2026-09-15 (owner ruling): the categorical "at most one loud print" rule is replaced by case-by-case visual judgment of
+    // prints across the whole outfit, shoes and accessories included; no fixed print count remains. The shared hierarchy block is
+    // interpolated into many assembled prompts, so its replacement applies to every key; the stylist and composer sentences are
+    // their own copies.
+    expected = expected.replace('- Pattern discipline is separate and stays strict: at most one loud print per outfit, grounded by quiet supporting pieces. This counts every piece in the outfit, not just the top and bottom — a loud shoe or a loud accessory (bag, scarf, jewelry) is a second loud print exactly like a second loud garment, and blows the same budget.', '- Prints and patterns are judged by eye, case by case — there is no fixed print count. Look at every patterned piece in the outfit together, shoes and accessories included: prints can coexist when scale, palette and hierarchy are controlled, and they fail when they compete for the same attention. When a print needs grounding, quieter pieces around it do that job.').replace('compete for the same visual slot exactly like two loud prints — pick one per placement', 'compete for the same visual slot — pick one per placement')
+    if (key === 'STYLIST_SYSTEM') expected = expected.replace('- This rule applies to the WHOLE outfit, including shoes and accessories — not just top/bottom. A loud printed shoe or a loud printed bag/scarf next to an already-loud garment is the same violation as two loud garments (e.g. a bold botanical top + floral mules, or a graphic dress + a paisley shawl). Check every piece\'s pattern before finalizing, footwear and accessories included.', '- Judge prints across the WHOLE outfit, including shoes and accessories — a printed shoe, bag or scarf is part of the pattern relationship, not an exception to it. Look at the photographs together and decide case by case whether the prints support or compete (a bold botanical top with floral mules, or a graphic dress with a paisley shawl, can clash or can work); there is no fixed print count.')
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') expected = expected.replace('- Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair', '- Pattern judgment: prints, patterns and heavy textures are judged by eye, case by case — there is no fixed count per outfit. Before you pair').replace('that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.', 'that is the sign to look at the photographs again: keep the pairing only if the prints visibly work together, and change one piece if they compete — do not use that reasoning in place of looking.')
+    // 2026-09-15 (owner ruling): the composer was told its roster was "already filtered for validity — compose freely", which reads as
+    // "eligible piece = adequate outfit". It now states what the gates actually guarantee.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        '- Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.',
+        "- Occasion & Weather Classification: Honor the occasion guidance provided in the request. The wardrobe shown has passed the hard eligibility gates — occasion and register, activity footwear, and pieces plainly unsuited to these conditions were removed. That is eligibility, not a verdict that a given piece, or any combination of them, is adequate for these conditions: judge the completed outfit against the stated conditions and duration yourself, from each piece's own recorded facts and its photograph."
+      )
+    }
+    // thread_1789532397982/1789532668263/1789536455443 (2026-09-16): a shared competence-framing
+    // paragraph is added to every model-facing surface that judges an outfit's physical suitability
+    // (this composer, the single-outfit tool loop, and the existing-card explanation path) — role
+    // framing only, no temperature cutoff or prescribed garment. See docs/engine-behaviour-map.md.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        'Return ONLY valid JSON. No markdown.\n\nYour job:',
+        `Return ONLY valid JSON. No markdown.\n\n${STYLIST_COMPETENCE_CONTRACT}\n\nYour job:`
       )
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
@@ -442,9 +641,11 @@ test('every currentStylistSystemTemplate patch still finds its target', () => {
 
 test('untouched global prompt constants still match the snapshot', async () => {
   const prompts = await import('../styling-engine/prompts.js')
-  for (const key of ['EXPRESSIVE_HIERARCHY_RULES', 'TAG_PIECE_SYSTEM', 'EXTRACT_PIECES_SYSTEM', 'EDITORIAL_IMAGE_BASE_PROMPT', 'EDITORIAL_IMAGE_REALISM_RULE', 'STYLE_SELECTED_ITEM_FEW_SHOTS']) {
+  for (const key of ['TAG_PIECE_SYSTEM', 'EXTRACT_PIECES_SYSTEM', 'EDITORIAL_IMAGE_BASE_PROMPT', 'EDITORIAL_IMAGE_REALISM_RULE', 'STYLE_SELECTED_ITEM_FEW_SHOTS']) {
     assert.strictEqual(prompts[key], snapshot[key], `byte drift in global ${key}`)
   }
+  // 2026-09-15 (owner ruling): EXPRESSIVE_HIERARCHY_RULES changes only by the registered print-judgment replacement.
+  assert.strictEqual(prompts.EXPRESSIVE_HIERARCHY_RULES, snapshot.EXPRESSIVE_HIERARCHY_RULES.replace('- Pattern discipline is separate and stays strict: at most one loud print per outfit, grounded by quiet supporting pieces. This counts every piece in the outfit, not just the top and bottom — a loud shoe or a loud accessory (bag, scarf, jewelry) is a second loud print exactly like a second loud garment, and blows the same budget.', '- Prints and patterns are judged by eye, case by case — there is no fixed print count. Look at every patterned piece in the outfit together, shoes and accessories included: prints can coexist when scale, palette and hierarchy are controlled, and they fail when they compete for the same attention. When a print needs grounding, quieter pieces around it do that job.').replace('compete for the same visual slot exactly like two loud prints — pick one per placement', 'compete for the same visual slot — pick one per placement'), 'byte drift in global EXPRESSIVE_HIERARCHY_RULES')
   assert.deepStrictEqual(prompts.WHOLE_WARDROBE_OUTFIT_ARCHETYPES, snapshot.WHOLE_WARDROBE_OUTFIT_ARCHETYPES)
   assert.deepStrictEqual(prompts.OUTFIT_MISSIONS, snapshot.OUTFIT_MISSIONS)
 })
@@ -472,4 +673,54 @@ test('partial constitution rows fall back per-layer to the generic defaults', ()
   assert.strictEqual(built.WORKING_STYLE, DEFAULT_CONSTITUTION.working_style)
   assert.ok(built.STYLIST_SYSTEM.includes('Layer 1 — custom contract'))
   for (const key of CONSTITUTION_LAYER_KEYS) assert.ok(typeof DEFAULT_CONSTITUTION[key] === 'string' && DEFAULT_CONSTITUTION[key].length > 0)
+})
+
+test('the missing-layer repair prompt carries every ratified constitution layer', () => {
+  // Sentinels, not a length check. The repair template shipped with four of the five stylist layers
+  // (`working_style` omitted) and no size-based assertion could see it — the four present layers
+  // were long enough on their own.
+  const STYLIST_LAYERS = ['body_contract', 'proven_formulas', 'aesthetic_gravity', 'lane_neutrality', 'working_style']
+  const sentinelConstitution = Object.fromEntries(
+    CONSTITUTION_LAYER_KEYS.map(key => [key, `__SENTINEL_${key.toUpperCase()}__`])
+  )
+  const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: sentinelConstitution })
+  const repair = built.WHOLE_WARDROBE_MISSING_LAYER_REPAIR_SYSTEM
+
+  for (const key of STYLIST_LAYERS) {
+    assert.ok(repair.includes(`__SENTINEL_${key.toUpperCase()}__`),
+      `the repair prompt must interpolate the ratified ${key} layer`)
+  }
+
+  // The control that keeps this honest: the conversational stylist prompts carry all five, so this
+  // is the repository rule for a stylist prompt and not a bar invented for this one template.
+  for (const key of STYLIST_LAYERS) {
+    for (const promptKey of ['STYLIST_SYSTEM', 'SINGLE_OUTFIT_STYLIST_SYSTEM', 'STYLE_SELECTED_ITEM_SYSTEM']) {
+      assert.ok(built[promptKey].includes(`__SENTINEL_${key.toUpperCase()}__`),
+        `${promptKey} carries ${key}, which is why the repair prompt must too`)
+    }
+  }
+
+  // MEASURED, not assumed (2026-09-13): several composition prompts do NOT carry all five today —
+  // WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM, OUTFIT_COMPOSER_SYSTEM, GENERATE_OUTFIT_IDEAS_SYSTEM,
+  // OUTFIT_BOARD_PLANNER_SYSTEM and EDITORIAL_NEW_PIECES_SYSTEM all omit `working_style`, and the
+  // evaluator prompts omit more. That is recorded here rather than silently "fixed" or silently
+  // accepted: widening those is a prompt change with its own byte deltas and its own review.
+  assert.ok(!built.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('__SENTINEL_WORKING_STYLE__'),
+    'if the composer gains working_style, update this note and the audit it points at')
+})
+
+test('the missing-layer repair prompt does not claim physical feasibility is settled', () => {
+  // The screen rejects candidates with a KNOWN deterministic conflict; a candidate whose construction
+  // evidence is unresolved is deliberately allowed through, because inability to judge is not a
+  // defect. Telling the model feasibility was already decided would contradict the rule that unknown
+  // construction still asks for inspection — and would invite exactly the sleeve failure this arc
+  // just fixed.
+  const repair = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
+    .WHOLE_WARDROBE_MISSING_LAYER_REPAIR_SYSTEM
+  // 2026-09-14: sleeve geometry is log-only, so the screen no longer decides sleeve compatibility at all; the prompt
+  // says so and asks for inspection with the neutral sentence instead of implying anything was settled.
+  assert.match(repair, /no known deterministic structural conflict on this card; sleeve compatibility is not decided mechanically/)
+  assert.match(repair, /Sleeve shape and relative sleeve length alone do not establish whether two garments layer\. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient\./)
+  assert.doesNotMatch(repair, /already been checked for physical feasibility/)
+  assert.doesNotMatch(repair, /your judgment is the visual and register one/)
 })

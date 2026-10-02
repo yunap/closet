@@ -220,3 +220,48 @@ ceilings rather than changing them.** The old wording was unratified scaffolding
 
 Pinned by two tests in `test/plan_outfit_set.test.js`: one on the guidance, one on the profile
 semantics it describes, so a future ceiling change cannot silently invalidate the wording.
+
+
+---
+
+## Amendment 3: Register ceilings rank; only a stated maximum gates
+
+Status: **ratified by Yuna, 2026-09-13.** Supersedes the gating half of the 2026-07-05 table and
+completes the reassessment Amendment 1 was marked for. The ceiling VALUES in the table are unchanged.
+
+### What changed
+
+| ceiling source | effect on a piece above it |
+|---|---|
+| wearer stated a maximum — "nothing above casual", "no dressy pieces" | hard exclusion |
+| occasion default, activity default, or a stated target ("casual outfit", "something dressy") | eligible, ranked down by distance |
+| genuine activity / weather / footwear / movement / construction incompatibility | hard exclusion **under that owner**, not under register |
+
+### Why
+
+Live thread_1789288270913: an ordinary "five casual outfits" request excluded 80 owned pieces as
+`prohibited` while four `elevated` base garments shipped in the same set — the survivors simply
+carried an explicit `casual` tag. The gate was reading tagging completeness as validity.
+
+Two further findings settled the shape:
+
+- **Formality does not establish physical capability.** Hiking's `everyday` ceiling was treated as a
+  capability rule; an elevated fleece shows it cannot be. Trail suitability belongs to movement
+  allowance, footwear support, maintenance/delicacy, construction and weather protection — each of
+  which keeps its own hard gate. Consequence, recorded: nothing hard now excludes an elevated city
+  trench from a hiking slot, because `required_occasion_tags` is deliberately *discouraged, never
+  prohibited* (2026-06-12) and reaches only top/bottom/dress. It ranks instead.
+- **The one-step bound was a preference.** Amendment 1 capped the explicit-tag exemption at one rank
+  and was marked for revisit. A dressy garment for a casual request now ranks very poorly
+  (`REGISTER_ADVISORY_PER_RANK × ranks`, floored below the thermal band's own magnitude) without
+  being declared invalid. The floor keeps register strictly subordinate to weather adequacy:
+  `scratch/audit_register_ranking_subordination.js` prints the paired comparisons that show it.
+
+### Measured effect on this wardrobe
+
+Casual, 65/50, fall: register exclusions **80 → 0**. Roster mix 56 everyday / 24 elevated / 2 dressy
+/ 1 lounge; the per-category cap, not register, now decides what fits. Nine pieces enter, eight
+leave, every departure attributable to capability or season. The ranking A/B (`rankings_ab_diff.js`)
+was run against an isolated baseline — this tree with only the register delta reverted — and its 9
+differing scenarios are identical to the HEAD-based run, establishing that the register change is
+their sole cause.

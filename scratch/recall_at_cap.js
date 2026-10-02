@@ -293,7 +293,7 @@ async function main() {
     }
   }
   console.log(`\n${report.conclusion}`)
-  console.log(`Wrote ${OUTPUT_PATH}`)
+  console.log(`Wrote ${outputPath}`)
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {

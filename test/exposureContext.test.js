@@ -99,11 +99,44 @@ test('conditionsSource records the sourcing tier, and coarse survives it', () =>
   assert.equal(none.conditionsSource, 'unknown')
   assert.equal(none.known, false)
 
-  // explicit_hourly is defined in the tier list but deliberately unreachable: the forecast requests
-  // `daily=` only, and no clock fact exists to key a window. Spec §10.3. Asserted so the day it
-  // becomes reachable, this test is what says so.
-  assert.ok(!/'explicit_hourly'/.test(fsRead('styling-engine/exposure.js').split('function resolveConditions')[1] || ''),
-    'no code path may claim explicit_hourly until hourly data is actually sampled')
+  // Activity time windows spec (2026-09-17): explicit_hourly is now reachable — weather.js's
+  // resolveExposureWindowHourly supplies genuinely sampled hourly data (source: 'live_hourly') keyed
+  // to a stated or inferred time_window, closing the gap this test used to pin as deliberately
+  // unreachable. Only a resolvedWeather actually carrying that source/scope pair may claim it.
+  const hourly = resolveExposureContext(MUSEUM, {
+    highF: 66.7, lowF: 61.1, source: 'live_hourly', scope: 'exposure_window',
+  }).conditions
+  assert.equal(hourly.conditionsSource, 'explicit_hourly')
+  assert.equal(hourly.wakingLowF, 61.1, 'the sampled window\'s own low, not a waking-window estimate derived from it')
+  assert.equal(hourly.coarse, false, 'genuinely observed, not inferred')
+})
+
+// thread_1789526496845 (reopened a second time): a stated_user range explicitly scoped
+// 'daily_forecast' (the day's high/low, stated separately from a narrower outing window — see
+// weather.js's validateUserWeather and its own USER_WEATHER_SCHEMA instruction) must NOT take the
+// certain stated_user_exposure_range shortcut above. It keeps its real numbers and gets the same
+// waking-window treatment any other daily envelope gets — never a qualitative band (that discards
+// numeric evidence and silences the whole thermal demand, which is not the fix).
+test('a stated_user range scoped daily_forecast gets the waking-window estimate, not the certain exposure-range shortcut', () => {
+  const dailyForecast = resolveExposureContext(MUSEUM, {
+    temperature: { highF: 50, lowF: 40, source: 'stated_user', scope: 'daily_forecast' },
+  }).conditions
+  assert.equal(dailyForecast.conditionsSource, 'stated_user_daily_forecast')
+  assert.equal(dailyForecast.coarse, true, 'not certain, unlike an exposure_window-scoped statement')
+  assert.equal(dailyForecast.dailyHighF, 50, 'the exact daily numbers are preserved')
+  assert.equal(dailyForecast.dailyLowF, 40)
+  assert.ok(dailyForecast.wakingLowF > dailyForecast.dailyLowF,
+    'the waking window sits above the bare daily low — the low is not read as a certain outing temperature')
+  assert.ok(dailyForecast.wakingLowF < dailyForecast.wakingHighF)
+
+  // Omitting scope is the prior, only behavior — every existing caller (the dedicated "Temperatures
+  // you'll be out in" UI numeric fields) is unaffected.
+  const noScope = resolveExposureContext(MUSEUM, {
+    temperature: { highF: 50, lowF: 40, source: 'stated_user' },
+  }).conditions
+  assert.equal(noScope.conditionsSource, 'stated_user_exposure_range')
+  assert.equal(noScope.coarse, false)
+  assert.equal(noScope.wakingLowF, 40, 'no scope stated defaults to the certain, verbatim treatment')
 })
 
 test('occasion never reaches the exposure context', () => {

@@ -1835,7 +1835,8 @@ complete upper system earns one bounded ordinal step above its strongest member.
 never more than one step for the chain, and never inferred from three garments without those roles.
 The established two-piece calculation is unchanged. `evaluateLayerPairConstruction` and
 `evaluateWearableOutfit` remain the independent owners of physical compatibility and the final hard
-verdict, so thermal contribution cannot certify sleeve or fit feasibility.
+verdict, so thermal contribution cannot certify sleeve or fit feasibility. (Since 2026-09-14 the sleeve
+verdict itself is log-only shadow evidence and contributes no hard verdict; see `docs/engine-behaviour-map.md`.)
 
 The permanent controls in `test/outfitThermalContribution.test.js` pin the three-piece result, the
 unchanged two-piece result, the unchanged roleless result, and both 60→48°F worn states. The
@@ -1843,3 +1844,125 @@ unchanged two-piece result, the unchanged roleless result, and both 60→48°F w
 copied-wardrobe diagnostic is `scratch/diagnose_single_outfit_layering.mjs`; the older tracked
 `scratch/measure_warmth_placement.mjs` now reads production `garmentWarmthLevel` rather than the
 retired `proposedWarmthLevel`, so the verifier and runtime share the documented warmth owner.
+
+### 25.8 Migration — endpoint/configuration evaluation replaces single-target comparison (2026-09-12)
+
+A precise forecast used to collapse the clothing-adequacy band to zero width: one demand level, one
+outfit level, and anything off by a single ordinal step reported as a fault. That produced findings
+against outfits a person would wear without hesitation, and it produced them most often on the
+flows that supply the most precise weather.
+
+The amount question is now asked of **configurations against endpoints**:
+
+- `wornConfigurations(pieces, { validateConfiguration })` enumerates the states the wearer can
+  actually reach — as composed, minus each outerwear piece individually, and (with more than one
+  removable layer) the bare state. Removal loosens every count-based and dependency-based rule, but
+  it can create an inner/outer adjacency the composed outfit never had, so each configuration is
+  passed to an injected validator. `evaluateWearableOutfit` supplied
+  `evaluateLayerPairConstruction` until 2026-09-14; the sleeve-geometry verdict is now log-only, so no
+  default validator removes a configuration. The dependency direction (validation → evaluator) is unchanged.
+  With no validator every configuration is valid, which is the prior behaviour, stated rather than
+  assumed.
+- `evaluateEndpointFit(configurations, target, { upperOnly, endpoint })` asks whether any
+  configuration suits an endpoint. The cold endpoint may use every configuration; the warm endpoint
+  excludes the as-composed state whenever anything is removable, because the warm part of the day is
+  where a layer comes off.
+- **Adjacency ranks, it does not reject.** A configuration within one level of the endpoint target
+  fits. Only a substantial mismatch — two levels or more, in one direction, with every viable
+  configuration known — is a mechanical fault.
+- **Unknown evidence proves nothing.** A configuration containing an unplaceable garment is
+  `unknown` even when `upperWithLayer` still returns a level for it, and is excluded from every
+  claim. A known fitting configuration proves fit regardless of remaining unknowns; if nothing known
+  fits and an unknown remains, the verdict is `cannot_judge` and no finding is produced. Known
+  misses in mixed directions return `no_fitting_configuration`, because no single direction
+  describes them.
+
+**Severe cold.** `isColdSevere` (`coldSevereForRange` in `weather.js`, daily high ≤ `SEVERE_COLD_F`)
+remains the physical-backstop AUTHORITY: it decides that the severe branch runs at all, and it is
+independent of the PET demand levels. What changed is the measurement inside that branch.
+`SEVERE_COLD_SYSTEM_COLD_FLOOR` and `systemColdScore` are retired — an additive sum of per-piece
+`cold` scores against a hand-set 12, a second grading system for a quantity the band already grades,
+and a sum of the kind §15.5 forbids. Thermal capacity for severe cold now comes from
+`evaluateEndpointFit` against the PET cold endpoint — **and against nothing else**.
+`severeColdCapacityTier()` maps the verdict: `substantial_shortfall` → hard finding, `cannot_judge`
+→ advisory, nothing else.
+
+**The two authorities stay separate, and may legitimately disagree.** A first version of this
+migration supplied a constant `very warm` demand when severity arrived as a bare `isColdSevere` flag
+with no temperature, on the evidence that 45/35, 40/28 and 30/20 all resolve to `very warm`. They
+do — because their LOWS are under 39°F, not because severity implies that target. `isColdSevere`
+means the daily HIGH is at most `SEVERE_COLD_F` (45°F), and **45/45 is severe with a PET cold
+endpoint of `warm`**. The constant graded such a day a full level too high, so an upper system
+merely adjacent to its real target could hard-fail. Deriving a clothing-demand level from the rigid
+boolean is exactly the coupling this arc removed, so it is gone:
+
+- `isColdSevere` decides whether the independent **physical** backstops run — layer presence,
+  outdoor capability, transit coverage, sleeve-bearing construction.
+- A numeric PET endpoint decides thermal **amount**.
+- Severity present, endpoint temperature absent → `no_target`, no amount verdict in either
+  direction. An unknown GARMENT yields an inability-to-judge advisory; an unknown DEMAND yields
+  nothing, because there is no question to be unable to answer.
+
+`test/outfitEnvironmentalAdequacy.test.js` pins the 45/45 disagreement and the flag-only shape (every
+physical rule still fires; `severeColdFit.verdict` is `no_target`).
+
+**Where each flow is proven.** The shared primitive's semantics are pinned in
+`test/thermalAdequacyMigration.test.js` and `test/outfitEnvironmentalAdequacy.test.js`; those are
+semantics, not wiring. Each consuming flow has its own test that the context goes in and the verdict
+comes out:
+
+| Flow | Call site | Test |
+| --- | --- | --- |
+| Freeform `/ask` | `executeTool('propose_outfit')` → `evaluateWearableOutfit` (`tools.js`), with `activity` and `requireThermalAdequacy` from declared intent | `test/aiEndpointContracts.test.js` — the Santa Fe 60/48 block: omitted layer, too-light layer (cold endpoint) and warm-coat-over-satin (warm endpoint) |
+| Whole Wardrobe | `locallyGateWholeWardrobeOutfits` (`rules.js`) | `test/whole_wardrobe_gate_rehydration.test.js` — "WHOLE WARDROBE: the endpoint evaluator runs on the gate weather…", including the trimmed-card rehydration precondition |
+| Trip slot | `validateSubmittedPlanOutfits` (`outfitSetPlanner.js`) | `test/tripPackingRoster.test.js` — "TRIP SLOT: the endpoint evaluator runs on the slot weather…" |
+
+Both flow tests were verified RED against a nulled `weatherContext` at their own call site, so they
+cannot pass on the primitive's behaviour alone, and each pins the DISPOSITION (rejected vs
+annotated) plus the finding's verbatim message — codes do not survive into `systemFlags` or
+rejection reasons, so the message is the identity available at that layer.
+
+**Every flow passes the exposure context it already holds.** Whole Wardrobe and trip both reached
+`resolveExposureContext` without an activity, so exertion resolved to `unknown` and no shift
+applied: a hiking card was graded against sedentary demand. That is not a ranking difference — at
+45/35 the cold endpoint is `very warm` sedentary and `moderate` hiking, two taxonomy levels, so the
+omission could manufacture a substantial false shortfall. `locallyGateWholeWardrobeOutfits` now
+passes `activity`, and the plan slot passes `activity: slot.activity`; each flow has a regression
+holding weather and garments fixed while only the activity changes, and each was verified RED
+against the previous call. Whole Wardrobe still passes NO `environment` — it has no typed
+environment input, and deriving one from occasion or prose is the inference this arc forbids.
+
+**The catalog states the target; the evaluator states the verdict.** `search_wardrobe`'s
+`thermal_guidance` used to end with "standalone uninsulated shells (warmth:light) without an
+insulating mid-layer will carry an advisory note for thermal undershoot". That is no longer true and
+was never the catalog's call: adequacy belongs to the completed outfit judged across its worn
+configurations, so a warm base under a light shell can be sufficient while a light base under the
+same shell is not. The line now names the required total upper-body warmth and says the completed
+outfit is judged against it. The cold-branch workbench instruction lost its count-and-formula
+prescription ("2–3 insulating outer coats OR middle layer knits") for the same reason the equivalent
+prompt rule did — it settled the composition from a category tag before anything was looked at.
+`test/freeform_observability.test.js` asserts this at the TOOL OUTPUT, which is the copy the model
+actually reads on a cold turn, not only against the system prompt.
+
+Not addressed here, deliberately: `resolveConditions()` prefers `weatherProfile.resolvedWeatherContext.temperature`
+over the flat `highF`/`lowF`, so a profile whose two projections disagree resolves to whichever copy
+wins. Production builds both together through one resolution, and changing the precedence would be
+writing policy for a contradictory object. The real fix is a single weather constructor, later. An adjacent-shortfall advisory was written and then removed
+after `scratch/audit_ensemble_thermal_calibration.js` showed it firing on a quilted puffer over a
+moderate sweater at 35/25 (bestDelta -1) — one level under a `very warm` target is where sound
+winter outfits sit, so adjacency stays ranking evidence in severe cold exactly as it is elsewhere.
+**Amendment 2026-09-13:** one narrow exception, re-verified against the same script before and after:
+in severe cold with a numeric target, a one-level shortfall whose upper body carries *no positive
+cold-weather insulation evidence* (no recorded fill, no insulating fibre) is a hard
+`outfit_thermal_capacity_short_without_insulation_evidence`; unknown evidence is an advisory, and any
+positive evidence (the puffer, a wool or fleece layer under a shell) leaves adjacency as ranking
+evidence. The script's puffer-over-sweater case is unchanged. Details: engine-behaviour-map.md,
+2026-09-13 amendment.
+
+Two consequences worth stating rather than discovering: the `measured`/`unmeasured` tier split no
+longer needs `baseLayersAreFullyMeasured`, because `substantial_shortfall` is only returned when
+every viable configuration is known; and a live card that the retired floor hard-failed — a light
+tee and light track pants under a winter coat at 35/25 — now produces **no finding at all**, because
+the upper system is one level short rather than two and the lower-body term that dragged the old sum
+down has no production authority. `test/outfitEnvironmentalAdequacy.test.js` records that change at
+the fixture.

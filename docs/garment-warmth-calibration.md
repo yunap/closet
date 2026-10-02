@@ -105,6 +105,17 @@ Two properties worth noting, both correct:
   trench wins.
 * **Leather sits at `moderate`**, above light jackets and below knits. Substantial, not insulating.
 
+> **Amendment 2026-09-13.** A later blanket ceiling (2026-09-09) clamped every outerwear garment without
+> insulating evidence to `light`, citing this section — yet it demoted the leather jacket this section
+> calls correctly `moderate`, and the "unlined gabardine trench" rationale does not describe the
+> wardrobe's trench, which is tagged fully lined. The ceiling is removed. Uninsulated outerwear now
+> places by substance and coverage like any garment: the lined trench, the unlined olive jacket and a
+> long-sleeved cotton tee all sit at raw 1.5 (`moderate`). Lining and coat length still add no
+> magnitude — no verified anchor separates them — so this section's trench-vs-cardigan ordering now
+> holds in raw score (wool cardigan 2.0 > trench 1.5) rather than in named level. Cold-weather
+> adequacy for uninsulated outer layers is judged by the severe-cold capacity backstop
+> (engine-behaviour-map.md, 2026-09-13 amendment), not by a garment-level ceiling.
+
 ## 4. The pinned case: the puffer — **resolved 2026-09-01, and how it resolved matters**
 
 > **Correction.** §4 below was written when the coat's fill was recorded as `["unknown"]` and the
@@ -172,6 +183,45 @@ That fact is:
 Note the shape: this is the *fourth* time in this arc that a rule failed because a garment's
 construction had no field to live in — `knit` for shoes, footwear lining, `season` lacking a cold
 value, and now fill. That pattern is itself a finding.
+
+
+## 4.2 Amendment 2026-09-12 — the layering vest, and the high-loft fibre tier
+
+Two owner rulings, both traced to the same root: the scale's substance term keys on `fabric_weight`,
+a MASS proxy, and its coverage term is binary.
+
+**(A) A sleeveless OUTER layer is charged the bare cut once, not twice.** `coverageAdjustment`'s
+`-2` bare-cut correction is right for a base garment — a sleeveless shell leaves the arms bare — and
+double-counts for a vest worn over a sleeved base, whose sleevelessness is what the garment IS.
+Measured: two near-identical medium cashmere open vests in the owner's wardrobe landed **two levels
+apart** (`142` `very light` vs `134` `moderate`) on nothing but `sleeveless` vs `cap` — a swing wider
+than the entire ultralight-to-heavy substance span. `isLayeringVest()` (category `outerwear` +
+`sleeve_length: sleeveless`) now halves that correction, and caps such a piece at `light`, anchored
+on §15.2's verified table: a sleeveless vest is 0.10 thin / 0.17 thick, both below the 0.25
+long-sleeve shirt. A piece with a RECORDED fill escapes the cap — a down gilet is not a knit vest.
+**Rejected signal, recorded so it is not retried:** `tuck_behavior: 'wear_over_only'` reads like
+"worn over another garment" and means "not tucked in". Tried first; it matched six bare base
+garments (three sleeveless dresses, two sleeveless tops, a crochet tank), each of which would then
+have escaped half the penalty — reintroducing the "sleeveless wool shell → warm" defect through a
+field whose name sounds right.
+
+**(B) High-loft fibres carry half a step more.** Owner: *"cashmere is meant to be thin and light in
+weight but warm."* The fibre-only credit was a flat `0.5` for every insulating fibre, while
+substance reads mass — so a medium cashmere knit and a medium cotton knit came out in the same
+bucket, 0.5 apart in a bucket 2.0 wide. `HIGH_LOFT_FIBERS` (`cashmere, alpaca, mohair, merino, down,
+shearling`, in `fiberTaxonomy.js`) now earn `1.0`. Deliberately narrow rather than all of
+`INSULATING_FIBERS`: the source-sensitivity census that cut this credit to 0.5 found a flat credit
+pushing 23 of 34 pieces to `warm`. A recorded insulating layer still dominates at `2`.
+
+**Measured blast radius on the live wardrobe (272 active pieces): 2 level changes**, both the
+intended ones — `142` and `990394`, `very light → light`. The `warm`/`very warm` populations are
+unchanged (2 and 3), so the over-credit failure mode does not recur. The high-loft tier changes no
+buckets on its own; it moves raw scores, which `thermalRankingFit` reads as `offset`, so cashmere now
+RANKS above cotton inside a shared bucket.
+
+One ranking fixture moved with it (`test/thermalRankingMigration.test.js`): its "excessive
+undershoot floors" case was a sleeveless outerwear shell, which under (A) is no longer an extreme
+undershoot. The property is unchanged and now demonstrated on a bare base garment.
 
 ## 5. Coverage: separate from insulation, not irrelevant to warmth
 

@@ -185,6 +185,16 @@ constraints:
 
 ---
 
+
+> **Amendment 2026-09-13 — Contract C, severe-cold capacity codes.** Two codes join the capacity
+> family: `outfit_thermal_capacity_short_without_insulation_evidence` (hard; numeric PET target, upper
+> system exactly one level short, outer layer outdoor-capable or of unknown capability, no upper-body
+> garment with positive cold-weather insulation evidence) and
+> `outfit_thermal_capacity_insulation_evidence_unknown` (advisory, inability to judge). Contract B is
+> unchanged: `weather_protection` still establishes outdoor capability and is never read as insulation
+> evidence. Owner-facing surfaces show one primary thermal explanation (engine-behaviour-map.md,
+> 2026-09-13 amendment); every typed finding remains in evaluation and debug.
+
 ## 4. Meaning of `outerwear_role`
 
 Do not assign fixed temperature thresholds to these values. The values answer *what kind of job the

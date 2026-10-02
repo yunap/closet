@@ -18,6 +18,26 @@
 // minimise: if this places a sleeveless wool shell at `light` while `cold` says -2, the old score may
 // simply be wrong in a different way.
 import { thermalMaterialVerdict, fabricWeight, wardrobeCategoryGroup, sleeveCoverage, pieceHemCoverage, pieceExposureDegree, necklineWarmth, insulatingLayerMaterials } from './attributes.js'
+import { HIGH_LOFT_FIBERS } from './fiberTaxonomy.js'
+
+// A sleeveless garment WORN OVER another one — a vest, a gilet, an open layering piece.
+//
+// CATEGORY, and nothing else. Two candidate signals were rejected by evidence:
+//   · `garmentKind()` reads the word "vest" out of a name — the text-inference class of bug this
+//     codebase keeps paying for (principle 2).
+//   · `tuck_behavior: 'wear_over_only'` LOOKS like "worn over another garment" and is not: it means
+//     "not tucked in". Tried first, and it matched six bare base garments in the owner's wardrobe —
+//     three sleeveless dresses, two sleeveless tops and a crochet tank — each of which would then
+//     have escaped half the bare-cut penalty. That is precisely the "sleeveless wool shell → warm"
+//     failure the penalty exists to prevent, arriving through a field whose name reads right.
+//
+// A sleeveless TOP (the tweed vest, `category: top`) therefore does not qualify here. Its coverage
+// is judged as a base garment because its category says it is one; if that is wrong, the category
+// is the thing to fix, not this predicate.
+export function isLayeringVest(piece = {}) {
+  if (String(piece?.sleeve_length || '').toLowerCase().trim() !== 'sleeveless') return false
+  return wardrobeCategoryGroup(piece) === 'outerwear'
+}
 
 export const WARMTH_LEVELS = ['very light', 'light', 'moderate', 'warm', 'very warm']
 
@@ -35,7 +55,7 @@ const SUBSTANCE = { ultralight: -1, light: 0, medium: 1, heavy: 2 }
 // fabric_category counts too: a piece tagged `denim` or `leather` has its face material established
 // whatever fiber_content says, which is the same reasoning hasPositiveInsulatingEvidence already
 // uses in the other direction.
-function hasFaceMaterialEvidence(piece = {}) {
+export function hasFaceMaterialEvidence(piece = {}) {
   const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
   const named = fibers.map(f => String(f).toLowerCase().trim()).filter(f => f && f !== 'unknown')
   if (named.length) return true
@@ -113,7 +133,17 @@ function coverageAdjustment(piece) {
   const exposure = pieceExposureDegree(piece) || 0
   // A bare cut is the strongest single correction available, and the one whose absence produced
   // "sleeveless wool shell → warm". Full ordinal steps: it moves a garment a whole level or two.
-  if (exposure > 0) return adj - (exposure >= 0.5 ? 2 : 1)
+  //
+  // HALVED FOR A LAYERING VEST (owner ruling 2026-09-12). The full -2 is right for a BASE garment:
+  // a sleeveless shell leaves the arms bare. A vest worn over a sleeved base leaves nothing bare —
+  // its sleevelessness is what the garment IS, not a coverage failure — so charging it two full
+  // levels counts the same fact twice. Measured cost of the old rule in the owner's wardrobe: two
+  // near-identical medium cashmere open vests landed two levels apart (`very light` vs `moderate`)
+  // on nothing but `sleeveless` vs `cap`, a delta larger than the entire ultralight-to-heavy span.
+  if (exposure > 0) {
+    const bareCut = exposure >= 0.5 ? (isLayeringVest(piece) ? 1 : 2) : 1
+    return adj - bareCut
+  }
 
   // Secondary coverage is HALF-STEPS. A first attempt gave sleeves, hem and neckline a full step
   // each, and a medium fleece with a warm collar then tied a heavy down puffer at `very warm` —
@@ -182,6 +212,14 @@ export function insulatingCreditWeight(piece) {
   if (thermalMaterialVerdict(piece) !== 'insulating') return 0
   const layer = insulatingLayerMaterials(piece)
   if (Array.isArray(layer) && layer.length) return 2
+  // HIGH-LOFT FIBRE TIER (owner ruling 2026-09-12). The flat fibre-only credit treats cashmere,
+  // a wool blend and an acrylic-wool mix as one fact, while the substance term keys on
+  // `fabric_weight` — a mass proxy. For fibres whose warmth does not track their weight that
+  // combination reads the wrong quantity twice: a medium cashmere knit and a medium cotton knit
+  // came out in the same bucket, 0.5 apart in a bucket 2.0 wide. Half a step more for the narrow
+  // high-loft set, leaving the census-driven 0.5 in place for every other insulating fibre.
+  const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
+  if (fibers.some(fiber => HIGH_LOFT_FIBERS.has(String(fiber || '').toLowerCase().trim()))) return 1
   return 0.5
 }
 
@@ -195,12 +233,14 @@ export function garmentWarmthScore(piece = {}) {
   if (warmthPlacementState(piece) !== 'placeable') return null
   const substance = SUBSTANCE[fabricWeight(piece)] ?? 0
   const raw = substance + insulatingCreditWeight(piece) + coverageAdjustment(piece)
-  // Outerwear shell boundary (docs/garment-warmth-calibration.md §3.1):
-  // An outer layer with no insulating material (thermalMaterialVerdict !== 'insulating')
-  // is a shell (wind/rain protection), not an insulator. Coverage (long sleeves, knee hem)
-  // and fabric weight must not promote an uninsulated shell (cotton, nylon, or uninsulated leather)
-  // past 'light' (ceiling 0.5).
-  if (wardrobeCategoryGroup(piece) === 'outerwear' && thermalMaterialVerdict(piece) !== 'insulating') {
+  // VEST CEILING, anchored rather than invented: the verified table (band spec §15.2) puts a
+  // sleeveless vest at 0.10 thin / 0.17 thick, both below the 0.25 long-sleeve shirt. A vest is a
+  // layer that adds a little; it is not a sweater, and no amount of face fabric makes it one.
+  //
+  // A RECORDED FILL ESCAPES THE CAP. A down gilet is not in that table, and its fill is exactly the
+  // strong, engineered evidence this module already credits at 2 — capping it would be the same
+  // mistake in the other direction.
+  if (isLayeringVest(piece) && !(insulatingLayerMaterials(piece) || []).length) {
     return Math.min(raw, LEVEL_RAW_BOUNDARIES[1])
   }
   return raw

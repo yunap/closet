@@ -711,11 +711,22 @@ test('Visual Composer Roster - register and footwear activity gates coexist with
     maxImages: 90
   })
 
-  assert.deepEqual(roster.map(piece => piece.id), [990351])
-  assert.equal(excluded.find(item => item.pieceId === 990352)?.reason, 'register: dressy exceeds everyday ceiling')
+  // 2026-09-13: the two gates still do not mask each other — but they no longer do the same KIND of
+  // thing. The footwear gate is a physical claim and still excludes; the register ceiling here is
+  // inferred from the occasion, so the dressy flat stays eligible and is ranked down instead.
+  assert.deepEqual(roster.map(piece => piece.id).sort(), [990351, 990352])
+  assert.equal(excluded.find(item => item.pieceId === 990352), undefined,
+    'an inferred register ceiling does not exclude')
+  assert.match((debug.relevanceAdjustments?.[990352] || []).join(' '), /register: dressy is 2 ranks above/,
+    'it is ranked down, by distance')
   assert.equal(excluded.find(item => item.pieceId === 990353)?.reason, 'footwear: mid heel unsuitable for Lots of walking')
-  assert.equal(debug.excludedCounts['register: dressy exceeds everyday ceiling'], 1)
   assert.equal(debug.excludedCounts['footwear: mid heel unsuitable for Lots of walking'], 1)
+
+  // And a stated maximum still removes it, through the same roster call.
+  const stated = buildVisualComposerRoster(pieces, {
+    occasion: 'casual', activity: 'walking', maxImages: 90, request: 'nothing dressy please',
+  })
+  assert.equal(stated.excluded.find(item => item.pieceId === 990352)?.reason, 'register: dressy exceeds everyday ceiling')
 })
 
 test('Visual Composer Roster - footwear activity gate ignores non-shoes and selected shoes', () => {
@@ -840,4 +851,149 @@ test('Visual Composer Roster - empty occasions are excluded under enforced hikin
   assert.ok(!roster.some(piece => piece.id === 991304))
   assert.equal(excluded.find(item => item.pieceId === 991304)?.reason, 'activity: not tagged for Hiking / Outdoor active')
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE linked_piece_id = ?").get(991304).count, 0)
+})
+
+// --- the cold-coat reserve (live runs 2077-2080) ------------------------------------------------
+//
+// On a stated 65/46 day the demand band is a certain `[warm, warm]`, so every `very warm` coat the
+// owner actually owns took a flat -10 overshoot penalty and was cut by the outerwear ceiling. The
+// reserve built to prevent exactly that fired — and then filled its three slots in RELEVANCE order,
+// i.e. by the score that had just penalized those coats, handing the slots to `moderate` fleece.
+// The composer was left with one adequate layer for five outfits, in every run.
+
+const COOL_DAY = { highF: 65, lowF: 46, isCold: false, needsRemovableCoolLayer: true, weatherSource: 'stated_user' }
+
+// Enough non-outerwear supply to push the pool past maxImages so the category ceilings engage.
+const fillerPieces = (count, startId) => Array.from({ length: count }, (_, i) => ({
+  id: startId + i,
+  name: `filler top ${i}`,
+  category: i % 2 === 0 ? 'top' : 'bottom',
+  photo: 'img.jpg',
+  fabric_weight: 'medium',
+  formality: 'everyday',
+  occasions: ['casual', 'city'],
+}))
+
+// `formality` is required or the register gate drops every one of these before the ceiling is
+// even reached — the gate this fixture is not about.
+const coat = (id, name, extra) => ({
+  id, name, category: 'outerwear', photo: 'img.jpg', occasions: ['casual', 'city'], sleeve_length: 'long', formality: 'everyday', ...extra,
+})
+
+const COLD_DAY_OUTERWEAR = [
+  coat(901, 'very warm down puffer', { fabric_weight: 'heavy', fiber_content: ['polyester'], insulating_layer_materials: ['down'] }),
+  coat(902, 'very warm shearling jacket', { fabric_weight: 'heavy', fiber_content: ['suede'], insulating_layer_materials: ['shearling'] }),
+  coat(903, 'wool overcoat', { fabric_weight: 'heavy', fiber_content: ['wool'] }),
+  coat(904, 'moderate fleece coat', { fabric_weight: 'medium', fiber_content: ['fleece'] }),
+  // No recorded insulating layer: a medium cotton knit places at `moderate`, one step under the
+  // demand. An earlier draft of this fixture gave it `insulating_layer_materials` and it scored
+  // `warm` — which would have made the test assert the opposite of what it means to.
+  coat(905, 'moderate knit cardigan', { fabric_weight: 'medium', fiber_content: ['cotton'] }),
+  coat(906, 'light nylon shell', { fabric_weight: 'light', fiber_content: ['nylon'] }),
+  coat(907, 'very light open vest', { fabric_weight: 'light', fiber_content: ['cotton'], sleeve_length: 'sleeveless', sleeve_type: 'sleeveless' }),
+  coat(908, 'light cotton jacket', { fabric_weight: 'light', fiber_content: ['cotton'] }),
+  coat(909, 'light linen jacket', { fabric_weight: 'light', fiber_content: ['linen'] }),
+]
+
+function coolDayRoster() {
+  const { roster } = buildVisualComposerRoster(
+    [...COLD_DAY_OUTERWEAR, ...fillerPieces(60, 1000)],
+    { occasion: 'city', weatherProfile: COOL_DAY, maxImages: 50 },
+  )
+  return roster.filter(piece => piece.category === 'outerwear').map(piece => piece.id)
+}
+
+test('COLD COAT RESERVE: the layers that suit the day survive the outerwear ceiling', () => {
+  const shown = coolDayRoster()
+  assert.ok(shown.length < COLD_DAY_OUTERWEAR.length, 'the ceiling must actually be cutting, or this proves nothing')
+  // 903 is the exact fit; 904/905/906/908/909 sit inside the LAYER band (light..warm) because a
+  // removable layer only has to work somewhere across the day. The wardrobe must reach the composer
+  // with more than one usable layer — the live failure was exactly one, five times running.
+  const usable = shown.filter(id => [903, 904, 905, 906, 908, 909].includes(id))
+  assert.ok(usable.length >= 2, `a 46°F low must reach the composer with more than one usable layer, got ${JSON.stringify(shown)}`)
+})
+
+test('COLD COAT RESERVE: it is filled by thermal fit, not by relevance rank', () => {
+  const shown = coolDayRoster()
+  // The old code filled the reserve in relevance order, where every warm coat sat at the bottom on
+  // an overshoot penalty, and the slots went to moderate fleece while `warm` coats were cut.
+  assert.ok(shown.includes(903), `the best-fitting layer must never be cut: ${JSON.stringify(shown)}`)
+})
+
+test('COLD COAT RESERVE: a winter coat is not a layer for a 65/46 day', () => {
+  // The correction to the correction. Reading the BASE band and admitting anything "not undershoot"
+  // swept `very warm` coats into the reserve, and three of five live cards then shipped one on a
+  // 65°F afternoon. The LAYER band (light..warm) excludes them at the top exactly as it excludes a
+  // `very light` vest at the bottom.
+  const shown = coolDayRoster()
+  assert.ok(!shown.includes(901) && !shown.includes(902),
+    `down and shearling are winter coats, not layers for this day: ${JSON.stringify(shown)}`)
+  assert.ok(!shown.includes(907), 'and a very light open vest is not enough layer to bother putting on')
+})
+
+test('COLD COAT RESERVE: no cold demand, no reserve — the ordinary ceiling is unchanged', () => {
+  const { roster } = buildVisualComposerRoster(
+    [...COLD_DAY_OUTERWEAR, ...fillerPieces(60, 1000)],
+    { occasion: 'city', weatherProfile: { highF: 78, lowF: 64 }, maxImages: 50 },
+  )
+  const shown = roster.filter(piece => piece.category === 'outerwear').map(piece => piece.id)
+  assert.ok(shown.length > 0, 'a mild day still shows outerwear')
+})
+
+// --- calendar season reaches the composer (owner ruling 2026-09-12) -----------------------------
+//
+// The visual composer had NO season handling: on a 65/50 fall day 18 of 60 base pieces in the live
+// wardrobe were tagged `warm`, zero exclusions mentioned season, and the cards came back built on a
+// graphic tee and cropped utility pants — after which the engine told the model that "every piece
+// under it is tagged as warm-season clothing" (thread_1789247972106). The cool-side content gates
+// all sit behind `isCold` (lowF <= 45), so at a 50°F low none of them run.
+
+const COOL_FALL = { highF: 65, lowF: 50, isCold: false, needsRemovableCoolLayer: true, weatherSource: 'stated_user' }
+const MILD_DAY = { highF: 78, lowF: 64, isCold: false, needsRemovableCoolLayer: false }
+
+const seasonPieces = () => ([
+  { id: 601, name: 'linen cropped pants', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'warm', fabric_weight: 'light' },
+  { id: 602, name: 'graphic tee', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'warm', fabric_weight: 'light' },
+  { id: 603, name: 'summer sundress', category: 'dress', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'warm', fabric_weight: 'light' },
+  { id: 604, name: 'warm-season blazer', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'warm', fabric_weight: 'light' },
+  { id: 605, name: 'wool overcoat', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'cool', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' },
+  { id: 606, name: 'straight jeans', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'year-round', fabric_weight: 'medium' },
+  { id: 607, name: 'knit top', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'year-round', fabric_weight: 'medium' },
+  { id: 608, name: 'loafers', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['casual'], season: 'year-round' },
+])
+
+const rosterIdsFor = (weatherProfile, calendarSeason) => buildVisualComposerRoster(seasonPieces(), {
+  occasion: 'casual', weatherProfile, calendarSeason, maxImages: 90,
+}).roster.map(piece => piece.id)
+
+// PARKED (owner ruling 2026-09-12): the hard exclusion is disabled pending its own justification
+// and the ranking A/B diff. Season is wearer-INTENT evidence, and one good run is not evidence that
+// every mismatched dress, bottom and layer should be removed from supply. That exclusion is NOT
+// ratified, so it has no test of its own — an unratified contract kept as a skip asserts nothing
+// while looking like coverage. What is pinned is the parked behaviour: supply is untouched, and the
+// ranking advisory below stays live.
+test('SEASON: nothing is excluded for season while the hard gate is parked', () => {
+  const shown = rosterIdsFor(COOL_FALL, 'fall')
+  assert.equal(shown.length, seasonPieces().length,
+    `supply is untouched while the exclusion is parked: ${JSON.stringify(shown)}`)
+  assert.ok(shown.includes(601) && shown.includes(603) && shown.includes(604),
+    'the warm-season bottom, dress and layer all still reach the composer')
+})
+
+test('SEASON: a mild day excludes nothing — the gate is the cool tier only', () => {
+  const shown = rosterIdsFor(MILD_DAY, 'fall')
+  assert.equal(shown.length, seasonPieces().length, `nothing is cut on a mild day: ${JSON.stringify(shown)}`)
+})
+
+test('SEASON: with no calendar season resolved, behaviour is exactly as before', () => {
+  const shown = rosterIdsFor(COOL_FALL, '')
+  assert.equal(shown.length, seasonPieces().length, 'season handling is a no-op without a season — provably additive')
+})
+
+test('SEASON: it also ranks, so an out-of-season piece sinks rather than vanishing on a mild day', () => {
+  const { debug } = buildVisualComposerRoster(seasonPieces(), {
+    occasion: 'casual', weatherProfile: MILD_DAY, calendarSeason: 'fall', maxImages: 90,
+  })
+  const adjustments = JSON.stringify(debug.relevanceAdjustments || {})
+  assert.match(adjustments, /tagged warm-season clothing/, 'the advisory is recorded as a visible reason, not a silent number')
 })

@@ -107,6 +107,6 @@ test('provider entry points fail closed under NODE_ENV=test unless a commissione
     .filter(file => file !== 'hermeticity_guard.test.js')
     .filter(file => fs.readFileSync(path.join(process.cwd(), 'test', file), 'utf8').includes("process.env.WARDROBE_ALLOW_TEST_PROVIDER_NETWORK = 'true'"))
     .sort()
-  assert.deepStrictEqual(optIns, ['api_keys.test.js', 'gemini_call_turn.test.js'],
-    'only a dedicated direct-provider contract test may use the test provider escape hatch, and only when it stubs the real SDK client (gemini_call_turn.test.js patches GoogleGenAI.prototype.interactions — no real network call is ever made)')
+  assert.deepStrictEqual(optIns, ['api_keys.test.js', 'composerOnlyCaptureIntegration.test.js', 'gemini_call_turn.test.js', 'providerCaptureCallIdPairing.test.js'],
+    'only a dedicated direct-provider contract test may use the test provider escape hatch, and only when it stubs the real SDK client (gemini_call_turn.test.js patches GoogleGenAI.prototype.interactions; providerCaptureCallIdPairing.test.js patches the Gemini, Anthropic and OpenAI request methods; composerOnlyCaptureIntegration.test.js patches the Gemini request method — no real network call is ever made)')
 })

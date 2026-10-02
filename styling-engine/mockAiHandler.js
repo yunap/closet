@@ -205,12 +205,31 @@ export function installMockAiHandler(db) {
       }
     }
 
+    // The visual composers answer in ID slots (docs/flows/use-my-wardrobe.md, atomic structured output).
+    if (systemPrompt.includes('personal stylist. You are looking at photos')) {
+      const [top, bottom, shoes] = ['top', 'bottom', 'shoes'].map(category => sampleOnePerCategory(db, [category])[0] || null)
+      const { pieceIds, pieces, ...card } = buildMockOutfit(db)
+      return {
+        outfits: [{
+          ...card,
+          base_top_id: top ? top.id : null,
+          bottom_id: bottom ? bottom.id : null,
+          dress_id: null,
+          middle_layer_id: null,
+          outer_layer_id: null,
+          shoes_id: shoes ? shoes.id : null,
+          styling_instructions: '',
+        }],
+        skip: '',
+        saveableLearning: 'Mock sandbox learning.'
+      }
+    }
+
     if (
       systemPrompt.includes('Outfit Composer') ||
       systemPrompt.includes('Outfit Gate') ||
       systemPrompt.includes('personal visual stylist agent') ||
-      systemPrompt.includes('whole-wardrobe outfit composer') ||
-      systemPrompt.includes('personal stylist. You are looking at photos')
+      systemPrompt.includes('whole-wardrobe outfit composer')
     ) {
       return {
         outfits: [buildMockOutfit(db)],

@@ -74,6 +74,11 @@ async function seedWardrobe() {
 }
 
 let aiCalls = []
+// Composer cards answer in ID slots (styling-engine/composerSlots.js); every slot is stated.
+function slots({ top = null, bottom = null, dress = null, middle = null, outer = null, shoes = null } = {}) {
+  return { base_top_id: top, bottom_id: bottom, dress_id: dress, middle_layer_id: middle, outer_layer_id: outer, shoes_id: shoes }
+}
+
 function mockAiHandler({ system, messages }) {
   aiCalls.push({ system, messages })
   return {
@@ -83,12 +88,7 @@ function mockAiHandler({ system, messages }) {
       dominantDirection: 'walk comfort',
       silhouette: 'top over bottom',
       bestFor: 'casual walking',
-      pieceIds: [seeded.top, seeded.bottom, seeded.sneaker],
-      pieces: [
-        { id: seeded.top, name: 'black tee', category: 'top' },
-        { id: seeded.bottom, name: 'blue jeans', category: 'bottom' },
-        { id: seeded.sneaker, name: 'sneakers', category: 'shoes' }
-      ],
+      ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.sneaker }),
       reason: 'Supportive walking outfit.',
       watchFor: 'none'
     }],
@@ -199,16 +199,18 @@ test('4. mood does NOT resolve to walking activity or trigger walkable', () => {
   assert.equal(sandalPenalized, false, 'Sandal should NOT receive walkable penalty since mood is insulated')
 })
 
-test('5. Composer prompt string contains the exact-slot hard constraint and the escape clause', () => {
+test('5. Composer prompt carries the slot contract, and no text placeholder for a missing garment', () => {
   assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('EXACTLY one top AND one bottom, OR exactly one dress'))
   assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('EXACTLY one pair of shoes'))
-  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes("[missing wardrobe gap: category]"))
-  // Live testing (2026-07-10) found a model-proposed layered outfit (top + bottom + cardigan) with
-  // zero shoes despite the rule above — added a self-check immediately before the JSON schema
-  // (proximity to the generation task) plus a layered example demonstrating shoes are still required.
-  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('A layered outfit (extra outerwear/cardigan piece) is not exempt'))
-  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('Never output a finished outfit with zero shoes'))
-  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('example of a layered outfit — shoes still required'))
+  for (const slot of ['base_top_id', 'bottom_id', 'dress_id', 'middle_layer_id', 'outer_layer_id', 'shoes_id']) {
+    assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes(`"${slot}"`), `the JSON shape names ${slot}`)
+  }
+  // Atomic structured output (2026-09-13): a missing garment is an empty slot and a diagnostic card,
+  // not a '[missing wardrobe gap: …]' string that made an incomplete outfit resemble a complete one,
+  // and completeness is owned by the schema plus validation rather than a pre-JSON self-check.
+  assert.ok(!WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('[missing wardrobe gap: category]'))
+  assert.ok(!WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes("check its 'pieces' array"))
+  assert.ok(!/"name": "/.test(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.slice(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.indexOf('JSON shape:'))), 'the JSON shape carries no garment names')
 })
 
 test('6. Diagnostic card payload in response and SQLite generation runs logging', async () => {
@@ -247,7 +249,7 @@ test('7. No post-model-filtering regression: malformed cards still appear as dia
         dominantDirection: 'city structure',
         silhouette: 'top over bottom',
         bestFor: 'city',
-        pieceIds: [seeded.top, seeded.bottom, seeded.sneaker],
+        ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.sneaker }),
         reason: 'Complete model outfit',
         watchFor: 'none'
       }, {
@@ -256,7 +258,7 @@ test('7. No post-model-filtering regression: malformed cards still appear as dia
         dominantDirection: 'unfinished',
         silhouette: 'top over bottom',
         bestFor: 'city',
-        pieceIds: [seeded.top, seeded.bottom], // no shoes
+        ...slots({ top: seeded.top, bottom: seeded.bottom }), // shoes_id null
         reason: 'Broken outfit mock',
         watchFor: 'Missing shoes'
       }],
@@ -311,32 +313,20 @@ test('8. One-time repair for metadata todos backfills field from description', (
   assert.equal(updated.field, 'fabric_weight')
 })
 
-test('9. Silent piece-drop resolution fallback and unresolved references tracking', async () => {
-  // Test case 1: 1 valid ID-match, 1 name-only-match (wrong ID, correct name), 1 fully unresolvable reference
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
-    return {
-      outfits: [{
-        label: 'Valid model outfit',
-        strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' },
-          { id: seeded.bottom, name: 'blue jeans' },
-          { id: seeded.sneaker, name: 'sneakers' }
-        ]
-      }, {
-        label: 'Resolution test outfit',
-        strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' }, // Valid ID-match
-          { id: 99999, name: 'blue jeans' }, // Wrong ID, correct name
-          { id: 88888, name: 'fully unresolvable shoes' } // Unresolvable
-        ]
-      }],
-      rejected: [],
-      skip: '',
-      saveableLearning: ''
-    }
-  }
+test('9. IDs only: an ID outside the roster is an unresolved slot, never rescued, and the card is kept as a diagnostic', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({
+    outfits: [{
+      label: 'Valid model outfit',
+      strength: 'strong',
+      ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.sneaker }),
+    }, {
+      label: 'Resolution test outfit',
+      strength: 'strong',
+      ...slots({ top: seeded.top, bottom: 99999, shoes: 88888 }),
+    }],
+    skip: '',
+    saveableLearning: '',
+  })
 
   const response = await generateWholeWardrobeOutfitsVisualInternal({
     occasion: 'city',
@@ -344,51 +334,55 @@ test('9. Silent piece-drop resolution fallback and unresolved references trackin
     limit: 2
   })
 
-  // Verify first resolved completely, second structurally rejected diagnostic card contains resolved pieces
   const outfits = response.structuredOutfits
   assert.equal(outfits.length, 2)
-  const testOutfit = outfits[1]
-  assert.equal(testOutfit.pieces.length, 2)
-  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
-  assert.ok(pieceIds.includes(seeded.top))
-  assert.ok(pieceIds.includes(seeded.bottom)) // Resolved via name fallback!
+  const testOutfit = outfits.find(outfit => outfit.label.includes('Resolution test outfit'))
+  assert.ok(testOutfit, 'the unresolved card is shown, not dropped')
+  assert.equal(testOutfit.broken, true)
+  assert.deepEqual(testOutfit.pieces.map(p => Number(p.id)), [seeded.top], 'only the IDs that exist resolve; nothing is filled in')
+  assert.deepEqual(testOutfit.modelSlots, { base_top_id: seeded.top, bottom_id: 99999, dress_id: null, middle_layer_id: null, outer_layer_id: null, shoes_id: 88888 },
+    'the slots exactly as the model returned them are kept as evidence')
 
-  // Check unresolvedReferences contains the third piece
-  const debug = response.debug
-  assert.ok(debug.unresolvedReferences)
-  const unres = debug.unresolvedReferences.find(r => Number(r.id) === 88888)
-  assert.ok(unres)
-  assert.equal(unres.name, 'fully unresolvable shoes')
-  assert.equal(unres.outfitLabel, 'Resolution test outfit')
+  const unresolved = response.debug.unresolvedReferences
+  assert.deepEqual(unresolved.map(ref => [ref.id, ref.slot, ref.outfitLabel]).sort(), [
+    [88888, 'shoes_id', 'Resolution test outfit'],
+    [99999, 'bottom_id', 'Resolution test outfit'],
+  ])
 })
 
-test('10. Name-fallback matching: case/whitespace variation normalization', async () => {
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
-    return {
-      outfits: [{
-        label: 'Normalization test outfit',
-        strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' },
-          { id: 99999, name: '  BlUe   JeAnS   ' }, // Case/whitespace variation
-          { id: seeded.sneaker, name: 'sneakers' }
-        ]
-      }],
-      rejected: [],
-      skip: '',
-      saveableLearning: ''
-    }
-  }
+test('10. A garment in the wrong slot is a finding, never moved to the slot its category belongs in', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({
+    outfits: [{
+      label: 'Valid model outfit',
+      strength: 'strong',
+      ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.sneaker }),
+    }, {
+      label: 'Swapped slots outfit',
+      strength: 'strong',
+      // The SAME garments as the ready card: diagnostics are de-duplicated by slot signature, not
+      // garment set, so the malformed assignment stays visible beside the card it resembles.
+      ...slots({ top: seeded.bottom, bottom: seeded.top, shoes: seeded.sneaker }),
+    }],
+    skip: '',
+    saveableLearning: '',
+  })
 
   const response = await generateWholeWardrobeOutfitsVisualInternal({
     occasion: 'city',
     season: 'current season',
-    limit: 1
+    limit: 2
   })
 
-  const testOutfit = response.structuredOutfits[0]
-  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
-  assert.ok(pieceIds.includes(seeded.bottom), 'Should resolve to blue jeans bottom via normalized name matching')
+  const swapped = response.structuredOutfits.find(outfit => outfit.label.includes('Swapped slots outfit'))
+  assert.ok(swapped, 'the card is shown as a diagnostic')
+  assert.equal(swapped.broken, true)
+  const mismatches = (swapped.structuralFindings || []).filter(finding => finding.code === 'slot_category_mismatch')
+  assert.equal(mismatches.length, 2, `both misplaced garments are reported: ${JSON.stringify(swapped.structuralFindings)}`)
+  const misplaced = swapped.pieces.filter(piece => [seeded.top, seeded.bottom].includes(Number(piece.id)))
+  assert.equal(misplaced.length, 2, 'both misplaced garments stay on the card as evidence')
+  assert.ok(misplaced.every(piece => piece.role == null), 'a misplaced garment carries no role — none is derived for it')
+  assert.equal(swapped.pieces.find(piece => Number(piece.id) === seeded.sneaker)?.role, 'shoes', 'a correctly slotted garment keeps the role its slot states')
+  assert.ok(response.structuredOutfits.some(outfit => outfit.label === 'Valid model outfit' && !outfit.broken), 'the ready card with the same garments ships too')
 })
 
 test('11. Diagnostic card renders resolutionNote when unresolvedReferences is non-empty', async () => {
@@ -397,19 +391,11 @@ test('11. Diagnostic card renders resolutionNote when unresolvedReferences is no
       outfits: [{
         label: 'Valid model outfit',
         strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' },
-          { id: seeded.bottom, name: 'blue jeans' },
-          { id: seeded.sneaker, name: 'sneakers' }
-        ]
+        ...slots({ top: seeded.top, bottom: seeded.bottom, shoes: seeded.sneaker }),
       }, {
         label: 'Rejected with unresolved',
         strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' },
-          { id: 99999, name: 'missing bottom item' }, // Missing bottom -> structural rejection
-          { id: seeded.sneaker, name: 'sneakers' }
-        ]
+        ...slots({ top: seeded.top, bottom: 99999, shoes: seeded.sneaker }), // unresolvable bottom -> structural rejection
       }],
       rejected: [],
       skip: '',
@@ -427,29 +413,22 @@ test('11. Diagnostic card renders resolutionNote when unresolvedReferences is no
   assert.ok(diagnosticOutfit, 'Should include diagnostic card')
   assert.equal(diagnosticOutfit.broken, true)
   assert.ok(diagnosticOutfit.resolutionNote, 'Should have resolutionNote')
-  assert.ok(diagnosticOutfit.resolutionNote.includes('model referenced "missing bottom item"'))
+  assert.ok(diagnosticOutfit.resolutionNote.includes('model put id 99999 in bottom_id'))
   // resolutionNote is a structured field, rendered only behind STYLIST_DEBUG_ENABLED — it must
   // not also be duplicated into the ungated `reason` text (see docs/stylist-bugfix-spec.md item 1).
   assert.ok(!diagnosticOutfit.reason.includes('Resolution note:'))
 })
 
-test('12. Full pipeline: mocked model response with stale ID for a real named roster piece resolves and completes outfit', async () => {
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
-    return {
-      outfits: [{
-        label: 'Full pipeline outfit',
-        strength: 'strong',
-        pieces: [
-          { id: seeded.top, name: 'black tee' },
-          { id: 99999, name: 'blue jeans' }, // stale ID, real name
-          { id: 88888, name: 'sneakers' } // stale ID, real name
-        ]
-      }],
-      rejected: [],
-      skip: '',
-      saveableLearning: ''
-    }
-  }
+test('12. Stale IDs are never completed from a name: the card does not ship as a ready outfit', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({
+    outfits: [{
+      label: 'Full pipeline outfit',
+      strength: 'strong',
+      ...slots({ top: seeded.top, bottom: 99999, shoes: 88888 }),
+    }],
+    skip: '',
+    saveableLearning: '',
+  })
 
   const response = await generateWholeWardrobeOutfitsVisualInternal({
     occasion: 'city',
@@ -457,13 +436,9 @@ test('12. Full pipeline: mocked model response with stale ID for a real named ro
     limit: 1
   })
 
-  const testOutfit = response.structuredOutfits[0]
-  assert.equal(testOutfit.broken || false, false, 'Outfit should be completely resolved and valid (not broken)')
-  assert.equal(testOutfit.pieces.length, 3)
-  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
-  assert.ok(pieceIds.includes(seeded.top))
-  assert.ok(pieceIds.includes(seeded.bottom))
-  assert.ok(pieceIds.includes(seeded.sneaker))
+  const readyModelCard = response.structuredOutfits.find(outfit => outfit.label === 'Full pipeline outfit' && !outfit.broken)
+  assert.equal(readyModelCard, undefined, 'an outfit with unresolved slots is never presented as complete')
+  assert.equal(response.debug.unresolvedReferences.length, 2)
 })
 
 

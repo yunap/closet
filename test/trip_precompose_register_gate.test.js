@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { wholeWardrobePieceTrustDecision } from '../styling-engine/rules.js'
+import { wholeWardrobePieceTrustDecision, registerFitPieceAdvisory } from '../styling-engine/rules.js'
 import { evaluateAutomaticUsePiecePool } from '../styling-engine/eligibility.js'
 
 function generationPool(pieces, context) {
@@ -21,10 +21,37 @@ const everydayPiece = { id: 502, category: 'top', formality: 'everyday' }
 const highHeelShoe = { id: 503, category: 'shoes', heel_height: 'high', walk_support: 'low' }
 const flatShoe = { id: 504, category: 'shoes', heel_height: 'flat', walk_support: 'high' }
 
-test('wholeWardrobePieceTrustDecision excludes a dressy piece for a register-capped occasion with no opt-in needed', () => {
+// 2026-09-13 owner ruling: an INFERRED ceiling is a preference, a STATED maximum is a constraint.
+// This gate runs upstream of the composer roster and of `recoveryEligiblePieces`, so whatever it
+// suppresses is unavailable to composition AND to repair — which is why it must carry the same
+// distinction as every other consumer rather than inheriting the hard default.
+test('wholeWardrobePieceTrustDecision keeps a one-rank-above piece for an INFERRED occasion ceiling', () => {
   const decision = wholeWardrobePieceTrustDecision(dressyPiece, { occasion: 'gallery / art event' })
+  assert.equal(decision.allowed, true,
+    'an occasion default is what the app expects of the occasion, not what the wearer will not wear')
+  assert.ok(!decision.reasons.join(' ').includes('exceeds'),
+    'and it is not reported as a register exclusion')
+})
+
+test('wholeWardrobePieceTrustDecision excludes the same piece when the wearer STATED a maximum', () => {
+  const decision = wholeWardrobePieceTrustDecision(dressyPiece, {
+    occasion: 'gallery / art event',
+    request: 'nothing dressy please',
+  })
   assert.equal(decision.allowed, false)
-  assert.match(decision.reasons.join(' '), /dressy exceeds elevated ceiling/)
+  assert.match(decision.reasons.join(' '), /exceeds/)
+})
+
+test('wholeWardrobePieceTrustDecision keeps TWO ranks above an inferred ceiling too, ranked far down', () => {
+  // Final ruling 2026-09-13: no ordinal cutoff without a stated maximum. The one-step bound came
+  // from the 2026-07-30 amendment capping the explicit-tag exemption — a ratified preference the
+  // record itself marked for revisit — so it ranks rather than gates.
+  const decision = wholeWardrobePieceTrustDecision(dressyPiece, { occasion: 'casual' })
+  assert.equal(decision.allowed, true)
+  const advisory = registerFitPieceAdvisory(dressyPiece, { registerCeiling: 'everyday', occasion: 'casual' })
+  assert.equal(advisory.score, -9,
+    'two ranks scales past one rank, then stops at the floor that keeps register under weather')
+  assert.match(advisory.reason, /2 ranks above/)
 })
 
 test('wholeWardrobePieceTrustDecision allows an everyday piece for the same register-capped occasion', () => {
@@ -33,7 +60,7 @@ test('wholeWardrobePieceTrustDecision allows an everyday piece for the same regi
 })
 
 test('wholeWardrobePieceTrustDecision accepts an already-resolved registerCeiling directly (no re-resolution needed)', () => {
-  const decision = wholeWardrobePieceTrustDecision(dressyPiece, { occasion: 'gallery / art event', registerCeiling: 'elevated' })
+  const decision = wholeWardrobePieceTrustDecision(dressyPiece, { occasion: 'gallery / art event', registerCeiling: 'elevated', registerCeilingExplicit: true })
   assert.equal(decision.allowed, false)
 })
 
@@ -48,13 +75,21 @@ test('wholeWardrobePieceTrustDecision allows a flat, high-support shoe for the s
   assert.equal(decision.allowed, true)
 })
 
-test('shared automatic-use pool excludes the dressy piece with no opt-in needed', () => {
-  const { allowedPieces, suppressedPieces } = generationPool([dressyPiece, everydayPiece], {
-    occasion: 'gallery / art event'
+test('shared automatic-use pool: inferred ceiling keeps the piece, stated maximum suppresses it', () => {
+  // The pool is the upstream boundary for BOTH composition and repair, so the inferred/explicit
+  // distinction has to hold here or nothing downstream can recover the piece.
+  const inferred = generationPool([dressyPiece, everydayPiece], { occasion: 'gallery / art event' })
+  assert.ok(inferred.allowedPieces.some(p => p.id === dressyPiece.id),
+    'one rank above an inferred ceiling stays available to composition and repair')
+  assert.ok(inferred.allowedPieces.some(p => p.id === everydayPiece.id))
+
+  const stated = generationPool([dressyPiece, everydayPiece], {
+    occasion: 'gallery / art event',
+    request: 'nothing dressy please',
   })
-  assert.ok(!allowedPieces.some(p => p.id === dressyPiece.id), 'dressy piece must not appear in allowedPieces')
-  assert.ok(allowedPieces.some(p => p.id === everydayPiece.id), 'everyday piece should still be allowed')
-  assert.ok(suppressedPieces.some(p => p.id === dressyPiece.id), 'dressy piece should be recorded as suppressed with a reason')
+  assert.ok(!stated.allowedPieces.some(p => p.id === dressyPiece.id), 'a stated maximum suppresses it')
+  assert.ok(stated.suppressedPieces.some(p => p.id === dressyPiece.id), 'and records the reason')
+  assert.ok(stated.allowedPieces.some(p => p.id === everydayPiece.id))
 })
 
 test('shared automatic-use pool excludes the high-heel shoe for a walking activity', () => {
