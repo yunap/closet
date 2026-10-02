@@ -6005,7 +6005,9 @@ export const TRIP_GARMENT_FACT_CONVENTIONS = `${GARMENT_FACT_CONVENTIONS} Occasi
 export function tripComposerSlotView(slot = {}) {
   const context = slot?.styling_context
   if (!context || typeof context !== 'object') return slot
-  const { weatherProfile, applicabilityContext, weatherText, resolvedWeatherContext, date, ...plainContext } = context
+  // provenance/conflicts/debug are the resolver's own bookkeeping (which field came from where); they
+  // also restated the stand-in date and a weatherProfile pointer (thread_1790973141460).
+  const { weatherProfile, applicabilityContext, weatherText, resolvedWeatherContext, date, provenance, provenanceByField, conflicts, debug, ...plainContext } = context
   return { ...slot, styling_context: plainContext }
 }
 

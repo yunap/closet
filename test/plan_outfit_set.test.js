@@ -9681,3 +9681,45 @@ test('the trip weather sentence states uncovered days and flags a far-ahead fore
   assert.ok(slot.styling_context.weatherProfile, 'the workbench itself keeps the structured copies for validation')
   assert.deepEqual(tripComposerSlotView({ id: 'x' }), { id: 'x' })
 })
+
+// Live thread_1790973141460: the slots the model sent WITHOUT a time of day still read
+// "81°F high / 64°F low — live forecast", the trip's first day alone. Same stand-in day, other path.
+test('a trip activity with no day and no time of day resolves over the whole trip, and survives a trip that runs past the forecast', async () => {
+  const { resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const dateRange = { start: '2026-10-12', end: '2026-10-18' }
+  const horizon = {
+    time: ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17'],
+    temperature_2m_max: [90, 88, 81, 75, 69, 69, 70, null],
+    temperature_2m_min: [70, 68, 64, 65, 55, 53, 53, null],
+  }
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    // The provider rejects a range whose end is past its horizon outright.
+    if (url.includes('end_date=2026-10-18')) return { ok: false, json: async () => ({ error: true, reason: 'out of allowed range' }) }
+    if (url.includes('forecast_days=')) return { ok: true, json: async () => ({ daily: horizon }) }
+    const day = /start_date=(\d{4}-\d{2}-\d{2})/.exec(url)?.[1]
+    const i = horizon.time.indexOf(day)
+    return { ok: true, json: async () => ({ daily: { time: [day], temperature_2m_max: [horizon.temperature_2m_max[i]], temperature_2m_min: [horizon.temperature_2m_min[i]] } }) }
+  }
+  const [undated, dated] = normalizePlanSlots([
+    { label: 'Sightseeing', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 1 },
+    { label: 'Arrival Day', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 1, date: '2026-10-12' },
+  ], { dateRange, location: 'Vienna, Virginia' })
+  assert.equal(undated.timeWindow || null, null)
+
+  _clearWeatherCachesForTests()
+  const wholeTrip = await resolveSlotWeather(undated, { dateRange, location: 'Vienna, Virginia', fetchImpl })
+  assert.equal(wholeTrip.profile.weatherSource, 'live', 'the covered days are used; the trip does not fall to a seasonal estimate')
+  assert.equal(wholeTrip.profile.highF, 81)
+  assert.equal(wholeTrip.profile.lowF, 53, 'the coolest covered trip day, not the first day (64) and not a null read as zero')
+  assert.equal(wholeTrip.profile.isCold, false)
+  assert.ok(urls.some(url => url.includes('forecast_days=')), 'the rejected range is retried over the horizon')
+  assert.match(wholeTrip.label, /53–81°F across the trip — live forecast/)
+
+  _clearWeatherCachesForTests()
+  const firstDay = await resolveSlotWeather(dated, { dateRange, location: 'Vienna, Virginia', fetchImpl })
+  assert.equal(firstDay.profile.highF, 81)
+  assert.equal(firstDay.profile.lowF, 64, 'a slot dated to one day still resolves that day alone')
+})

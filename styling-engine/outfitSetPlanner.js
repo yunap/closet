@@ -1330,7 +1330,14 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       }
     }
   }
-  const resolvedDateRange = { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
+  // The same stand-in day defect on the path with NO time window (live thread_1790973141460, the
+  // run after the across-days fix above): "81°F high / 64°F low — live forecast" for a week of
+  // sightseeing was the trip's first day alone, because the inherited slot.date narrowed this range
+  // to one day. A slot with no day of its own resolves over the whole trip, as it did before
+  // 2026-09-17's date inheritance; a slot dated to one day keeps that day.
+  const resolvedDateRange = spansTripDays
+    ? { start: tripStart, end: tripEnd }
+    : { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
   const context = await resolveWeatherForRequest({
     location: targetLocation,
     dateRange: resolvedDateRange,

@@ -149,13 +149,28 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const cacheKey = `${start}:${end}|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
   const cached = weatherCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.data
-  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&start_date=${start}&end_date=${end}`
-  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  const dailyBase = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`
+  let res = await withTimeout(fetchImpl(`${dailyBase}&start_date=${start}&end_date=${end}`), FETCH_TIMEOUT_MS)
+  let withinHorizonOnly = false
+  // A multi-day range that runs past the provider's horizon is rejected WHOLE (an error, not a
+  // shorter answer), so a trip ending one day beyond it lost every day it does cover and fell to
+  // a seasonal estimate. Retry once over the horizon itself and keep the requested days it reaches.
+  if (!res?.ok && end > start) {
+    res = await withTimeout(fetchImpl(`${dailyBase}&forecast_days=${HORIZON_FORECAST_DAYS}`), FETCH_TIMEOUT_MS)
+    withinHorizonOnly = true
+  }
   if (!res?.ok) return null
   const data = await res.json()
-  const highs = data?.daily?.temperature_2m_max || []
-  const lows = data?.daily?.temperature_2m_min || []
-  const dates = data?.daily?.time || []
+  const rawHighs = data?.daily?.temperature_2m_max || []
+  const rawLows = data?.daily?.temperature_2m_min || []
+  const rawDates = data?.daily?.time || []
+  // The horizon's last day can come back with null temperatures; Math.max/min would read null as
+  // 0°F. A day counts only with both numbers, and on the retry only inside the requested range.
+  const keep = rawHighs.map((high, i) => Number.isFinite(high) && Number.isFinite(rawLows[i])
+    && (!withinHorizonOnly || (String(rawDates[i] || '') >= start && String(rawDates[i] || '') <= end)))
+  const highs = rawHighs.filter((_, i) => keep[i])
+  const lows = rawLows.filter((_, i) => keep[i])
+  const dates = rawDates.length === rawHighs.length ? rawDates.filter((_, i) => keep[i]) : []
   if (!highs.length || !lows.length) return null
   // `fetchedAt` is captured once, at the real network call, and rides along with the cached data —
   // a cache hit must report when the underlying forecast was actually retrieved, not "now", or
