@@ -691,6 +691,13 @@ export async function resolveToolStylingContext({
       ...explicitRequest,
       activity: activityFromAuthority,
       season: seasonFromAuthority,
+      // The router classified the whole occasion as spent in one room (routes/ai.js). That is the
+      // existing 'indoor' stated-weather sentinel, applied here once for every tool in the turn
+      // instead of depending on the model to repeat a flag on each call. It outranks a
+      // weather_estimate the model may still volunteer, and that estimate is dropped: with one, the
+      // indoor sentinel means "indoor destination" and the estimate becomes the walk there and
+      // back, which an occasion with no travel does not have. Weather the USER stated is kept.
+      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null } : {}),
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.

@@ -4663,3 +4663,72 @@ test('single_outfit propose_outfit keeps the stylist note, and an indoor wearing
   await executeTool('propose_outfit', { ...args, stylist_note: undefined, season: 'indoor' }, withoutNote)
   assert.equal(withoutNote.singleOutfitStylistNote, '')
 })
+
+// thread_1790929800547: with the brief asking for both, the model marked its wardrobe search indoor
+// but not its proposal, sent a 65/50 estimate anyway, and left stylist_note empty. Both are now
+// structure rather than instructions: the router classifies the setting and code applies it to every
+// tool; the note is a required field on a single-outfit proposal.
+test('a router-classified indoor-only occasion resolves as indoor for the proposal even when the model volunteers a weather estimate', async () => {
+  for (const p of [
+    { id: 61, name: 'Knit Shift Dress', category: 'dress', fabric_weight: 'medium', fiber_content: JSON.stringify(['rayon']), sleeve_length: 'short' },
+    { id: 62, name: 'Flat Sandals', category: 'shoes', walk_support: 'medium' },
+  ]) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.walk_support || null, p.sleeve_length || null)
+  }
+  const context = indoorOnly => {
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      singleOutfitCatalogEligibleIds: new Set([61, 62]),
+      retrievedPieceIds: new Set([61, 62]),
+      visuallySeenPieceIds: new Set([61, 62]),
+      freeformDiagnostics: {},
+      activity: 'none',
+      executionRouterIndoorOnly: indoorOnly,
+    }
+    declareSingleOutfitIntent(toolContext)
+    return toolContext
+  }
+  const args = {
+    pieces: [{ id: 61, role: 'dress' }, { id: 62, role: 'shoes' }],
+    label: 'Hosting at home',
+    why_it_works: 'Flat and sleeveless for an evening on your feet.',
+    stylist_note: 'Intro.\n\nPick.',
+    weather_estimate: { high_f: 65, low_f: 50 },
+  }
+  const indoorContext = context(true)
+  await executeTool('propose_outfit', args, indoorContext)
+  assert.ok(!(indoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
+    `an evening at home must not be judged against an estimated outdoor day: ${JSON.stringify(indoorContext.generatedOutfits[0].result?.annotations)}`)
+
+  const outdoorContext = context(false)
+  await executeTool('propose_outfit', args, outdoorContext)
+  assert.ok((outdoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
+    'without the indoor classification the same proposal is still judged against the estimate')
+})
+
+test('the router must classify the setting, and a single-outfit proposal must carry the stylist note', async () => {
+  const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
+  assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('setting'))
+  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'includes_outdoors'])
+
+  const single = stylistToolsForTurn({ executionProfile: 'single_outfit', allowedToolNames: ['search_wardrobe', 'view_pieces', 'propose_outfit'] })
+  assert.deepEqual(single.map(tool => tool.name).sort(), ['propose_outfit', 'search_wardrobe', 'view_pieces'])
+  const singlePropose = single.find(tool => tool.name === 'propose_outfit')
+  assert.ok(singlePropose.input_schema.required.includes('stylist_note'))
+  assert.ok(singlePropose.input_schema.required.includes('why_it_works'))
+  const fullPropose = stylistToolsForTurn({}).find(tool => tool.name === 'propose_outfit')
+  assert.ok(!fullPropose.input_schema.required.includes('stylist_note'), 'the full stylist schema is unchanged')
+
+  const indoorPayload = buildSingleOutfitConversationPayload(
+    { question: 'I am hosting a small get-together at our house tonight. what should I wear?' },
+    { profile: 'single_outfit', occasion: 'casual', activity: 'none', setting: 'indoor_only', season: 'fall', limit: 1 })
+  const indoorText = indoorPayload.messages[0].content
+  assert.match(indoorText, /"setting": "indoor only"/)
+  assert.match(indoorText, /Dress for the room: do not supply user_weather or weather_estimate/)
+  const outdoorText = buildSingleOutfitConversationPayload(
+    { question: 'what should I wear to dinner downtown?' },
+    { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: 'fall', limit: 1 }).messages[0].content
+  assert.doesNotMatch(outdoorText, /"setting"/)
+  assert.match(outdoorText, /let the tools resolve weather/)
+})

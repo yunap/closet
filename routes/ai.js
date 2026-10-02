@@ -6749,6 +6749,12 @@ router.post('/ask', async (req, res) => {
           toolContext.season = routed.value?.season || toolContext.season
           toolContext.executionRouterSeason = toolContext.season
           toolContext.executionRouterSeasonLocked = true
+          // Third turn-level fact from the router, same authority as activity and season above.
+          // thread_1790928379170 / thread_1790929800547: an evening hosted at home was dressed for
+          // a model-estimated outdoor day, twice, and asking the composer to flag it per tool call
+          // did not hold (it marked the search and not the proposal). resolveToolStylingContext
+          // reads this and resolves the turn's weather as indoor for every tool.
+          toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {

@@ -4291,6 +4291,7 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
     location: routed.location || body.location || '',
     date: routed.date || '',
     season: routed.season || body.season || '',
+    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : {}),
     mood: routed.mood || body.mood || '',
     mission: routed.mission || body.mission || 'mix',
     user_weather: userWeather || null,
@@ -4309,7 +4310,9 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
                 ? 'Preserve both endpoints unchanged on every composition tool call.'
                 : 'Only one endpoint was stated; preserve it unchanged and do not supply the other — it is genuinely unknown, not zero and not equal to the stated one.'
             }`
-          : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
+          : routed.setting === 'indoor_only'
+            ? 'This occasion is spent indoors in one room for its whole duration. Dress for the room: do not supply user_weather or weather_estimate, and add no layer for warmth.'
+            : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
       ].join('\n')
     }],
     maxTokens: 1200,

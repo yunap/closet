@@ -1014,9 +1014,21 @@ export function stylistToolsForTurn(toolContext = {}) {
   //
   // Returning FEWER tools above is a different thing and stays: which tools are offered is a
   // deliberate turn-ending boundary, not per-request policy inside a schema.
-  return allowedNames
+  const tools = allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
+  // The single-outfit turn ends when its card is accepted, so the chat reply has to arrive inside
+  // the proposal. As an optional field the model left it empty on a live run
+  // (thread_1790929800547); here it is required. This profile already has its own three-tool list,
+  // so the full stylist's tool schemas, and their cached prefix, stay byte-identical.
+  if (toolContext?.executionProfile !== 'single_outfit') return tools
+  return tools.map(tool => tool.name !== 'propose_outfit' ? tool : {
+    ...tool,
+    input_schema: {
+      ...tool.input_schema,
+      required: [...new Set([...(tool.input_schema?.required || []), 'why_it_works', 'stylist_note'])],
+    },
+  })
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
@@ -1440,11 +1452,12 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
+    setting: { type: 'string', enum: ['indoor_only', 'includes_outdoors'] },
     season: { type: 'string' },
     mood: { type: 'string' },
     mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
@@ -1473,7 +1486,9 @@ Choose full_stylist for: broad outfit critique; user-attached photos; existing-o
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the user's own home or another single heated or cooled room, with no travel and no time outdoors: hosting or staying at home, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. For full_stylist use includes_outdoors.
+
+Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
