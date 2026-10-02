@@ -54,8 +54,8 @@ The full freeform tool loop remains the fallback for genuinely open-ended wardro
 | Product requested | Bounded execution |
 |---|---|
 | text, explanation, critique | conversational answer; retrieve only when exact garment truth is needed |
-| explicit one best/pick-one request | targeted visual search + `propose_outfit` |
-| ordinary “what should I wear?” or 2–5 fresh outfits sharing one occasion/activity/weather context | `generate_outfits` once; ordinary request defaults to two options |
+| explicit one best/pick-one request, **and since 2026-10-02 an ordinary “what should I wear?”** | targeted visual search + `propose_outfit` (the `single_outfit` profile) |
+| an explicit request for several options, or 2–5 fresh outfits sharing one occasion/activity/weather context | `generate_outfits` once; options asked for without a number default to two |
 | one-slot revision of a current card | `suggest_slot_swaps` once |
 | coordinated multi-context set | `plan_outfit_set` |
 | seasonal capsule | existing model roster + atomic capsule composition |
@@ -87,7 +87,7 @@ is supplied, or when the user asked for explanation rather than cards.
    provider iteration on `declare_intent`; the general freeform and one-card contracts still do.
 10. Composer prose is checked locally before delivery. Deliberation/self-correction or an explicit
     garment ID outside the final card is withheld and visibly flagged, never repaired by a paid call.
-11. An ordinary new “what should I wear?” request defaults to two options. The controller calls
+11. **[superseded by owner ruling 2026-10-02 — an ordinary “what should I wear?” is ONE recommended outfit from the `single_outfit` stylist; this bounded path now needs an explicit request for several options. See `stylist-conversation-targets.md`.]** As originally ratified: an ordinary new “what should I wear?” request defaults to two options. The controller calls
     `generate_outfits` directly without a preliminary wardrobe search. An explicit one/best/pick-one
     request retains the targeted one-card path; an explicit numeric count wins over the default.
 12. A multi-option result is a comparison set, not several substitutions inside one template. The

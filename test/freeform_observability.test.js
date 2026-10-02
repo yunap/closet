@@ -1172,7 +1172,9 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
   assert.match(tool('suggest_slot_swaps').description, /alternatives to ONE slot/)
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
-  assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)
+  // Owner ruling 2026-10-02 (supersedes 2026-08-18): an ordinary request is ONE recommended outfit, not a batch of two.
+  assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' with no request for several options is ONE recommended outfit/)
+  assert.match(tool('generate_outfits').description, /asks for options without a number, compose 2/)
   assert.match(tool('plan_outfit_set').description, /multiple use-case slots/)
   // Grew from ~700 to ~890 chars when lever 1 moved the bounded exception out of the tool schemas.
   // That is the trade working: ~48 tokens of volatile text at full input price (~$0.00014/call)
@@ -3055,7 +3057,7 @@ test('generate_outfits rejects a whole-wardrobe one-look call before the nested 
   const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.input_schema
   assert.equal(schema?.properties?.limit?.minimum, 2)
   assert.equal(schema?.properties?.limit?.maximum, 5)
-  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.description || '', /For exactly one outfit/)
+  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.description || '', /ONE recommended outfit: use declare_intent \+ visual search_wardrobe \+ propose_outfit, not this tool/)
 
   const toolContext = {
     turnMode: 'new_request',
@@ -4602,3 +4604,13 @@ test('view_pieces projects stylistCatalogLine truth across all execution profile
   assert.doesNotMatch(jacket.truth, /warmth/)
 })
 
+
+// Owner ruling 2026-10-02 (docs/engine-behaviour-map.md; supersedes 2026-08-18). The router is a
+// model call, so its behaviour cannot be exercised offline; this pins the instruction it is given.
+test('the execution router sends an ordinary "what should I wear?" to the single-outfit stylist, not the two-option composer', async () => {
+  const fsMod = await import('node:fs')
+  const source = fsMod.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(source, /An ordinary "what should I wear\?" with no request for several options is single_outfit/)
+  assert.match(source, /Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options/)
+  assert.doesNotMatch(source, /An ordinary "what should I wear\?" means 2/)
+})

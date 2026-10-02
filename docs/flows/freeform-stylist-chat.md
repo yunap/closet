@@ -437,7 +437,7 @@ search/`propose_outfit` loop. One-look, multi-context, selected-piece and revisi
 changed. See `docs/freeform-bounded-execution-spec.md`.
 
 The bounded tool call itself declares the card contract, so this profile does not call
-`declare_intent` first. An ordinary new “what should I wear?” defaults to two options and enters
+`declare_intent` first. **[amended 2026-10-02, owner ruling: an ordinary “what should I wear?” no longer enters this path. The router sends it to `single_outfit`, which returns one recommended outfit with a two-paragraph stylist note; this bounded path requires an explicit request for several options, defaulting to two when no number is given.]** As originally written: an ordinary new “what should I wear?” defaults to two options and enters
 this path directly; an explicit one/best/pick-one request retains targeted search plus one card,
 and an explicit count wins. Composer `reason`, `watchFor`, and `stylingInstructions` are locally
 checked against their final IDs; deliberation or discarded-ID prose is withheld without another

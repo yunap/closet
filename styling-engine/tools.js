@@ -1268,7 +1268,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' request defaults to 2 options; an explicit count from 2 to 5 overrides that default. For exactly one outfit, use declare_intent + visual search_wardrobe + propose_outfit instead.",
+    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 2; an explicit count from 2 to 5 wins.",
     input_schema: {
       type: "object",
       properties: {

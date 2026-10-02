@@ -891,6 +891,8 @@ cites IDs outside its final card, adds a visible resolution note, and records th
 debug without making another provider call. This follows `thread_1787079261414`, whose first card
 contained the composer’s discarded alternatives while its actual IDs remained valid.
 
+**[owner ruling 2026-10-02, supersedes the 2026-08-18 ruling below] Ordinary “what should I wear?” means ONE recommended outfit.** The two-option composer ends the turn with a code-written introduction and no stylist prose; on `thread_1790552162737` and `thread_1790926838422` that read as cards with no advice, while the `single_outfit` stylist on `thread_1790923286929` opened with a paragraph on the occasion and then gave its pick, the format the owner asked to keep. `FREEFORM_EXECUTION_ROUTER_SYSTEM` (`styling-engine/provider.js`) now routes an ordinary request to `single_outfit` with limit 1 and reserves `bounded_multi` for an explicit request for several options (two when no number is given); the `generate_outfits` tool description (`styling-engine/tools.js`) says the same. The single-outfit path was also the cheaper one in the captured runs (about $0.01 against $0.03).
+
 **[owner ruling after third live run, 2026-08-18] Ordinary “what should I wear?” means two
 options.** `thread_1787089704692` searched first and only then invoked the bounded composer for two
 looks, producing three paid iterations and about $0.3376. Under the flag, the controller and tool

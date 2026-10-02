@@ -1457,9 +1457,9 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
 
 const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
 
-Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
+Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options ("a few options", "some ideas", "outfits", or a count from 2 to 5) sharing one occasion, activity, location, date, and weather context. Use the stated count; when options are asked for without a number, use 2.
 
-Choose single_outfit only for a FRESH request for exactly one complete outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. Explicit "one", "one best", "pick one", and "give me an outfit" requests use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
+Choose single_outfit for a FRESH request for an outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. An ordinary "what should I wear?" with no request for several options is single_outfit: the stylist recommends one outfit and the user can ask for more. Explicit "one", "one best", "pick one", and "give me an outfit" requests also use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
 
 Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
 
