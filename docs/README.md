@@ -17,6 +17,7 @@ inferring intent from implementation. See §"How to use this index" at the botto
 | If you are asking… | Read first |
 |---|---|
 | What does this term mean? Is "piece"/"garment"/"item" the same thing? What's a "roster" vs a "candidate"? | [CONTEXT.md](CONTEXT.md) — canonical domain vocabulary, read this before trusting any term used loosely elsewhere |
+| What should a good stylist reply look like, and how is a reply judged as usable rather than as gate-passing? | [stylist-conversation-targets.md](stylist-conversation-targets.md) — draft for owner review (2026-10-01): a nine-check rubric readable without a model call, and six live conversations rewritten as target replies (ordinary request, objection, trip, "more like this", "more interesting", shortfall); garments illustrative, shape and voice are the proposal |
 | A user typed a message into the chat — what happens next? | [message-lifecycle.md](message-lifecycle.md) — routing, prompt, model call, answer, follow-up, end to end |
 | Why did the engine allow / block / rank this garment? | [engine-behaviour-map.md](engine-behaviour-map.md) |
 | What did the Stage 1 single-outfit vs Whole Wardrobe comparison show, which owner garment rulings came from it, and what are the next experiment contracts? | [stage1-cause-matrix-2026-09-14.md](stage1-cause-matrix-2026-09-14.md) — per-card cause matrix, sleeve truth table (144/184 wearable, 238 incompatible), probe, payload and count contracts; nothing approved to run |
