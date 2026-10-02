@@ -289,6 +289,17 @@ export async function resolveExposureWindowHourly({ location = '', date = '', ti
   }
 }
 
+// "Hot" is the top of a range; it says nothing about the bottom. A week whose warmest afternoon
+// reaches 81°F and whose evenings fall to 50°F is hot AND has a cool end, and the hot-weather
+// exclusions were removing every real layer from it: live thread_1790973141460 offered the trip
+// packer 3 of the wardrobe's 34 layers (a sheer shrug and two light cardigans) for a week in
+// mid-October, because one day at or above HOT_F marked the whole activity hot. A layer is what
+// comes OFF in the heat, so the hot-weather exclusions for outerwear apply only when the conditions
+// are hot throughout. Garments worn through the heat (tops, bottoms, dresses) are judged as before.
+export function weatherHasCoolEnd(weatherProfile = {}) {
+  return Boolean(weatherProfile?.needsRemovableCoolLayer || weatherProfile?.transitNeedsRemovableCoolLayer)
+}
+
 // A trip activity happens on SEVERAL days at one time of day ("evening dinners" across a week), not
 // on one day. Live thread_1790929985430 resolved every such activity against the trip's first day
 // only: Vienna, VA, 12–18 October became "the evening of the 12th", a flat rainy 67–68°F, while the

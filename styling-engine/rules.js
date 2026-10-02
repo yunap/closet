@@ -3,6 +3,7 @@
 // docs/feedback-and-memory-map.md (getStylistFeedbackMemory, owner_constraints, and the
 // AUTHORITY each store carries). Intent lives there, not here — read it before deciding a
 // missing gate is a bug, and amend it in the same commit as any change. See AGENTS.md.
+import { weatherHasCoolEnd } from './weather.js'
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 import { storedGarmentRules } from './ruleProvenance.js'
@@ -2896,7 +2897,8 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
       checkBottomCoverage: true,
       openFrontExemption: true,
     })
-    if (reason) reasons.push(reason)
+    // Not for a layer when the same conditions have a cool end (weatherHasCoolEnd, weather.js).
+    if (reason && !(wardrobeCategoryGroup(piece) === 'outerwear' && weatherHasCoolEnd(weatherProfile))) reasons.push(reason)
   }
 
   if (weatherProfile.isCold) {
@@ -3340,6 +3342,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   const isCold = weatherProfile && weatherProfile.isCold
 
   if (isHot) {
+    const coolEnd = weatherHasCoolEnd(weatherProfile)
     const outerwearCandidates = []
     for (const p of afterSeasonGate) {
       const missingField = missingWeatherGateField(p)
@@ -3367,7 +3370,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
         ensureMetadataTodo(p, missingField)
-      } else if (insulationReason) {
+      } else if (insulationReason && !(isOuterwear(p) && coolEnd)) {
         exclude(p, insulationReason)
       } else if (isOuterwear(p)) {
         outerwearCandidates.push(p)
@@ -3376,8 +3379,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
 
-    // Cap outerwear to the 3 lightest pieces
-    if (outerwearCandidates.length > 3) {
+    // Cap outerwear to the 3 lightest pieces — only when it is hot throughout. With a cool end
+    // the cap kept exactly the layers least able to help at that end (weatherHasCoolEnd).
+    if (outerwearCandidates.length > 3 && !coolEnd) {
       const weightValues = { 'light': 1, 'medium': 2, 'heavy': 3 }
       outerwearCandidates.sort((a, b) => {
         const wa = weightValues[fabricWeight(a)] || 2

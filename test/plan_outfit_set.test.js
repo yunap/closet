@@ -9723,3 +9723,36 @@ test('a trip activity with no day and no time of day resolves over the whole tri
   assert.equal(firstDay.profile.highF, 81)
   assert.equal(firstDay.profile.lowF, 64, 'a slot dated to one day still resolves that day alone')
 })
+
+// Live thread_1790973141460: the packer put four pairs of shoes in the suitcase and both dinner looks
+// were then rejected for wearing the fourth, the pair packed for dinner.
+test('a pair of shoes the trip packer already packed is never rejected as a 4th pair under reuse:maximize', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (const label of ['A', 'B', 'C', 'D']) {
+    insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
+    insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
+    insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces, question: 'four days', constraints: { reuse: 'maximize' }, planKind: 'trip',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+  })
+  assert.equal(workbench.pendingPlan.tripRosterSource, 'model', 'fixture needs a curated suitcase')
+  const [slotA, slotB, slotC, slotD] = workbench.pendingPlan.slots
+  const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
+    { slot_id: slotA.id, piece_ids: [idFor(slotA, 'A top'), idFor(slotA, 'A bottom'), idFor(slotA, 'A shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotB.id, piece_ids: [idFor(slotB, 'B top'), idFor(slotB, 'B bottom'), idFor(slotB, 'B shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotC.id, piece_ids: [idFor(slotC, 'C top'), idFor(slotC, 'C bottom'), idFor(slotC, 'C shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotD.id, piece_ids: [idFor(slotD, 'D top'), idFor(slotD, 'D bottom'), idFor(slotD, 'D shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+  ])
+  assert.deepEqual(result.failures.map(failure => failure.reasons), [], 'every look wears shoes that are already in the suitcase')
+  assert.equal(result.accepted.length, 4)
+})

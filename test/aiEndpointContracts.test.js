@@ -8712,3 +8712,32 @@ test('LOG-ONLY SLEEVE GEOMETRY (propose_outfit): a sleeve-geometry verdict neith
     assert.ok((card.debug?.sleeveGeometryShadow || []).some(finding => finding.code === 'layer_construction_sleeve_conflict'), `${executionProfile || 'freeform'}: kept as debug shadow evidence`)
   }
 })
+
+// Live thread_1790973141460: a week in mid-October (81°F on the warmest afternoon, 50°F evenings) was
+// packed with a sheer shrug as its only layer, because one day at 80°F+ marked the whole range hot
+// and the hot-weather exclusions removed 31 of 34 layers before the packer saw them.
+test('a range that is hot at the top and cool at the bottom keeps its layers; hot throughout still excludes them', async () => {
+  const { wholeWardrobePieceTrustDecision } = await import('../styling-engine/rules.js')
+  const { weatherHasCoolEnd } = await import('../styling-engine/weather.js')
+  const hotThroughout = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: false } }
+  const hotWithCoolEnd = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: true } }
+  const hotWithCoolTransit = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, isIndoor: true, transitNeedsRemovableCoolLayer: true } }
+  assert.equal(weatherHasCoolEnd(hotThroughout.weatherProfile), false)
+  assert.equal(weatherHasCoolEnd(hotWithCoolEnd.weatherProfile), true)
+  assert.equal(weatherHasCoolEnd(hotWithCoolTransit.weatherProfile), true)
+
+  const hotReasons = (piece, context) => wholeWardrobePieceTrustDecision(piece, context).reasons.filter(reason => reason.startsWith('hot weather'))
+  const trench = { id: 9301, name: 'cream trench coat', category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cotton', sleeve_length: 'long' }
+  const fleece = { id: 9302, name: 'plaid fleece coat', category: 'outerwear', fabric_weight: 'medium', fabric_category: 'fleece', fiber_content: ['fleece'], sleeve_length: 'long' }
+  for (const layer of [trench, fleece]) {
+    assert.ok(hotReasons(layer, hotThroughout).length > 0, `${layer.name} is still excluded when it is hot throughout`)
+    assert.deepEqual(hotReasons(layer, hotWithCoolEnd), [], `${layer.name} is what comes off in the heat; with a cool end it stays available`)
+    assert.deepEqual(hotReasons(layer, hotWithCoolTransit), [])
+  }
+
+  // What is worn THROUGH the heat is judged exactly as before, cool end or not.
+  const velvetMaxi = { id: 9303, name: 'heavy velvet maxi dress', category: 'dress', fabric_weight: 'heavy', fabric_category: 'velvet', length_hits_at: 'maxi' }
+  assert.ok(hotReasons(velvetMaxi, hotWithCoolEnd).includes('hot weather: insulating piece'))
+  const woolTurtleneck = { id: 9304, name: 'wool turtleneck', category: 'top', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'long', neckline: 'turtleneck' }
+  assert.ok(hotReasons(woolTurtleneck, hotWithCoolEnd).length > 0)
+})

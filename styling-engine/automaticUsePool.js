@@ -2,6 +2,7 @@ import { db } from '../db.js'
 import { parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 import { pieceFabricWeight, wardrobeCategoryGroup } from './attributes.js'
 import { pieceOuterwearCapabilityFacts } from './outerwearCapability.js'
+import { weatherHasCoolEnd } from './weather.js'
 
 function findingCode(reason = '') {
   return String(reason || 'excluded').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
@@ -72,7 +73,9 @@ export function evaluateAutomaticUsePiecePoolCore({
   })
 
   const hotOuterwearCap = Number(policy.hotOuterwearCap)
-  if (context.weatherProfile?.isHot && Number.isFinite(hotOuterwearCap) && hotOuterwearCap >= 0) {
+  // The cap keeps the lightest layers, which is right only when it is hot throughout; with a cool
+  // end those are the layers least able to help (weatherHasCoolEnd, weather.js).
+  if (context.weatherProfile?.isHot && !weatherHasCoolEnd(context.weatherProfile) && Number.isFinite(hotOuterwearCap) && hotOuterwearCap >= 0) {
     const weightScore = { light: 1, medium: 2, heavy: 3 }
     const capCandidates = decisions
       .filter(decision => decision.underlyingAllowed && wardrobeCategoryGroup(decision.piece) === 'outerwear')

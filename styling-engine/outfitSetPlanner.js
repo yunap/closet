@@ -5757,8 +5757,17 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // the piece budget. Reuse there means mix-and-match value across a
       // season, not trip-style shoe minimization. Keep the three-pair cap for
       // trips and other packing-light plans only.
+      // 2026-10-02 (live thread_1790973141460): a pair the trip packer already put in the suitcase
+      // is not a "4th pair" to pack — it is packed. The packer chose four pairs (hiking boots,
+      // sneakers, slip-ons, ankle boots); the cap then counted pairs in card order, so both dinner
+      // looks were rejected for wearing the ankle boots packed FOR dinner, and the trip lost its
+      // dinners. The cap limits what gets packed; with a curated roster that decision is the
+      // roster's, so it applies here only to a pair outside it (or when no roster was curated).
+      const curatedSuitcaseIds = ['model', 'model_repaired'].includes(pendingPlan?.tripRosterSource)
+        ? new Set((Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []).map(piece => Number(piece.id)))
+        : new Set()
       if (reuseMode === 'maximize' && !isEnforcedCapsule) {
-        const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes')
+        const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes' && !curatedSuitcaseIds.has(Number(pair.id)))
         if (shoePair) {
           const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
           if (!usedShoes.has(shoePair.id) && usedShoes.size >= 3) {
