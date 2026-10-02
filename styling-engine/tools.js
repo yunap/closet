@@ -1050,11 +1050,11 @@ export function coldLayerDecisionSchemaProperty() {
       mode: {
         type: 'string',
         enum: ['core_is_warm_enough', 'assigned_packed_layer', 'not_required'],
-        description: "core_is_warm_enough: piece_ids alone (either including an outerwear piece directly in piece_ids, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: pairs this outfit with a compatible packed roster layer (named by assigned_layer_piece_id) worn with this look when outdoors. not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
+        description: "core_is_warm_enough: piece_ids alone (either including an outerwear piece directly in piece_ids, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: pairs this outfit with a compatible packed roster layer (named by assigned_layer_piece_id) worn with this look when outdoors; when choosing assigned_packed_layer, you MUST explicitly name this assigned piece and the temperature/layering transition rationale in the outfit's reason or styling_instructions (e.g. 'bring the cream trench coat for the cooler morning stretch, shed it once temperatures climb'). not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
       },
       assigned_layer_piece_id: {
         type: ['integer', 'null'],
-        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity. Must be null for every other mode."
+        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity. Must be null for every other mode. When set, explicitly name this layer and explain the temperature/layering transition rationale in the outfit's reason or styling_instructions."
       }
     },
     required: ['mode', 'assigned_layer_piece_id']

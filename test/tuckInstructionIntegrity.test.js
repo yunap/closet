@@ -34,8 +34,11 @@ test('without roles, a single top is the base; several unroled tops are not gues
 test('every composition path runs the same check on its own pieces and instructions', async () => {
   const fs = await import('node:fs')
   const read = file => fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
-  assert.match(read('styling-engine/tools.js'), /tuckInstructionConflict\(\{ pieces: resolved, stylingInstructions: styling_instructions \}\)[\s\S]{0,200}contractIssues\.push/, '/ask propose_outfit returns it as a contract issue')
-  assert.match(read('styling-engine/outfitSetPlanner.js'), /tuckInstructionConflict\(\{ pieces, stylingInstructions: outfit\.stylingInstructions \}\)\s*\n\s*if \(tuckConflict\) reasons\.push/, 'trip/capsule plan validation rejects the submission for resubmission')
+  assert.match(read('styling-engine/tools.js'), /tuckInstructionConflict\(\{ pieces: resolved, stylingInstructions: styling_instructions \}\)[\s\S]{0,200}contractIssues\.push/, '/ask propose_outfit returns it as a contract issue (resubmission within the same turn is cheap here)')
+  // thread_1789801108635: the atomic trip composer has no resubmission round, so a hard reject over
+  // this one mechanically-fixable clause permanently lost an otherwise-valid card. Trip/capsule plan
+  // validation now corrects it the same way Whole Wardrobe already does, rather than rejecting.
+  assert.match(read('styling-engine/outfitSetPlanner.js'), /correctTuckInstruction\(\{ pieces, stylingInstructions: outfit\.stylingInstructions \}\)\s*\n\s*if \(tuckCorrection\.conflict\) outfit\.stylingInstructions = tuckCorrection\.corrected/, 'trip/capsule plan validation corrects the contradicted clause instead of rejecting the card')
   assert.match(read('routes/ai.js'), /correctTuckInstruction\(\{[\s\S]{0,1200}type: 'Fit note', code: tuckConflict\.code/, 'Whole Wardrobe annotates the delivered card (advisor mode: no repair)')
   assert.match(read('routes/ai.js'), /stylingInstructions: tuck\.corrected, stylingInstructionsOriginal: tuck\.original/, 'and the contradicted clause does not ship as authoritative guidance')
 })

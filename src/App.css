@@ -10371,6 +10371,13 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   -webkit-line-clamp: 2;
 }
 
+.stylist-outfit-piece-role-badge {
+  font-size: var(--type-caption);
+  font-weight: 600;
+  color: var(--text-light);
+  margin-top: -3px;
+}
+
 .stylist-capsule-roster {
   margin-top: 18px;
   padding: 18px;

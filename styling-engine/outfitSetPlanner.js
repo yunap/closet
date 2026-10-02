@@ -52,7 +52,7 @@ import { seasonFitPieceAdvisory, seasonEligibleForCalendar, OUT_OF_SEASON } from
 import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
 import { garmentWarmthLevel, WARMTH_LEVELS } from './garmentWarmth.js'
 import { SEVERE_COLD_THRESHOLD_F } from './biometeorology.js'
-import { requiredThermalBand, requiredThermalEndpointBands } from './thermalDemand.js'
+import { requiredThermalBand, requiredThermalEndpointBands, compareThermalFit } from './thermalDemand.js'
 import { evaluateAutomaticUsePiecePool } from './eligibility.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement, restrictSupplyRequirement } from './candidateSet.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedSubstitute } from './recovery.js'
@@ -65,7 +65,7 @@ import {
   evaluateWearableOutfit,
   layerConstructionPromptRule,
   layerDirectionPromptRule,
-  tuckInstructionConflict,
+  correctTuckInstruction,
   wardrobeSupportsLayeringPair,
 } from './outfitValidation.js'
 export { describeOutfitStructureGap } from './outfitValidation.js'
@@ -4776,7 +4776,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
     // was built to remove.
     planKind === 'trip'
-      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When cold_layer_required is false, mode \'not_required\' (assigned_layer_piece_id null) is standard; however, if the slot notes cool transition temperatures or a removable cool layer is needed, you may include the layer in piece_ids (mode \'core_is_warm_enough\') or assign an appropriate packed outerwear layer via mode \'assigned_packed_layer\'. If neither cold nor cool layer applies, use mode \'not_required\' with assigned_layer_piece_id null.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When choosing mode \'assigned_packed_layer\', you must explicitly name the assigned layer in the outfit\'s reason or styling_instructions and explain the temperature/transition rationale (e.g. bring the trench coat for cool morning transit and remove it when it warms up). mode \'not_required\' applies only when the slot\'s conditions are genuinely uniform across the day. When a slot\'s conditions span a real range (whether or not the day is overall cold) or a removable cool layer is needed, you MUST choose mode \'core_is_warm_enough\' (a genuinely warm core) or \'assigned_packed_layer\' (a genuinely adequate candidate) with the disclosure above — \'not_required\' is not a valid answer for that slot.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
@@ -5271,14 +5271,28 @@ export function slotColdLayerPermitted(slot = {}) {
 // whose roster genuinely has no qualifying layer is excluded too (repairing toward nothing is wasted
 // cost, and cold_floor_infeasible should already have caught this before composition ever ran).
 //
-// A false core_is_warm_enough claim and a plain omission are structurally different failures
-// (validateSubmittedPlanOutfits gives them distinct messages, on purpose, for diagnostics) but
-// converge on the exact same recoverable path here — both are, at this level, "the model's stated
-// cold-layer decision for this card doesn't hold up."
+// A false core_is_warm_enough claim, a plain omission, and a positively-inadequate assigned layer
+// are structurally different failures (validateSubmittedPlanOutfits gives them distinct messages,
+// on purpose, for diagnostics) but converge on the exact same recoverable path here — all three
+// are, at this level, "the model's stated cold-layer decision for this card doesn't hold up."
+//
+// thread_1789763628463: the model named a real packed piece (a thin UPF technical hoodie) via
+// mode 'assigned_packed_layer' and explained its reasoning in styling_instructions -- the strengthened
+// disclosure instruction worked -- but the piece itself failed outerwearLayerPositivelyInadequate,
+// and this list had no pattern for that rejection shape, so the card was lost to a disclosed
+// coverage gap instead of reaching this repair round, even though a genuinely adequate candidate
+// (a reversible hooded windbreaker) sat unused in the same roster.
+//
+// thread_1789801108635: the symmetric failure -- an assigned layer substantially too WARM for the
+// slot's own thermal demand (compareThermalFit's substantial_overshoot), not too weak. Same
+// recoverable shape; identifyColdLayerRepairableFailures' own candidate filter (below) already
+// excludes overshoot candidates too, so a repair never re-offers the same class of wrong pick.
 const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
+  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
+  /^assigned layer piece \d+ \(.+\) is substantially warmer than .+'s conditions call for — its own recorded construction and insulation place it well above .+ demand; choose a lighter packed layer\.$/,
 ]
 
 export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
@@ -5291,8 +5305,11 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
     if (!isColdLayerOnly) continue
     const slot = slotById.get(failure.slot_id)
     if (!slot) continue
+    const repairExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
+    const repairDemand = requiredThermalBand(repairExposure)
     const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
       .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
+      .filter(piece => !repairDemand?.level || compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit !== 'substantial_overshoot')
     if (!candidates.length) continue
     repairable.push({
       slot_id: failure.slot_id,
@@ -5494,7 +5511,24 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // NOT gated on category/garmentKind here — the assigned relation can legitimately name a
           // cardigan, vest, or knit jacket, and this asks only "does this garment's own thermal
           // evidence positively contradict the cold-layer claim," not "is it a coat."
-          if (outerwearLayerPositivelyInadequate(layerPiece)) {
+          //
+          // thread_1789801108635: the under-dressing side above has always been a hard gate; the
+          // over-dressing side never was. A navy quilted puffer ("designed as a true cold-weather
+          // outer layer with substantial insulation" per its own notes) was assigned as the
+          // removable layer for an 86°F-peak day and passed cleanly, because nothing checked
+          // whether the claimed layer was too WARM for the slot, only whether it was too weak.
+          // compareThermalFit already classifies this correctly (garmentWarmthLevel 'warm' against
+          // a 'light' demand is a 2-level substantial_overshoot) and is already trusted elsewhere in
+          // this file for ranking -- reused here as a hard gate, symmetric with the inadequacy
+          // check above, and held to the same conservative bar (2+ levels, not 1) so a merely
+          // borderline pick (moderate against a light target, e.g. a plain fleece coat) still
+          // passes as a defensible edge case rather than being rejected outright.
+          const layerExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
+          const layerDemand = requiredThermalBand(layerExposure)
+          const layerFit = layerDemand?.level ? compareThermalFit(garmentWarmthLevel(layerPiece), layerDemand) : { fit: 'unknown' }
+          if (layerFit.fit === 'substantial_overshoot') {
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) is substantially warmer than ${label}'s conditions call for — its own recorded construction and insulation place it well above ${layerDemand.level} demand; choose a lighter packed layer.`)
+          } else if (outerwearLayerPositivelyInadequate(layerPiece)) {
             reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
           } else {
             assignedLayers.push(layerPiece)
@@ -5521,9 +5555,15 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         ? { resolvedWeatherContext: serializeResolvedWeatherContext(slot.weatherProfile.resolvedWeatherContext) }
         : {}),
     }
-    // Garment-fact integrity (thread_1789508440573): the instructions may not tuck a base top recorded wear_over_only.
-    const tuckConflict = tuckInstructionConflict({ pieces, stylingInstructions: outfit.stylingInstructions })
-    if (tuckConflict) reasons.push(`${tuckConflict.message} — rewrite styling_instructions to wear it untucked, or choose a base top that tucks, and resubmit.`)
+    // Garment-fact integrity (thread_1789508440573): the instructions may not tuck a base top recorded
+    // wear_over_only. Mechanically fixable (the recorded fact always wins, there is exactly one
+    // correction), same shape as the cold_layer_decision correction the atomic composer already
+    // applies before validation -- so it is corrected here rather than rejecting the whole card over
+    // one contradicted clause. thread_1789801108635: the atomic path has no resubmission round, so a
+    // hard reject here permanently lost an otherwise-valid Coastal Hike card to a one-clause fix
+    // routes/ai.js's single_outfit path already applies silently via correctTuckInstruction.
+    const tuckCorrection = correctTuckInstruction({ pieces, stylingInstructions: outfit.stylingInstructions })
+    if (tuckCorrection.conflict) outfit.stylingInstructions = tuckCorrection.corrected
     if (outfit.reason && reasonRevisesMidSentence(outfit.reason)) {
       reasons.push(REASON_REVISION_MESSAGE)
     }

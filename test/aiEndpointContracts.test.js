@@ -3946,7 +3946,7 @@ test('StylistChat selected-piece season menu keeps spring and summer separate', 
   assert.doesNotMatch(src, /spring \/ summer/)
 })
 
-test('StylistChat shows trip explanation before cards, not inside trip cards', () => {
+test('StylistChat shows trip explanation before cards and discloses reason and assigned layers inside cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /Trip plan/)
   assert.match(src, /Outfit plan/)
@@ -3954,7 +3954,8 @@ test('StylistChat shows trip explanation before cards, not inside trip cards', (
   assert.match(src, /getTripPlanNotes/)
   assert.match(src, /garment and layer photos are prioritized before accessories/)
   assert.doesNotMatch(src, /Accessories are left out of these cards/)
-  assert.match(src, /outfit\.reason && !isTripCard/)
+  assert.match(src, /outfit\.reason \|\| assignedLayerPieces\.length > 0/)
+  assert.match(src, /Packed for cooler transitions \/ temperature drops/)
   assert.match(src, /outfit\.coveragePosition/)
   assert.match(src, /const exclusionDisplaySource = isTripCard/)
   assert.match(src, /!isTripCard && outfit\.missionLabel/)

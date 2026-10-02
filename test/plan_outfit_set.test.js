@@ -928,6 +928,92 @@ test('a positively-inadequate assigned layer is rejected even when the base outf
   )
 })
 
+// thread_1789801108635: the symmetric gap to the test above. A navy quilted puffer ("designed as a
+// true cold-weather outer layer with substantial insulation" per its own real notes) was assigned
+// as the removable layer for an 86°F-peak day and passed cleanly, because outerwearLayerPositivelyInadequate
+// only ever asks whether a layer is too WEAK -- nothing asked whether it was too WARM. compareThermalFit
+// already classifies a heavy, fully-lined, insulated coat against a warm slot's 'light'/'very light'
+// demand as a 2-level substantial_overshoot; this pins that as a hard rejection, not just a ranking signal.
+test('an assigned layer substantially warmer than the slot demands is rejected, even though it easily passes the inadequacy check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'hike top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'hike bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'hike shoes', heel_height: 'flat', walk_support: 'high' })
+  const puffyId = insertPiece({ category: 'outerwear', name: 'insulated puffer coat', fabric_weight: 'heavy' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('["down"]', 'full_lining', puffyId)
+  // A genuinely adequate alternative in the same roster (mirroring the real reversible windbreaker
+  // that sat unused in thread_1789801108635) so the repair round has something to offer.
+  const windbreakerId = insertPiece({ category: 'outerwear', name: 'reversible windbreaker', fabric_weight: 'light' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  // The real thread_1789801108635 shape: a mild (not hot) real high/low range on an outdoor
+  // activity, where needsRemovableCoolLayer legitimately unlocks mode 'assigned_packed_layer' and
+  // the layer is gate-eligible on its own merits -- a genuinely hot slot instead excludes a heavy
+  // insulated piece from gateAllowedIds entirely before this check is ever reached, which is a
+  // different, already-correct exclusion and not what this test isolates.
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.needsRemovableCoolLayer), true, 'fixture needs a slot where an assigned layer is a legitimate claim')
+  assert.ok(slot.gateAllowedIds.has(Number(puffyId)), 'fixture needs the coat to otherwise be gate-eligible, isolating the new overshoot check')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(puffyId) },
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.equal(result.failures.length, 1)
+  assert.ok(
+    result.failures[0].reasons.some(reason => reason.includes('substantially warmer')),
+    'the substantial-overshoot rejection must fire even though the coat easily clears the inadequacy check'
+  )
+
+  const repairable = identifyColdLayerRepairableFailures(workbench.pendingPlan, result.failures)
+  assert.equal(repairable.length, 1, 'this failure shape must reach the existing repair round')
+  assert.ok(!repairable[0].candidates.some(c => c.id === Number(puffyId)), 'the rejected overshoot piece must never be re-offered as its own repair candidate')
+  assert.ok(repairable[0].candidates.some(c => c.id === Number(windbreakerId)), 'a genuinely adequate alternative in the same roster must be offered')
+})
+
+// The boundary this fix must not cross: a merely borderline pick (one PET level above target, the
+// same shape as a real plain fleece coat measured directly against a light-demand slot) is still a
+// defensible edge case, not an objective mismatch, and must continue to pass.
+test('an assigned layer only one PET level above the slot demand is accepted, not treated as substantial overshoot', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'hike top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'hike bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'hike shoes', heel_height: 'flat', walk_support: 'high' })
+  // The real cream and taupe plaid fleece coat's own facts (thread_1789801108635): medium weight,
+  // unlined, no recorded insulating fill -- garmentWarmthLevel 'moderate', one level above this
+  // slot's own 'very light' target, which compareThermalFit classifies as adequate, not overshoot.
+  const fleeceId = insertPiece({ category: 'outerwear', name: 'plain fleece coat', fabric_weight: 'medium', fiber_content: ['fleece', 'polyester'] })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('[]', 'unlined', fleeceId)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
+  const slot = workbench.pendingPlan.slots[0]
+  assert.equal(Boolean(slot.weatherProfile?.needsRemovableCoolLayer), true, 'fixture needs a slot where an assigned layer is a legitimate claim')
+  assert.ok(slot.gateAllowedIds.has(Number(fleeceId)), 'fixture needs the coat to otherwise be gate-eligible')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(fleeceId) },
+  }])
+
+  assert.equal(result.failures.length, 0, 'a one-level overshoot is a defensible edge case, not a hard rejection')
+  assert.equal(result.accepted.length, 1)
+  assert.deepEqual(result.accepted[0].assignedLayerIds, [Number(fleeceId)])
+})
+
 test('a medium/insulating cardigan continues to satisfy an ordinary cold slot\'s assigned-layer check', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'invariant top', occasions: ['city'], formality: 'everyday' })
@@ -1282,6 +1368,33 @@ test('identifyColdLayerRepairableFailures never sends a slot with no qualifying 
 
   const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
   assert.equal(repairable.length, 0, 'repairing toward a roster with nothing that could ever qualify is wasted cost -- must stay a disclosed failure')
+})
+
+// thread_1789763628463: the model named a real packed piece via mode 'assigned_packed_layer' and
+// explained its choice in styling_instructions -- the disclosure instruction worked -- but the named
+// piece (a thin UPF technical hoodie) failed outerwearLayerPositivelyInadequate, and this failure
+// shape had no pattern in COLD_LAYER_ONLY_FAILURE_PATTERNS, so the card was lost to a disclosed
+// coverage gap instead of reaching Part B's repair round, even though a genuinely adequate candidate
+// (a reversible hooded windbreaker) sat unused in the same roster.
+test('identifyColdLayerRepairableFailures recognizes a positively-inadequate assigned layer as repairable, offering only adequate candidates', () => {
+  const inadequateLayer = { id: 902, name: 'thin UPF technical hoodie', category: 'outerwear', fabric_weight: 'ultralight', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const qualifyingLayer = { id: 903, name: 'reversible hooded windbreaker', category: 'outerwear' }
+  const pendingPlan = {
+    slots: [{ id: 'pismo_coast_hike', label: 'Pismo Coast Hike', allowedPieces: [inadequateLayer, qualifyingLayer] }]
+  }
+  const failures = [{
+    slot_id: 'pismo_coast_hike', label: 'Pismo Coast Hike',
+    reasons: ["assigned layer piece 902 (thin UPF technical hoodie) has evidence it cannot serve as a cold layer for Pismo Coast Hike — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer."],
+    outfit: { title: 'Ditsy Floral Blouse & Utility Pants', pieceIds: [10, 11, 12] },
+  }]
+
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 1, 'the positively-inadequate-assigned-layer rejection must now be recognized as repairable')
+  assert.deepEqual(repairable[0].piece_ids, [10, 11, 12])
+  assert.equal(repairable[0].title, 'Ditsy Floral Blouse & Utility Pants')
+  const candidateIds = repairable[0].candidates.map(c => c.id)
+  assert.ok(candidateIds.includes(903), 'the genuinely adequate windbreaker must be offered as a repair candidate')
+  assert.ok(!candidateIds.includes(902), 'the rejected inadequate hoodie must never be re-offered as its own repair candidate')
 })
 
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md §6 -- the repair prompt's own wording
@@ -3188,6 +3301,42 @@ test('submit_plan_outfits carries styling_instructions through to the accepted o
   }])
   assert.equal(withoutMechanics.accepted.length, 1)
   assert.equal(withoutMechanics.accepted[0].stylingInstructions, '')
+})
+
+// thread_1789801108635: a Coastal Hike card was hard-rejected and lost entirely (no repair round on
+// the atomic path) because styling_instructions said to tuck a base top recorded tuck_behavior:
+// 'wear_over_only' -- a mechanically fixable one-clause contradiction the single_outfit path
+// (routes/ai.js) already silently corrects via correctTuckInstruction. validateSubmittedPlanOutfits
+// must apply the identical correction rather than reject the whole card over it, the same shape as
+// the existing cold_layer_decision pre-validation correction.
+test('submit_plan_outfits corrects a tuck instruction that contradicts a wear_over_only base top instead of rejecting the card', async () => {
+  // insertPiece's fixed INSERT column list does not include tuck_behavior (it is silently dropped),
+  // so this uses plain piece objects directly, the same pattern as "model plan workbench exposes
+  // authoritative garment construction without special-case rules" above.
+  const topId = 9201
+  const bottomId = 9202
+  const shoesId = 9203
+  const allPieces = [
+    { id: topId, name: 'wear-over-only top', category: 'top', occasions: ['casual'], formality: 'everyday', tuck_behavior: 'wear_over_only', status: 'active' },
+    { id: bottomId, name: 'joggers', category: 'bottom', occasions: ['casual'], formality: 'everyday', status: 'active' },
+    { id: shoesId, name: 'sneakers', category: 'shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', status: 'active' },
+  ]
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'coastal hike outfit' })
+  const slotId = workbench.pendingPlan.slots[0].id
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slotId,
+    piece_ids: [topId, bottomId, shoesId],
+    styling_instructions: 'Tuck the top into the joggers.',
+  }])
+
+  assert.equal(result.failures.length, 0, 'a mechanically fixable tuck contradiction must not fail the card')
+  assert.equal(result.accepted.length, 1)
+  assert.doesNotMatch(result.accepted[0].stylingInstructions, /\btuck(?:ed|s|ing)?\b/i, 'the contradicting tuck clause must be removed')
+  assert.match(result.accepted[0].stylingInstructions, /worn untucked \(recorded wear over only\)/)
 })
 
 test('submit_plan_outfits rejects gate-suppressed pieces with the gate reason', async () => {
