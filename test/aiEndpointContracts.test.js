@@ -3956,6 +3956,10 @@ test('StylistChat shows trip explanation before cards and discloses reason and a
   assert.doesNotMatch(src, /Accessories are left out of these cards/)
   assert.match(src, /outfit\.reason \|\| assignedLayerPieces\.length > 0/)
   assert.match(src, /Packed for cooler transitions \/ temperature drops/)
+  // thread_1790928650262: a layer named both in the outfit's pieces and as the packed layer is one garment, drawn once.
+  assert.match(src, /const extraLayerPieces = assignedLayerPieces\.filter\(piece => !outfitPieceIds\.has\(Number\(piece\.id\)\)\)/)
+  assert.match(src, /\{extraLayerPieces\.map\(/)
+  assert.doesNotMatch(src, /\{assignedLayerPieces\.map\(\(piece, layerIdx\) => renderPieceItem/)
   assert.match(src, /outfit\.coveragePosition/)
   assert.match(src, /const exclusionDisplaySource = isTripCard/)
   assert.match(src, /!isTripCard && outfit\.missionLabel/)

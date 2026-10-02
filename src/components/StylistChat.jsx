@@ -3302,6 +3302,14 @@ export default function StylistChat({
               .filter(p => Number(p?.id))
           })()
 
+          // The composer can name a layer it already listed among the outfit's own pieces (live
+          // thread_1790928650262: the fleece coat in piece_ids AND as the assigned packed layer), and
+          // the card then drew the same garment twice. It is one garment worn once: shown in place
+          // with the "Packed layer" badge, and only a layer NOT already in the outfit gets its own tile.
+          const outfitPieceIds = new Set((Array.isArray(outfit.pieces) ? outfit.pieces : []).map(piece => Number(piece?.id)).filter(Boolean))
+          const assignedLayerIdSet = new Set(assignedLayerPieces.map(piece => Number(piece.id)))
+          const extraLayerPieces = assignedLayerPieces.filter(piece => !outfitPieceIds.has(Number(piece.id)))
+
           const renderPieceItem = (rawPiece, pieceIdx, { isLayer = false } = {}) => {
             const piece = hydrateDisplayPiece(rawPiece)
             const photo = piece?.photo || piece?.worn_photo
@@ -3583,8 +3591,8 @@ export default function StylistChat({
                   className="stylist-outfit-piece-list"
                   aria-label={`Pieces in ${cardDisplayTitle}`}
                 >
-                  {Array.isArray(outfit.pieces) && outfit.pieces.map((rawPiece, pieceIdx) => renderPieceItem(rawPiece, pieceIdx))}
-                  {assignedLayerPieces.map((piece, layerIdx) => renderPieceItem(piece, (outfit.pieces?.length || 0) + layerIdx, { isLayer: true }))}
+                  {Array.isArray(outfit.pieces) && outfit.pieces.map((rawPiece, pieceIdx) => renderPieceItem(rawPiece, pieceIdx, { isLayer: assignedLayerIdSet.has(Number(rawPiece?.id)) }))}
+                  {extraLayerPieces.map((piece, layerIdx) => renderPieceItem(piece, (outfit.pieces?.length || 0) + layerIdx, { isLayer: true }))}
                 </div>
               )}
               {pendingWrongChoice?.outfitKey === `${messageIndex}:${idx}` && (
