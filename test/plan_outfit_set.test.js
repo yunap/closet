@@ -9758,3 +9758,71 @@ test('a pair of shoes the trip packer already packed is never rejected as a 4th 
   assert.deepEqual(result.failures.map(failure => failure.reasons), [], 'every look wears shoes that are already in the suitcase')
   assert.equal(result.accepted.length, 4)
 })
+
+// Live thread_1790982306031: "Layer with the cream trench coat (ID 996759) during cooler morning
+// hours." reached the card, and the plan repeated one week-long weather sentence per activity.
+test('plan card text carries no piece-id citations, and activities sharing weather are named together once', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'stripe tee' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'dark denim' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'canvas sneakers', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Days', occasion: 'city', activity: 'walking', count: 1, weather_estimate: { high_f: 70, low_f: 50 } },
+    { label: 'Park Days', occasion: 'casual', activity: 'walking', count: 1, weather_estimate: { high_f: 70, low_f: 50 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'two kinds of day' })
+  const [city, park] = workbench.pendingPlan.slots
+  const { accepted } = validateSubmittedPlanOutfits(workbench.pendingPlan, [
+    { slot_id: city.id, piece_ids: [topId, bottomId, shoeId], title: 'Stripe Tee (ID 12)', reason: `Stripe tee (ID ${topId}) with dark denim (#${bottomId}) for walking [IDs ${topId}, ${shoeId}].`, styling_instructions: `Tuck the tee (ID ${topId}) lightly.` },
+    { slot_id: park.id, piece_ids: [topId, bottomId, shoeId], title: 'Park look', reason: 'Easy and walkable.' },
+  ])
+  assert.ok(accepted.length >= 1)
+  const card = accepted[0]
+  assert.equal(card.title, 'Stripe Tee')
+  assert.equal(card.reason, 'Stripe tee with dark denim for walking.')
+  assert.equal(card.stylingInstructions, 'Tuck the tee lightly.')
+
+  const outfits = assembleSubmittedPlanOutfits(workbench.pendingPlan, accepted)
+  const weatherLine = (outfits[0]?.tripPlanLines || []).find(line => line.startsWith('Weather used:')) || ''
+  assert.match(weatherLine, /^Weather used: City Days, Park Days — /, `shared weather is named once for both: ${weatherLine}`)
+  assert.doesNotMatch(weatherLine, /; Park Days — /, 'the shared sentence is not repeated per activity')
+})
+
+// Live thread_1790982306031: after the layer repair the card wore the trench but its reason still said
+// "Layer with the technical hoodie if temperatures drop".
+test('a layer repair that swaps the layer renames it in the card text when the model did not', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'stripe tee' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'dark denim' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'canvas sneakers', heel_height: 'flat', walk_support: 'high' })
+  const hoodieId = insertPiece({ category: 'outerwear', name: 'thin UPF technical hoodie', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?').run('[]', 'unlined', hoodieId)
+  const trenchId = insertPiece({ category: 'outerwear', name: 'cream trench coat' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, hoodieId, trenchId] }),
+    composeTripPlanOnce: async workbench => [{
+      slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Stripe tee and denim',
+      reason: 'Stripe tee with dark denim. Layer with the thin UPF technical hoodie if temperatures drop.',
+      styling_instructions: 'Zip the thin UPF technical hoodie over the tee in the morning.',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: hoodieId },
+    }],
+    // Answers like the live model: swaps the layer, leaves the text alone.
+    repairTripColdLayerCards: async ({ cards }) => cards.map(card => ({
+      slot_id: card.slot_id, piece_ids: card.piece_ids, title: card.title,
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+    })),
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip', weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  const [card] = toolContext.generatedOutfits
+  assert.deepEqual(card.assignedLayerIds, [Number(trenchId)])
+  assert.equal(card.reason, 'Stripe tee with dark denim. Layer with the cream trench coat if temperatures drop.')
+  assert.equal(card.stylingInstructions, 'Zip the cream trench coat over the tee in the morning.')
+})

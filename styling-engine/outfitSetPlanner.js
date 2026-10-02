@@ -263,10 +263,27 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
 }
 
 function buildWeatherLine(slotWeather = []) {
-  const parts = (Array.isArray(slotWeather) ? slotWeather : [])
-    .filter(entry => entry?.label && entry?.weather)
-    .map(entry => `${entry.label} — ${entry.weather}`)
-  return parts.length ? `Weather used: ${parts.join('; ')}` : ''
+  // Activities that share the same weather are named together, so a week's full weather sentence
+  // is shown once instead of once per activity (thread_1790982306031 repeated it three times).
+  const groups = []
+  for (const entry of (Array.isArray(slotWeather) ? slotWeather : []).filter(entry => entry?.label && entry?.weather)) {
+    const group = groups.find(existing => existing.weather === entry.weather)
+    if (group) group.labels.push(entry.label)
+    else groups.push({ weather: entry.weather, labels: [entry.label] })
+  }
+  return groups.length ? `Weather used: ${groups.map(group => `${group.labels.join(', ')} — ${group.weather}`).join('; ')}` : ''
+}
+
+// Piece-id citations the composer writes into card text ("(ID 996759)", "#105") are for the
+// engine, not the wearer; live thread_1790982306031 showed them on the cards. Same patterns
+// stripPieceIdCitations removes from chat prose, applied where a plan card's text is assembled.
+function withoutPieceIdCitations(text = '') {
+  return String(text || '')
+    .replace(/[ \t]*[([]\s*IDs?\s*:?\s*#?\d+(?:\s*(?:,|and|&)\s*#?\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/[ \t]*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:])/g, '$1')
+    .trim()
 }
 
 // thread_1789585467294 (owner ruling 2026-09-16): the PARTIAL-PLAN CONTRACT the atomic trip
@@ -5669,9 +5686,9 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       }
     }
     const outfit = {
-      title: String(raw?.title || slot.label || '').trim(),
-      reason: String(raw?.reason || '').trim(),
-      stylingInstructions: String(raw?.styling_instructions || raw?.stylingInstructions || '').trim(),
+      title: withoutPieceIdCitations(raw?.title || slot.label || ''),
+      reason: withoutPieceIdCitations(raw?.reason || ''),
+      stylingInstructions: withoutPieceIdCitations(raw?.styling_instructions || raw?.stylingInstructions || ''),
       pieces,
       pieceIds: dedupedIds,
       ...(assignedLayers.length ? { assignedLayerIds: assignedLayers.map(piece => Number(piece.id)) } : {}),

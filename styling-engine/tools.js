@@ -4014,6 +4014,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
                   if (original) unclaimedFailures.push(original)
                   continue
                 }
+                // When the repair swaps the layer, the card text must not keep naming the rejected one
+                // (thread_1790982306031: the card showed the trench while its reason still said
+                // "Layer with the technical hoodie"). The repair prompt allows that one edit; when the
+                // model leaves it, the rejected piece's exact name is replaced by the new layer's.
+                const rawSubmission = sanitizedOutfits.find(raw => String(raw?.slot_id || '') === String(card.slot_id)
+                  && pieceKey(raw?.piece_ids) === pieceKey(card.piece_ids))
+                const pieceName = id => (pendingPlan.piecesById?.get?.(Number(id)) || pendingPlan.piecesById?.[Number(id)])?.name || ''
+                const oldLayerName = pieceName(rawSubmission?.cold_layer_decision?.assigned_layer_piece_id)
+                const newLayerId = entry.cold_layer_decision?.assigned_layer_piece_id
+                const newLayerName = newLayerId && Number(newLayerId) !== Number(rawSubmission?.cold_layer_decision?.assigned_layer_piece_id) ? pieceName(newLayerId) : ''
+                const renameLayer = text => (oldLayerName && newLayerName ? String(text || '').split(oldLayerName).join(newLayerName) : text)
                 resubmission.push({
                   slot_id: card.slot_id,
                   // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
@@ -4023,8 +4034,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
                     ? entry.piece_ids
                     : (original?.outfit?.pieceIds || card.piece_ids || []),
                   title: entry.title || original?.outfit?.title || card.title || '',
-                  reason: entry.reason || original?.outfit?.reason || '',
-                  styling_instructions: entry.styling_instructions || original?.outfit?.stylingInstructions || '',
+                  reason: renameLayer(entry.reason || original?.outfit?.reason || ''),
+                  styling_instructions: renameLayer(entry.styling_instructions || original?.outfit?.stylingInstructions || ''),
                   cold_layer_decision: entry.cold_layer_decision,
                 })
               }
