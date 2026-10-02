@@ -4413,10 +4413,16 @@ export async function selectTripRosterViaModel({
     // the final answer could only restate piece names. Kept as explanation, never as evidence:
     // nothing validates a job, and a look may use the piece differently.
     const rosterIds = new Set(roster.map(piece => Number(piece.id)))
+    // The packer cites pieces as "(#105)" in its own prose (thread_1790926685366). This text is
+    // handed on as explanation for the wearer, so the citations are removed at this boundary.
+    const withoutIdCitations = text => String(text || '')
+      .replace(/[ \t]*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+      .replace(/[ \t]*#\d+\b/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+      .trim()
     const jobs = (Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [])
-      .map(entry => ({ pieceId: Number(entry?.piece_id), job: String(entry?.job || '').trim() }))
+      .map(entry => ({ pieceId: Number(entry?.piece_id), job: withoutIdCitations(entry?.job) }))
       .filter(entry => entry.job && rosterIds.has(entry.pieceId))
-    return { roster, contractFailures, jobs, packingReasoning: String(answer?.packing_reasoning || '').trim() }
+    return { roster, contractFailures, jobs, packingReasoning: withoutIdCitations(answer?.packing_reasoning) }
   }
 
   const attemptChoose = async attemptArgs => {
@@ -5891,7 +5897,7 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
 // be a recap (thread_1790924321526). Pure projection of facts already on the plan: the packer's
 // stated job per piece, each card's own reason, and the packed pieces no card wears. The unused list
 // is computed here, not asked of a model, so "this piece is a spare" is said from a fact.
-export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = []) {
+export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = [], { declined = [] } = {}) {
   const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
   const nameById = new Map(roster.map(piece => [Number(piece.id), piece.name || `piece ${piece.id}`]))
   const wornIds = new Set()
@@ -5905,6 +5911,19 @@ export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = [])
       .filter(entry => nameById.has(Number(entry?.pieceId)) && entry?.job)
       .map(entry => ({ piece: nameById.get(Number(entry.pieceId)), packed_for: entry.job })),
     unused_pieces: roster.filter(piece => !wornIds.has(Number(piece.id))).map(piece => piece.name || `piece ${piece.id}`),
+    // What the plan does not cover, as counts and the composer's own stated reasons — the same facts
+    // the displayed "[coverage gap: … failed validation]" lines carry, without their engine wording,
+    // which the final answer was paraphrasing back to the user (thread_1790926685366).
+    not_covered: [
+      ...(Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).map(slot => {
+        const planned = Math.min(3, Math.max(0, Number(slot?.targetOutfits) || 0))
+        const ready = planOutfits.filter(outfit => outfit?.label === slot?.label).length
+        return ready < planned ? { activity: slot.label, outfits_planned: planned, outfits_ready: ready } : null
+      }).filter(Boolean),
+      ...(Array.isArray(declined) ? declined : [])
+        .filter(entry => entry?.activity && entry?.reason)
+        .map(entry => ({ activity: entry.activity, reason: entry.reason })),
+    ],
   }
 }
 

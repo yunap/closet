@@ -1627,9 +1627,17 @@ test('a trip composer that honestly declines one outfit via slot_gaps still acce
   assert.equal(cityCard.label, 'City Days')
   assert.ok(!('fit_confidence' in cityCard) && !('fitConfidence' in cityCard), 'an accepted card carries no confidence rating of any kind')
   assert.match(cityCard.watchFor || '', /^$|^none$/i, 'a card the composer did not flag must not be given a caveat it never wrote')
-  const coverageText = (result.plan_lines || []).join(' ')
+  // The disclosure the USER sees is the card's own plan lines, rendered by the client.
+  const coverageText = (cityCard.tripPlanLines || []).join(' ')
   assert.match(coverageText, /Hill Hiking/)
   assert.match(coverageText, /no genuinely hot-weather-suited top or bottom was available/)
+  // The final WRITER gets the same fact without the display wording (2026-10-02): the bracketed
+  // "[coverage gap: …]" lines were being paraphrased back to the user as "validation gaps".
+  assert.ok(!('plan_lines' in result), 'the display lines are not handed to the writer')
+  const declinedHike = (result.not_covered || []).find(entry => entry.activity === 'Hill Hiking' && entry.reason)
+  assert.match(declinedHike?.reason || '', /no genuinely hot-weather-suited top or bottom was available/)
+  assert.ok((result.not_covered || []).some(entry => entry.activity === 'Hill Hiking' && entry.outfits_ready === 0 && entry.outfits_planned >= 1))
+  assert.doesNotMatch(JSON.stringify(result.not_covered), /validation|coverage gap/)
 })
 
 test('atomic trip truth catalog is the shared garment fact line, with owner rules and rejections in piece_notes', async () => {

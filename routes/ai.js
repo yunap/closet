@@ -5620,6 +5620,8 @@ For every selected ID, give exactly one piece_jobs entry naming the job it does 
 
 In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible.
 
+Both piece_jobs and packing_reasoning are read by the traveller. Write them in plain words: name garments by name, never by ID or number, and say what the piece is for on this trip rather than describing the plan (no "use case", "register", "roster", "capsule" or "combinatorial").
+
 On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
 
 Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.

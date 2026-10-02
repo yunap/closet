@@ -1446,5 +1446,39 @@ test('trip explanation evidence counts an assigned packed layer as worn, and is 
   const roster = [{ id: 1, name: 'white tee' }, { id: 4, name: 'grey cardigan' }]
   const evidence = buildTripExplanationEvidence({ tripRoster: roster }, [{ pieces: [{ id: 1 }], assignedLayerIds: [4] }])
   assert.deepEqual(evidence.unused_pieces, [])
-  assert.deepEqual(buildTripExplanationEvidence(), { packing_reasoning: '', packing_notes: [], unused_pieces: [] })
+  assert.deepEqual(buildTripExplanationEvidence(), { packing_reasoning: '', packing_notes: [], unused_pieces: [], not_covered: [] })
+})
+
+test('the packer\'s reasons reach the writer without piece-number citations', async () => {
+  const { selectTripRosterViaModel } = await import('../styling-engine/outfitSetPlanner.js')
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 2, name: 'blue jeans', category: 'bottom', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 3, name: 'canvas sneakers', category: 'shoes', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+  ]
+  const selection = await selectTripRosterViaModel({
+    pool,
+    slots: [{ id: 'city', label: 'City Days', occasion: 'casual', activity: 'none', count: 1, weatherProfile: {} }],
+    chooseRoster: async ({ bench }) => ({
+      roster_piece_ids: bench.map(piece => piece.id),
+      packing_reasoning: 'Denim (#2) and a tee (#1, #3) cover the city days.',
+      piece_jobs: bench.map(piece => ({ piece_id: piece.id, job: `the ${piece.name} #${piece.id} for city days` })),
+    }),
+  })
+  assert.equal(selection.packingReasoning, 'Denim and a tee cover the city days.')
+  assert.ok(selection.jobs.length > 0)
+  assert.ok(selection.jobs.every(entry => !/#\d/.test(entry.job)))
+})
+
+test('trip explanation evidence reports an activity with fewer outfits than planned as a count, in plain fields', async () => {
+  const { buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const evidence = buildTripExplanationEvidence(
+    { slots: [{ id: 'a', label: 'Nature Walks', targetOutfits: 2 }, { id: 'b', label: 'Museums', targetOutfits: 1 }] },
+    [{ label: 'Nature Walks', pieces: [] }, { label: 'Museums', pieces: [] }],
+    { declined: [{ activity: 'Nature Walks', reason: 'nothing light enough for the afternoon' }, { activity: '', reason: 'dropped' }] }
+  )
+  assert.deepEqual(evidence.not_covered, [
+    { activity: 'Nature Walks', outfits_planned: 2, outfits_ready: 1 },
+    { activity: 'Nature Walks', reason: 'nothing light enough for the afternoon' },
+  ])
 })

@@ -4038,7 +4038,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.generatedOutfits = planOutfits
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true
-          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
           return {
             status: 'success',
             bounded_composition: true,
@@ -4046,9 +4045,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
             // same list two or three times and no explanation. The final answer is now asked for what
             // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
-            message: `Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list and the plan_lines (trip length, weather used, any coverage gap) are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected; (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities; (3) say plainly, in your own words, anything the plan does not cover — a coverage gap reported in plan_lines, or a packed piece in unused_pieces that no look wears — and what you would do about it. packing_notes are the packer's stated reason for each piece; where a look uses a piece differently, describe what the look actually shows. Never mention piece ids, slots, validation, or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
-            plan_lines: planLinesForResponse,
-            ...buildTripExplanationEvidence(pendingPlan, planOutfits),
+            message: `Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected; (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            ...buildTripExplanationEvidence(pendingPlan, planOutfits, {
+              declined: (Array.isArray(toolContext.tripCompositionSlotGaps) ? toolContext.tripCompositionSlotGaps : []).map(gap => ({
+                activity: pendingPlan.slots.find(slot => String(slot.id) === String(gap?.slot_id || ''))?.label || '',
+                reason: String(gap?.gap_reason || '').trim(),
+              })),
+            }),
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
               coverage: outfit.coveragePosition,
