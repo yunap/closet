@@ -1404,3 +1404,47 @@ test('a piece genuinely tagged outdoor, with no low-confidence marker, still get
   await selectTripRosterViaModel({ pool: POOL, slots: [hikingSlot], chooseRoster })
   assert.ok((capturedLabels.get(4) || []).includes('Hiking'), 'a genuinely outdoor-tagged piece must keep its Hiking label')
 })
+
+// docs/stylist-conversation-targets.md check 8; live thread_1790924321526. The packer's reasons used
+// to be discarded after the roster call, so the trip answer could only recite the packing list.
+test('trip roster selection keeps the packer\'s piece jobs and packing reasoning for pieces it actually packed', async () => {
+  const { selectTripRosterViaModel, buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 2, name: 'blue jeans', category: 'bottom', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 3, name: 'canvas sneakers', category: 'shoes', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 4, name: 'grey cardigan', category: 'outerwear', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+  ]
+  const slots = [{ id: 'city', label: 'City Days', occasion: 'casual', activity: 'none', count: 1, weatherProfile: {} }]
+  const selection = await selectTripRosterViaModel({
+    pool, slots,
+    chooseRoster: async ({ bench }) => ({
+      roster_piece_ids: bench.map(piece => piece.id),
+      packing_reasoning: 'Four pieces, one outfit and a layer.',
+      piece_jobs: [
+        ...bench.map(piece => ({ piece_id: piece.id, job: `job for ${piece.name}` })),
+        { piece_id: 999, job: 'a piece that was never packed' },
+      ],
+    }),
+  })
+  assert.equal(selection.packingReasoning, 'Four pieces, one outfit and a layer.')
+  assert.ok(selection.jobs.length > 0)
+  assert.ok(selection.jobs.every(entry => selection.roster.some(piece => Number(piece.id) === entry.pieceId)), 'no job for an unpacked piece')
+
+  const evidence = buildTripExplanationEvidence(
+    { tripRoster: selection.roster, tripRosterJobs: selection.jobs, tripPackingReasoning: selection.packingReasoning },
+    [{ pieces: selection.roster.filter(piece => piece.category !== 'outerwear'), assignedLayerIds: [] }]
+  )
+  assert.equal(evidence.packing_reasoning, 'Four pieces, one outfit and a layer.')
+  assert.ok(evidence.packing_notes.every(note => note.piece && note.packed_for && !('pieceId' in note)), 'the writer is given names, never ids')
+  const packedLayers = selection.roster.filter(piece => piece.category === 'outerwear').map(piece => piece.name)
+  assert.deepEqual(evidence.unused_pieces, packedLayers, 'a packed piece no look wears is reported as unused')
+})
+
+test('trip explanation evidence counts an assigned packed layer as worn, and is empty-safe', async () => {
+  const { buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const roster = [{ id: 1, name: 'white tee' }, { id: 4, name: 'grey cardigan' }]
+  const evidence = buildTripExplanationEvidence({ tripRoster: roster }, [{ pieces: [{ id: 1 }], assignedLayerIds: [4] }])
+  assert.deepEqual(evidence.unused_pieces, [])
+  assert.deepEqual(buildTripExplanationEvidence(), { packing_reasoning: '', packing_notes: [], unused_pieces: [] })
+})

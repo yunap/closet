@@ -4503,6 +4503,10 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
   assert.equal(proposed.result?.disposition, 'annotated')
   assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
   assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+  // The remedy is an instruction to the model: it stays in the tool result and never reaches the card.
+  assert.ok(result.systemNotes?.some(n => n.message.includes('address this trade-off candidly in your final note')))
+  assert.ok(!proposed.result?.annotations?.some(a => /final note|Swap to an insulating/.test(a.message)))
+  assert.ok(!result.systemNotes?.some(n => 'cardMessage' in n))
 })
 
 test('propose_outfit merges advisory findings into non-blocking notes in full_stylist', async () => {
@@ -4579,6 +4583,10 @@ test('propose_outfit merges advisory findings into non-blocking notes in full_st
   assert.equal(proposed.result?.disposition, 'annotated')
   assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
   assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+  // The remedy is an instruction to the model: it stays in the tool result and never reaches the card.
+  assert.ok(result.systemNotes?.some(n => n.message.includes('address this trade-off candidly in your final note')))
+  assert.ok(!proposed.result?.annotations?.some(a => /final note|Swap to an insulating/.test(a.message)))
+  assert.ok(!result.systemNotes?.some(n => 'cardMessage' in n))
 })
 
 test('view_pieces projects stylistCatalogLine truth across all execution profiles', async () => {

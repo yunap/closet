@@ -336,12 +336,17 @@ function demandHint(weather, resolvedContext = {}) {
   return ' — each candidate piece states its own warmth and insulation; choose accordingly'
 }
 
-function finding(code, message, { severity = 'error', evidence = {}, remedy = false } = {}) {
+// message is what a MODEL is told (it may end in a hint about how to act on the finding). cardMessage,
+// when given, is the same finding worded for the wearer and is what a card shows instead: live
+// thread_1790923286929 displayed "each candidate piece states its own warmth and insulation; choose
+// accordingly" on a card — an instruction to the composer, read by the owner as a note to her.
+function finding(code, message, { severity = 'error', evidence = {}, remedy = false, cardMessage = '' } = {}) {
   return {
     code,
     severity,
     stage: 'environment',
     message: remedy && severity === 'error' ? `${message} — ${SUPPLY_REMEDY}` : message,
+    ...(cardMessage ? { cardMessage } : {}),
     evidence,
   }
 }
@@ -522,7 +527,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         // that a removable layer was needed, so a down puffer satisfied it on a 65/48 day — seven
         // times. The demand is stated so the requirement can be met proportionately.
         corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
-        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false,
+          cardMessage: corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed') }))
     } else if (!someLayerContributesWarmth(layers)) {
       // ADJUDICATED (docs/README.md: trip roster architecture, item 3) rather than left unexamined
       // once thermal coverage moved to the SET level: does this finding own a factual/physical
@@ -559,7 +565,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
         corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
-        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false,
+          cardMessage: corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back') }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
@@ -952,6 +959,6 @@ export function advisoryFindingsToSystemFlags(findings = []) {
     type: ENVIRONMENTAL_CODE_VALUES.has(finding.code) || finding.stage === 'environment' || finding.kind === 'environment' || String(finding.code || '').startsWith('env_')
       ? 'Weather note'
       : 'Fit note',
-    message: finding.message,
+    message: finding.cardMessage || finding.message,
   }))
 }

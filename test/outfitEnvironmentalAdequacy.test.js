@@ -853,6 +853,21 @@ test('CHIPS: that same outfit shows ONE weather chip, not three', () => {
   assert.match(flags[0].message, /no layer to put on/)
 })
 
+// thread_1790923286929: the card showed "each candidate piece states its own warmth and insulation;
+// choose accordingly" -- an instruction to the composer. The model still receives it; the card does not.
+test('CHIPS: a card shows the finding worded for the wearer, while the model keeps the hint about how to act on it', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: WALNUT_CREEK_65_46,
+  })
+  const coolLayer = result.advisoryFindings.find(f => f.code === C.NO_REMOVABLE_COOL_LAYER)
+  assert.match(coolLayer.message, /choose accordingly/, 'the model-facing message keeps its hint')
+  assert.doesNotMatch(coolLayer.cardMessage, /choose accordingly|candidate piece/)
+  const flags = advisoryFindingsToSystemFlags(result.advisoryFindings)
+  assert.equal(flags.length, 1)
+  assert.match(flags[0].message, /no layer to put on/)
+  assert.doesNotMatch(flags[0].message, /choose accordingly|candidate piece/, 'no instruction to the model reaches the card')
+})
+
 test('CHIPS: the overlapping warmth family collapses to the most specific note', () => {
   const findings = [
     { code: C.WARM_LAYER_RECOMMENDED, message: 'a warm or midweight layer is recommended for cool weather' },

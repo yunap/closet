@@ -36,6 +36,7 @@ import {
   resolveSlotWeather,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
+  buildTripExplanationEvidence,
   buildRejectedCapsuleCards,
   describeCapsuleSupplyGap,
   mergePendingPlanForReplan,
@@ -1617,7 +1618,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : ''
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST keep its cards and tell the user about every gap or trim those plan_lines report, following that response's own presentation instruction — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -2544,12 +2545,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // show the same chips the composer does.
         for (const finding of collapseWarmthAdvisoryFindings(nonBlockingFindings)) {
           let msg = finding.message
+          let cardMsg = finding.cardMessage || finding.message
           if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
-            msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
+            // The observation is for both readers; the remedy that follows it is an instruction to the model.
+            cardMsg = `${finding.message}. Outdoor conditions call for warmer upper coverage.`
+            msg = `${cardMsg} Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
           }
+          // message goes back to the model in the tool result (it may carry a hint or a remedy);
+          // cardMessage is the same finding worded for the wearer, which is what the card shows.
           advisoryNotes.push({
             type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
-            message: msg
+            message: msg,
+            cardMessage: cardMsg
           })
         }
         if (isSingleOutfit) {
@@ -2670,6 +2677,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : []),
           ...(advisoryNotes || [])
         ]
+        const cardAnnotations = finalAnnotations.map(({ cardMessage, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
+        const modelNotes = finalAnnotations.map(({ cardMessage, ...note }) => note)
         const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
@@ -2692,8 +2701,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: finalDisposition,
-          annotations: finalAnnotations,
-          findings: (advisoryNotes || []).map(n => ({ message: n.message, kind: 'advisory', severity: 'warning' })),
+          annotations: cardAnnotations,
+          findings: (advisoryNotes || []).map(n => ({ message: n.cardMessage || n.message, kind: 'advisory', severity: 'warning' })),
           provenance: {
             flow: 'freeform_propose_outfit',
             source: 'proposed',
@@ -2745,7 +2754,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           status: "success",
           message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.${finalAnnotations.length ? ` System notes: ${finalAnnotations.map(a => a.message).join('; ')}` : ''}`,
           pieceNames: resolved.map(p => p.name),
-          ...(finalAnnotations.length ? { systemNotes: finalAnnotations } : {})
+          ...(modelNotes.length ? { systemNotes: modelNotes } : {})
         }
       }
       case 'view_pieces': {
@@ -4033,13 +4042,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: 'success',
             bounded_composition: true,
-            message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            // The cards, the packing list and the plan lines are rendered by the client from the card
+            // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
+            // same list two or three times and no explanation. The final answer is now asked for what
+            // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
+            message: `Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list and the plan_lines (trip length, weather used, any coverage gap) are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected; (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities; (3) say plainly, in your own words, anything the plan does not cover — a coverage gap reported in plan_lines, or a packed piece in unused_pieces that no look wears — and what you would do about it. packing_notes are the packer's stated reason for each piece; where a look uses a piece differently, describe what the look actually shows. Never mention piece ids, slots, validation, or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
             plan_lines: planLinesForResponse,
+            ...buildTripExplanationEvidence(pendingPlan, planOutfits),
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
               coverage: outfit.coveragePosition,
               weather: outfit.slotWeather || '',
-              pieceNames: (outfit.pieces || []).map(piece => piece.name)
+              pieceNames: (outfit.pieces || []).map(piece => piece.name),
+              reason: outfit.reason || ''
             }))
           }
         }

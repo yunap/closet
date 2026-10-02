@@ -4408,7 +4408,15 @@ export async function selectTripRosterViaModel({
     const contractFailures = outsideBench.length
       ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
       : []
-    return { roster, contractFailures }
+    // The packer's own explanation: why each piece earned its place and the shape of the suitcase.
+    // It was requested and paid for on every trip and then dropped here (thread_1790924321526), so
+    // the final answer could only restate piece names. Kept as explanation, never as evidence:
+    // nothing validates a job, and a look may use the piece differently.
+    const rosterIds = new Set(roster.map(piece => Number(piece.id)))
+    const jobs = (Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [])
+      .map(entry => ({ pieceId: Number(entry?.piece_id), job: String(entry?.job || '').trim() }))
+      .filter(entry => entry.job && rosterIds.has(entry.pieceId))
+    return { roster, contractFailures, jobs, packingReasoning: String(answer?.packing_reasoning || '').trim() }
   }
 
   const attemptChoose = async attemptArgs => {
@@ -4416,7 +4424,7 @@ export async function selectTripRosterViaModel({
       return resolve(await chooseRoster(attemptArgs), attemptArgs?.attempt || 1)
     } catch (err) {
       const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
-      return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
+      return { roster: [], jobs: [], packingReasoning: '', contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
     }
   }
 
@@ -4424,7 +4432,7 @@ export async function selectTripRosterViaModel({
   const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
   let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
+    return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, coverageGaps: [] }
   }
 
   bump('tripRosterModelRepairs')
@@ -4434,7 +4442,7 @@ export async function selectTripRosterViaModel({
   })
   const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', failures: [], bench, coverageGaps: [] }
+    return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, coverageGaps: [] }
   }
 
   bump('tripRosterModelFallbacks')
@@ -4933,6 +4941,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // provider-agnostic name a follow-up edit checks regardless of which plan kind produced it.
       tripRoster,
       tripRosterSource: tripRosterSelection?.source || '',
+      tripRosterJobs: tripRosterSelection?.jobs || [],
+      tripPackingReasoning: tripRosterSelection?.packingReasoning || '',
       tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
       packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
       tripRequirementSlots,
@@ -5873,6 +5883,29 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
     }))
   }
   return cards
+}
+
+// What the final writer of a trip answer needs in order to EXPLAIN the suitcase rather than recite
+// it (docs/stylist-conversation-targets.md, check 8). Before this, the tool result carried only
+// piece names and plan lines, with an instruction to present the lines — so the prose could only
+// be a recap (thread_1790924321526). Pure projection of facts already on the plan: the packer's
+// stated job per piece, each card's own reason, and the packed pieces no card wears. The unused list
+// is computed here, not asked of a model, so "this piece is a spare" is said from a fact.
+export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = []) {
+  const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
+  const nameById = new Map(roster.map(piece => [Number(piece.id), piece.name || `piece ${piece.id}`]))
+  const wornIds = new Set()
+  for (const outfit of planOutfits) {
+    for (const piece of outfit?.pieces || []) wornIds.add(Number(piece.id))
+    for (const id of outfit?.assignedLayerIds || []) wornIds.add(Number(id))
+  }
+  return {
+    packing_reasoning: String(pendingPlan?.tripPackingReasoning || ''),
+    packing_notes: (Array.isArray(pendingPlan?.tripRosterJobs) ? pendingPlan.tripRosterJobs : [])
+      .filter(entry => nameById.has(Number(entry?.pieceId)) && entry?.job)
+      .map(entry => ({ piece: nameById.get(Number(entry.pieceId)), packed_for: entry.job })),
+    unused_pieces: roster.filter(piece => !wornIds.has(Number(piece.id))).map(piece => piece.name || `piece ${piece.id}`),
+  }
 }
 
 export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits = [], { source = 'plan_outfit_set' } = {}) {

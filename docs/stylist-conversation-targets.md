@@ -237,6 +237,10 @@ Stated as requirements, not designs. How to meet them is the next step, decided 
 - **Follow-ups need to know what was liked.** "In this style" referred to a specific card's
   construction; the reply treated it as a label.
 
+## Implementation log
+
+- **2026-10-02, first slice.** Baseline captured on three live threads (`thread_1790923286929` hosting, `thread_1790924321526` Vienna trip, `thread_1790924998519` styling one piece). Three changes followed, none requiring a different model: notes written for the model no longer appear on cards (check 5); the single-outfit brief opens with the situation and asks for an occasion-specific reason and an honest drawback (checks 1, 3, 4); the trip’s final answer is given the packer’s per-piece reasons and asked to explain instead of recite (checks 6, 8, 9). Details in `engine-behaviour-map.md` and `freeform-rearchitecture-handoff.md`, both dated 2026-10-02. Not yet re-run live.
+
 ## Open questions for the owner
 
 1. Is one recommended outfit plus one or two alternatives the right default for an ordinary
