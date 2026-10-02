@@ -2133,9 +2133,14 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         // and we haven't yet given the model a follow-up turn to see those notes, allow one iteration
         // so the model receives the tool_result with systemNotes and can either swap pieces or speak with candor.
         if (!hasAdvisoryNotes || toolContext.singleOutfitAdvisoryTurnDelivered) {
+          // thread_1790928379170: the loop ends here the moment a card is accepted, so the brief's
+          // "Stylist Note" step only ever ran when an advisory note bought the model one more turn
+          // (which is the only reason thread_1790923286929 had its intro paragraph). Otherwise the
+          // chat reply was the card's own why_it_works, repeated. The note now travels with the
+          // proposal as propose_outfit's stylist_note, costing no extra provider call.
           const chatText = (turn.text && turn.text.trim())
             ? joinAnswer(turn.text)
-            : (outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
+            : (toolContext.singleOutfitStylistNote || outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
           return { answer: chatText, savedCorrections }
         }
         if (turn.text && narration.length && narration[narration.length - 1] === turn.text) {

@@ -4614,3 +4614,52 @@ test('the execution router sends an ordinary "what should I wear?" to the single
   assert.match(source, /Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options/)
   assert.doesNotMatch(source, /An ordinary "what should I wear\?" means 2/)
 })
+
+// thread_1790928379170. (1) The single-outfit loop ends when the card is accepted, so the stylist's
+// note must arrive with the proposal. (2) An at-home evening was dressed for a model-estimated
+// 62/48 outdoor day; season:'indoor' is the existing way to say the wearing period is a room.
+test('single_outfit propose_outfit keeps the stylist note, and an indoor wearing period raises no cool-layer note where an outdoor estimate does', async () => {
+  const pieces = [
+    { id: 61, name: 'Knit Shift Dress', category: 'dress', fabric_weight: 'medium', fiber_content: JSON.stringify(['rayon']), sleeve_length: 'short' },
+    { id: 62, name: 'Flat Sandals', category: 'shoes', walk_support: 'medium' },
+  ]
+  for (const p of pieces) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.walk_support || null, p.sleeve_length || null)
+  }
+  const context = () => {
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      singleOutfitCatalogEligibleIds: new Set([61, 62]),
+      retrievedPieceIds: new Set([61, 62]),
+      visuallySeenPieceIds: new Set([61, 62]),
+      freeformDiagnostics: {},
+      activity: 'none',
+    }
+    declareSingleOutfitIntent(toolContext)
+    return toolContext
+  }
+  const args = {
+    pieces: [{ id: 61, role: 'dress' }, { id: 62, role: 'shoes' }],
+    label: 'Hosting at home',
+    why_it_works: 'Sleeveless and flat for an evening on your feet.',
+    stylist_note: 'You are hosting, so you will be on your feet.\n\nMy pick is the knit dress with flat sandals.',
+  }
+
+  const indoorContext = context()
+  const indoor = await executeTool('propose_outfit', { ...args, season: 'indoor' }, indoorContext)
+  assert.equal(indoor.status, 'success')
+  assert.equal(indoorContext.singleOutfitStylistNote, args.stylist_note)
+  const indoorCard = indoorContext.generatedOutfits[0]
+  assert.ok(!(indoorCard.result?.annotations || []).some(a => a.type === 'Weather note'), `no weather note for a room: ${JSON.stringify(indoorCard.result?.annotations)}`)
+  assert.equal(indoorCard.reason, args.why_it_works, 'the card keeps its own short reason, not the note')
+
+  const outdoorContext = context()
+  const outdoor = await executeTool('propose_outfit', { ...args, weather_estimate: { high_f: 62, low_f: 48 } }, outdoorContext)
+  assert.equal(outdoor.status, 'success')
+  assert.ok((outdoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'), 'the same outfit against an estimated 62/48 outdoor day is what drew the layer')
+
+  const withoutNote = context()
+  await executeTool('propose_outfit', { ...args, stylist_note: undefined, season: 'indoor' }, withoutNote)
+  assert.equal(withoutNote.singleOutfitStylistNote, '')
+})
