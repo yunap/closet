@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -1223,6 +1223,11 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
   const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
   if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
+  // A warm day inside a mild range is easy to dress for and easy to forget; say which days they are.
+  const hotDays = days.filter(day => day.highF >= HOT_F)
+  if (days.length > 1 && hotDays.length && hotDays.length < days.length) {
+    parts.push(`${hotDays.length} of ${days.length} days ${hotDays.length === 1 ? 'reaches' : 'reach'} ${HOT_F}°F or more (${hotDays.map(day => shortDate(day.date)).join(', ')}), the rest top out at ${Math.round(Math.max(...days.filter(day => day.highF < HOT_F).map(day => day.highF)))}°F`)
+  }
   // Rain is stated only where it was measured (the hourly slices); the whole-day path has none.
   if (acrossDays.rainDays != null) {
     const rainDays = Number(acrossDays.rainDays) || 0
@@ -4501,7 +4506,14 @@ export async function selectTripRosterViaModel({
   // threshold definition to drift out of sync with it. Any one slot running hot is enough: a trip
   // roster is chosen once for the whole trip, and a genuinely hot day anywhere in it means hot-
   // weather bottoms belong in the candidate pool regardless of the trip's overall calendar season.
-  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot))
+  // 2026-10-02: isHot now describes a range's typical day (at least half its days hot), which keeps a
+  // mild week from being packed as summer. But the ruling above is about ANY hot day: a mid-October
+  // week with one 81°F afternoon still needs something to wear on it (owner: "what am I supposed to
+  // do on the day when it's 80F?"). So warm-weather bottoms join the candidates when any day of the
+  // trip reaches HOT_F, alongside the fall ones the typical-day reading keeps; which to pack is the
+  // packer's call, told by the weather sentence which days are warm.
+  const reachesHot = profile => [profile?.highF, profile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F)
+  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || reachesHot(slot?.weatherProfile))
   const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
   const benchById = pieceMapForPieces(bench)
 

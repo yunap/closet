@@ -9717,7 +9717,7 @@ test('a trip activity with no day and no time of day resolves over the whole tri
   assert.equal(wholeTrip.profile.isCold, false)
   assert.ok(urls.some(url => url.includes('forecast_days=')), 'the rejected range is retried over the horizon')
   // Prefix only: the trailing far-ahead caveat depends on the day the test runs.
-  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
+  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); 1 of 5 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F; Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
   assert.doesNotMatch(wholeTrip.label, /rain/, 'the whole-day path has no rain data and must not claim any')
 
   _clearWeatherCachesForTests()
@@ -9825,4 +9825,42 @@ test('a layer repair that swaps the layer renames it in the card text when the m
   assert.deepEqual(card.assignedLayerIds, [Number(trenchId)])
   assert.equal(card.reason, 'Stripe tee with dark denim. Layer with the cream trench coat if temperatures drop.')
   assert.equal(card.stylingInstructions, 'Zip the cream trench coat over the tee in the morning.')
+})
+
+// Owner, on the first coherent fall suitcase: "what am I supposed to do on the day when it's 80F?"
+// A mild week with one hot day keeps its fall pieces AND gets warm-weather candidates, and the
+// weather sentence says which day is the warm one.
+test('a mostly mild trip with one hot day: not hot overall, warm-weather bottoms still offered, the hot day named', async () => {
+  const { tripWindowWeatherSentence } = await import('../styling-engine/outfitSetPlanner.js')
+  const sentence = tripWindowWeatherSentence({
+    lowF: 49, highF: 81,
+    days: [
+      { date: '2026-10-12', lowF: 64, highF: 81 }, { date: '2026-10-13', lowF: 65, highF: 75 },
+      { date: '2026-10-14', lowF: 55, highF: 69 }, { date: '2026-10-17', lowF: 49, highF: 66 },
+    ],
+  }, { whenLabel: 'whole days', sourceLabel: 'daily forecast', today: new Date('2026-10-11T00:00:00Z') })
+  assert.match(sentence, /1 of 4 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F/)
+
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'stripe tee', season: 'year-round' })
+  const linen = insertPiece({ category: 'bottom', name: 'linen wide-leg pants', season: 'warm', fabric_weight: 'light' })
+  const denim = insertPiece({ category: 'bottom', name: 'dark denim', season: 'year-round', fabric_weight: 'heavy' })
+  insertPiece({ category: 'shoes', name: 'sneakers', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const daily = { time: ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15'], temperature_2m_max: [81, 75, 69, 66], temperature_2m_min: [64, 65, 55, 49] }
+  const fetchImpl = async url => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    : { ok: true, json: async () => ({ daily }) })
+  const dateRange = { start: '2026-10-12', end: '2026-10-15' }
+  const slots = normalizePlanSlots([{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }], { dateRange, location: 'Vienna, Virginia' })
+  let offered = []
+  _clearWeatherCachesForTests()
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces, dateRange, location: 'Vienna, Virginia', question: 'a mild week', planKind: 'trip', fetchImpl,
+    chooseTripRoster: async ({ bench }) => { offered = bench; return { roster_piece_ids: bench.map(piece => Number(piece.id)) } },
+  })
+  assert.equal(workbench.pendingPlan.slots[0].weatherProfile.isHot, false, 'one hot day of four does not make the week hot')
+  const offeredIds = offered.map(piece => Number(piece.id))
+  assert.ok(offeredIds.includes(Number(denim)), 'the fall bottom is offered')
+  assert.ok(offeredIds.includes(Number(linen)), 'and so is a bottom for the hot day')
 })
