@@ -5995,6 +5995,20 @@ export function tripPlanPieceNotes(rosterPieces = []) {
 // since occasions are stated per piece here unlike every other fact-line consumer.
 export const TRIP_GARMENT_FACT_CONVENTIONS = `${GARMENT_FACT_CONVENTIONS} Occasions are stated per piece here (unlike other paths' fact line) because a trip roster spans multiple slot occasions rather than one already-filtered request occasion; a piece's occasions are its recorded tags, not a suitability verdict for any specific slot — read them alongside formality and the slot's own best_for text.`
 
+// What the trip composer is shown of a slot. Live capture (thread_1790929985430): each slot carried
+// its weather about four times over — weather_used, then styling_context.weatherProfile,
+// styling_context.applicabilityContext.weather, applicabilityContext.weatherProfile, and a
+// resolvedWeatherContext nested inside both profiles — as flags and numbers that could disagree with
+// each other, plus the stand-in first-day date. The composer now gets the weather once, as the
+// plain sentence in weather_used (and the slot's exposure_conditions). The structured copies stay
+// on the workbench for validation; they are only left out of the prompt.
+export function tripComposerSlotView(slot = {}) {
+  const context = slot?.styling_context
+  if (!context || typeof context !== 'object') return slot
+  const { weatherProfile, applicabilityContext, weatherText, resolvedWeatherContext, date, ...plainContext } = context
+  return { ...slot, styling_context: plainContext }
+}
+
 async function composeTripPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -6012,7 +6026,7 @@ async function composeTripPlanOnce(workbench, toolContext) {
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    slots: workbench.slots,
+    slots: (workbench.slots || []).map(tripComposerSlotView),
     piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog,
     piece_catalog_conventions: TRIP_GARMENT_FACT_CONVENTIONS,
     piece_notes: tripPlanPieceNotes(rosterPieces)

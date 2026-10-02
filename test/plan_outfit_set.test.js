@@ -9602,3 +9602,82 @@ test('validateSubmittedPlanOutfits accepts assigned_packed_layer for cool transi
   }])
   assert.equal(validationNotRequired.accepted.length, 1, 'mode not_required must also be accepted when cold_layer_required is false')
 })
+
+// 2026-10-02, live thread_1790929985430. A trip activity with no day of its own used to be sliced on
+// the trip's first day only; it is now sliced on every trip day, and the composer is told once.
+function mockTripHorizonFetch(daysByDate = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (const [date, { hours = {}, defaultTemp = 60, rainHours = [] } = {}] of Object.entries(daysByDate)) {
+    for (let h = 0; h < 24; h += 1) {
+      times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+      temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+      precip.push(rainHours.includes(h) ? 1.2 : 0)
+    }
+  }
+  return async (url) => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    : { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) })
+}
+
+test('a trip activity with no day of its own is weathered across the whole trip; one dated to a day keeps that day', async () => {
+  const { resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const dateRange = { start: '2026-10-12', end: '2026-10-14' }
+  const forecast = {
+    '2026-10-12': { defaultTemp: 67, hours: { 17: 68, 22: 67 }, rainHours: [18] },
+    '2026-10-13': { defaultTemp: 70, hours: { 17: 78, 22: 62 } },
+    '2026-10-14': { defaultTemp: 60, hours: { 17: 65, 22: 55 } },
+  }
+  const [undated, dated] = normalizePlanSlots([
+    { label: 'Evening Dinners', occasion: 'smart casual', activity: 'none', environment: 'outdoor', count: 1, time_window: { period: 'evening' } },
+    { label: 'Opening Night', occasion: 'evening', activity: 'none', environment: 'outdoor', count: 1, date: '2026-10-12', time_window: { period: 'evening' } },
+  ], { dateRange, location: 'Vienna, Virginia' })
+  assert.equal(undated.dateInherited, true)
+  assert.equal(dated.dateInherited, false)
+
+  _clearWeatherCachesForTests()
+  const acrossTrip = await resolveSlotWeather(undated, { dateRange, location: 'Vienna, Virginia', fetchImpl: mockTripHorizonFetch(forecast) })
+  assert.equal(acrossTrip.profile.lowF, 55, 'the coldest evening of the week, not the first evening')
+  assert.equal(acrossTrip.profile.highF, 78)
+  assert.deepEqual(acrossTrip.profile.resolvedWeatherContext.dateRange, { start: '2026-10-12', end: '2026-10-14' })
+  assert.equal(acrossTrip.profile.resolvedWeatherContext.exposureWindowAcrossDays.rainDays, 1)
+  assert.ok(!acrossTrip.profile.isRainy, 'one wet evening of three does not mark the whole activity rainy')
+  assert.match(acrossTrip.label, /^evenings, Oct 12–Oct 14: 55–78°F; coolest Oct 14 \(55°F\), warmest Oct 13 \(78°F\); rain at that time on 1 of 3 days — hourly forecast, Vienna, Virginia/)
+  assert.doesNotMatch(acrossTrip.label, /sliced to this activity|live hourly forecast/)
+
+  _clearWeatherCachesForTests()
+  const oneDay = await resolveSlotWeather(dated, { dateRange, location: 'Vienna, Virginia', fetchImpl: mockTripHorizonFetch(forecast) })
+  assert.equal(oneDay.profile.lowF, 67, 'a slot dated to one day is still sliced on that day alone')
+  assert.equal(oneDay.profile.highF, 68)
+})
+
+test('the trip weather sentence states uncovered days and flags a far-ahead forecast; the composer view carries weather once', async () => {
+  const { tripWindowWeatherSentence } = await import('../styling-engine/outfitSetPlanner.js')
+  const { tripComposerSlotView } = await import('../routes/ai.js')
+  const acrossDays = {
+    lowF: 54.2, highF: 76.8, rainDays: 0, uncoveredDates: ['2026-10-17', '2026-10-18'],
+    days: [{ date: '2026-10-15', lowF: 54.2, highF: 62 }, { date: '2026-10-16', lowF: 60, highF: 76.8 }],
+  }
+  const farAhead = tripWindowWeatherSentence(acrossDays, { timeWindow: { period: 'morning' }, location: 'Vienna, Virginia', today: new Date('2026-10-02T12:00:00Z') })
+  assert.equal(farAhead, 'mornings, Oct 15–Oct 16: 54–77°F; coolest Oct 15 (54°F), warmest Oct 16 (77°F); no rain forecast at that time; Oct 17–Oct 18 not forecast yet — hourly forecast, Vienna, Virginia; a forecast this far ahead often changes')
+  const soon = tripWindowWeatherSentence(acrossDays, { timeWindow: { start_local: '09:00', end_local: '11:00' }, today: new Date('2026-10-14T12:00:00Z') })
+  assert.match(soon, /^09:00–11:00 each day, Oct 15–Oct 16: /)
+  assert.doesNotMatch(soon, /often changes/)
+  assert.equal(tripWindowWeatherSentence({ days: [] }), '')
+
+  const slot = {
+    id: 'evening_dinners', weather_used: 'evenings, Oct 12–Oct 14: 55–78°F', cold_layer_required: false,
+    styling_context: {
+      occasion: 'smart casual', activity: 'none', calendarSeason: 'fall', date: '2026-10-12T00:00:00.000Z', weatherText: '',
+      weatherProfile: { highF: 68, needsRemovableCoolLayer: false, resolvedWeatherContext: { status: 'resolved' } },
+      applicabilityContext: { weather: { rainy: true }, weatherProfile: { highF: 68 } },
+    },
+  }
+  const view = tripComposerSlotView(slot)
+  assert.deepEqual(view.styling_context, { occasion: 'smart casual', activity: 'none', calendarSeason: 'fall' })
+  assert.equal(view.weather_used, slot.weather_used)
+  assert.equal(view.cold_layer_required, false)
+  assert.ok(slot.styling_context.weatherProfile, 'the workbench itself keeps the structured copies for validation')
+  assert.deepEqual(tripComposerSlotView({ id: 'x' }), { id: 'x' })
+})

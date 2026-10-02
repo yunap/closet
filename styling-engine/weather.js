@@ -274,6 +274,101 @@ export async function resolveExposureWindowHourly({ location = '', date = '', ti
   }
 }
 
+// A trip activity happens on SEVERAL days at one time of day ("evening dinners" across a week), not
+// on one day. Live thread_1790929985430 resolved every such activity against the trip's first day
+// only: Vienna, VA, 12–18 October became "the evening of the 12th", a flat rainy 67–68°F, while the
+// same forecast had evenings from 55°F to 78°F across the week — and the suitcase was packed for
+// the one day. The single-day slice above is right for an outing on a known day; this is the same
+// slice taken on every day of a date range, reduced to the range actually encountered across them.
+//
+// One request covers the whole forecast horizon (`forecast_days`, never start/end dates): Open-Meteo
+// rejects an end date past its horizon with an error for the WHOLE request, so a trip that runs one
+// day past it would otherwise lose every covered day too. Days it does not cover come back in
+// `uncoveredDates` — stated, never filled in.
+//
+// Precipitation follows the same "range, not a point" discipline: rain in this window on SOME days
+// is reported as a count (`rainDays` of `coveredDays`) for the stylist to weigh, and only rain on
+// every covered day is 'rain' for the wet-exposure gates. One wet day used to put a rain note on
+// every card of the trip.
+const HORIZON_FORECAST_DAYS = 16
+const MAX_TRIP_WINDOW_DAYS = 31
+
+async function fetchHourlyHorizon(coords, fetchImpl) {
+  const cacheKey = `horizon|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
+  const cached = hourlyCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&timezone=auto&forecast_days=${HORIZON_FORECAST_DAYS}`
+  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  if (!res?.ok) return null
+  const data = await res.json()
+  const times = data?.hourly?.time || []
+  const temps = data?.hourly?.temperature_2m || []
+  const precip = data?.hourly?.precipitation || []
+  if (!times.length) return null
+  const result = { times, temps, precip, fetchedAt: new Date().toISOString() }
+  hourlyCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
+  return result
+}
+
+function datesInRange(startDate, endDate) {
+  const start = dateKey(startDate)
+  const end = dateKey(endDate || startDate)
+  if (!start || !end || end < start) return []
+  const dates = []
+  const cursor = new Date(`${start}T00:00:00Z`)
+  while (dates.length < MAX_TRIP_WINDOW_DAYS) {
+    const key = cursor.toISOString().slice(0, 10)
+    if (key > end) break
+    dates.push(key)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+export async function resolveExposureWindowAcrossDays({ location = '', startDate = '', endDate = '', timeWindow = null, fetchImpl = defaultFetch } = {}) {
+  if (shouldSkipLive(fetchImpl) || !location) return null
+  const hours = resolveTimeWindowHours(timeWindow)
+  const requestedDates = datesInRange(startDate, endDate)
+  if (!hours || !requestedDates.length) return null
+  try {
+    const coords = await resolveLocationToCoords(location, fetchImpl)
+    if (!coords) return null
+    const hourly = await fetchHourlyHorizon(coords, fetchImpl)
+    if (!hourly) return null
+    const days = []
+    const uncoveredDates = []
+    // A day counts only when the forecast reaches the END of the window. The horizon stops partway
+    // through its last day, and two hours of an evening are not that evening's range (live: the
+    // final day's partial slice came out as the coolest "evening" of the whole trip).
+    const lastWindowHour = String(hours.endHour - 1).padStart(2, '0')
+    const reachesWindowEnd = date => hourly.times.some((timestamp, i) =>
+      String(timestamp).startsWith(`${date}T${lastWindowHour}`) && Number.isFinite(hourly.temps[i]))
+    for (const date of requestedDates) {
+      const sliced = reachesWindowEnd(date) ? sliceHourlyWindow(hourly, date, hours) : null
+      if (sliced) days.push({ date, highF: sliced.highF, lowF: sliced.lowF, rain: sliced.precipitation === 'rain' })
+      else uncoveredDates.push(date)
+    }
+    if (!days.length) return null
+    const rainDays = days.filter(day => day.rain).length
+    return {
+      // Non-exclusive, like resolveLive's own multi-day trip range: a week of evenings genuinely can
+      // hold both a hot one and a cold one.
+      ...classify(days.map(day => day.highF), days.map(day => day.lowF), { exclusive: false, dates: days.map(day => day.date) }),
+      precipitation: rainDays === days.length ? 'rain' : rainDays === 0 ? 'none' : 'unknown',
+      weatherSource: 'live_hourly',
+      scope: 'exposure_window_across_days',
+      days,
+      rainDays,
+      coveredDays: days.length,
+      requestedDays: requestedDates.length,
+      uncoveredDates,
+      retrievedAt: hourly.fetchedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
 // The no-time-stated path (spec §6): resolves the same hourly series once, sliced into all three
 // canonical dayparts, for a caller (outfitSetPlanner.js) to judge whether the plausible windows are
 // PHYSICALLY distinguishable — this function states facts only, never a materiality verdict. Returns

@@ -661,3 +661,66 @@ test('ambient comfort scale alignment in weather classification', () => {
   assert.equal('requiresOuterwear' in at56, false)
 })
 
+
+// 2026-10-02, live thread_1790929985430: a week of evenings was planned from the first evening only.
+function makeMockHorizonFetch(daysByDate = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (const [date, { hours = {}, defaultTemp = 60, rainHours = [], lastHour = 23 } = {}] of Object.entries(daysByDate)) {
+    for (let h = 0; h <= lastHour; h += 1) {
+      times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+      temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+      precip.push(rainHours.includes(h) ? 1.2 : 0)
+    }
+  }
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    return { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) }
+  }
+  fetchImpl.urls = urls
+  return fetchImpl
+}
+
+test('resolveExposureWindowAcrossDays takes one time of day across every trip day, not the first day alone', async () => {
+  const { resolveExposureWindowAcrossDays } = await import('../styling-engine/weather.js')
+  _clearWeatherCachesForTests()
+  const fetchImpl = makeMockHorizonFetch({
+    '2026-10-12': { defaultTemp: 67, hours: { 17: 68, 22: 67 }, rainHours: [18] },          // flat, wet evening
+    '2026-10-13': { defaultTemp: 70, hours: { 17: 78, 20: 67, 22: 62 } },
+    '2026-10-14': { defaultTemp: 60, hours: { 17: 65, 20: 58, 22: 55 } },                    // the cold evening
+    '2026-10-15': { defaultTemp: 66, lastHour: 18 },                                         // forecast ends mid-evening
+  })
+  const result = await resolveExposureWindowAcrossDays({
+    location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-16', timeWindow: { period: 'evening' }, fetchImpl,
+  })
+  assert.equal(result.weatherSource, 'live_hourly')
+  assert.equal(result.lowF, 55, 'the coldest evening of the trip sets the low, not the first evening')
+  assert.equal(result.highF, 78)
+  assert.deepEqual(result.days.map(day => day.date), ['2026-10-12', '2026-10-13', '2026-10-14'])
+  assert.deepEqual(result.uncoveredDates, ['2026-10-15', '2026-10-16'], 'a day the forecast does not reach to the end of the window is stated as not covered')
+  assert.equal(result.rainDays, 1)
+  assert.equal(result.coveredDays, 3)
+  assert.equal(result.precipitation, 'unknown', 'rain on one evening of three is a count for the stylist, not a wet-exposure verdict on every card')
+  assert.equal(result.needsRemovableCoolLayer, true)
+  const forecastUrl = fetchImpl.urls.find(url => !url.includes('geocoding-api'))
+  assert.match(forecastUrl, /forecast_days=16/)
+  assert.doesNotMatch(forecastUrl, /end_date/, 'an end date past the horizon makes the provider reject the whole request')
+})
+
+test('resolveExposureWindowAcrossDays: rain on every covered day is rain; no covered day, no window, or no location is null', async () => {
+  const { resolveExposureWindowAcrossDays } = await import('../styling-engine/weather.js')
+  _clearWeatherCachesForTests()
+  const wet = makeMockHorizonFetch({ '2026-10-12': { rainHours: [9] }, '2026-10-13': { rainHours: [10] } })
+  const everyDay = await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' }, fetchImpl: wet })
+  assert.equal(everyDay.precipitation, 'rain')
+  _clearWeatherCachesForTests()
+  const dry = makeMockHorizonFetch({ '2026-10-12': {} })
+  assert.equal((await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-12', timeWindow: { period: 'morning' }, fetchImpl: dry })).precipitation, 'none')
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-11-01', endDate: '2026-11-03', timeWindow: { period: 'morning' }, fetchImpl: dry }), null, 'no trip day inside the forecast')
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: null, fetchImpl: dry }), null)
+  assert.equal(await resolveExposureWindowAcrossDays({ location: '', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' }, fetchImpl: dry }), null)
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' } }), null, 'never the real network under NODE_ENV=test')
+})

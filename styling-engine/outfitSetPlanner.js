@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -1179,6 +1179,43 @@ export function truthfulWeatherLabel(temperature, { location = '', heuristicText
   }
 }
 
+// The weather for a trip activity, said once, the way a person would say it: the range across the
+// trip's days at that time of day, which days are the extremes, how many of those days have rain,
+// and which days the forecast does not reach. It is the fact a stylist needs to decide about
+// layers for themselves, in place of a verdict. Shown to the composer as weather_used and to the
+// user in the plan's "Weather used" line.
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const FAR_FORECAST_DAYS = 7
+function shortDate(isoDate = '') {
+  const match = /^\d{4}-(\d{2})-(\d{2})/.exec(String(isoDate))
+  return match ? `${MONTH_NAMES[Number(match[1]) - 1]} ${Number(match[2])}` : String(isoDate)
+}
+function dateSpanText(dates = []) {
+  if (!dates.length) return ''
+  return dates.length === 1 ? shortDate(dates[0]) : `${shortDate(dates[0])}–${shortDate(dates[dates.length - 1])}`
+}
+export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, location = '', today = new Date() } = {}) {
+  const days = Array.isArray(acrossDays.days) ? acrossDays.days : []
+  if (!days.length) return ''
+  const period = String(timeWindow?.period || '').toLowerCase().trim()
+  const when = period === 'morning' ? 'mornings'
+    : (period === 'afternoon' || period === 'midday') ? 'afternoons'
+      : period === 'evening' ? 'evenings'
+        : (timeWindow?.start_local && timeWindow?.end_local) ? `${timeWindow.start_local}–${timeWindow.end_local} each day` : 'this time of day'
+  const coolest = days.reduce((best, day) => (day.lowF < best.lowF ? day : best))
+  const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
+  const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
+  if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
+  const rainDays = Number(acrossDays.rainDays) || 0
+  parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+  const uncovered = Array.isArray(acrossDays.uncoveredDates) ? acrossDays.uncoveredDates : []
+  if (uncovered.length) parts.push(`${dateSpanText(uncovered)} not forecast yet`)
+  const lastDay = new Date(`${days[days.length - 1].date}T00:00:00Z`)
+  const daysAhead = Number.isNaN(lastDay.getTime()) ? 0 : (lastDay.getTime() - new Date(today).getTime()) / 86400000
+  const farAhead = daysAhead > FAR_FORECAST_DAYS ? '; a forecast this far ahead often changes' : ''
+  return `${parts.join('; ')} — hourly forecast${location ? `, ${location}` : ''}${farAhead}`
+}
+
 function isGenericSeasonText(season = '') {
   const value = String(season || '').trim().toLowerCase()
   return !value || value === 'current season' || value === 'current' || value === 'year-round'
@@ -1215,15 +1252,38 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
   // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
   const isIndoorSlot = slot.statedWeather === 'indoor'
-  if (slot.timeWindow && day && targetLocation) {
-    const hourly = await resolveExposureWindowHourly({
-      location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
-    })
+  // 2026-10-02 (live thread_1790929985430): a trip activity with no day of its own inherits the
+  // trip's FIRST day as a stand-in (normalizePlanSlots, dateInherited). Slicing that one day
+  // dressed a week of evenings for one flat, rainy evening. Such a slot now takes its time-of-day
+  // slice on every day of the trip (resolveExposureWindowAcrossDays); a slot dated to one specific
+  // day keeps the single-day slice it was built for.
+  const tripStart = String(dateRange?.start || '').slice(0, 10)
+  const tripEnd = String(dateRange?.end || '').slice(0, 10)
+  const spansTripDays = slot.dateInherited === true && Boolean(tripStart) && tripEnd > tripStart
+  if (slot.timeWindow && targetLocation && (day || spansTripDays)) {
+    const acrossDays = spansTripDays
+      ? await resolveExposureWindowAcrossDays({
+          location: targetLocation, startDate: tripStart, endDate: tripEnd, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+        })
+      : null
+    const hourly = acrossDays || (day
+      ? await resolveExposureWindowHourly({
+          location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+        })
+      : null)
     if (hourly) {
       const resolvedWeatherContext = {
         status: 'resolved',
         location: targetLocation,
-        dateRange: { start: day, end: day },
+        dateRange: acrossDays
+          ? { start: acrossDays.days[0].date, end: acrossDays.days[acrossDays.days.length - 1].date }
+          : { start: day, end: day },
+        ...(acrossDays ? {
+          exposureWindowAcrossDays: {
+            days: acrossDays.days, rainDays: acrossDays.rainDays, coveredDays: acrossDays.coveredDays,
+            requestedDays: acrossDays.requestedDays, uncoveredDates: acrossDays.uncoveredDates, retrievedAt: acrossDays.retrievedAt,
+          },
+        } : {}),
         temperature: {
           highF: hourly.highF, lowF: hourly.lowF, band: null,
           isHot: hourly.isHot, isCold: isIndoorSlot ? false : hourly.isCold, isColdSevere: false,
@@ -1234,7 +1294,9 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         wind: { value: 'unknown', source: 'unavailable' },
         overallSource: hourly.weatherSource,
       }
-      const hourlyLabel = truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+      const hourlyLabel = acrossDays
+        ? tripWindowWeatherSentence(acrossDays, { timeWindow: slot.timeWindow, location: targetLocation })
+        : truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
       if (isIndoorSlot) {
         // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
         // instead of the flat day envelope — base stays climate-controlled/permissive, transit*
@@ -6252,6 +6314,10 @@ export function normalizePlanSlots(rawSlots = [], {
         location,
         environment,
         date: resolvedSlotDate,
+        // True when the slot named no day of its own and resolvedSlotDate is only the trip's first
+        // day standing in for it. resolveSlotWeather reads this to slice the slot's time of day
+        // across the whole trip instead of on that one stand-in day.
+        dateInherited: !slotDate && Boolean(String(dateRange?.start || '').trim()),
         // thread_1789633862650 (owner correction, 2026-09-17, narrowing the Activity Time Windows
         // spec's "never inferred or defaulted by code" rule): a slot typed occasion:'evening', or
         // whose own label/best_for names a dinner/wine bar/evening use case, has already declared
