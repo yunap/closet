@@ -5299,16 +5299,14 @@ export function slotColdLayerPermitted(slot = {}) {
 // coverage gap instead of reaching this repair round, even though a genuinely adequate candidate
 // (a reversible hooded windbreaker) sat unused in the same roster.
 //
-// thread_1789801108635: the symmetric failure -- an assigned layer substantially too WARM for the
-// slot's own thermal demand (compareThermalFit's substantial_overshoot), not too weak. Same
-// recoverable shape; identifyColdLayerRepairableFailures' own candidate filter (below) already
-// excludes overshoot candidates too, so a repair never re-offers the same class of wrong pick.
+// thread_1789801108635 added a fifth pattern for an assigned layer substantially too WARM for the
+// slot. Since 2026-10-02 that is a card note, not a rejection, so there is no such failure to match
+// and the pattern is gone; repair candidates are ordered proportionate-first instead of filtered.
 const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
   /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
-  /^assigned layer piece \d+ \(.+\) is substantially warmer than .+'s conditions call for — its own recorded construction and insulation place it well above .+ demand; choose a lighter packed layer\.$/,
 ]
 
 export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
@@ -5325,7 +5323,12 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
     const repairDemand = requiredThermalBand(repairExposure)
     const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
       .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
-      .filter(piece => !repairDemand?.level || compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit !== 'substantial_overshoot')
+      // Proportionate layers are offered first; a substantially warmer one is still offered, last,
+      // because on a mild day it can be the only real layer the suitcase has (2026-10-02 ruling above
+      // validateSubmittedPlanOutfits' assigned-layer check).
+      .map((piece, index) => ({ piece, index, tooWarm: Boolean(repairDemand?.level) && compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit === 'substantial_overshoot' }))
+      .sort((a, b) => Number(a.tooWarm) - Number(b.tooWarm) || a.index - b.index)
+      .map(entry => entry.piece)
     if (!candidates.length) continue
     repairable.push({
       slot_id: failure.slot_id,
@@ -5512,6 +5515,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // the plain-omission shape and keeping this block's own new reasons scoped to genuinely new
     // validation surface (schema misuse, false claims) rather than duplicating the existing floor.
     const assignedLayers = []
+    const tooWarmLayerNotes = []
     if ((coldLayerRequired || coldLayerPermitted) && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
       const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
@@ -5542,12 +5546,22 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           const layerExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
           const layerDemand = requiredThermalBand(layerExposure)
           const layerFit = layerDemand?.level ? compareThermalFit(garmentWarmthLevel(layerPiece), layerDemand) : { fit: 'unknown' }
-          if (layerFit.fit === 'substantial_overshoot') {
-            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) is substantially warmer than ${label}'s conditions call for — its own recorded construction and insulation place it well above ${layerDemand.level} demand; choose a lighter packed layer.`)
-          } else if (outerwearLayerPositivelyInadequate(layerPiece)) {
+          //
+          // 2026-10-02 (owner ruling, live thread_1790929985430): substantial overshoot is a NOTE
+          // on the card, not a rejection. As a hard gate it contradicted the layer requirement on
+          // any mild, flat day: a 64–65°F hike resolved to "very light" demand, the slot still
+          // required a removable layer, the thin hoodie was rejected as inadequate and every real
+          // jacket in the wardrobe (olive jacket, fleece coat, trench — all "moderate") as two
+          // levels too warm. No layer could pass, and the whole activity was lost. A removable
+          // layer that is warmer than ideal is something to tell the wearer; it does not make the
+          // outfit unwearable. The inadequacy check below remains a hard gate.
+          if (outerwearLayerPositivelyInadequate(layerPiece)) {
             reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
           } else {
             assignedLayers.push(layerPiece)
+            if (layerFit.fit === 'substantial_overshoot') {
+              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || 'packed layer'} is warmer than these conditions call for; it is there to take off once you warm up` })
+            }
           }
         }
       }
@@ -5604,6 +5618,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (Array.isArray(wearableValidation.advisoryFindings) && wearableValidation.advisoryFindings.length) {
         outfit.systemFlags = advisoryFindingsToSystemFlags(wearableValidation.advisoryFindings)
       }
+      if (tooWarmLayerNotes.length) outfit.systemFlags = [...(outfit.systemFlags || []), ...tooWarmLayerNotes]
       // The model receives every typed finding. The rejected card shown to the owner gets one primary
       // thermal explanation: the messages the collapse drops are remembered against this reasons list.
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
