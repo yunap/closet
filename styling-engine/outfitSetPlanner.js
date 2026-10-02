@@ -3244,7 +3244,10 @@ export function tripSeasonEligiblePool(pool = [], calendarSeason = '', { tripHas
   const calendar = String(calendarSeason || '').toLowerCase().trim()
   if (!calendar) return pool
   return pool.filter(piece => {
-    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && wardrobeCategoryGroup(piece) === 'bottom') return true
+    // A hot day in a cool-season trip needs a whole warm-weather base, not only a top: a bottom, or a
+    // dress that can also take a layer when the evening cools (owner, 2026-10-02, on a fall suitcase
+    // that had tees for its 81°F day and nothing to wear them with). Dresses join bottoms here.
+    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && ['bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) return true
     return seasonEligibleForCalendar(piece, calendar, wardrobeCategoryGroup(piece))
   })
 }

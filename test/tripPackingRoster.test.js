@@ -300,11 +300,13 @@ test('a single-use-case-only piece survives the bench even when 60+ cross-slot-r
   // calendar `fall` (OUT_OF_SEASON.fall === 'warm') but ran up to 94.9°F -- the hard exclusion above
   // purged every warm-tagged bottom before the model ever saw one, leaving a single non-hiking
   // fallback pair to cover every casual/outdoor slot. This narrow override reuses weather.js's own
-  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Deliberately
-  // scoped to `bottom` only -- dress/outerwear keep the unconditional exclusion from the tests above.
-  test('tripSeasonEligiblePool keeps a warm-tagged bottom on a fall/winter trip when tripHasHotWeather is true', () => {
+  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Originally scoped
+  // to `bottom` only. Owner direction 2026-10-02 widened it to dresses: a hot day in a fall trip needs
+  // a whole warm-weather base, and a dress that can take a layer for the evening is one. Shoes and
+  // outerwear keep the unconditional exclusion.
+  test('tripSeasonEligiblePool keeps a warm-tagged bottom and dress on a fall/winter trip when tripHasHotWeather is true', () => {
     const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR], 'fall', { tripHasHotWeather: true })
-    assert.deepEqual(result, [WARM_BOTTOM], 'only the bottom is spared -- shoes/dress/outerwear stay excluded even on a hot day')
+    assert.deepEqual(result, [WARM_BOTTOM, WARM_DRESS], 'the bottom and the dress are spared -- shoes/outerwear stay excluded even on a hot day')
   })
 
   test('tripSeasonEligiblePool still excludes a warm-tagged bottom on a fall/winter trip when the trip is not actually hot', () => {
@@ -1481,4 +1483,17 @@ test('trip explanation evidence reports an activity with fewer outfits than plan
     { activity: 'Nature Walks', outfits_planned: 2, outfits_ready: 1 },
     { activity: 'Nature Walks', reason: 'nothing light enough for the afternoon' },
   ])
+})
+
+// Owner, 2026-10-02: a fall suitcase had tees for its one 81°F day and nothing to wear them with.
+test('a cool-season trip with a hot day admits warm-weather dresses as well as bottoms; shoes stay season-filtered', () => {
+  const pool = [
+    { id: 1, name: 'linen pants', category: 'bottom', season: 'warm' },
+    { id: 2, name: 'sundress', category: 'dress', season: 'warm' },
+    { id: 3, name: 'sandals', category: 'shoes', season: 'warm' },
+    { id: 4, name: 'denim', category: 'bottom', season: 'year-round' },
+  ]
+  const ids = list => list.map(piece => piece.id).sort()
+  assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: false })), [4])
+  assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: true })), [1, 2, 4])
 })
