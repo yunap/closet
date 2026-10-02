@@ -3972,26 +3972,54 @@ async function executeToolInternal(name, args, toolContext = {}) {
               repairResponses = []
             }
             if (Array.isArray(repairResponses) && repairResponses.length) {
-              const repairedBySlot = new Map(repairResponses.map(entry => [String(entry?.slot_id || ''), entry]))
-              const repairableSlotIds = new Set(repairable.map(entry => entry.slot_id))
-              const stillNeedsRepair = failures.filter(failure => !repairableSlotIds.has(failure.slot_id))
-              const originalBySlot = new Map(failures.map(failure => [failure.slot_id, failure.outfit]))
-              const resubmission = repairable
-                .map(entry => repairedBySlot.get(String(entry.slot_id)))
-                .filter(Boolean)
-                .map(entry => ({
-                  slot_id: entry.slot_id,
+              // Each repair response is paired with ONE card, not one slot. thread_1790926685366: a
+              // slot with two repairable cards was keyed by slot_id alone, so both cards resolved to
+              // the last response for that slot — the model repaired both correctly, the second
+              // overwrote the first, the pair then failed as a duplicate of itself, and a whole look
+              // was lost. A response is claimed once: by its own piece_ids, then its title, then
+              // slot order (the repair may legitimately revise piece_ids, so ids alone cannot key it).
+              const pieceKey = ids => (Array.isArray(ids) ? ids : []).map(Number).sort((x, y) => x - y).join(',')
+              const unclaimedResponses = [...repairResponses]
+              const claimResponseFor = card => {
+                const sameSlot = response => String(response?.slot_id || '') === String(card.slot_id)
+                let index = unclaimedResponses.findIndex(response => sameSlot(response) && Array.isArray(response.piece_ids) && response.piece_ids.length && pieceKey(response.piece_ids) === pieceKey(card.piece_ids))
+                if (index < 0) index = unclaimedResponses.findIndex(response => sameSlot(response) && response.title && response.title === card.title)
+                if (index < 0) index = unclaimedResponses.findIndex(sameSlot)
+                return index < 0 ? null : unclaimedResponses.splice(index, 1)[0]
+              }
+              const unclaimedFailures = [...failures]
+              const claimFailureFor = card => {
+                const index = unclaimedFailures.findIndex(failure => failure.slot_id === card.slot_id
+                  && (failure.outfit?.title || '') === card.title
+                  && pieceKey(failure.outfit?.pieceIds) === pieceKey(card.piece_ids))
+                return index < 0 ? null : unclaimedFailures.splice(index, 1)[0]
+              }
+              const resubmission = []
+              for (const card of repairable) {
+                const original = claimFailureFor(card)
+                const entry = claimResponseFor(card)
+                if (!entry) {
+                  // No answer for this card: it stays a failure rather than vanishing from the record.
+                  if (original) unclaimedFailures.push(original)
+                  continue
+                }
+                resubmission.push({
+                  slot_id: card.slot_id,
                   // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
                   // supplied its own warmer piece_ids -- the repair call is instructed not to
                   // restyle otherwise, but the model still owns that one legitimate escape hatch.
                   piece_ids: Array.isArray(entry.piece_ids) && entry.piece_ids.length
                     ? entry.piece_ids
-                    : (originalBySlot.get(entry.slot_id)?.pieceIds || []),
-                  title: entry.title || originalBySlot.get(entry.slot_id)?.title || '',
-                  reason: entry.reason || originalBySlot.get(entry.slot_id)?.reason || '',
-                  styling_instructions: entry.styling_instructions || originalBySlot.get(entry.slot_id)?.stylingInstructions || '',
+                    : (original?.outfit?.pieceIds || card.piece_ids || []),
+                  title: entry.title || original?.outfit?.title || card.title || '',
+                  reason: entry.reason || original?.outfit?.reason || '',
+                  styling_instructions: entry.styling_instructions || original?.outfit?.stylingInstructions || '',
                   cold_layer_decision: entry.cold_layer_decision,
-                }))
+                })
+              }
+              // Every failure not handed to the repair resubmission, including a non-repairable card
+              // that shares a slot with a repairable one (previously dropped from the record).
+              const stillNeedsRepair = unclaimedFailures
               const repairValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, {
                 visuallySeenPieceIds: seenForValidation
               })

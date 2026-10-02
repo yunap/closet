@@ -1491,6 +1491,57 @@ test('the exact live failure shape does not recur: an unnamed cold_layer_decisio
   assert.equal(debug.repaired.length, 3, 'the diagnostic must record all three cards as repaired, distinguishing "needed one narrow second chance" from "lost"')
 })
 
+// thread_1790926685366: two cards in ONE slot both needed the layer repair. The model repaired both;
+// the merge keyed responses by slot_id, so the second overwrote the first and one look was lost as a
+// "duplicate" of the other. The earlier test never caught it: its three cards sit in three slots.
+test('two cards in the same slot that both need the layer repair are both recovered, each keeping its own pieces', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topA = insertPiece({ category: 'top', name: 'walk top A' })
+  const bottomA = insertPiece({ category: 'bottom', name: 'walk bottom A' })
+  const topB = insertPiece({ category: 'top', name: 'walk top B' })
+  const bottomB = insertPiece({ category: 'bottom', name: 'walk bottom B' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const trenchId = insertPiece({ category: 'outerwear', name: 'trench coat' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week of walks',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topA, bottomA, topB, bottomB, shoeId, trenchId] }),
+    composeTripPlanOnce: async workbench => [[topA, bottomA], [topB, bottomB]].map((core, index) => ({
+      slot_id: workbench.slots[0].id,
+      piece_ids: core.concat([shoeId]),
+      title: `Walk ${index + 1}`,
+      reason: 'r',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+    })),
+    // Answers exactly as the live model did: one response per card, same slot_id, own piece_ids.
+    repairTripColdLayerCards: async ({ cards }) => cards.map(card => ({
+      slot_id: card.slot_id,
+      title: card.title,
+      piece_ids: card.piece_ids,
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+    })),
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'Nature Walks', occasion: 'casual', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
+  assert.equal(toolContext.generatedOutfits.length, 2, `both looks must survive the repair, rejected: ${JSON.stringify(debug.rejected)}`)
+  const coreOf = ids => ids.map(Number).filter(id => id !== Number(trenchId)).sort((x, y) => x - y).join(',')
+  assert.deepEqual(
+    toolContext.generatedOutfits.map(card => coreOf(card.pieces.map(piece => piece.id))).sort(),
+    [coreOf([topA, bottomA, shoeId]), coreOf([topB, bottomB, shoeId])].sort(),
+    'each look keeps its own top and bottom')
+  assert.equal(debug.repaired.length, 2)
+  assert.deepEqual(debug.rejected, [])
+})
+
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md §4.3 -- a false core_is_warm_enough
 // claim and a plain omission are structurally different failures (distinct messages, for
 // diagnostics) but must converge on the exact same repairable path.
