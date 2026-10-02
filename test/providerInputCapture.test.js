@@ -104,3 +104,53 @@ test('a capture never overwrites a legacy counter-only filename after a process 
   assert.match(newFiles[0], /-anthropic-normalized\.json$/)
   delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
 })
+
+test('enabled: every record carries the thread, turn and request it belongs to, and a structured call its schema name', async () => {
+  const dir = path.join(tmpRoot, 'attribution')
+  process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR = dir
+  const { registerProviderCaptureContextReader, captureNormalizedProviderInput, captureWireProviderInput, captureProviderOutput } = await import('../lib/providerInputCapture.js')
+  registerProviderCaptureContextReader(() => ({
+    sessionId: 'thread_123',
+    freeformTurnToken: 'turn-abc',
+    originalUrl: '/api/ai/ask?debug=1',
+    isNested: true,
+  }))
+  try {
+    const meta = { provider: 'gemini', model: 'x', subflow: 'structured_response', schemaName: 'trip_plan_composition', callId: 'c1' }
+    captureNormalizedProviderInput({ ...meta, system: 'sys', messages: [], tools: [] })
+    captureWireProviderInput({ ...meta, request: { foo: 'bar' } })
+    captureProviderOutput({ ...meta, output: '{}' })
+    const records = fs.readdirSync(dir).sort().map(file => JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')))
+    assert.deepEqual(records.map(r => r.stage), ['normalized', 'wire', 'output'])
+    for (const record of records) {
+      assert.equal(record.threadId, 'thread_123')
+      assert.equal(record.turnToken, 'turn-abc')
+      assert.equal(record.requestPath, '/api/ai/ask')
+      assert.equal(record.nested, true)
+      assert.equal(record.schemaName, 'trip_plan_composition')
+    }
+  } finally {
+    registerProviderCaptureContextReader(null)
+    delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
+  }
+})
+
+test('enabled with no request context: attribution fields are present and empty, and a throwing reader never breaks the capture', async () => {
+  const dir = path.join(tmpRoot, 'no-context')
+  process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR = dir
+  const { registerProviderCaptureContextReader, captureWireProviderInput } = await import('../lib/providerInputCapture.js')
+  registerProviderCaptureContextReader(() => { throw new Error('no store') })
+  try {
+    captureWireProviderInput({ provider: 'gemini', model: 'x', request: { foo: 'bar' } })
+    const [file] = fs.readdirSync(dir)
+    const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'))
+    assert.equal(record.threadId, '')
+    assert.equal(record.turnToken, '')
+    assert.equal(record.requestPath, '')
+    assert.equal(record.nested, false)
+    assert.equal(record.schemaName, '')
+  } finally {
+    registerProviderCaptureContextReader(null)
+    delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
+  }
+})

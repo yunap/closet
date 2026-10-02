@@ -4486,6 +4486,8 @@ Known limits, recorded rather than changed here:
 - Selected-piece required-footwear repair replaces the shoe object without carrying its `role`; that
   flow validates by category, so nothing reads it today.
 
+**[amended 2026-10-01 — capture attribution]** Every capture record now also carries `threadId`, `turnToken`, `requestPath` and `nested`, read from the request-scoped telemetry context that `ai_call_log` uses (`registerProviderCaptureContextReader`, registered by `lib/aiCallTelemetry.js`), so a capture is matched to a chat thread by id rather than by timestamp. Records written by `askStylistStructuredWithUsage` add `schemaName` (`trip_roster_selection`, `trip_plan_composition`, `trip_cold_layer_repair`, `capsule_roster_selection`, …), because those calls share the default `structured_response` subflow and could not be told apart inside one trip turn. Filenames and the directory layout are unchanged. Reason: the captures for `thread_1789801108635` and `thread_1790552162737` were written under `/tmp`, which macOS clears, and were gone when the threads were reviewed; `.claude/launch.json` gains `wardrobe-api-capture`, the real dev server with capture written to `~/.wardrobe-captures` (outside the repo and outside `/tmp`). Capture stays off by default. Known limit, unchanged: a capture ends at the provider reply — what gates, repairs and deterministic prose then do to it is only in the thread payload’s `debug` blob.
+
 **Raw output capture.** `lib/providerInputCapture.js` gains an `output` stage, on whenever
 `WARDROBE_CAPTURE_PROVIDER_INPUT_DIR` is set and written to the same directory — a complete capture
 needs no second variable — written from `askStylistWithUsage` and

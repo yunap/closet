@@ -1331,14 +1331,14 @@ export async function askStylistStructuredWithUsage({
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
   const captureCallId = newProviderCaptureCallId()
-  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, callId: captureCallId, system, messages, tools: [] })
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, schemaName: name, callId: captureCallId, system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
     const startedAt = Date.now()
     let interaction
     try {
-      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, callId: captureCallId }, {
+      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, schemaName: name, callId: captureCallId }, {
         model: target.model,
         system_instruction: plainSystem,
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
@@ -1370,7 +1370,7 @@ export async function askStylistStructuredWithUsage({
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
-    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
+    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, schemaName: name, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1381,7 +1381,7 @@ export async function askStylistStructuredWithUsage({
 
   if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, callId: captureCallId }, {
+    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, schemaName: name, callId: captureCallId }, {
       model: target.model,
       max_tokens: maxTokens,
       messages: [
@@ -1396,7 +1396,7 @@ export async function askStylistStructuredWithUsage({
     const text = response.choices?.[0]?.message?.content || ''
     const stopReason = response.choices?.[0]?.finish_reason
     const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason })
-    captureProviderOutput({ provider: 'openai', model: target.model, subflow, callId: captureCallId, stopReason: stopReason ?? null, output: text })
+    captureProviderOutput({ provider: 'openai', model: target.model, subflow, schemaName: name, callId: captureCallId, stopReason: stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1407,7 +1407,7 @@ export async function askStylistStructuredWithUsage({
 
   const resolvedModel = model || ANTHROPIC_MODEL
   const client = new Anthropic({ apiKey: resolveAnthropicKey() })
-  const response = await client.messages.create(wireCaptured({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId }, {
+  const response = await client.messages.create(wireCaptured({ provider: 'anthropic', model: resolvedModel, subflow, schemaName: name, callId: captureCallId }, {
     model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
@@ -1420,7 +1420,7 @@ export async function askStylistStructuredWithUsage({
   }), { signal })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
   const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
-  captureProviderOutput({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
+  captureProviderOutput({ provider: 'anthropic', model: resolvedModel, subflow, schemaName: name, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
   // A tool_use block that hit max_tokens mid-generation can still have a complete-looking,
   // valid `input` object — just missing whatever fields the model hadn't reached yet (e.g. an
   // empty `outfits` array instead of the requested count). The !toolUse?.input check alone
