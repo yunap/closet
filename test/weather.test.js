@@ -724,3 +724,30 @@ test('resolveExposureWindowAcrossDays: rain on every covered day is rain; no cov
   assert.equal(await resolveExposureWindowAcrossDays({ location: '', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' }, fetchImpl: dry }), null)
   assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' } }), null, 'never the real network under NODE_ENV=test')
 })
+
+// Live thread_1790974353527: daily highs 81, 75, 69, 69, 70, 66 in mid-October were classified
+// "hot" because of the one 81°F day, and the suitcase came out as summer clothes under coats.
+test('a multi-day range is hot only when at least half its days are hot; cold still counts on any day', async () => {
+  _clearWeatherCachesForTests()
+  const oneWarmDay = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-17') }, location: 'Vienna, VA',
+    fetchImpl: makeMockFetch({ highs: [81, 75, 69, 69, 70, 66], lows: [64, 65, 55, 53, 53, 49] }),
+  })
+  assert.equal(oneWarmDay.isHot, false, 'one warm afternoon does not make a mild week hot')
+  assert.equal(oneWarmDay.highF, 81, 'the warmest day is still reported in the range')
+  assert.equal(oneWarmDay.needsRemovableCoolLayer, true)
+
+  _clearWeatherCachesForTests()
+  const mostlyHot = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-07-12'), end: new Date('2026-07-15') }, location: 'Paso Robles, CA',
+    fetchImpl: makeMockFetch({ highs: [92, 88, 79, 95], lows: [58, 56, 55, 60] }),
+  })
+  assert.equal(mostlyHot.isHot, true)
+
+  _clearWeatherCachesForTests()
+  const oneColdNight = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-15') }, location: 'Denver, CO',
+    fetchImpl: makeMockFetch({ highs: [70, 72, 68, 60], lows: [50, 48, 45, 28] }),
+  })
+  assert.equal(oneColdNight.isCold, true, 'one cold night still has to be dressed for')
+})

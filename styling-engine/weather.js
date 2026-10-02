@@ -431,7 +431,16 @@ export async function resolveDaypartHourlyEvidence({ location = '', date = '', f
 function classify(highs, lows, { exclusive = true, dates = [] } = {}) {
   const maxHigh = Math.max(...highs)
   const minLow = Math.min(...lows)
-  const isHot = maxHigh >= HOT_F
+  // Over SEVERAL days, "hot" describes the days you will mostly be in, not the single warmest one.
+  // Live thread_1790974353527 (Vienna, VA, mid-October; daily highs 81, 75, 69, 69, 70, 66): one
+  // 81°F afternoon made the whole week "hot", the hot-weather gates removed the fall bottoms
+  // (denim, corduroy, wool) and the hot-trip rule let summer bottoms in, and the suitcase came out
+  // as summer clothes under coats. A multi-day range is hot when at least half its days reach HOT_F.
+  // One day keeps the single-day reading. Cold and extreme heat still count on any day: one cold
+  // or dangerously hot day has to be dressed for.
+  const isHot = highs.length > 1
+    ? highs.filter(high => high >= HOT_F).length * 2 >= highs.length
+    : maxHigh >= HOT_F
   const isCold = minLow < COLD_F
   const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
