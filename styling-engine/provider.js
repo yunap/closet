@@ -1322,7 +1322,9 @@ export async function askStylistStructuredWithUsage({
   model = null,
   providerOverride = null,
   subflow = 'structured_response',
-  signal = null
+  signal = null,
+  // Per-call Gemini thinking level; null keeps GEMINI_THINKING_LEVEL. Ignored by other providers.
+  thinkingLevel = null
 }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1354,7 +1356,7 @@ export async function askStylistStructuredWithUsage({
         model: target.model,
         system_instruction: plainSystem,
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
-        generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+        generation_config: { max_output_tokens: maxTokens, thinking_level: thinkingLevel || GEMINI_THINKING_LEVEL },
         // Gemini's JSON-Schema subset does not necessarily accept every construct Closet's
         // schemas use (e.g. FREEFORM_EXECUTION_ROUTE_SCHEMA's plain enums are fine; a schema using
         // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent

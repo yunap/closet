@@ -4511,6 +4511,11 @@ export const TRIP_ROSTER_PHOTO_LIMIT = 90
 // its ~20 MB inline limit). Owner, 2026-10-03: revert if packing does not improve; setting this
 // back to TRIP_ROSTER_PHOTO_LIMIT restores the shortlist.
 export const GEMINI_TRIP_ROSTER_PHOTO_LIMIT = 300
+// Off (owner, 2026-10-03, after live thread_1791016975094): with all 183 photos the packer made the
+// same mistakes it makes from text — sneakers for the trail, heels for a museum day, a boot named in
+// its reasoning but not packed — at ~$0.07 more per run. The photo path stays for a later trial;
+// true sends photos again (whole bench on Gemini, model shortlist elsewhere).
+export const TRIP_ROSTER_PHOTOS_ENABLED = false
 
 export async function selectTripRosterViaModel({
   pool = [],
@@ -4520,6 +4525,7 @@ export async function selectTripRosterViaModel({
   chooseRoster = null,
   shortlistRoster = null,
   photoLimit = TRIP_ROSTER_PHOTO_LIMIT,
+  photos = TRIP_ROSTER_PHOTOS_ENABLED,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4603,9 +4609,9 @@ export async function selectTripRosterViaModel({
     }
   }
   let choiceBench = bench
-  let withPhotos = bench.length <= photoLimit
+  let withPhotos = photos && bench.length <= photoLimit
   let shortlistSource = withPhotos ? 'whole_bench' : 'text_only'
-  if (!withPhotos && typeof shortlistRoster === 'function') {
+  if (photos && !withPhotos && typeof shortlistRoster === 'function') {
     bump('tripRosterShortlistCalls')
     let listed = await shortlistFrom(1)
     if (listed.failures.length && listed.shortlist.length) {

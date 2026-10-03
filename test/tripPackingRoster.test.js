@@ -1079,7 +1079,7 @@ test('trip roster photos go inside the cached prefix, ahead of the repair text',
   assert.equal(initial[4].cache_control?.type, 'ephemeral', 'the breakpoint sits on the last photo')
   assert.deepEqual(repair.slice(0, 5), initial, 'catalog and photos are identical on the repair')
   assert.match(repair[5].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
-  assert.match(tripRosterSelectionSystemPrompt(), /Each candidate with a photograph is shown after the list/)
+  assert.match(tripRosterSelectionSystemPrompt(), /When photographs follow the list, each is labelled with its ID/)
 })
 
 // ─── VISUAL-ROLE EVIDENCE (thread_1788518048013 arc, superseded by thread_1789598100140) ────────
@@ -1525,7 +1525,7 @@ test('a bench within the photo limit goes to the packer whole, with photos, and 
   let shortlistCalls = 0
   const seen = []
   const result = await selectTripRosterViaModel({
-    pool: POOL, slots: SLOTS,
+    pool: POOL, slots: SLOTS, photos: true,
     shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
     chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
   })
@@ -1542,7 +1542,7 @@ test('a bench over the photo limit is shortlisted by the model, and the packer s
   const shortlist = [1, 2, 3, 4, 5, 6, 8, 1000, 1001]
   const seen = []
   const result = await selectTripRosterViaModel({
-    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true,
     shortlistRoster: async ({ bench, limit }) => {
       assert.ok(bench.length > limit, 'the shortlist call gets the complete list')
       return { shortlist_piece_ids: shortlist }
@@ -1559,7 +1559,7 @@ test('a shortlist that cannot dress every use case is retried once, then the pac
   const shortlistAttempts = []
   const seen = []
   const result = await selectTripRosterViaModel({
-    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true,
     // No shoes at all: neither use case can be dressed from it.
     shortlistRoster: async ({ attempt, failures }) => { shortlistAttempts.push({ attempt, codes: failures.map(f => f.code) }); return { shortlist_piece_ids: [1, 2, 1000] } },
     chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
@@ -1578,7 +1578,7 @@ test('with a higher provider photo limit the packer sees the whole bench with ph
   let shortlistCalls = 0
   const seen = []
   const result = await selectTripRosterViaModel({
-    pool: [...POOL, ...manyCityTops], slots: SLOTS, photoLimit: GEMINI_TRIP_ROSTER_PHOTO_LIMIT,
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true, photoLimit: GEMINI_TRIP_ROSTER_PHOTO_LIMIT,
     shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
     chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
   })
@@ -1586,4 +1586,32 @@ test('with a higher provider photo limit the packer sees the whole bench with ph
   assert.equal(seen[0].withPhotos, true)
   assert.ok(seen[0].bench.length > 90)
   assert.equal(result.shortlistSource, 'whole_bench')
+})
+
+// Owner, 2026-10-03 (thread_1791016975094): photos made no difference to the packer's mistakes at
+// ~$0.07 more per run, so roster selection is text-only by default again.
+test('by default the packer chooses from the full text list, with no photos and no shortlist call', async () => {
+  const { TRIP_ROSTER_PHOTOS_ENABLED } = await import('../styling-engine/outfitSetPlanner.js')
+  assert.equal(TRIP_ROSTER_PHOTOS_ENABLED, false)
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, false)
+  assert.equal(seen[0].bench.length, result.bench.length)
+  assert.equal(result.shortlistSource, 'text_only')
+})
+
+test('the packer brief sizes the suitcase by the looks it must make, keeps distinct-job shoes, and keeps its reasoning to packed pieces', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.doesNotMatch(brief, /defeats the point of packing light/)
+  assert.doesNotMatch(brief, /would serve the trip better as a top or a layer instead/, 'the clause that argued against trail shoes')
+  assert.match(brief, /HOW TO DECIDE\. Before choosing, picture the trip/)
+  assert.match(brief, /trail footing and an evening out are different jobs from city walking/)
+  assert.match(brief, /shoes made for walking for walking-heavy days \(not heels or wedges\)/)
+  assert.match(brief, /Name only pieces you actually selected/)
 })
