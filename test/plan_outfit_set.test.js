@@ -10021,3 +10021,43 @@ test('the trip writer is told which looks need a packed layer for the cool part 
   assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse], assignedLayerIds: [1] }), 'worn: olive field jacket')
   assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Warm Beach', pieces: [blouse] }), null, 'no cool end, nothing to say')
 })
+
+// thread_1791018137741: asked only to set the layer, and never shown the card text, the repair
+// rewrote it — an id citation, and boots the card did not have. The card keeps its own words.
+test('a layer repair that leaves the pieces unchanged keeps the card\'s own reason and styling, and is shown them', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const top = insertPiece({ category: 'top', name: 'mock-neck top' })
+  const skirt = insertPiece({ category: 'bottom', name: 'botanical midi skirt' })
+  const shoes = insertPiece({ category: 'shoes', name: 'olive slip-ons', heel_height: 'flat', walk_support: 'high' })
+  const coat = insertPiece({ category: 'outerwear', name: 'black wool coat' })
+  let shown = null
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [top, skirt, shoes, coat] }),
+    composeTripPlanOnce: async workbench => workbench.slots.map(slot => ({
+      slot_id: slot.id, piece_ids: [top, skirt, shoes], title: 'Mock-Neck and Skirt',
+      reason: 'A soft gallery look.', styling_instructions: 'Tuck the top into the skirt.',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+    })),
+    repairTripColdLayerCards: async ({ cards }) => {
+      shown = cards
+      return cards.map(card => ({
+        slot_id: card.slot_id, piece_ids: card.piece_ids, title: card.title,
+        reason: `Paired with the black wool coat (${coat}) for transit.`,
+        styling_instructions: 'Wear it with comfortable walking boots.',
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: coat },
+      }))
+    },
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip', weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'Museum Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(shown?.[0]?.reason, 'A soft gallery look.', 'the repair sees the text it is told to keep')
+  const card = toolContext.generatedOutfits[0]
+  assert.equal(card.reason, 'A soft gallery look.')
+  assert.equal(card.stylingInstructions, 'Tuck the top into the skirt.')
+  assert.deepEqual(card.assignedLayerIds, [Number(coat)])
+})

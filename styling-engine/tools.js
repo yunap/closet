@@ -4047,6 +4047,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
                 const newLayerId = entry.cold_layer_decision?.assigned_layer_piece_id
                 const newLayerName = newLayerId && Number(newLayerId) !== Number(rawSubmission?.cold_layer_decision?.assigned_layer_piece_id) ? pieceName(newLayerId) : ''
                 const renameLayer = text => (oldLayerName && newLayerName ? String(text || '').split(oldLayerName).join(newLayerName) : text)
+                // The card's own words are kept: live thread_1791018137741's repair, asked only to set
+                // the layer, rewrote both cards' text — an id citation, and "walking boots" / "heeled
+                // boots" on cards wearing slip-ons and wedges. Its text is used only when it changed
+                // the pieces (the warmer-core escape hatch), since the old text then describes the
+                // wrong outfit.
+                const repairChangedPieces = Array.isArray(entry.piece_ids) && entry.piece_ids.length
+                  && pieceKey(entry.piece_ids) !== pieceKey(original?.outfit?.pieceIds || card.piece_ids)
+                const cardText = (repairText, originalText) => repairChangedPieces
+                  ? (repairText || originalText || '')
+                  : renameLayer(originalText || repairText || '')
                 resubmission.push({
                   slot_id: card.slot_id,
                   // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
@@ -4056,8 +4066,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
                     ? entry.piece_ids
                     : (original?.outfit?.pieceIds || card.piece_ids || []),
                   title: entry.title || original?.outfit?.title || card.title || '',
-                  reason: renameLayer(entry.reason || original?.outfit?.reason || ''),
-                  styling_instructions: renameLayer(entry.styling_instructions || original?.outfit?.stylingInstructions || ''),
+                  reason: cardText(entry.reason, original?.outfit?.reason),
+                  styling_instructions: cardText(entry.styling_instructions, original?.outfit?.stylingInstructions),
                   cold_layer_decision: entry.cold_layer_decision,
                 })
               }

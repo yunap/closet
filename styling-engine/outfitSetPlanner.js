@@ -281,6 +281,8 @@ function withoutPieceIdCitations(text = '') {
   return String(text || '')
     .replace(/[ \t]*[([]\s*IDs?\s*:?\s*#?\d+(?:\s*(?:,|and|&)\s*#?\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
     .replace(/[ \t]*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // A bare "(996867)" (live thread_1791018137741); a four-digit year in parentheses is kept.
+    .replace(/[ \t]*\(\s*(\d{2,7})\s*\)/g, (match, digits) => (/^(19|20)\d{2}$/.test(digits) ? match : '')) // ratchet-allow: model-output integrity boundary, not garment classification
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\s+([.,;:])/g, '$1')
     .trim()
@@ -5540,6 +5542,9 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
       label: failure.label || slot.label || '',
       title: failure.outfit?.title || '',
       piece_ids: Array.isArray(failure.outfit?.pieceIds) ? failure.outfit.pieceIds.map(Number) : [],
+      // The repair is told to return these unchanged; it must be able to see them.
+      reason: failure.outfit?.reason || '',
+      styling_instructions: failure.outfit?.stylingInstructions || '',
       candidates: candidates.map(piece => ({ id: Number(piece.id), name: piece.name || `piece ${piece.id}` })),
     })
   }
