@@ -5447,6 +5447,9 @@ const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
   /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
+  // thread_1790989165853: a rejected assigned layer leaves the card with no layer, so the transit
+  // check fires as well. It is the same missing layer, and a repair that supplies one fixes both.
+  /^no adequate sleeve-bearing layer for cold-weather transit \(the indoor base may stay light, but removable coverage is required for getting there and back\)$/,
 ]
 
 export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {

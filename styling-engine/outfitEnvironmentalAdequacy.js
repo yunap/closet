@@ -412,12 +412,12 @@ export function outerwearLayerPositivelyInadequate(piece) {
   if (thermalMaterialVerdict(piece) === 'insulating') return false
   if (fabricWeight(piece) === 'heavy') return false
 
-  const negativeSignals = [
-    pieceFabricWeightIsUltralight(piece),
-    thermalMaterialVerdict(piece) === 'non_insulating',
-    interiorConstruction(piece) === 'unlined',
-  ].filter(Boolean).length
-  return negativeSignals >= 2
+  // Ultralight is required (2026-10-02). The floor was built for the ultralight UPF hoodie above;
+  // "any two of three" also convicted every medium-weight unlined cotton or knit layer — the olive
+  // field jacket, a cotton cardigan, two zip jackets — and live thread_1790989165853 lost both dinner
+  // looks to it. The same jacket had been rejected as too WARM a week earlier (thread_1790929985430).
+  if (!pieceFabricWeightIsUltralight(piece)) return false
+  return thermalMaterialVerdict(piece) === 'non_insulating' || interiorConstruction(piece) === 'unlined'
 }
 
 // Migrated verbatim from validateSlotOutfitConstraints ([R2]). This is the MINIMUM-WARMTH FLOOR and

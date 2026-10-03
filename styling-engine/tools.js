@@ -4091,11 +4091,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // Live thread_1790984756285: two activities had no outfit at all, and the reply still described
           // sightseeing and dinner looks built from the packer's intent, so the user read them as covered.
           // An activity with nothing on screen is named first, ahead of everything else the writer reads.
+          // Live thread_1790989165853: asked "what you would add to the bag", with no reason given, the
+          // writer invented one (nicer trousers) when the real cause was a jacket. Not asked to guess now.
           const undressedActivities = (pendingPlan.slots || [])
             .map(slot => slot.label)
             .filter(label => label && !planOutfits.some(outfit => outfit?.label === label))
           const undressedPreface = undressedActivities.length
-            ? `NO OUTFIT EXISTS for: ${undressedActivities.join(', ')}. Do not describe an outfit for ${undressedActivities.length === 1 ? 'it' : 'them'}; say plainly that you could not put one together and what you would add to the bag to fix it. `
+            ? `NO OUTFIT EXISTS for: ${undressedActivities.join(', ')}. Do not describe an outfit for ${undressedActivities.length === 1 ? 'it' : 'them'}; say plainly that you could not put one together, and give a cause only if not_covered states one. `
             : ''
           return {
             status: 'success',

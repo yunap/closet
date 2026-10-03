@@ -1022,7 +1022,7 @@ test('user-facing thermal errors collapse to one primary explanation while every
   // Through the shared evaluator, with the presence requirement the styling-context resolver attaches
   // to a verified severe outdoor exposure (resolveColdLayerPresenceRequirement) — without it the floor
   // has no requirement to enforce.
-  const unlined = { ...LINED_TRENCH, id: 32, name: 'unlined cotton jacket', interior_construction: 'unlined', length_hits_at: 'hip' }
+  const unlined = { ...LINED_TRENCH, id: 32, name: 'unlined cotton jacket', interior_construction: 'unlined', fabric_weight: 'ultralight', length_hits_at: 'hip' }
   const pieces = [
     { ...cottonTee(), role: 'primary_top' },
     { ...bottom(), role: 'primary_bottom' },
@@ -1030,7 +1030,7 @@ test('user-facing thermal errors collapse to one primary explanation while every
     { ...unlined, role: 'outerwear' },
   ]
   const result = evaluateWearableOutfit(pieces, { requireShoes: true, roleAware: true, weatherContext: { weatherProfile: { ...severeRange(45, 35), coldPresenceRequirement: { state: 'required' } }, activity: 'none' } })
-  assert.ok(hardCodes(result).includes(C.NO_WARM_LAYER_FOR_COLD) && hardCodes(result).includes(ADJ), `both typed errors are kept: ${JSON.stringify(hardCodes(result))}`)
+  assert.ok(hardCodes(result).includes(C.NO_WARM_LAYER_FOR_COLD) && hardCodes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT), `both typed errors are kept: ${JSON.stringify(hardCodes(result))}`)
   const shown = collapseThermalErrorFindings(result.hardFindings)
   assert.deepEqual(shown.map(f => f.code), [C.NO_WARM_LAYER_FOR_COLD])
 })
@@ -1099,7 +1099,7 @@ test('KNOWN UNRESOLVED: a fully-lined, wind-protective, non-insulating trench at
 })
 
 test('NEUTRAL VERDICTS (experiment flag): the warm-layer advisory is stated as the recorded facts, not a recommendation', () => {
-  const thinJacket = { id: 35, category: 'outerwear', name: 'unlined cotton jacket', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', sleeve_length: 'long' }
+  const thinJacket = { id: 35, category: 'outerwear', name: 'unlined cotton jacket', fabric_weight: 'ultralight', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', sleeve_length: 'long' }
   const weatherProfile = { ...severeRange(60, 48), coldPresenceRequirement: { state: 'recommended' } }
   const run = () => evaluateOutfitEnvironmentalAdequacy([top({ fiber_content: ['cotton'] }), bottom(), shoes(), thinJacket], { weatherProfile, environment: 'outdoor' })
     .findings.find(finding => finding.code === C.WARM_LAYER_RECOMMENDED)

@@ -8031,7 +8031,7 @@ async function seedRepairChoiceWardrobe() {
   const thinShell = insertPiece({
     name: 'thin unlined windbreaker', category: 'outerwear', colors: ['olive'],
     occasions: ['city', 'casual'], photo: await makeImage('thin-windbreaker.png', '#5d6b4a'),
-    fabric_weight: 'light', fiber_content: ['polyester'], fabric_category: 'nylon',
+    fabric_weight: 'ultralight', fiber_content: ['polyester'], fabric_category: 'nylon',
   })
   db.prepare("UPDATE pieces SET sleeve_length = 'long', interior_construction = 'unlined', insulating_layer_materials = ? WHERE id = ?")
     .run(JSON.stringify([]), thinShell)

@@ -468,7 +468,7 @@ const THIN_UNLINED_SHELL = piece(11, 'outerwear', {
   // Two independent negative warmth signals — non-insulating construction and an unlined interior —
   // which is what `outerwearLayerPositivelyInadequate` requires. A provable thermal claim, unlike
   // the formality label this fixture used to lean on.
-  fabric_weight: 'light',
+  fabric_weight: 'ultralight',
   fiber_content: ['polyester'],
   fabric_category: 'nylon',
   insulating_layer_materials: [],

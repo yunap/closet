@@ -1357,6 +1357,31 @@ test('identifyColdLayerRepairableFailures excludes a card that also carries a di
   assert.equal(repairable.length, 0, 'a card with any other failure alongside the cold-layer one must never be bundled into repair')
 })
 
+// thread_1790989165853: both dinner cards assigned a jacket the layer check rejected, which left
+// them with no layer, so the transit check fired as well. The second reason kept them out of repair.
+test('a rejected assigned layer plus the transit finding it causes is still repaired', () => {
+  const fleece = { id: 902, name: 'grey textured fleece', category: 'outerwear', fabric_weight: 'medium', fiber_content: ['fleece', 'polyester'] }
+  const pendingPlan = { slots: [{ id: 'dinners', label: 'Evening & Dinners', allowedPieces: [fleece] }] }
+  const failures = [{
+    slot_id: 'dinners', label: 'Evening & Dinners',
+    reasons: [
+      'assigned layer piece 996767 (olive green lightweight jacket) has evidence it cannot serve as a cold layer for Evening & Dinners — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.',
+      'no adequate sleeve-bearing layer for cold-weather transit (the indoor base may stay light, but removable coverage is required for getting there and back)',
+    ],
+    outfit: { title: 'Mustard Knit & Boots', pieceIds: [84, 105, 191] },
+  }]
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 1)
+  assert.deepEqual(repairable[0].candidates.map(c => c.id), [902])
+})
+
+test('only an ultralight layer is convicted as no layer at all; a medium unlined cotton jacket is a layer', async () => {
+  const { outerwearLayerPositivelyInadequate } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const unlinedCotton = { category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined' }
+  assert.equal(outerwearLayerPositivelyInadequate(unlinedCotton), false, 'the olive field jacket, the cotton cardigan and two zip jackets were convicted by the old two-of-three rule')
+  assert.equal(outerwearLayerPositivelyInadequate({ ...unlinedCotton, fabric_weight: 'ultralight' }), true, 'the thin UPF hoodie the floor was built for')
+})
+
 test('identifyColdLayerRepairableFailures never sends a slot with no qualifying candidate layer to repair', () => {
   // "outerwear" category but positively inadequate (ultralight + unlined -- 2 of the 3 negative
   // signals outerwearLayerPositivelyInadequate checks), so it can never satisfy the cold floor.
