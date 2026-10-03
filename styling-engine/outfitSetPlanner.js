@@ -5463,7 +5463,10 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
     const slot = slotById.get(failure.slot_id)
     if (!slot) continue
     const repairExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
-    const repairDemand = requiredThermalBand(repairExposure)
+    const repairBand = requiredThermalBand(repairExposure)
+    // A layer answers to the walk there and the cool end, not to the destination indoors
+    // (thermalDemand.js `layer`); thread_1791007872599 measured a dinner coat against the dining room.
+    const repairDemand = repairBand?.layer?.level ? repairBand.layer : repairBand
     const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
       .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
       // Proportionate layers are offered first; a substantially warmer one is still offered, last,
@@ -5687,7 +5690,8 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // borderline pick (moderate against a light target, e.g. a plain fleece coat) still
           // passes as a defensible edge case rather than being rejected outright.
           const layerExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
-          const layerDemand = requiredThermalBand(layerExposure)
+          const layerBand = requiredThermalBand(layerExposure)
+          const layerDemand = layerBand?.layer?.level ? layerBand.layer : layerBand
           const layerFit = layerDemand?.level ? compareThermalFit(garmentWarmthLevel(layerPiece), layerDemand) : { fit: 'unknown' }
           //
           // 2026-10-02 (owner ruling, live thread_1790929985430): substantial overshoot is a NOTE

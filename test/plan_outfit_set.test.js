@@ -932,6 +932,39 @@ test('a positively-inadequate assigned layer is rejected even when the base outf
 // Owner ruling 2026-10-02, after thread_1790929985430: it is a NOTE on the card. As a rejection it
 // contradicted the layer requirement on a mild flat day — every real jacket was "too warm", the thin
 // hoodie "too weak", and a whole activity lost its outfits.
+// thread_1791007872599: a puffer over a wrap dress for the walk to dinner (low 43°F) was told it was
+// "warmer than these conditions call for", measured against the heated dining room. A layer answers
+// to the walk there (thermalDemand.js `layer`).
+test('a coat assigned for the walk to an indoor dinner is measured against the walk, not the room', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'wrap midi dress' })
+  const bootId = insertPiece({ category: 'shoes', name: 'ankle boots', heel_height: 'flat' })
+  const puffyId = insertPiece({ category: 'outerwear', name: 'insulated puffer coat', fabric_weight: 'heavy' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('["down"]', 'full_lining', puffyId)
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Dinners Out', occasion: 'smart casual', environment: 'indoor', count: 1, weather_estimate: { high_f: 60, low_f: 40 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with dinners out' })
+  const slot = workbench.pendingPlan.slots[0]
+  // The live run's stored dinner weather: indoors, walk there 43–75°F.
+  slot.weatherProfile = {
+    isHot: false, isCold: false, isIndoor: true, weatherSource: 'live_hourly',
+    transitIsHot: false, transitIsCold: true, transitIsColdSevere: false, transitNeedsRemovableCoolLayer: false,
+    transitHighF: 75.1, transitLowF: 42.9,
+  }
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(dressId), Number(bootId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(puffyId) },
+  }])
+  assert.equal(result.accepted.length, 1, JSON.stringify(result.failures.map(f => f.reasons)))
+  assert.ok(!(result.accepted[0].systemFlags || []).some(flag => /warmer than these conditions call for/.test(flag.message)),
+    `no too-warm note for a coat on a 40°F walk: ${JSON.stringify(result.accepted[0].systemFlags)}`)
+})
+
+// Moved from 66/57 to 78/63 when the note began reading the layer's own demand: a down coat against
+// a 57°F start is one level over (ordinary overshoot, no note); against 63°F it is two.
 test('an assigned layer substantially warmer than the slot demands is accepted with a note on the card, not rejected', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'hike top' })
@@ -947,7 +980,7 @@ test('an assigned layer substantially warmer than the slot demands is accepted w
 
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
-    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 78, low_f: 63 } },
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
   const slot = workbench.pendingPlan.slots[0]
@@ -998,7 +1031,7 @@ test('an assigned layer only one PET level above the slot demand is accepted, no
 
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
-    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 78, low_f: 63 } },
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
   const slot = workbench.pendingPlan.slots[0]
