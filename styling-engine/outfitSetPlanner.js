@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, weatherHasCoolEnd, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -5326,7 +5326,13 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   // requirement — and the shared owner adds the severity-aware outdoor-capability judgment neither
   // of them could make. This specialization keeps everything else: slot register, activity, season
   // and plan requirements remain local strategy.
-  if (weatherProfile?.isHot) {
+  // Same whole-range rule as the candidate pool (weatherHasCoolEnd, weather.js; engine map 2026-10-02).
+  // Live thread_1790984756285: the pool now offered heavy trousers for a 52–85°F week of afternoons,
+  // the packer packed them, and this check then rejected every sightseeing and dinner look as "a
+  // heavy main for hot weather" — 4 of 6 looks lost to two stages disagreeing. A heavy main is wrong
+  // only when it is hot throughout; with a cool end, the outfit-level warmth note (THERMAL_OVERSHOOT)
+  // still tells the wearer it runs warm at the hot end.
+  if (weatherProfile?.isHot && !weatherHasCoolEnd(weatherProfile)) {
     for (const piece of mainPieces) {
       if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
     }

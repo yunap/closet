@@ -340,6 +340,12 @@ function demandHint(weather, resolvedContext = {}) {
 // when given, is the same finding worded for the wearer and is what a card shows instead: live
 // thread_1790923286929 displayed "each candidate piece states its own warmth and insulation; choose
 // accordingly" on a card — an instruction to the composer, read by the owner as a note to her.
+// Same question as weather.js's weatherHasCoolEnd, answered locally: importing weather.js here would be
+// circular (it reaches this module through its own imports).
+function rangeHasCoolEnd(weather = {}) {
+  return Boolean(weather?.needsRemovableCoolLayer || weather?.transitNeedsRemovableCoolLayer || weather?.isCold || weather?.transitIsCold)
+}
+
 function finding(code, message, { severity = 'error', evidence = {}, remedy = false, cardMessage = '' } = {}) {
   return {
     code,
@@ -674,7 +680,13 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
           corroborate('no way of wearing this outfit carries enough warmth for the cold end of these conditions'),
           { evidence, severity: enforceCertainRequiredLayer ? 'error' : 'advisory' }))
       }
-      if (warmFit.verdict === 'substantial_excess') {
+      // A card for an activity spread over SEVERAL days with both a hot and a cool end is not meant for
+      // the hottest of them, so "too warm for the warm end" says nothing about it (live replay of
+      // thread_1790984756285: the note on every card of a 52–85°F week). On one day it still means
+      // what it says, and a range that is hot throughout still gets it.
+      const range = weather?.resolvedWeatherContext?.dateRange
+      const spansSeveralDays = Boolean(range?.start && range?.end && String(range.start).slice(0, 10) !== String(range.end).slice(0, 10))
+      if (warmFit.verdict === 'substantial_excess' && !(spansSeveralDays && rangeHasCoolEnd(weather))) {
         // ADVISORY, never hard (§5.5): overshoot ranks, it never excludes. Judged across
         // configurations, so excess a person can simply take off is no longer reported as a fault —
         // only warmth that remains in every wearable state.

@@ -9864,3 +9864,44 @@ test('a mostly mild trip with one hot day: not hot overall, warm-weather bottoms
   assert.ok(offeredIds.includes(Number(denim)), 'the fall bottom is offered')
   assert.ok(offeredIds.includes(Number(linen)), 'and so is a bottom for the hot day')
 })
+
+// Live thread_1790984756285: the pool offered heavy trousers for a 52–85°F week, then the outfit check
+// rejected every look wearing them as "a heavy main for hot weather" — two stages disagreeing.
+test('the heavy-main-for-hot-weather check follows the same whole-range rule as the candidate pool', async () => {
+  const { validateSlotOutfitConstraints } = await import('../styling-engine/outfitSetPlanner.js')
+  const outfit = { pieces: [{ id: 1, name: 'stripe tee', category: 'top' }, { id: 2, name: 'heavy wide-leg trousers', category: 'bottom', fabric_weight: 'heavy' }, { id: 3, name: 'sneakers', category: 'shoes' }] }
+  const hotThroughout = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, highF: 94, lowF: 75 } })
+  assert.ok(hotThroughout.some(reason => /heavy main for hot weather/.test(reason)))
+  const hotWithCoolEnd = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, highF: 85, lowF: 52, needsRemovableCoolLayer: true } })
+  assert.ok(!hotWithCoolEnd.some(reason => /heavy main for hot weather/.test(reason)))
+  const hotWithColdEnd = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, isCold: true, highF: 85, lowF: 43 } })
+  assert.ok(!hotWithColdEnd.some(reason => /heavy main for hot weather/.test(reason)), 'a cold end counts as a cool end')
+})
+
+// Live thread_1790984756285: the reply described dinner and sightseeing looks that did not exist.
+test('the trip writer is told first, by name, which activities have no outfit at all', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'city shoes', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a city day and a hike',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => [
+      { slot_id: workbench.slots.find(slot => slot.occasion === 'city').id, piece_ids: [topId, bottomId, shoeId], title: 'City Look', reason: 'r' },
+      // Submitted but rejected (no shoes), as the live dinner looks were rejected.
+      { slot_id: workbench.slots.find(slot => slot.occasion !== 'city').id, piece_ids: [topId, bottomId], title: 'Hike Look', reason: 'r' },
+    ],
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [
+      { label: 'City Days', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'Hill Hiking', occasion: 'casual', activity: 'hiking', count: 1 },
+    ],
+  }, toolContext)
+  assert.equal(result.status, 'success', JSON.stringify(result).slice(0, 400))
+  assert.match(result.message, /^NO OUTFIT EXISTS for: Hill Hiking\. Do not describe an outfit for it;/)
+})
