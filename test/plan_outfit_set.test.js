@@ -3057,6 +3057,42 @@ test('plan_outfit_set: a wrong model date_range is corrected to the user-stated 
   assert.equal(toolContext.freeformDiagnostics.resolvedLocation, 'Vienna, Virginia')
 })
 
+// thread_1791015503457: the model wrote 2024 for the range AND each activity's date. The range was
+// corrected to 2026; the activities kept 2024, fell outside the plan, did not inherit its estimate,
+// and the call stopped for weather.
+test('plan_outfit_set: activity dates move with a corrected trip range and keep inheriting the plan estimate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'city bottom', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'city shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const question = 'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?'
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange: extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') }),
+    weatherFetchImpl: async (url) => {
+      if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+      return { ok: false, json: async () => ({ error: true }) }
+    }
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2024-10-12', end: '2024-10-19' },
+    weather_estimate: { high_f: 68, low_f: 48, precipitation: 'none', wind: 'breezy' },
+    slots: [
+      { label: 'City Sightseeing', occasion: 'city', activity: 'walking', count: 1, date: '2024-10-13' },
+      { label: 'Late Stroll', occasion: 'city', activity: 'walking', count: 1, date: '2024-10-25' },
+    ],
+  }, toolContext)
+  assert.notEqual(result.status, 'weather_context_required', JSON.stringify(result).slice(0, 300))
+  const slots = toolContext.pendingPlan?.slots || []
+  assert.equal(slots.find(slot => slot.label === 'City Sightseeing')?.date?.slice(0, 10), '2026-10-13', 'day 2 of the trip stays day 2')
+  assert.equal(slots.find(slot => slot.label === 'Late Stroll')?.dateInherited, true, 'a date that would land past the trip falls back to the range')
+})
+
 // thread_1788501349296's rerun: start agreed at Oct 12, and the model's own end date (Oct 19) rode
 // through unchanged even though the user's own "for a week" already makes Oct 18 the complete,
 // settled fact -- agreement on start is not the same as the user having said nothing about the end.

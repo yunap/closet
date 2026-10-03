@@ -3413,9 +3413,26 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const rawPlanLocation = String(args?.location || toolContext.location || '').trim()
         const fallbackLocation = looksLikeTimezoneIdentifier(rawPlanLocation) ? '' : rawPlanLocation
         toolContext.freeformDiagnostics.resolvedLocation = fallbackLocation
+        // Live thread_1791015503457: the model wrote 2024 throughout. The stated range corrected the
+        // plan to 2026, but each activity kept its own 2024 date, fell outside the plan, and so did not
+        // inherit the plan's weather estimate — the call stopped for weather. When the range is
+        // corrected, an activity's own date moves by the same number of days (day 2 stays day 2); one
+        // that would land outside the trip drops its date and inherits the range.
+        const slotDateShiftDays = (() => {
+          if (dateRangeSource !== 'user_stated' || !modelDateRange.start || modelDateRange.start === planDateRange.start) return 0
+          const days = Math.round((Date.parse(`${planDateRange.start}T00:00:00Z`) - Date.parse(`${modelDateRange.start}T00:00:00Z`)) / 86400000)
+          return Number.isFinite(days) ? days : 0
+        })()
+        const shiftSlotDate = slot => {
+          const own = String(slot?.date || '').trim().slice(0, 10)
+          if (!slotDateShiftDays || !/^\d{4}-\d{2}-\d{2}$/.test(own)) return slot
+          const moved = new Date(Date.parse(`${own}T00:00:00Z`) + slotDateShiftDays * 86400000).toISOString().slice(0, 10)
+          const inside = moved >= planDateRange.start && (!planDateRange.end || moved <= planDateRange.end)
+          return inside ? { ...slot, date: moved } : { ...slot, date: '' }
+        }
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
-        )
+        ).map(slot => (slot ? shiftSlotDate(slot) : slot))
         // Spec future-trip-weather-estimate-spec.md §3.1: the free-text `weather`
         // field is removed from this schema entirely — a non-conforming caller's
         // args.weather is never read here, for gating or anything else.

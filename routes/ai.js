@@ -5822,7 +5822,9 @@ export async function shortlistTripRosterWithProvider({ bench, slots, dateRange 
     name: 'trip_roster_shortlist',
     description: 'Choose which candidates to look at before packing.',
     providerOverride: toolContext?.providerOverride || null,
-    maxTokens: structuredResponseMaxTokens(limit, { tokensPerItem: 12, base: 400, floor: 800, ceiling: 2000 })
+    // Live thread_1791015503457: 1,480 tokens truncated the list; Gemini counts its thinking against
+    // this cap, and ninety ids alone are ~400 tokens.
+    maxTokens: structuredResponseMaxTokens(limit, { tokensPerItem: 20, base: 3000, floor: 3000, ceiling: 6000 })
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}
