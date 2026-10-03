@@ -50,7 +50,7 @@ import {
   EXTRACT_PIECES_SYSTEM,
   STYLIST_COMPETENCE_CONTRACT
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, stripSoftRankingRules } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
@@ -5842,7 +5842,7 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
       requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
-  const imageParts = withPhotos && bench.length <= TRIP_ROSTER_PHOTO_LIMIT ? await tripRosterImageParts(bench) : []
+  const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
     attempt, failures, previousRosterIds, slotLabelsById, imageParts
@@ -6712,6 +6712,9 @@ router.post('/ask', async (req, res) => {
     if (modelTripRosterEnabled()) {
       toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
       toolContext.shortlistTripRoster = request => shortlistTripRosterWithProvider(request, toolContext)
+      toolContext.tripRosterPhotoLimit = toolContext.resolvedProviderTarget?.provider === 'gemini'
+        ? GEMINI_TRIP_ROSTER_PHOTO_LIMIT
+        : TRIP_ROSTER_PHOTO_LIMIT
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
     const priorConversationHistory = priorStylistConversationHistory(req.body.history, currentQuestion)

@@ -4505,6 +4505,12 @@ export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) 
 // catalog — no code ranking decides what is seen — and the suitcase is then chosen from the
 // shortlist with a photo of every piece.
 export const TRIP_ROSTER_PHOTO_LIMIT = 90
+// Gemini takes far more images per request. Live thread_1791015882776: flash-lite's shortlist was the
+// first 90 lines of the list (78 of 90), never reaching the newest pieces — every real layer and
+// both boots — so on Gemini the packer is shown every candidate instead (183 photos ≈ 9 MB, under
+// its ~20 MB inline limit). Owner, 2026-10-03: revert if packing does not improve; setting this
+// back to TRIP_ROSTER_PHOTO_LIMIT restores the shortlist.
+export const GEMINI_TRIP_ROSTER_PHOTO_LIMIT = 300
 
 export async function selectTripRosterViaModel({
   pool = [],
@@ -4513,6 +4519,7 @@ export async function selectTripRosterViaModel({
   dateRange = {},
   chooseRoster = null,
   shortlistRoster = null,
+  photoLimit = TRIP_ROSTER_PHOTO_LIMIT,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4586,9 +4593,9 @@ export async function selectTripRosterViaModel({
   // the full catalog as text, as before — never from a shortlist code assembled.
   const shortlistFrom = async (attempt, failures = [], previousShortlistIds = []) => {
     try {
-      const answer = await shortlistRoster({ bench, slots, dateRange, limit: TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt, failures, previousShortlistIds })
+      const answer = await shortlistRoster({ bench, slots, dateRange, limit: photoLimit, slotLabelsById, attempt, failures, previousShortlistIds })
       const ids = [...new Set((Array.isArray(answer?.shortlist_piece_ids) ? answer.shortlist_piece_ids : []).map(Number))]
-        .filter(id => benchById.has(id)).slice(0, TRIP_ROSTER_PHOTO_LIMIT)
+        .filter(id => benchById.has(id)).slice(0, photoLimit)
       const shortlist = ids.map(id => benchById.get(id))
       return { shortlist, failures: shortlist.length ? validateTripRoster(shortlist, { slots, pool: bench }).failures : [{ code: 'empty_shortlist', message: 'the shortlist was empty; choose candidates from the list' }] }
     } catch (err) {
@@ -4596,7 +4603,7 @@ export async function selectTripRosterViaModel({
     }
   }
   let choiceBench = bench
-  let withPhotos = bench.length <= TRIP_ROSTER_PHOTO_LIMIT
+  let withPhotos = bench.length <= photoLimit
   let shortlistSource = withPhotos ? 'whole_bench' : 'text_only'
   if (!withPhotos && typeof shortlistRoster === 'function') {
     bump('tripRosterShortlistCalls')
@@ -4639,7 +4646,7 @@ export async function selectTripRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
@@ -4716,6 +4723,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       dateRange,
       chooseRoster: chooseTripRoster,
       shortlistRoster: shortlistTripRoster,
+      ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}),
       onDiagnostic,
     })
   }

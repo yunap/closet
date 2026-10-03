@@ -3605,6 +3605,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           shortlistTripRoster: typeof toolContext.shortlistTripRoster === 'function'
             ? toolContext.shortlistTripRoster
             : null,
+          tripRosterPhotoLimit: toolContext.tripRosterPhotoLimit || 0,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)

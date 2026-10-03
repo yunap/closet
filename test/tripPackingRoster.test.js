@@ -1570,3 +1570,20 @@ test('a shortlist that cannot dress every use case is retried once, then the pac
   assert.equal(seen[0].withPhotos, false)
   assert.ok(seen[0].bench.length > 90, 'never a shortlist assembled by code')
 })
+
+// Live thread_1791015882776: flash-lite's shortlist was the first 90 lines of the list. On Gemini the
+// packer is shown every candidate instead; the shortlist remains for the 90-photo providers.
+test('with a higher provider photo limit the packer sees the whole bench with photos and no shortlist call', async () => {
+  const { GEMINI_TRIP_ROSTER_PHOTO_LIMIT } = await import('../styling-engine/outfitSetPlanner.js')
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photoLimit: GEMINI_TRIP_ROSTER_PHOTO_LIMIT,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, true)
+  assert.ok(seen[0].bench.length > 90)
+  assert.equal(result.shortlistSource, 'whole_bench')
+})
