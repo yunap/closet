@@ -6070,6 +6070,27 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
 // be a recap (thread_1790924321526). Pure projection of facts already on the plan: the packer's
 // stated job per piece, each card's own reason, and the packed pieces no card wears. The unused list
 // is computed here, not asked of a model, so "this piece is a spare" is said from a fact.
+// Live thread_1791013807691 (48–68°F): the per-card "no layer" note stands down once the suitcase
+// holds a real layer (SET vs CARD, outfitEnvironmentalAdequacy.js), so nothing told the wearer that
+// both dinner looks and two thin-hoodie day looks need the packed jacket, and the reply called the
+// UPF hoodie the layer. The cards stay quiet; the writer gets the fact. Null when the activity has no
+// cool end; otherwise the look's own real layer, or the packed real layers it can borrow.
+export function tripOutfitCoolEndLayer(pendingPlan = {}, outfit = {}) {
+  const slot = (Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).find(entry => entry?.label === outfit?.label)
+  if (!slot || !weatherHasCoolEnd(slot.weatherProfile || {})) return null
+  const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
+  const realLayer = piece => piece && wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece)
+  const worn = [
+    ...(outfit?.pieces || []),
+    ...(outfit?.assignedLayerIds || []).map(id => roster.find(piece => Number(piece.id) === Number(id))),
+  ].filter(realLayer)
+  if (worn.length) return `worn: ${worn.map(piece => piece.name).join(', ')}`
+  const packed = roster.filter(realLayer).map(piece => piece.name)
+  return packed.length
+    ? `none on this outfit; bring a packed layer: ${packed.join(', ')}`
+    : 'none on this outfit, and none packed'
+}
+
 export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = [], { declined = [] } = {}) {
   const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
   const nameById = new Map(roster.map(piece => [Number(piece.id), piece.name || `piece ${piece.id}`]))

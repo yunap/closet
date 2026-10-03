@@ -9965,3 +9965,23 @@ test('the trip writer is told first, by name, which activities have no outfit at
   assert.equal(result.status, 'success', JSON.stringify(result).slice(0, 400))
   assert.match(result.message, /^NO OUTFIT EXISTS for: Hill Hiking\. Do not describe an outfit for it;/)
 })
+
+// thread_1791013807691: with a real layer packed, cards stay quiet about it, so the trip writer is
+// told per look whether it carries its own layer for the cool end or should borrow a packed one.
+test('the trip writer is told which looks need a packed layer for the cool part of the day', async () => {
+  const { tripOutfitCoolEndLayer } = await import('../styling-engine/outfitSetPlanner.js')
+  const jacket = { id: 1, name: 'olive field jacket', category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], interior_construction: 'unlined', insulating_layer_materials: [] }
+  const hoodie = { id: 2, name: 'thin UPF hoodie', category: 'outerwear', fabric_weight: 'ultralight', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const blouse = { id: 3, name: 'white blouse', category: 'top' }
+  const pendingPlan = {
+    slots: [
+      { label: 'Dinners Out', weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true, transitHighF: 68, transitLowF: 48 } },
+      { label: 'Warm Beach', weatherProfile: { isHot: true, highF: 90, lowF: 75 } },
+    ],
+    tripRoster: [jacket, hoodie, blouse],
+  }
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse] }), 'none on this outfit; bring a packed layer: olive field jacket')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse, hoodie] }), 'none on this outfit; bring a packed layer: olive field jacket', 'the ultralight hoodie is not the layer')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse], assignedLayerIds: [1] }), 'worn: olive field jacket')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Warm Beach', pieces: [blouse] }), null, 'no cool end, nothing to say')
+})
