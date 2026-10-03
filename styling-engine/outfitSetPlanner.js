@@ -1319,7 +1319,9 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
           location: targetLocation, startDate: tripStart, endDate: tripEnd, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
         })
       : null
-    const hourly = acrossDays || (day
+    // A week-long activity whose forecast is unavailable falls to the daily path for the whole trip,
+    // never to its first day alone.
+    const hourly = acrossDays || (day && !spansTripDays
       ? await resolveExposureWindowHourly({
           location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
         })

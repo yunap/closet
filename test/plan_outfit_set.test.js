@@ -21,7 +21,9 @@ process.env.ANTHROPIC_API_KEY = ''
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY, resolveToolStylingContext } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory, slotColdLayerRequired, slotColdLayerPermitted } = await import('../styling-engine/outfitSetPlanner.js')
-const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
+const { _clearWeatherCachesForTests, setForecastClockForTests } = await import('../styling-engine/weather.js')
+// Fixtures use fixed October 2026 trip dates; pin "today" so they stay inside the trusted forecast window.
+setForecastClockForTests('2026-10-10T12:00:00')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -2985,7 +2987,7 @@ test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed p
         if (url.toLowerCase().includes('nowhereville')) return { ok: true, json: async () => ({ results: [] }) }
         return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
       }
-      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [65], temperature_2m_min: [45] } }) }
+      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [65, 65, 65, 65, 65, 65, 65], temperature_2m_min: [45, 45, 45, 45, 45, 45, 45] } }) }
     }
   }
   const mixedResult = await executeTool('plan_outfit_set', {

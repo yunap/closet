@@ -111,6 +111,25 @@ function dateKey(date) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
+// How far ahead a forecast day is trusted (owner, 2026-10-02: "17th is way past 10 day forecast").
+// Open-Meteo answers 16 days out, but its far days swing by 10°F+ between runs: Vienna, VA,
+// 12–18 October read 43–85°F one afternoon and 38–77°F that night, and a single 38°F morning on
+// the 15th day put a puffer in the suitcase. Days past this are "not forecast yet", the same as
+// days past the provider horizon, and a range mostly past it falls to the seasonal estimate.
+const RELIABLE_FORECAST_DAYS = 10
+let forecastClock = () => new Date()
+// Tests pin "today" so fixtures with fixed trip dates do not age out of the window.
+export function setForecastClockForTests(now) { forecastClock = now ? () => new Date(now) : () => new Date() }
+export function lastReliableForecastDate(now = forecastClock()) {
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  d.setUTCDate(d.getUTCDate() + RELIABLE_FORECAST_DAYS - 1)
+  return d.toISOString().slice(0, 10)
+}
+const beyondReliableForecast = date => String(dateKey(date) || '') > lastReliableForecastDate()
+// A range is described by its forecast only when the forecast covers at least half its days;
+// otherwise the first day or two would stand in for the week.
+const forecastCoversRange = (covered, requested) => covered > 0 && covered * 2 >= requested
+
 async function geocodeQuery(query, fetchImpl) {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=1&language=en&format=json`
   const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
@@ -163,15 +182,19 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const data = await res.json()
   const rawHighs = data?.daily?.temperature_2m_max || []
   const rawLows = data?.daily?.temperature_2m_min || []
-  const rawDates = data?.daily?.time || []
+  // A start/end request answers from the start date, so its days are known even without `time`.
+  const requested = withinHorizonOnly ? [] : datesInRange(start, end)
+  const rawDates = data?.daily?.time?.length ? data.daily.time : (rawHighs.length === requested.length ? requested : [])
   // The horizon's last day can come back with null temperatures; Math.max/min would read null as
   // 0°F. A day counts only with both numbers, and on the retry only inside the requested range.
   const keep = rawHighs.map((high, i) => Number.isFinite(high) && Number.isFinite(rawLows[i])
+    && !(rawDates[i] && beyondReliableForecast(rawDates[i]))
     && (!withinHorizonOnly || (String(rawDates[i] || '') >= start && String(rawDates[i] || '') <= end)))
   const highs = rawHighs.filter((_, i) => keep[i])
   const lows = rawLows.filter((_, i) => keep[i])
   const dates = rawDates.length === rawHighs.length ? rawDates.filter((_, i) => keep[i]) : []
   if (!highs.length || !lows.length) return null
+  if (end > start && !forecastCoversRange(highs.length, datesInRange(start, end).length)) return null
   // `fetchedAt` is captured once, at the real network call, and rides along with the cached data —
   // a cache hit must report when the underlying forecast was actually retrieved, not "now", or
   // provenance silently lies about freshness for up to CACHE_TTL_MS.
@@ -265,7 +288,7 @@ function sliceHourlyWindow(hourly, date, { startHour, endHour } = {}) {
 // horizon, or lacking hourly coverage for that date — callers degrade to the existing waking-window
 // estimate on null, never fabricate hourly certainty from a day this call could not resolve.
 export async function resolveExposureWindowHourly({ location = '', date = '', timeWindow = null, fetchImpl = defaultFetch } = {}) {
-  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  if (shouldSkipLive(fetchImpl) || !location || !date || beyondReliableForecast(date)) return null
   const hours = resolveTimeWindowHours(timeWindow)
   if (!hours) return null
   try {
@@ -383,11 +406,11 @@ export async function resolveExposureWindowAcrossDays({ location = '', startDate
     const reachesWindowEnd = date => hourly.times.some((timestamp, i) =>
       String(timestamp).startsWith(`${date}T${lastWindowHour}`) && Number.isFinite(hourly.temps[i]))
     for (const date of requestedDates) {
-      const sliced = reachesWindowEnd(date) ? sliceHourlyWindow(hourly, date, hours) : null
+      const sliced = !beyondReliableForecast(date) && reachesWindowEnd(date) ? sliceHourlyWindow(hourly, date, hours) : null
       if (sliced) days.push({ date, highF: sliced.highF, lowF: sliced.lowF, rain: sliced.precipitation === 'rain' })
       else uncoveredDates.push(date)
     }
-    if (!days.length) return null
+    if (!forecastCoversRange(days.length, requestedDates.length)) return null
     const rainDays = days.filter(day => day.rain).length
     return {
       // Non-exclusive, like resolveLive's own multi-day trip range: a week of evenings genuinely can
@@ -413,7 +436,7 @@ export async function resolveExposureWindowAcrossDays({ location = '', startDate
 // PHYSICALLY distinguishable — this function states facts only, never a materiality verdict. Returns
 // null under the same conditions resolveExposureWindowHourly does.
 export async function resolveDaypartHourlyEvidence({ location = '', date = '', fetchImpl = defaultFetch } = {}) {
-  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  if (shouldSkipLive(fetchImpl) || !location || !date || beyondReliableForecast(date)) return null
   try {
     const coords = await resolveLocationToCoords(location, fetchImpl)
     if (!coords) return null

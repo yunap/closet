@@ -15,7 +15,10 @@ import {
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
   COLD_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence, DAYPARTS,
+  setForecastClockForTests,
 } from '../styling-engine/weather.js'
+// Fixtures use fixed October 2026 trip dates; pin "today" so they stay inside the trusted forecast window.
+setForecastClockForTests('2026-10-10T12:00:00')
 import { weatherProfileFromStatedText } from '../styling-engine/stylingContext.js'
 import { STYLIST_TOOLS } from '../styling-engine/tools.js'
 
@@ -268,7 +271,7 @@ test('caching: two calls for the same date/location hit the mock fetch only once
 test('getWeatherProfileForPlan aggregates a multi-day range and allows both isHot and isCold for a wide swing', async () => {
   const fetchImpl = makeMockFetch({ highs: [90, 55], lows: [60, 30] })
   const profile = await getWeatherProfileForPlan({
-    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-05') },
+    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-02') },
     location: 'Denver, CO',
     fetchImpl
   })
@@ -708,6 +711,31 @@ test('resolveExposureWindowAcrossDays takes one time of day across every trip da
   const forecastUrl = fetchImpl.urls.find(url => !url.includes('geocoding-api'))
   assert.match(forecastUrl, /forecast_days=16/)
   assert.doesNotMatch(forecastUrl, /end_date/, 'an end date past the horizon makes the provider reject the whole request')
+})
+
+// Owner, 2026-10-02: "17th is way past 10 day forecast". Asked on Oct 2, a 12–18 October trip has
+// one day inside the trusted window; that one day must not describe the week.
+test('forecast days more than 10 days out are not used, and a trip mostly past them falls to the estimate', async () => {
+  const { resolveExposureWindowAcrossDays, lastReliableForecastDate } = await import('../styling-engine/weather.js')
+  const week = {}
+  for (const day of [12, 13, 14, 15, 16, 17, 18]) week[`2026-10-${day}`] = { defaultTemp: day === 17 ? 38 : 66 }
+  try {
+    setForecastClockForTests('2026-10-02T12:00:00')
+    assert.equal(lastReliableForecastDate(), '2026-10-11')
+    _clearWeatherCachesForTests()
+    assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-18', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) }), null)
+    assert.equal(await resolveExposureWindowHourly({ location: 'Vienna, Virginia', date: '2026-10-17', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) }), null, 'a single day past the window is not forecast either')
+    const plan = await getWeatherProfileForPlan({ dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-18') }, location: 'Vienna, Virginia', fetchImpl: makeMockFetch({ highs: [73, 68, 65, 67, 66, 51, 60], lows: [56, 50, 49, 51, 47, 38, 45] }) })
+    assert.notEqual(plan?.weatherSource, 'live', 'one forecast day of seven does not describe the trip')
+
+    setForecastClockForTests('2026-10-07T12:00:00')
+    _clearWeatherCachesForTests()
+    const mostly = await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-18', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) })
+    assert.deepEqual(mostly.uncoveredDates, ['2026-10-17', '2026-10-18'], 'five of seven days covered; the far ones are not forecast yet')
+    assert.equal(mostly.lowF, 66, 'the 38°F day 15 out no longer sets the low')
+  } finally {
+    setForecastClockForTests('2026-10-10T12:00:00')
+  }
 })
 
 test('resolveExposureWindowAcrossDays: rain on every covered day is rain; no covered day, no window, or no location is null', async () => {
