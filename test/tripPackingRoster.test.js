@@ -1044,10 +1044,9 @@ test('the trip roster system prompt distinguishes making a use case wearable onc
   assert.match(brief, /without repeating the same core piece-for-piece/)
 })
 
-// thread_1789598100140 (owner ruling 2026-09-16): roster selection is now text-only (no thumbnails),
-// so there is only ever one text block to cache -- the repair call must still reuse it verbatim
-// (byte-identical) rather than rebuilding it, so the repair round reads the cache the initial call
-// wrote instead of re-paying for the whole catalog.
+// The repair call must reuse the initial call's catalog block verbatim (byte-identical) rather than
+// rebuilding it, so the repair round reads the cache the initial call wrote instead of re-paying for
+// the whole catalog. (Text-only here; the photo variant is the next test.)
 test('the trip roster repair call reuses the initial call cache prefix instead of rebuilding the catalog', () => {
   const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
@@ -1056,11 +1055,31 @@ test('the trip roster repair call reuses the initial call cache prefix instead o
   const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, failures: [], previousRosterIds: [] })
   const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures, previousRosterIds: [1] })
 
-  assert.equal(initial.length, 1, 'sanity: text-only content has exactly one part with nothing to attach images to')
+  assert.equal(initial.length, 1, 'sanity: with no photos supplied, the content is the catalog block alone')
   assert.equal(initial[0].cache_control?.type, 'ephemeral')
   assert.deepEqual(repair[0], initial[0], 'the cached catalog block must be byte-identical between the initial call and the repair')
   assert.equal(repair.length, 2, 'the repair appends exactly one additional block, not more')
   assert.match(repair[1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+})
+
+// Owner, 2026-10-03: photos are restored to roster selection. They sit inside the cached prefix
+// (catalog, then every labelled photo, breakpoint on the last), so the repair reuses them and its
+// own text comes after.
+test('trip roster photos go inside the cached prefix, ahead of the repair text', () => {
+  const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const imageParts = [
+    { type: 'text', text: 'ID 1: city top' }, { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAA' } },
+    { type: 'text', text: 'ID 2: city bottom' }, { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBB' } },
+  ]
+  const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, imageParts })
+  const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures: [{ message: 'x' }], previousRosterIds: [1], imageParts })
+  assert.equal(initial.length, 5)
+  assert.equal(initial[4].type, 'image')
+  assert.equal(initial[4].cache_control?.type, 'ephemeral', 'the breakpoint sits on the last photo')
+  assert.deepEqual(repair.slice(0, 5), initial, 'catalog and photos are identical on the repair')
+  assert.match(repair[5].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.match(tripRosterSelectionSystemPrompt(), /Each candidate with a photograph is shown after the list/)
 })
 
 // ─── VISUAL-ROLE EVIDENCE (thread_1788518048013 arc, superseded by thread_1789598100140) ────────
@@ -1496,4 +1515,58 @@ test('a cool-season trip with a hot day admits warm-weather dresses as well as b
   const ids = list => list.map(piece => piece.id).sort()
   assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: false })), [4])
   assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: true })), [1, 2, 4])
+})
+
+// Owner, 2026-10-03: the packer chooses by sight again. A bench within the photo limit is shown
+// whole; a larger one is shortlisted by the model from the full text list, then shown.
+test('a bench within the photo limit goes to the packer whole, with photos, and no shortlist call', async () => {
+  const { TRIP_ROSTER_PHOTO_LIMIT } = await import('../styling-engine/outfitSetPlanner.js')
+  assert.equal(TRIP_ROSTER_PHOTO_LIMIT, 90)
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: POOL, slots: SLOTS,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(result.source, 'model')
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, true)
+  assert.equal(seen[0].bench.length, result.bench.length)
+  assert.equal(result.shortlistSource, 'whole_bench')
+})
+
+const manyCityTops = Array.from({ length: 95 }, (_, i) => piece(1000 + i, 'top'))
+
+test('a bench over the photo limit is shortlisted by the model, and the packer sees only the shortlist, with photos', async () => {
+  const shortlist = [1, 2, 3, 4, 5, 6, 8, 1000, 1001]
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    shortlistRoster: async ({ bench, limit }) => {
+      assert.ok(bench.length > limit, 'the shortlist call gets the complete list')
+      return { shortlist_piece_ids: shortlist }
+    },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(result.source, 'model')
+  assert.equal(result.shortlistSource, 'model_shortlist')
+  assert.equal(seen[0].withPhotos, true)
+  assert.deepEqual(seen[0].bench.map(p => Number(p.id)), shortlist)
+})
+
+test('a shortlist that cannot dress every use case is retried once, then the packer falls back to the full text list without photos', async () => {
+  const shortlistAttempts = []
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    // No shoes at all: neither use case can be dressed from it.
+    shortlistRoster: async ({ attempt, failures }) => { shortlistAttempts.push({ attempt, codes: failures.map(f => f.code) }); return { shortlist_piece_ids: [1, 2, 1000] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.deepEqual(shortlistAttempts.map(a => a.attempt), [1, 2])
+  assert.ok(shortlistAttempts[1].codes.includes('use_case_uncoverable'), 'the retry is told what is missing')
+  assert.equal(result.shortlistSource, 'text_only')
+  assert.equal(seen[0].withPhotos, false)
+  assert.ok(seen[0].bench.length > 90, 'never a shortlist assembled by code')
 })

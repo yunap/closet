@@ -1182,8 +1182,9 @@ export function visuallyPrioritizedPieces(pieces = [], limit = Infinity) {
 // Pattern complexity and textured fabric are the genuine signals this function answers on: "does
 // this garment need a bigger, higher-detail image to be read correctly." This arc originally added a
 // `useVisualRoles:false` opt-out for chooseTripRosterWithProvider (routes/ai.js), the one caller with
-// no trip-specific meaning for a visual role — removed along with that caller (thread_1789598100140:
-// trip roster selection is text-only now, with no thumbnails to allocate fidelity for at all).
+// no trip-specific meaning for a visual role — removed when trip roster selection went text-only
+// (thread_1789598100140). Photos returned to trip roster selection on 2026-10-03 under this same
+// one-behaviour policy, so a visual role now earns a trip candidate the larger image too.
 export function pieceVisualDetailPolicy(p, { allowLow = true } = {}) {
   if (!p) return { maxPx: 448, detail: 'low' }
   if (!allowLow) return { maxPx: 768, detail: 'auto' }

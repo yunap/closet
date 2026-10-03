@@ -4497,12 +4497,22 @@ export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) 
 // would be exactly the roster-level styling judgment this architecture exists to avoid). The
 // fallback instead degrades honestly to the full coverage-guaranteed bench, disclosed as a
 // coverage gap rather than presented as a chosen roster.
+// The packer chooses by sight (owner, 2026-10-03: "it wasn't my decision, restore the images").
+// 2026-09-16 (thread_1789598100140) made roster selection text-only to lift a 60-piece cap that hid
+// single-use pieces; the visual-grounding lesson (models choose clothes badly from text alone) was
+// never weighed. A provider call takes at most TRIP_ROSTER_PHOTO_LIMIT photos (Claude rejects more
+// than 100 images), so a larger bench is first shortlisted BY THE MODEL from the complete text
+// catalog — no code ranking decides what is seen — and the suitcase is then chosen from the
+// shortlist with a photo of every piece.
+export const TRIP_ROSTER_PHOTO_LIMIT = 90
+
 export async function selectTripRosterViaModel({
   pool = [],
   slots = [],
   calendarSeason = '',
   dateRange = {},
   chooseRoster = null,
+  shortlistRoster = null,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4570,21 +4580,53 @@ export async function selectTripRosterViaModel({
     }
   }
 
+  // Which candidates the packer sees with photos. The whole bench when it fits; otherwise the
+  // model's own shortlist, accepted only if the suitcase could still cover every use case from it.
+  // A shortlist that cannot is retried once with the reasons; failing that, the packer chooses from
+  // the full catalog as text, as before — never from a shortlist code assembled.
+  const shortlistFrom = async (attempt, failures = [], previousShortlistIds = []) => {
+    try {
+      const answer = await shortlistRoster({ bench, slots, dateRange, limit: TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt, failures, previousShortlistIds })
+      const ids = [...new Set((Array.isArray(answer?.shortlist_piece_ids) ? answer.shortlist_piece_ids : []).map(Number))]
+        .filter(id => benchById.has(id)).slice(0, TRIP_ROSTER_PHOTO_LIMIT)
+      const shortlist = ids.map(id => benchById.get(id))
+      return { shortlist, failures: shortlist.length ? validateTripRoster(shortlist, { slots, pool: bench }).failures : [{ code: 'empty_shortlist', message: 'the shortlist was empty; choose candidates from the list' }] }
+    } catch (err) {
+      return { shortlist: [], failures: [{ code: err?.isTruncation ? 'provider_truncated' : 'provider_error', message: err?.message || 'Trip shortlist call failed.' }] }
+    }
+  }
+  let choiceBench = bench
+  let withPhotos = bench.length <= TRIP_ROSTER_PHOTO_LIMIT
+  let shortlistSource = withPhotos ? 'whole_bench' : 'text_only'
+  if (!withPhotos && typeof shortlistRoster === 'function') {
+    bump('tripRosterShortlistCalls')
+    let listed = await shortlistFrom(1)
+    if (listed.failures.length && listed.shortlist.length) {
+      bump('tripRosterShortlistRepairs')
+      listed = await shortlistFrom(2, listed.failures, listed.shortlist.map(piece => Number(piece.id)))
+    }
+    if (!listed.failures.length) {
+      choiceBench = listed.shortlist
+      withPhotos = true
+      shortlistSource = 'model_shortlist'
+    }
+  }
+
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
-  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
+  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
+  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: choiceBench }).failures
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, coverageGaps: [] }
+    return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench, slots, dateRange, attempt: 2, failures, slotLabelsById,
+    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
-  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
+  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: choiceBench }).failures
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, coverageGaps: [] }
+    return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelFallbacks')
@@ -4597,7 +4639,7 @@ export async function selectTripRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
@@ -4673,6 +4715,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
       dateRange,
       chooseRoster: chooseTripRoster,
+      shortlistRoster: shortlistTripRoster,
       onDiagnostic,
     })
   }

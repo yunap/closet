@@ -50,7 +50,7 @@ import {
   EXTRACT_PIECES_SYSTEM,
   STYLIST_COMPETENCE_CONTRACT
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, stripSoftRankingRules } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
@@ -5624,7 +5624,7 @@ Both piece_jobs and packing_reasoning are read by the traveller. Write them in p
 
 On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
 
-Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.
+Each candidate with a photograph is shown after the list, labelled with its ID. Use the record and the photograph together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads, what it looks like beside the others you are packing, and whether it is worth the suitcase space.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -5734,15 +5734,14 @@ ${truthCatalog.join('\n')}${repairBlock}${notesBlock ? `\n\n${notesBlock}` : ''}
 // cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
 // the initial call wrote instead of re-paying for the whole catalog.
 //
-// thread_1789598100140 (owner ruling 2026-09-16): text-only, no images. Roster selection previously
-// attached a base64 photo thumbnail per bench candidate, which is what made a large bench
-// prohibitively expensive and forced the reuse-ranked 60-piece cap that starved single-use-case
-// pieces (see buildTripBench). The candidate catalog is now the same sparse text format /ask's
-// single_outfit whole-wardrobe catalog uses for its own full candidate list, at a fraction of the
-// token cost of even the old 60-image bench. composeTripPlanOnce still attaches real photos, for the
-// much smaller chosen roster, when actual outfits are being judged for drape/volume/layering.
+// thread_1789598100140 (2026-09-16) made roster selection text-only to lift the reuse-ranked
+// 60-piece cap that starved single-use-case pieces; the code called that an owner ruling, and the
+// owner has since said it was not theirs (2026-10-03). Photos are restored: the catalog stays the
+// complete sparse text list, and `imageParts` (one labelled photo per candidate, from
+// tripRosterImageParts) follow it inside the cached prefix. A bench over TRIP_ROSTER_PHOTO_LIMIT is
+// first shortlisted by the model (shortlistTripRosterWithProvider), never cut by code.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = []
 } = {}) {
   const content = [{
     type: 'text',
@@ -5751,6 +5750,11 @@ export function tripRosterSelectionContent({
     }),
     cache_control: { type: 'ephemeral' }
   }]
+  // Photos sit inside the cached prefix, as in capsuleRosterSelectionContent: the repair reuses them.
+  content.push(...imageParts)
+  if (content.length > 1) {
+    content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } }
+  }
   if (attempt > 1) {
     content.push({ type: 'text', text: tripRosterRepairText({ failures, previousRosterIds }) })
   }
@@ -5764,7 +5768,67 @@ export function tripRosterSelectionContent({
 // production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
 // plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
 // output, because this function did not exist to be wired in.
-export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById }, toolContext) {
+// One labelled photo per candidate, sized like the capsule packer's (pieceVisualDetailPolicy: larger
+// for prints, textures and statement pieces, small and low-detail for plain basics).
+async function tripRosterImageParts(bench = []) {
+  const imageParts = []
+  for (const piece of bench) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece)
+      const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
+      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.error(`Error loading trip roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  return imageParts
+}
+
+export function tripRosterShortlistSystemPrompt(limit = TRIP_ROSTER_PHOTO_LIMIT) {
+  return `You are about to pack for a trip, and first you choose which garments to look at closely. Below is every eligible candidate as a line of recorded facts. Pick up to ${limit} of them by ID; next you will see a photograph of each one you pick and choose the suitcase from those alone.
+
+Pick generously: anything that could plausibly earn a place in this suitcase for any of the trip's use cases, so that the final choice has real options. Make sure every use case keeps enough tops, bottoms or dresses, shoes and layers to dress it several different ways, including what each activity physically needs (footwear for the walking, a layer for the cool part of the day). Leave out what plainly does not suit this trip. A piece left out here cannot be packed.`
+}
+
+export function tripRosterShortlistSchema(limit = TRIP_ROSTER_PHOTO_LIMIT) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      shortlist_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: limit, uniqueItems: true },
+    },
+    required: ['shortlist_piece_ids'],
+  }
+}
+
+export async function shortlistTripRosterWithProvider({ bench, slots, dateRange = {}, limit = TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt = 1, failures = [], previousShortlistIds = [] }, toolContext) {
+  const content = [{
+    type: 'text',
+    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById }),
+    cache_control: { type: 'ephemeral' }
+  }]
+  if (attempt > 1) {
+    content.push({ type: 'text', text: `YOUR SHORTLIST LEFT A USE CASE WITHOUT ENOUGH TO PACK FROM. Previous IDs: [${previousShortlistIds.join(', ')}]\nKeep them and add what fixes these problems, staying within ${limit}:\n${failures.map(entry => `- ${entry.message}`).join('\n')}` })
+  }
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripRosterShortlistSystemPrompt(limit),
+    messages: [{ role: 'user', content }],
+    schema: tripRosterShortlistSchema(limit),
+    name: 'trip_roster_shortlist',
+    description: 'Choose which candidates to look at before packing.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(limit, { tokensPerItem: 12, base: 400, floor: 800, ceiling: 2000 })
+  })
+  if (toolContext) recordToolLoopUsage(toolContext, usage)
+  return value || {}
+}
+
+export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById, withPhotos = false }, toolContext) {
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
     contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
@@ -5776,9 +5840,10 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
       requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
+  const imageParts = withPhotos && bench.length <= TRIP_ROSTER_PHOTO_LIMIT ? await tripRosterImageParts(bench) : []
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
-    attempt, failures, previousRosterIds, slotLabelsById
+    attempt, failures, previousRosterIds, slotLabelsById, imageParts
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
@@ -6644,6 +6709,7 @@ router.post('/ask', async (req, res) => {
     }
     if (modelTripRosterEnabled()) {
       toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
+      toolContext.shortlistTripRoster = request => shortlistTripRosterWithProvider(request, toolContext)
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
     const priorConversationHistory = priorStylistConversationHistory(req.body.history, currentQuestion)
