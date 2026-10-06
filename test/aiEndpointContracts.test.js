@@ -8867,3 +8867,18 @@ test('a set of options opens with the stylist\'s own note when she wrote one abo
   assert.equal(boundedAtomicMultiLookResponse(base), "For this evening's forecast high of 89°F and low of 65°F in San Mateo, I’d compare these two directions.")
   assert.match(boundedAtomicMultiLookResponse({ ...base, boundedStylistNote: note, boundedWeatherUnavailable: true }), /^I couldn’t verify the forecast for San Mateo[\s\S]*A warm evening/)
 })
+
+// thread_1791328194271: the single-outfit stylist was told to let the tools resolve weather and was
+// never told what they resolved; she dressed an 89°F evening in trousers, boots and a cardigan.
+test('the single-outfit wardrobe search states the resolved conditions as a fact, and says nothing when there are none', async () => {
+  const { buildSingleOutfitStylistCatalog } = await import('../styling-engine/tools.js')
+  const live = { weatherProfile: { resolvedWeatherContext: { location: 'San Mateo', temperature: { highF: 89, lowF: 65, source: 'live', provider: 'Open-Meteo' } } } }
+  const stated = buildSingleOutfitStylistCatalog([], { stylingContext: live, weatherWindow: 'evening' }).conditions
+  assert.match(stated, /^this evening: 89°F high \/ 65°F low — live forecast/)
+  assert.match(stated, /San Mateo/)
+  assert.doesNotMatch(stated, /must|should wear|layer/i, 'a fact, not a prescription')
+  assert.match(buildSingleOutfitStylistCatalog([], { stylingContext: live }).conditions, /^89°F high/)
+  const guess = { weatherProfile: { resolvedWeatherContext: { location: '', temperature: { highF: null, lowF: null, source: 'heuristic' } } } }
+  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], { stylingContext: guess }), false)
+  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], {}), false)
+})

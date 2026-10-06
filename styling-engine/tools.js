@@ -334,7 +334,7 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
 
 export const stylistCatalogLine = singleOutfitStylistCatalogLine
 
-export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } = {}) {
+export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext, weatherWindow = '' } = {}) {
   const unique = []
   const seen = new Set()
   for (const piece of Array.isArray(pieces) ? pieces : []) {
@@ -378,9 +378,24 @@ export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } 
   // the exposure) rather than the two specific fields.
   const instruction = 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). When the stated conditions call for real warmth, don\'t let silhouette or hero selection alone decide which layers you even look at — bring enough candidates whose recorded construction is plausibly relevant to the exposure (insulation, substantial weight, weather protection, or other stated construction) onto the workbench to judge them fairly alongside the more polished-looking options. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
 
+  // The conditions the tools resolved, stated as a fact. Live thread_1791328194271: the stylist is
+  // told to "let the tools resolve weather", the tools did (89°F falling to 65°F that evening) and
+  // filtered the catalog by it, and she was never told — so she chose trousers, boots and a cardigan
+  // and wrote about "the cooler evening air". Above, the model "judges the completed outfit against
+  // the stated conditions itself"; this is where they are stated. No target, no instruction on what
+  // to wear.
+  const resolvedWeather = stylingContext?.weatherProfile?.resolvedWeatherContext
+  const weatherLabel = resolvedWeather?.temperature && resolvedWeather.temperature.source !== 'heuristic'
+    ? truthfulWeatherLabel(resolvedWeather.temperature, { location: resolvedWeather.location })
+    : ''
+  const conditions = weatherLabel
+    ? `${weatherWindow ? `this ${weatherWindow}: ` : ''}${weatherLabel}. These are the conditions the outfit is worn in; say them in your Stylist Note so the wearer can correct them.`
+    : ''
+
   return {
     eligible_piece_count: unique.length,
     eligible_by_category: eligibleByCategory,
+    ...(conditions ? { conditions } : {}),
     sparse_conventions: SPARSE_CATALOG_CONVENTIONS,
     instruction,
     catalog,
@@ -1939,7 +1954,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // disclaimer could not undo that practical ownership. The stylist now nominates the IDs
         // to photograph through view_pieces, and propose_outfit validates the chosen system.
         const singleOutfitCatalog = completeSingleOutfitCatalogSearch
-          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext })
+          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext, weatherWindow: toolContext.weatherWindowUsed || '' })
           : null
         if (singleOutfitCatalog) {
           toolContext.singleOutfitCatalogEligibleIds = new Set(completeEligibleResults.map(piece => Number(piece.id)))
