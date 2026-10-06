@@ -27,6 +27,7 @@ import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
   TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+  resolveExposureWindowHourly, getCurrentWeatherProfile,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -667,8 +668,29 @@ export async function resolveToolStylingContext({
     location: toolContext.location,
     date: toolContext.currentDate,
   }
-  const resolver = weatherResolver
-    ? createStylingContextResolver({ weatherResolver })
+  // The router's time of day (routes/ai.js) reads the forecast for those hours of the day instead
+  // of its whole envelope — the same hourly slice trip activities use (resolveExposureWindowHourly).
+  // It stands in for the day's live forecast and falls back to it when the hours are not covered.
+  const timeOfDay = toolContext.executionRouterTimeOfDay || ''
+  const windowedWeatherResolver = !weatherResolver && timeOfDay
+    ? async args => {
+        const day = args?.date instanceof Date
+          ? `${args.date.getFullYear()}-${String(args.date.getMonth() + 1).padStart(2, '0')}-${String(args.date.getDate()).padStart(2, '0')}`
+          : String(args?.date || '').slice(0, 10)
+        let sliced = null
+        try {
+          sliced = await resolveExposureWindowHourly({ location: args?.location || '', date: day, timeWindow: { period: timeOfDay } })
+        } catch {
+          sliced = null
+        }
+        toolContext.weatherWindowUsed = sliced ? timeOfDay : ''
+        return sliced
+          ? { ...sliced, weatherSource: 'live', provider: 'Open-Meteo' }
+          : getCurrentWeatherProfile(args)
+      }
+    : null
+  const resolver = weatherResolver || windowedWeatherResolver
+    ? createStylingContextResolver({ weatherResolver: weatherResolver || windowedWeatherResolver })
     : resolveStylingContext
   // On a fresh /ask turn the execution router already classified activity from the user's words.
   // That result is the authority for the whole turn. The stylist may omit activity, but may not
@@ -4415,9 +4437,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const hasLow = Number.isFinite(Number(resolvedWeather.lowF))
           const roundedHigh = hasHigh ? Math.round(Number(resolvedWeather.highF)) : null
           const roundedLow = hasLow ? Math.round(Number(resolvedWeather.lowF)) : null
+          const forecastLabel = toolContext.weatherWindowUsed ? `${toolContext.weatherWindowUsed} forecast` : 'forecast'
           const forecastTemperature = hasHigh
             ? (hasLow && roundedHigh !== roundedLow
-                ? `forecast high ${roundedHigh}°F, low ${roundedLow}°F`
+                ? `${forecastLabel} high ${roundedHigh}°F, low ${roundedLow}°F`
                 : `temperature around ${roundedHigh}°F`)
             : ''
           // Cold gets the same 3-tier treatment as heat (isExtremeHeat) rather than
@@ -4439,9 +4462,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
             : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
+          const forecastWindow = toolContext.weatherWindowUsed ? `this ${toolContext.weatherWindowUsed}'s forecast` : 'a forecast'
           toolContext.boundedWeatherSummary = hasHigh
             ? (hasLow && roundedHigh !== roundedLow
-                ? `a forecast high of ${roundedHigh}°F and low of ${roundedLow}°F`
+                ? `${forecastWindow} high of ${roundedHigh}°F and low of ${roundedLow}°F`
                 : `a temperature around ${roundedHigh}°F`)
             : ''
           toolContext.boundedLocation = stylingContext.location

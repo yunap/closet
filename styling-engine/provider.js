@@ -1446,7 +1446,7 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
@@ -1460,6 +1460,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     date: { type: 'string' },
     subject: { type: 'string' },
     clarifying_question: { type: 'string' },
+    time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
   }
 }
 
@@ -1482,6 +1483,8 @@ Choose full_stylist for: broad outfit critique; user-attached photos; existing-o
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
 Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the user's own home or another single heated or cooled room, with no travel and no time outdoors: hosting or staying at home, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. For full_stylist use includes_outdoors.
+
+time_of_day is when the outing happens, when the request says so or plainly implies it: tonight, this evening, dinner, drinks, a concert or show at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Use an empty value when no time is stated or implied, when it spans the day, and for full_stylist. The forecast is then read for those hours rather than the whole day.
 
 Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
 

@@ -6878,6 +6878,12 @@ router.post('/ask', async (req, res) => {
           // did not hold (it marked the search and not the proposal). resolveToolStylingContext
           // reads this and resolves the turn's weather as indoor for every tool.
           toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
+          // Fourth turn-level fact. Live thread_1791327434563: "Tonight I'm going to a guitar concert"
+          // was dressed for "a forecast high of 90°F and low of 58°F" — the 4pm peak and the
+          // early-morning low — while the evening itself ran 89°F down to 64°F.
+          toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(routed.value?.time_of_day)
+            ? routed.value.time_of_day
+            : ''
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {

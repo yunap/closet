@@ -8808,3 +8808,47 @@ test('the router is asked for a clarifying question, told when to leave it empty
     assert.notEqual(verdict?.clause, 'destinationClarification')
   }
 })
+
+// thread_1791327434563: "Tonight I'm going to a guitar concert" was dressed for the whole day's
+// 58–90°F; the evening ran 89°F down to 64°F. The router's time of day reads the forecast for those
+// hours, and falls back to the day when they are not covered.
+test('a routed time of day reads the forecast for those hours, not the whole day', async () => {
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  const { _clearWeatherCachesForTests, setForecastClockForTests } = await import('../styling-engine/weather.js')
+  const hourlyTemps = Array.from({ length: 24 }, (_, hour) => (hour < 8 ? 58 : hour < 17 ? 90 : hour === 17 ? 89 : 64))
+  const originalFetch = globalThis.fetch
+  const originalEnv = process.env.NODE_ENV
+  globalThis.fetch = async url => {
+    const u = String(url)
+    if (u.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ name: 'San Mateo', latitude: 37.56, longitude: -122.33 }] }) }
+    if (u.includes('hourly=')) return { ok: true, json: async () => ({ hourly: { time: hourlyTemps.map((_, h) => `2026-10-06T${String(h).padStart(2, '0')}:00`), temperature_2m: hourlyTemps, precipitation: hourlyTemps.map(() => 0) } }) }
+    return { ok: true, json: async () => ({ daily: { time: ['2026-10-06'], temperature_2m_max: [90], temperature_2m_min: [58] } }) }
+  }
+  process.env.NODE_ENV = 'development'
+  setForecastClockForTests('2026-10-06T12:00:00')
+  const resolveFor = async timeOfDay => {
+    _clearWeatherCachesForTests()
+    const toolContext = { season: 'current season', executionRouterSeason: 'current season', executionRouterSeasonLocked: true, executionRouterTimeOfDay: timeOfDay, question: 'concert', freeformDiagnostics: {} }
+    const context = await resolveToolStylingContext({
+      explicitRequest: { occasion: 'concert', activity: 'none', season: 'current season', location: 'San Mateo', date: '2026-10-06', dateRange: { start: '2026-10-06', end: '2026-10-06' } },
+      toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    })
+    return { profile: context.weatherProfile, used: toolContext.weatherWindowUsed || '' }
+  }
+  try {
+    const evening = await resolveFor('evening')
+    assert.equal(evening.profile.weatherSource, 'live')
+    assert.equal(evening.profile.highF, 89)
+    assert.equal(evening.profile.lowF, 64, 'the early-morning 58°F is not part of the evening')
+    assert.equal(evening.used, 'evening')
+    const wholeDay = await resolveFor('')
+    assert.equal(wholeDay.profile.highF, 90)
+    assert.equal(wholeDay.profile.lowF, 58)
+    assert.equal(wholeDay.used, '')
+  } finally {
+    globalThis.fetch = originalFetch
+    process.env.NODE_ENV = originalEnv
+    setForecastClockForTests(null)
+    _clearWeatherCachesForTests()
+  }
+})
