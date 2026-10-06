@@ -779,3 +779,37 @@ test('a multi-day range is hot only when at least half its days are hot; cold st
   })
   assert.equal(oneColdNight.isCold, true, 'one cold night still has to be dressed for')
 })
+
+// thread_1791277608402: "San Mateo" resolved to the Philippines (larger population) for a wearer in
+// Walnut Creek, CA. A bare name goes to the same-named match nearest the home location; a qualified
+// name is taken as the geocoder returns it.
+test('a bare city name resolves to the same-named place nearest the home location', async () => {
+  const { registerWeatherHomeLocationReader } = await import('../styling-engine/weather.js')
+  const forecastCoords = []
+  const fetchImpl = async (url) => {
+    if (url.includes('geocoding-api')) {
+      const name = decodeURIComponent(url.match(/name=([^&]+)/)[1])
+      if (name.startsWith('walnut creek')) return { ok: true, json: async () => ({ results: [{ name: 'Walnut Creek', latitude: 37.9, longitude: -122.07 }] }) }
+      return { ok: true, json: async () => ({ results: [
+        { name: 'San Mateo', latitude: 14.7, longitude: 121.12 },
+        { name: 'San Mateo', latitude: 37.56, longitude: -122.33 },
+        { name: 'San Mateo Park', latitude: 37.57, longitude: -122.35 },
+      ] }) }
+    }
+    forecastCoords.push(url.match(/latitude=([-\d.]+)/)[1])
+    return { ok: true, json: async () => ({ daily: { time: [], temperature_2m_max: [93], temperature_2m_min: [58] } }) }
+  }
+  try {
+    registerWeatherHomeLocationReader(() => 'Walnut Creek, CA')
+    _clearWeatherCachesForTests()
+    await getCurrentWeatherProfile({ date: new Date('2026-10-06'), location: 'San Mateo', fetchImpl })
+    assert.equal(forecastCoords.at(-1), '37.56', 'the California one, not the first result')
+    registerWeatherHomeLocationReader(null)
+    _clearWeatherCachesForTests()
+    await getCurrentWeatherProfile({ date: new Date('2026-10-06'), location: 'San Mateo', fetchImpl })
+    assert.equal(forecastCoords.at(-1), '14.7', 'with no home location the geocoder order stands, as before')
+  } finally {
+    registerWeatherHomeLocationReader(null)
+    _clearWeatherCachesForTests()
+  }
+})

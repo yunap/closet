@@ -130,29 +130,63 @@ const beyondReliableForecast = date => String(dateKey(date) || '') > lastReliabl
 // otherwise the first day or two would stand in for the week.
 const forecastCoversRange = (covered, requested) => covered > 0 && covered * 2 >= requested
 
-async function geocodeQuery(query, fetchImpl) {
-  const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=1&language=en&format=json`
+// A bare city name is ambiguous, and the geocoder ranks by population: "San Mateo" is a city in the
+// Philippines before it is the one in California (live thread_1791277608402 — 90°F/75°F for a
+// concert twenty miles from the wearer's home). With a reference point, the same-named match nearest
+// to it wins; a name the user qualified ("Vienna, Virginia") already resolves correctly and is not
+// second-guessed.
+let homeLocationReader = null
+export function registerWeatherHomeLocationReader(reader) {
+  homeLocationReader = typeof reader === 'function' ? reader : null
+}
+function distanceSquared(a, b) {
+  const dLat = a.lat - b.lat
+  const dLon = (a.lon - b.lon) * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180)
+  return dLat * dLat + dLon * dLon
+}
+
+async function geocodeQuery(query, fetchImpl, { near = null } = {}) {
+  const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=${near ? 5 : 1}&language=en&format=json`
   const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
   if (!res?.ok) return null
   const data = await res.json()
-  const first = data?.results?.[0]
-  if (!first || typeof first.latitude !== 'number' || typeof first.longitude !== 'number') return null
-  return { lat: first.latitude, lon: first.longitude }
+  const usable = (data?.results || []).filter(entry => typeof entry?.latitude === 'number' && typeof entry?.longitude === 'number')
+  if (!usable.length) return null
+  const sameName = near ? usable.filter(entry => String(entry.name || '').toLowerCase() === String(query).toLowerCase()) : []
+  const chosen = sameName.length > 1
+    ? sameName.reduce((best, entry) => (distanceSquared({ lat: entry.latitude, lon: entry.longitude }, near) < distanceSquared({ lat: best.latitude, lon: best.longitude }, near) ? entry : best))
+    : usable[0]
+  return { lat: chosen.latitude, lon: chosen.longitude }
+}
+
+async function resolveQualifiedLocation(location, fetchImpl) {
+  try {
+    return await geocodeQuery(location, fetchImpl) || await geocodeQuery(location.split(',')[0].trim(), fetchImpl)
+  } catch {
+    return null
+  }
 }
 
 async function resolveLocationToCoords(location, fetchImpl) {
-  const key = String(location || '').trim().toLowerCase()
-  if (!key) return null
+  const name = String(location || '').trim().toLowerCase()
+  if (!name) return null
+  let home = ''
+  try { home = String(homeLocationReader?.() || '').trim().toLowerCase() } catch { home = '' }
+  const ambiguous = !name.includes(',') && home && home !== name // ratchet-allow: location qualifier check, not garment matching
+  const key = ambiguous ? `${name}|near:${home}` : name
   const cached = geocodeCache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.coords
-  let coords = await geocodeQuery(key, fetchImpl)
+  // The home location carries its own qualifier or is taken as written; it is never itself
+  // resolved "near" anything.
+  const near = ambiguous ? await resolveQualifiedLocation(home, fetchImpl) : null
+  let coords = await geocodeQuery(name, fetchImpl, { near })
   if (!coords) {
     // "City, ST" / "City, State" is an extremely common way to type a US location, but Open-Meteo's
     // geocoder returns zero results for the combined string (confirmed live, 2026-07-10 — "Walnut
     // Creek, CA" silently failed and fell back to the heuristic weather guess with no error surfaced,
     // even though "Walnut Creek" alone resolves correctly). Retry with just the part before the comma.
-    const cityOnly = key.split(',')[0].trim()
-    if (cityOnly && cityOnly !== key) {
+    const cityOnly = name.split(',')[0].trim()
+    if (cityOnly && cityOnly !== name) {
       coords = await geocodeQuery(cityOnly, fetchImpl)
     }
   }

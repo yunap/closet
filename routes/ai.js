@@ -71,7 +71,8 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile, registerWeatherHomeLocationReader } from '../styling-engine/weather.js'
+import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
@@ -5038,6 +5039,22 @@ router.post('/compare-outfits', async (req, res) => {
 // 2026-07-10: server-side default, deliberately not left to the model to infer (see the timezone-as-
 // location bug this replaced). Only used as a fallback when the conversation hasn't already
 // established a real place — an explicitly named destination always takes priority.
+// The router names the season a dated request falls in ("October 6th" -> 'fall'). That is the
+// calendar, not a hypothetical, but every forecast lookup is gated on the literal 'current season'
+// placeholder (stylingContext.js isCurrentSeason: an explicitly chosen season such as "summer looks"
+// must not pull live weather). Since the 2026-09-16 season lock made the router's word the turn's
+// season, every such turn skipped the forecast — live thread_1791277608402 dressed a 93°F day in San
+// Mateo as "fall; mild weather". A router season equal to the calendar season of the requested date
+// is recorded as 'current season', which resolves to the same calendar season everywhere else
+// (resolveCalendarSeason) and lets the forecast through. Any other season stays a hypothetical.
+export function routerSeasonForTurn(season, date, now = new Date()) {
+  const named = extractSeasonRequest(season)
+  if (!named || named === 'current season') return season || ''
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00`) : null
+  const reference = isoDay && !Number.isNaN(isoDay.getTime()) ? isoDay : now
+  return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
+}
+
 function getHomeLocation() {
   try {
     const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
@@ -5046,6 +5063,8 @@ function getHomeLocation() {
     return ''
   }
 }
+// A bare destination name ("San Mateo") is resolved to the match nearest the wearer's home.
+registerWeatherHomeLocationReader(getHomeLocation)
 
 function normalizedCapsuleExpansionContext(raw = {}) {
   const rosterIds = [...new Set((Array.isArray(raw?.roster_ids) ? raw.roster_ids : [])
@@ -6829,7 +6848,7 @@ router.post('/ask', async (req, res) => {
           toolContext.activity = normalizeActivity(routed.value?.activity)
           toolContext.executionRouterActivity = toolContext.activity
           toolContext.executionRouterActivityLocked = true
-          toolContext.season = routed.value?.season || toolContext.season
+          toolContext.season = routerSeasonForTurn(routed.value?.season, routed.value?.date) || toolContext.season
           toolContext.executionRouterSeason = toolContext.season
           toolContext.executionRouterSeasonLocked = true
           // Third turn-level fact from the router, same authority as activity and season above.

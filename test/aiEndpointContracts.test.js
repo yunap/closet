@@ -8756,3 +8756,16 @@ test('a range that is hot at the top and cool at the bottom keeps its layers; ho
   assert.ok(coldReasons(shorts, coldThroughout).length > 0)
   assert.deepEqual(coldReasons(shorts, coldWithHotEnd), [], 'shorts for the 85°F days of a 43–85°F week are the model\'s call')
 })
+
+// thread_1791277608402: "October 6th… a guitar concert in San Mateo" was dressed as "fall; mild
+// weather" on a 93°F day. The router's 'fall' is the calendar, not a hypothetical.
+test('a router season equal to the requested date\'s calendar season is the current season; any other stays a hypothetical', async () => {
+  const { routerSeasonForTurn } = await import('../routes/ai.js')
+  assert.equal(routerSeasonForTurn('fall', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('autumn', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('winter', '2026-10-06'), 'winter', '"winter looks" in October must not pull live weather')
+  assert.equal(routerSeasonForTurn('summer', '', new Date('2026-07-15T12:00:00')), 'current season', 'no date: judged against today')
+  assert.equal(routerSeasonForTurn('fall', '2027-01-20'), 'fall', 'judged against the requested date, not today')
+  assert.equal(routerSeasonForTurn('current season', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('', '2026-10-06'), '')
+})
