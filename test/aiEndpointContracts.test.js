@@ -8769,3 +8769,42 @@ test('a router season equal to the requested date\'s calendar season is the curr
   assert.equal(routerSeasonForTurn('current season', '2026-10-06'), 'current season')
   assert.equal(routerSeasonForTurn('', '2026-10-06'), '')
 })
+
+// Owner ruling 2026-10-06: the stylist asks first when information is missing or the request can go
+// different ways. The question is remembered once; the answer is joined to the original request.
+test('a pending clarifying question is taken exactly once and joined to the answer', async () => {
+  const { takePendingClarification, clarifiedRequestText } = await import('../routes/ai.js')
+  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'clarify-test-session'
+  saveStylistConversationState({ occasion: 'city', pending_clarification: { request: 'What should I wear to the party on Saturday?', question: 'Is it a sit-down dinner or more of a standing drinks thing?' } }, sessionId)
+  const pending = takePendingClarification(sessionId)
+  assert.equal(pending.question, 'Is it a sit-down dinner or more of a standing drinks thing?')
+  assert.equal(getStylistConversationState(sessionId).pending_clarification, undefined, 'cleared when read')
+  assert.equal(getStylistConversationState(sessionId).occasion, 'city', 'the rest of the state is kept')
+  assert.equal(takePendingClarification(sessionId), null, 'never attaches to a later message')
+  const joined = clarifiedRequestText(pending, 'Standing drinks, in a garden')
+  assert.match(joined, /^What should I wear to the party on Saturday\?/)
+  assert.match(joined, /You asked me: "Is it a sit-down dinner or more of a standing drinks thing\?" My answer: Standing drinks, in a garden/)
+})
+
+test('the router is asked for a clarifying question, told when to leave it empty, and the asking-is-a-mistake retry is gone', async () => {
+  const { routeFreeformExecutionProfile, evaluateTurnEnd } = await import('../styling-engine/provider.js')
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 1, location: '', date: '', subject: '', clarifying_question: 'What kind of party is it?' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: 'What should I wear to the party?' })
+    assert.equal(routed.value.clarifying_question, 'What kind of party is it?')
+    assert.match(captured.system, /a good stylist asks before choosing when she has to/)
+    assert.match(captured.system, /those are looked up, never asked/)
+    assert.match(captured.system, /do not ask again/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+  if (typeof evaluateTurnEnd === 'function') {
+    const verdict = evaluateTurnEnd({ answerText: 'Where are you headed, and what weather do you expect?', toolContext: { freeformDiagnostics: { searchCalls: 0 }, declaredIntent: { want: 'text' } }, retried: new Set() })
+    assert.notEqual(verdict?.clause, 'destinationClarification')
+  }
+})

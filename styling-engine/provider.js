@@ -207,18 +207,10 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     }
   }
 
-  // ── context (legacy clarification clause — retire candidate) ────────────
-  // Per the proposed architecture this should become the model's own judgment
-  // informed by THREAD STATE. Kept mechanical until live evidence shows the
-  // prompt-level judgment holds. The sibling tripScopeClarification clause was
-  // retired outright in spec 21 Part 3 (spec 18 Part 2's flag window closed on
-  // owner ruling — the model repeatedly demonstrated the judgment the clause
-  // distrusted, with no misfire evidence for this one to justify keeping it
-  // mechanical too). This clause has no such misfire evidence and stays live.
-  if (!retried.has('destinationClarification') && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
-    return fail('destinationClarification', 'destinationClarificationRetries',
-      "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request.")
-  }
+  // The legacy destinationClarification retry (Spec 7 Part 2) is retired, owner ruling 2026-10-06:
+  // it re-ran a turn in which the model asked about weather or destination, to save the cost of an
+  // extra turn on a costlier model. Asking when she needs to is now the stylist's job; the prompt
+  // still tells her that a named place and its forecast are looked up, never asked.
 
   // ── delivery ────────────────────────────────────────────────────────────
   // The declaration is authoritative; the phrasing regexes apply only on
@@ -1454,7 +1446,7 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
@@ -1467,6 +1459,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     location: { type: 'string' },
     date: { type: 'string' },
     subject: { type: 'string' },
+    clarifying_question: { type: 'string' },
   }
 }
 
@@ -1491,6 +1484,8 @@ Occasion follows the event's social register, not the relationship between atten
 Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the user's own home or another single heated or cooled room, with no travel and no time outdoors: hosting or staying at home, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. For full_stylist use includes_outdoors.
 
 Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
+
+clarifying_question is for single_outfit and bounded_multi requests only, and is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 

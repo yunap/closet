@@ -5055,6 +5055,21 @@ export function routerSeasonForTurn(season, date, now = new Date()) {
   return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
 }
 
+// One-shot: the pending question is read and cleared together, so an unanswered or abandoned
+// question cannot attach itself to some later message.
+export function takePendingClarification(sessionId = 'default') {
+  const state = getStylistConversationState(sessionId) || {}
+  const pending = state.pending_clarification
+  if (!pending) return null
+  const { pending_clarification: _taken, ...rest } = state
+  saveStylistConversationState(rest, sessionId)
+  return pending.request && pending.question ? pending : null
+}
+
+export function clarifiedRequestText(pending = {}, answer = '') {
+  return `${pending.request}\n\n(You asked me: "${pending.question}" My answer: ${String(answer || '').trim()})`
+}
+
 function getHomeLocation() {
   try {
     const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
@@ -6601,7 +6616,13 @@ router.post('/ask', async (req, res) => {
   // success path.
   let diagnosticsContext = null
   try {
-    const currentQuestion = req.body.question || ''
+    // The stylist asked a question last turn (pendingClarification below); this message is the
+    // answer. The paths that compose an outfit see only the current message, so the original
+    // request and the exchange are joined into it, once.
+    const typedQuestion = req.body.question || ''
+    const pendingClarification = takePendingClarification(req.body.sessionId || 'default')
+    const currentQuestion = pendingClarification ? clarifiedRequestText(pendingClarification, typedQuestion) : typedQuestion
+    if (pendingClarification) req.body.question = currentQuestion
     // Item 12's deferred fast path (feedback-routing-proposal.md): a simple, explicit, self-
     // contained prohibition needs no model turn at all — extractOwnerGuidanceApplicability already
     // resolves it deterministically. Applies regardless of thread state, since the whole point is
@@ -6675,7 +6696,7 @@ router.post('/ask', async (req, res) => {
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
       statedTripDateRange,
-      history: priorStylistConversationHistory(req.body.history, currentQuestion),
+      history: priorStylistConversationHistory(req.body.history, typedQuestion),
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.
@@ -6732,7 +6753,7 @@ router.post('/ask', async (req, res) => {
         : TRIP_ROSTER_PHOTO_LIMIT
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
-    const priorConversationHistory = priorStylistConversationHistory(req.body.history, currentQuestion)
+    const priorConversationHistory = priorStylistConversationHistory(req.body.history, typedQuestion)
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
     // full_stylist answer actually discussed (cited in prose AND verified that turn) — not raw
     // search candidates. Read-only here: informs the router's contextSummary (§5.4) and, if the
@@ -6874,6 +6895,34 @@ router.post('/ask', async (req, res) => {
         toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
         if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
           singleOutfitRoute = routed.value
+        }
+        // Owner ruling 2026-10-06: "stylist may absolutely ask the question first! in fact she must
+        // if she is missing information or can take different approaches." The router judges that
+        // and writes the question; the request is kept so the answer can be joined to it. Never
+        // twice in a row: an answer to her own question is composed from, not questioned again.
+        const askFirst = String(routed.value?.clarifying_question || '').trim()
+        if (askFirst && freshExecutionRequest && !pendingClarification && ['single_outfit', 'bounded_multi'].includes(compactProfile)) {
+          saveStylistConversationState(
+            { ...compactState, pending_clarification: { request: currentQuestion, question: askFirst } },
+            req.body.sessionId || 'default'
+          )
+          toolContext.freeformDiagnostics.executionProfile = 'clarifying_question'
+          recordFreeformToolIteration(toolContext, ['clarifying_question'])
+          const freeformDiagnostics = toolContext.freeformDiagnostics
+          persistFreeformGenerationRun({
+            sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
+            diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
+          })
+          return res.json({
+            answer: askFirst,
+            savedCorrections: [], renderedBoards: [],
+            provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+            model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
+            structuredOutfits: [], structuredOutfitsSource: null,
+            structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
+            structuredOutfitsMood: null, structuredOutfitsMission: null,
+            structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
+          })
         }
         if (compactProfile === 'wardrobe_inventory') {
           const categoryRows = db.prepare("SELECT category, COUNT(*) AS count FROM pieces WHERE status = 'active' GROUP BY category").all()
