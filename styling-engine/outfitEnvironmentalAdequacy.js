@@ -690,9 +690,13 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         // ADVISORY, never hard (§5.5): overshoot ranks, it never excludes. Judged across
         // configurations, so excess a person can simply take off is no longer reported as a fault —
         // only warmth that remains in every wearable state.
+        // The card says it in plain words with the number (owner, 2026-10-06); the model-facing
+        // message is unchanged.
+        const warmEndF = [weather?.highF, weather?.transitHighF].filter(value => value != null).map(Number).find(value => Number.isFinite(value))
+        const warmEndText = Number.isFinite(warmEndF) ? `a high of ${Math.round(warmEndF)}°F` : 'the warm end of these conditions'
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT,
           'even with the removable layers off, this outfit carries considerably more warmth than the warm end of these conditions calls for',
-          { evidence, severity: 'advisory' }))
+          { evidence, severity: 'advisory', cardMessage: `this outfit runs warm for ${warmEndText}${layers.length ? ', even with the layer off' : ''}` }))
       }
 
       // THE WARM ENDPOINT'S OWN SHORTFALL. A required removable layer creates two worn states, and

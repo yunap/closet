@@ -8882,3 +8882,33 @@ test('the single-outfit wardrobe search states the resolved conditions as a fact
   assert.equal('conditions' in buildSingleOutfitStylistCatalog([], { stylingContext: guess }), false)
   assert.equal('conditions' in buildSingleOutfitStylistCatalog([], {}), false)
 })
+
+// Owner, 2026-10-06 (thread_1791328549015): word-count styling notes are not shown on cards, and the
+// too-warm note is said in plain words with the number.
+test('word-count styling notes stay off the card; the too-warm note names the temperature', async () => {
+  const { locallyGateWholeWardrobeOutfits } = await import('../styling-engine/rules.js')
+  const { evaluateOutfitEnvironmentalAdequacy, advisoryFindingsToSystemFlags, ENVIRONMENTAL_ADEQUACY_CODES: C } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const pieces = [
+    { id: 1, name: 'relaxed tee', category: 'top', formality: 'everyday', status: 'active', occasions: ['casual'] },
+    { id: 2, name: 'wide-leg flowing pants', category: 'bottom', formality: 'everyday', status: 'active', occasions: ['casual'] },
+    { id: 3, name: 'flat sandals', category: 'shoes', formality: 'everyday', status: 'active', occasions: ['casual'], heel_height: 'flat' },
+  ]
+  const card = { label: 'Easy', pieceIds: [1, 2, 3], pieces, reason: 'A relaxed, loose, flowing, wide silhouette.', strength: 'strong' }
+  const gated = locallyGateWholeWardrobeOutfits([card], 1, { mode: 'advisor', applyDiversity: false, candidatePieces: pieces, occasion: 'casual', activity: 'none' })
+  const shown = gated.outfits[0]
+  assert.ok(shown, JSON.stringify(gated.rejected))
+  assert.ok(!(shown.systemFlags || []).some(flag => /volume-heavy/.test(flag.message)), 'not on the card')
+  assert.ok((shown.advisorDiagnosticFlags || []).some(flag => /volume-heavy/.test(flag.message)), 'kept for diagnosis')
+
+  const warm = [
+    { id: 11, category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' },
+    { id: 12, category: 'bottom', name: 'wool trousers', fabric_weight: 'heavy', fiber_content: ['wool'] },
+    { id: 13, category: 'shoes', name: 'boots' },
+  ]
+  const result = evaluateOutfitEnvironmentalAdequacy(warm, { weatherProfile: { isHot: true, highF: 89, lowF: 65, weatherSource: 'live' }, environment: 'outdoor' })
+  const overshoot = [...(result.findings || []), ...(result.advisoryFindings || [])].find(f => f.code === C.THERMAL_OVERSHOOT)
+  if (overshoot) {
+    assert.equal(overshoot.cardMessage, 'this outfit runs warm for a high of 89°F')
+    assert.match(advisoryFindingsToSystemFlags([overshoot])[0].message, /runs warm for a high of 89°F/)
+  }
+})

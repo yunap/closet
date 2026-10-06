@@ -5720,6 +5720,20 @@ export function normalizeWholeWardrobeStrengths(outfits = []) {
   }))
 }
 
+// Owner, 2026-10-06 (live thread_1791328549015): the mood, proportion and contrast checks below
+// count words in the outfit's names and prose ("wide", "relaxed", "flowing" three times is
+// "volume-heavy"). That is a styling opinion formed by counting words, shown on the card in engine
+// wording over the stylist's own pick. In advisor mode they are now recorded for diagnosis only and
+// never shown; gate mode is unchanged.
+function appendDiagnosticFlag(outfit = {}, type = 'note', message = '') {
+  if (!message) return outfit
+  const advisorDiagnosticFlags = Array.isArray(outfit.advisorDiagnosticFlags) ? [...outfit.advisorDiagnosticFlags] : []
+  if (!advisorDiagnosticFlags.some(flag => flag.type === type && flag.message === message)) {
+    advisorDiagnosticFlags.push({ type, message })
+  }
+  return { ...outfit, advisorDiagnosticFlags }
+}
+
 function appendSystemFlag(outfit = {}, type = 'note', message = '') {
   if (!message) return outfit
   const systemFlags = Array.isArray(outfit.systemFlags) ? [...outfit.systemFlags] : []
@@ -5879,7 +5893,7 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     }
     if (wholeWardrobeMissesMood(repaired, mood)) {
       if (advisorMode) {
-        repaired = appendSystemFlag(repaired, 'mood', 'May miss the requested mood; compare against the garment photos.')
+        repaired = appendDiagnosticFlag(repaired, 'mood', 'May miss the requested mood; compare against the garment photos.')
       } else {
         reject(repaired, 'misses requested boho mood')
         continue
@@ -5887,7 +5901,7 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     }
     if ((text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length >= 3) {
       if (advisorMode) {
-        repaired = appendSystemFlag(repaired, 'proportion', 'Reads volume-heavy; check that one piece anchors the outfit.')
+        repaired = appendDiagnosticFlag(repaired, 'proportion', 'Reads volume-heavy; check that one piece anchors the outfit.')
       } else {
         reject(repaired, 'too much width/volume')
         continue
@@ -5895,7 +5909,7 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     }
     if ((text.match(/\b(soft|gauzy|drape|drapey|cream|ivory|beige|taupe|sand)\b/g) || []).length >= 5 && !/\b(black|charcoal|espresso|boot|loafer|pointed|structured|graphic)\b/.test(text)) {
       if (advisorMode) {
-        repaired = appendSystemFlag(repaired, 'contrast', 'Soft neutral read; check whether it has enough grounding in the photos.')
+        repaired = appendDiagnosticFlag(repaired, 'contrast', 'Soft neutral read; check whether it has enough grounding in the photos.')
       } else {
         reject(repaired, 'soft neutral drift')
         continue
