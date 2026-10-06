@@ -241,11 +241,18 @@ Stated as requirements, not designs. How to meet them is the next step, decided 
 
 - **2026-10-02, first slice.** Baseline captured on three live threads (`thread_1790923286929` hosting, `thread_1790924321526` Vienna trip, `thread_1790924998519` styling one piece). Three changes followed, none requiring a different model: notes written for the model no longer appear on cards (check 5); the single-outfit brief opens with the situation and asks for an occasion-specific reason and an honest drawback (checks 1, 3, 4); the trip’s final answer is given the packer’s per-piece reasons and asked to explain instead of recite (checks 6, 8, 9). Details in `engine-behaviour-map.md` and `freeform-rearchitecture-handoff.md`, both dated 2026-10-02. Not yet re-run live.
 
-## Open questions for the owner
+## Owner rulings on the open questions
 
-1. Is one recommended outfit plus one or two alternatives the right default for an ordinary
-   request, in place of two unranked directions?
-2. How long should the prose be? The targets run 60–120 words outside a trip.
-3. For a trip, is "by activity" the right organisation, or day by day?
-4. Should the stylist ever ask a question before answering (for example "are you cooking?"), or
-   always state its assumption and proceed, as the targets do?
+1. **One outfit for an ordinary request** (2026-10-02): an ordinary "what should I wear?" gets one
+   outfit from the single-outfit stylist, with the two-paragraph note (her read of the situation,
+   then the pick). Several options only when the person asks for options.
+2. **Prose length: let her judge** (2026-10-06). No fixed length. Short when the request is simple,
+   longer when there is a real tradeoff to explain. Any word count in a prompt is a mistake.
+3. **Trips are organised by activity** (chosen during implementation 2026-10-02, not ruled on by the
+   owner; still open to "day by day").
+4. **The stylist asks first when she needs to** (2026-10-06, owner: "stylist may absolutely ask the
+   question first! in fact she must if she is missing information or can take different approaches.
+   just like a real stylist would"). When a fact that changes the answer is missing, or the request
+   can reasonably be taken in different directions, she asks before proposing an outfit. This
+   replaces the targets' earlier habit of stating an assumption and proceeding; target 1's opening
+   ("You're hosting, so…") stands only where the situation is actually known.
