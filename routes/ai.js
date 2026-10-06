@@ -2632,6 +2632,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   currentDate = null,
   adaptiveVisualDetail = false,
   comparisonSetGuidance = true,
+  // /ask's "a few options" turn: the composer also writes the reply shown above the cards, in this
+  // same call (docs/freeform-bounded-execution-spec.md item 7, amended 2026-10-06).
+  stylistNote = false,
   // Was previously absent-by-default so the two direct HTTP routes (/generate-wardrobe-outfits-
   // visual, saved-outfit variants) never saw the experimental Gemini routing flag — found live: a
   // freeform turn running under STYLIST_PROVIDER_OVERRIDE=gemini still made this nested composer
@@ -3119,6 +3122,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       comparisonSetGuidance && requestedLimit > 1 && !composerExperiment?.holdOutComparisonSet
         ? 'COMPARISON SET CONTRACT: These options will be compared side by side. Each card should be worthwhile on its own; meaningful alternatives are welcome, but do not choose a weaker outfit merely to avoid repeating a sound formula. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.\nOUTFIT CONDITIONS FIT: Judge each complete outfit for the user\'s stated conditions and exposure; alternatives need not carry uniform thermal weight. Count a removable layer only when it is actually included in the outfit and realistically wearable in it. Do not invent indoor stops or timing to justify a lighter or heavier look.'
         : '',
+      stylistNote && !composerExperiment
+        ? 'STYLIST NOTE (stylist_note): write to the wearer directly, as their stylist, about this set of options. Open with what this occasion and its conditions ask of an outfit, as you understood the request. Then say how the options differ and when you would choose each, naming each by its label; if one is your pick for this occasion, say which and why. Be honest about a real drawback an option has for what the wearer will be doing. As long as it needs to be and no longer: a few lines when the choice is simple, more when there is a real tradeoff to explain. Do not list each outfit\'s garments (the cards show them), do not cite piece IDs, and do not describe an outfit you are not returning.'
+        : '',
       savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (exact reactions — each applies to its own combination only):\n${wholeWardrobeFeedbackText}` : '',
@@ -3145,12 +3151,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerErrorIsTimeout = false
     let composerUsage = null
     const composerStartedAt = Date.now()
-    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit)
+    const wantsStylistNote = Boolean(stylistNote && !composerExperiment)
+    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 500 : 0)
     const productionSystemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     const sleeveSystemPrompt = composerExperiment?.sleeveGuidance === 'neutral' ? withNeutralSleeveGuidance(productionSystemPrompt) : productionSystemPrompt
     const explainDayWear = composerExperiment?.dayWearGuidance === 'explain'
     const systemPrompt = explainDayWear ? withDayWearExplanation(sleeveSystemPrompt) : sleeveSystemPrompt
-    const composerSchema = composerOutfitSlotsSchema({ minOutfits: requestedLimit, wearThroughDay: explainDayWear })
+    const composerSchema = composerOutfitSlotsSchema({ minOutfits: requestedLimit, wearThroughDay: explainDayWear, stylistNote: wantsStylistNote })
     const composerRequestIdentityRecord = composerExperiment
       ? composerRequestIdentity({ system: systemPrompt, content, schema: composerSchema, model: resolveAiTarget(providerOverride).model, maxTokens: composerMaxTokens })
       : null
@@ -4288,6 +4295,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     return {
       feedback,
       structuredOutfits,
+      // Her note describes the outfits she composed; the caller shows it only when those are the
+      // cards delivered (a dropped or backfilled card would leave it describing something not shown).
+      stylistNote: wantsStylistNote ? String(parsed?.stylist_note || '').trim() : '',
+      composedLabels: (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => String(outfit?.label || '').trim()),
       // Tier 2(a): said once at the SET level. Cards keep their own advisory and are never mutated,
       // dropped, or completed by the engine — this only stops the set from shipping a known
       // deficiency silently. Empty string when nothing is deficient.

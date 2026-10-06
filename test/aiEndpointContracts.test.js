@@ -8852,3 +8852,18 @@ test('a routed time of day reads the forecast for those hours, not the whole day
     _clearWeatherCachesForTests()
   }
 })
+
+// Owner 2026-10-06: the "a few options" reply is written by the stylist, in the composer's own call.
+test('a set of options opens with the stylist\'s own note when she wrote one about exactly these cards; otherwise the code line stands', async () => {
+  const { composerOutfitSlotsSchema } = await import('../styling-engine/composerSlots.js')
+  const { boundedAtomicMultiLookResponse } = await import('../styling-engine/provider.js')
+  assert.ok(composerOutfitSlotsSchema({ minOutfits: 2, stylistNote: true }).required.includes('stylist_note'))
+  assert.equal('stylist_note' in composerOutfitSlotsSchema({ minOutfits: 2 }).properties, false, 'no other composer call is asked for it')
+
+  const cards = [{ label: 'Botanical Vibe' }, { label: 'Textured Rhythm' }]
+  const base = { atomicMultiLookCompleted: true, atomicMultiLookRequestedCount: 2, generatedOutfits: cards, boundedWeatherSummary: "this evening's forecast high of 89°F and low of 65°F", boundedLocation: 'San Mateo' }
+  const note = 'A warm evening that cools once the sun is down. Botanical Vibe is my pick: the vest goes on when it drops. Textured Rhythm is the bolder one.'
+  assert.equal(boundedAtomicMultiLookResponse({ ...base, boundedStylistNote: note }), note)
+  assert.equal(boundedAtomicMultiLookResponse(base), "For this evening's forecast high of 89°F and low of 65°F in San Mateo, I’d compare these two directions.")
+  assert.match(boundedAtomicMultiLookResponse({ ...base, boundedStylistNote: note, boundedWeatherUnavailable: true }), /^I couldn’t verify the forecast for San Mateo[\s\S]*A warm evening/)
+})

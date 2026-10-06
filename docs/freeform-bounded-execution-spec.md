@@ -81,6 +81,12 @@ is supplied, or when the user asked for explanation rather than cards.
    paid live A/B are accepted.
 7. The tool result ends the paid loop. Deterministic code writes the short card introduction and
    shortfall language; there is no full-prefix closing model call after validated cards exist.
+   **[amended 2026-10-06, owner: "build the written intro for few options"]** The introduction is
+   now the stylist's own note, written by the composer in the SAME call (`stylist_note` on the
+   `wardrobe_outfits` schema, requested only for this turn) — still no closing model call. It is
+   shown only when the delivered cards are exactly the outfits she composed (same labels, none
+   dropped, backfilled or needs-review); otherwise the deterministic line above stands. A
+   forecast-unavailable sentence still leads it.
 8. A named location and resolved requested date travel into `generate_outfits`, which resolves live
    weather before roster construction and records `weather_source`. Seasonal text is only fallback.
 9. The bounded `generate_outfits` call is itself the cards declaration. It does not spend a separate

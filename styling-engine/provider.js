@@ -395,6 +395,16 @@ export function boundedAtomicMultiLookResponse(toolContext = {}) {
   const directionPhrase = ready === 1
     ? 'this direction'
     : (ready === 2 ? 'these two directions' : `these ${ready} directions`)
+  // The stylist's own note for the set, when she wrote one about exactly these cards (tools.js).
+  // The forecast-unavailable sentence still leads: it is a fact she was not given.
+  const stylistNote = String(toolContext?.boundedStylistNote || '').trim()
+  const unavailableSentence = `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
+  if (ready && stylistNote) {
+    return boundedAtomicMultiLookFinalAnswer(unavailableWeather ? `${unavailableSentence}\n\n${stylistNote}` : stylistNote, {
+      ...toolContext,
+      atomicMultiLookRequestedCount: requested
+    })
+  }
   const base = ready
     ? unavailableWeather
       ? `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`

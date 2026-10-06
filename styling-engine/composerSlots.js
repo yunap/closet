@@ -34,7 +34,7 @@ const nullableId = { type: ['integer', 'null'] }
 // an Anthropic forced tool call — so `composerOutfitCountCheck` checks it locally on every provider.
 // `wearThroughDay` exists only for the day-wear explanation experiment (docs/day-wear-explanation-experiment-2026-09-15.md);
 // production never passes it, so the production schema is unchanged.
-export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutfits, wearThroughDay = false } = {}) {
+export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutfits, wearThroughDay = false, stylistNote = false } = {}) {
   const min = Math.max(1, Number(minOutfits) || 1)
   const max = Math.max(min, Number(maxOutfits) || min)
   return {
@@ -65,8 +65,11 @@ export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutf
     },
     skip: { type: 'string' },
     saveableLearning: { type: 'string' },
+    // The stylist's own words about the set, shown as the chat reply above the cards (/ask's
+    // "a few options" turn; owner 2026-10-06). Absent from every other composer call.
+    ...(stylistNote ? { stylist_note: { type: 'string' } } : {}),
   },
-  required: ['outfits', 'skip', 'saveableLearning'],
+  required: ['outfits', 'skip', 'saveableLearning', ...(stylistNote ? ['stylist_note'] : [])],
 }
 }
 

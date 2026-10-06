@@ -4522,6 +4522,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
+            stylistNote: boundedMultiLook,
             // Same reasoning as the selected-piece branch above — this is the exact call site
             // implicated in the live $0.122-inside-a-"Gemini"-turn finding.
             providerOverride: toolContext.providerOverride || null,
@@ -4555,6 +4556,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.generatedOutfits = Object.keys(generatedWeatherFields).length
             ? result.structuredOutfits.map(outfit => ({ ...outfit, ...generatedWeatherFields }))
             : result.structuredOutfits
+          // The stylist's own reply for a set of options. Shown only when the delivered cards are
+          // exactly the ones she wrote about; otherwise the code-written line stands.
+          const deliveredLabels = result.structuredOutfits.filter(outfit => !outfit?.broken).map(outfit => String(outfit?.label || '').trim())
+          const composedLabels = Array.isArray(result.composedLabels) ? result.composedLabels : []
+          const sameCards = composedLabels.length > 0 && composedLabels.length === deliveredLabels.length
+            && result.structuredOutfits.every(outfit => !outfit?.broken)
+            && [...composedLabels].sort().join('\n') === [...deliveredLabels].sort().join('\n')
+          toolContext.boundedStylistNote = boundedMultiLook && sameCards ? String(result.stylistNote || '').trim() : ''
 
           // 2026-09-16 (owner review, thread_1789546295700): `aiReturnedCount === 0` means the
           // composer produced no model-styled output this turn — timed out, errored, or any other
