@@ -207,18 +207,10 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     }
   }
 
-  // ── context (legacy clarification clause — retire candidate) ────────────
-  // Per the proposed architecture this should become the model's own judgment
-  // informed by THREAD STATE. Kept mechanical until live evidence shows the
-  // prompt-level judgment holds. The sibling tripScopeClarification clause was
-  // retired outright in spec 21 Part 3 (spec 18 Part 2's flag window closed on
-  // owner ruling — the model repeatedly demonstrated the judgment the clause
-  // distrusted, with no misfire evidence for this one to justify keeping it
-  // mechanical too). This clause has no such misfire evidence and stays live.
-  if (!retried.has('destinationClarification') && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
-    return fail('destinationClarification', 'destinationClarificationRetries',
-      "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request.")
-  }
+  // The legacy destinationClarification retry (Spec 7 Part 2) is retired, owner ruling 2026-10-06:
+  // it re-ran a turn in which the model asked about weather or destination, to save the cost of an
+  // extra turn on a costlier model. Asking when she needs to is now the stylist's job; the prompt
+  // still tells her that a named place and its forecast are looked up, never asked.
 
   // ── delivery ────────────────────────────────────────────────────────────
   // The declaration is authoritative; the phrasing regexes apply only on
@@ -272,8 +264,17 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // the normal state of an ordinary prose answer, and the old clause would have fired on exactly
   // the conversational turns this change makes cheap -- spending a retry to save a round-trip.
   // Prose that actually describes an unproposed outfit is still caught, by inspecting the prose.
+  // Advice about pieces the thread already holds is not an unproposed outfit. Live
+  // thread_1791360025316: her answer to "I don't want to take 3 coats, what are my options?" was a
+  // numbered list naming the suitcase's own three coats; the numbered-list-with-ids shape tripped
+  // this check, she was told to "call propose_outfit now", and the advice was replaced by one new
+  // outfit card. When every piece the prose cites is already in the thread's cards or suitcase,
+  // there is nothing unproposed in it.
+  const establishedIds = new Set((Array.isArray(toolContext?.knownOutfitPieceIds) ? toolContext.knownOutfitPieceIds : []).map(Number))
+  const citedInAnswer = extractPieceIdsFromProse(answerText)
+  const discussesEstablishedPieces = citedInAnswer.length > 0 && citedInAnswer.every(id => establishedIds.has(Number(id)))
   if (!boundedCompositionCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
-      looksLikeUnproposedOutfitProse(answerText)) {
+      !discussesEstablishedPieces && looksLikeUnproposedOutfitProse(answerText)) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
       ? ` You already referenced these exact piece IDs: ${priorIds.join(', ')} — reuse exactly these IDs and roles, do not substitute or invent different pieces.`
@@ -333,6 +334,9 @@ export function stripPieceIdCitations(answerText = '', { knownPieceIds = null } 
     // Tidy what removal leaves behind, without touching line structure.
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([,.;:!?])/g, '$1')
+    // "(`grey textured fleece`, ID 996762)" became "(`grey textured fleece`,)" (live
+    // thread_1791360769989): a separator stranded just inside a closing bracket goes with the citation.
+    .replace(/[ \t]*[,;:][ \t]*([)\]])/g, '$1')
     .replace(/\(\s*\)|\[\s*\]/g, '')
     // Removing a mid-sentence citation leaves its separators behind: "the loafers, ID 196, work"
     // became "the loafers,, work". The bracketed form the prompt actually mandates never hits this,
@@ -403,6 +407,16 @@ export function boundedAtomicMultiLookResponse(toolContext = {}) {
   const directionPhrase = ready === 1
     ? 'this direction'
     : (ready === 2 ? 'these two directions' : `these ${ready} directions`)
+  // The stylist's own note for the set, when she wrote one about exactly these cards (tools.js).
+  // The forecast-unavailable sentence still leads: it is a fact she was not given.
+  const stylistNote = String(toolContext?.boundedStylistNote || '').trim()
+  const unavailableSentence = `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
+  if (ready && stylistNote) {
+    return boundedAtomicMultiLookFinalAnswer(unavailableWeather ? `${unavailableSentence}\n\n${stylistNote}` : stylistNote, {
+      ...toolContext,
+      atomicMultiLookRequestedCount: requested
+    })
+  }
   const base = ready
     ? unavailableWeather
       ? `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
@@ -552,6 +566,16 @@ export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flas
 // to find out whether the unset default itself is the latency driver before trusting any number
 // run against it).
 const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
+// The stylist's own tool loop — the calls that choose and justify garments in a single-outfit turn
+// and in every follow-up. The comment above planned "medium for the stylist" and it was never done.
+// Evidence that 'low' means no reasoning on this model: the trip packer (730 output tokens, thin
+// suitcases; fixed at medium), the options composer (592 tokens, boots under tropical trousers on an
+// 89°F evening; fixed at medium), and live thread_1791352199157, where a follow-up asked to replace
+// one blouse rebuilt the outfit and put a cropped short-sleeved shrug over a billowy 3/4-sleeve
+// satin top it had been shown photographs of. Gemini counts thinking against max_output_tokens, so
+// the loop's cap gets headroom. Set GEMINI_STYLIST_LOOP_THINKING_LEVEL=low to revert.
+const GEMINI_STYLIST_LOOP_THINKING_LEVEL = process.env.GEMINI_STYLIST_LOOP_THINKING_LEVEL || 'medium'
+const GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS = 4000
 
 // The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
 // generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
@@ -1014,9 +1038,21 @@ export function stylistToolsForTurn(toolContext = {}) {
   //
   // Returning FEWER tools above is a different thing and stays: which tools are offered is a
   // deliberate turn-ending boundary, not per-request policy inside a schema.
-  return allowedNames
+  const tools = allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
+  // The single-outfit turn ends when its card is accepted, so the chat reply has to arrive inside
+  // the proposal. As an optional field the model left it empty on a live run
+  // (thread_1790929800547); here it is required. This profile already has its own three-tool list,
+  // so the full stylist's tool schemas, and their cached prefix, stay byte-identical.
+  if (toolContext?.executionProfile !== 'single_outfit') return tools
+  return tools.map(tool => tool.name !== 'propose_outfit' ? tool : {
+    ...tool,
+    input_schema: {
+      ...tool.input_schema,
+      required: [...new Set([...(tool.input_schema?.required || []), 'why_it_works', 'stylist_note'])],
+    },
+  })
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
@@ -1310,7 +1346,9 @@ export async function askStylistStructuredWithUsage({
   model = null,
   providerOverride = null,
   subflow = 'structured_response',
-  signal = null
+  signal = null,
+  // Per-call Gemini thinking level; null keeps GEMINI_THINKING_LEVEL. Ignored by other providers.
+  thinkingLevel = null
 }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1331,18 +1369,18 @@ export async function askStylistStructuredWithUsage({
   const target = resolveAiTarget(providerOverride)
   assertProviderKey(target)
   const captureCallId = newProviderCaptureCallId()
-  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, callId: captureCallId, system, messages, tools: [] })
+  captureNormalizedProviderInput({ provider: target.provider, model: target.model, subflow, schemaName: name, callId: captureCallId, system, messages, tools: [] })
 
   if (target.provider === 'gemini') {
     const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
     const startedAt = Date.now()
     let interaction
     try {
-      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, callId: captureCallId }, {
+      interaction = await ai.interactions.create(wireCaptured({ provider: 'gemini', model: target.model, subflow, schemaName: name, callId: captureCallId }, {
         model: target.model,
         system_instruction: plainSystem,
         input: (Array.isArray(messages) ? messages : []).flatMap(m => canonicalContentToGeminiParts(m.content)),
-        generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+        generation_config: { max_output_tokens: maxTokens, thinking_level: thinkingLevel || GEMINI_THINKING_LEVEL },
         // Gemini's JSON-Schema subset does not necessarily accept every construct Closet's
         // schemas use (e.g. FREEFORM_EXECUTION_ROUTE_SCHEMA's plain enums are fine; a schema using
         // oneOf, like search_wardrobe's tool input, might not be) — no shadow schema, no silent
@@ -1370,7 +1408,7 @@ export async function askStylistStructuredWithUsage({
       .join('\n\n').trim() || String(interaction.output_text || '').trim()
     const usage = normalizeAiUsage(interaction.usage, { provider: 'gemini', model: target.model, stopReason: geminiStopReasonFromStatus(interaction.status) })
     await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', usage, ...callOutcomeFromUsage(usage), latencyMs, isMock: false, context: { ...geminiModalityContext(interaction), stopReason: usage?.stopReason ?? null } })
-    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
+    captureProviderOutput({ provider: 'gemini', model: target.model, subflow, schemaName: name, callId: captureCallId, stopReason: usage?.stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1381,7 +1419,7 @@ export async function askStylistStructuredWithUsage({
 
   if (target.provider === 'openai') {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, callId: captureCallId }, {
+    const response = await client.chat.completions.create(wireCaptured({ provider: 'openai', model: target.model, subflow, schemaName: name, callId: captureCallId }, {
       model: target.model,
       max_tokens: maxTokens,
       messages: [
@@ -1396,7 +1434,7 @@ export async function askStylistStructuredWithUsage({
     const text = response.choices?.[0]?.message?.content || ''
     const stopReason = response.choices?.[0]?.finish_reason
     const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: target.model, stopReason })
-    captureProviderOutput({ provider: 'openai', model: target.model, subflow, callId: captureCallId, stopReason: stopReason ?? null, output: text })
+    captureProviderOutput({ provider: 'openai', model: target.model, subflow, schemaName: name, callId: captureCallId, stopReason: stopReason ?? null, output: text })
     try {
       return { value: parseModelJson(text, { context: name, maxTokens, stopReason: usage?.stopReason }), usage }
     } catch (err) {
@@ -1407,7 +1445,7 @@ export async function askStylistStructuredWithUsage({
 
   const resolvedModel = model || ANTHROPIC_MODEL
   const client = new Anthropic({ apiKey: resolveAnthropicKey() })
-  const response = await client.messages.create(wireCaptured({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId }, {
+  const response = await client.messages.create(wireCaptured({ provider: 'anthropic', model: resolvedModel, subflow, schemaName: name, callId: captureCallId }, {
     model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
@@ -1420,7 +1458,7 @@ export async function askStylistStructuredWithUsage({
   }), { signal })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
   const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel, stopReason: response.stop_reason })
-  captureProviderOutput({ provider: 'anthropic', model: resolvedModel, subflow, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
+  captureProviderOutput({ provider: 'anthropic', model: resolvedModel, subflow, schemaName: name, callId: captureCallId, stopReason: response.stop_reason ?? null, output: response.content ?? null })
   // A tool_use block that hit max_tokens mid-generation can still have a complete-looking,
   // valid `input` object — just missing whatever fields the model hadn't reached yet (e.g. an
   // empty `outfits` array instead of the requested count). The !toolUse?.input check alone
@@ -1440,11 +1478,12 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day'],
   properties: {
-    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
+    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
+    setting: { type: 'string', enum: ['indoor_only', 'includes_outdoors'] },
     season: { type: 'string' },
     mood: { type: 'string' },
     mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
@@ -1452,14 +1491,16 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     location: { type: 'string' },
     date: { type: 'string' },
     subject: { type: 'string' },
+    clarifying_question: { type: 'string' },
+    time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
   }
 }
 
 const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
 
-Choose bounded_multi ONLY when the user wants 2–5 fresh complete outfit options sharing one occasion, activity, location, date, and weather context. An ordinary "what should I wear?" means 2. An explicit count 2–5 wins.
+Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options ("a few options", "some ideas", "outfits", or a count from 2 to 5) sharing one occasion, activity, location, date, and weather context. Use the stated count; when options are asked for without a number, use 2.
 
-Choose single_outfit only for a FRESH request for exactly one complete outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. Explicit "one", "one best", "pick one", and "give me an outfit" requests use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
+Choose single_outfit for a FRESH request for an outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. An ordinary "what should I wear?" with no request for several options is single_outfit: the stylist recommends one outfit and the user can ask for more. Explicit "one", "one best", "pick one", and "give me an outfit" requests also use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
 
 Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
 
@@ -1469,11 +1510,19 @@ Choose general_advice only for general styling education that does not claim to 
 
 Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
 
+Choose trip_plan ONLY for a FRESH request to pack for, or plan what to wear on, a trip or stay away from home lasting more than one day ("what should I pack for…", "I'm going to X for a week/weekend"), including when the user is answering your question about such a trip. Not for a capsule wardrobe, a work week at home, a single outing in another city, or any change to a plan or cards that already exist; those are full_stylist. Use limit 0.
+
 Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the user's own home or another single heated or cooled room, with no travel and no time outdoors: hosting or staying at home, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. For full_stylist use includes_outdoors.
+
+time_of_day is when the outing happens, when the request says so or plainly implies it: tonight, this evening, dinner, drinks, a concert or show at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Use an empty value when no time is stated or implied, when it spans the day, and for full_stylist. The forecast is then read for those hours rather than the whole day.
+
+Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
+
+clarifying_question is for single_outfit and bounded_multi requests only, and is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
@@ -1859,7 +1908,10 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     model,
     ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
     input,
-    generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+    generation_config: {
+      max_output_tokens: maxTokens + (GEMINI_STYLIST_LOOP_THINKING_LEVEL === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
+      thinking_level: GEMINI_STYLIST_LOOP_THINKING_LEVEL,
+    },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
   }
   // Note for comparison purposes: on a continuation call (iteration 2+ within one turn), this wire
@@ -2124,6 +2176,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
       }
+      if (toolContext.followupProposalCompleted && toolContext.followupStylistNote) {
+        return { answer: toolContext.followupStylistNote, savedCorrections }
+      }
       if (toolContext.executionProfile === 'single_outfit' && toolContext.singleOutfitProposalCompleted) {
         const outfit = Array.isArray(toolContext.generatedOutfits)
           ? toolContext.generatedOutfits.find(o => !o?.broken)
@@ -2133,9 +2188,14 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         // and we haven't yet given the model a follow-up turn to see those notes, allow one iteration
         // so the model receives the tool_result with systemNotes and can either swap pieces or speak with candor.
         if (!hasAdvisoryNotes || toolContext.singleOutfitAdvisoryTurnDelivered) {
+          // thread_1790928379170: the loop ends here the moment a card is accepted, so the brief's
+          // "Stylist Note" step only ever ran when an advisory note bought the model one more turn
+          // (which is the only reason thread_1790923286929 had its intro paragraph). Otherwise the
+          // chat reply was the card's own why_it_works, repeated. The note now travels with the
+          // proposal as propose_outfit's stylist_note, costing no extra provider call.
           const chatText = (turn.text && turn.text.trim())
             ? joinAnswer(turn.text)
-            : (outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
+            : (toolContext.singleOutfitStylistNote || outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
           return { answer: chatText, savedCorrections }
         }
         if (turn.text && narration.length && narration[narration.length - 1] === turn.text) {

@@ -27,6 +27,7 @@ import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
   TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
+  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -36,6 +37,8 @@ import {
   resolveSlotWeather,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
+  buildTripExplanationEvidence,
+  tripOutfitCoolEndLayer,
   buildRejectedCapsuleCards,
   describeCapsuleSupplyGap,
   mergePendingPlanForReplan,
@@ -331,7 +334,7 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
 
 export const stylistCatalogLine = singleOutfitStylistCatalogLine
 
-export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } = {}) {
+export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext, weatherWindow = '' } = {}) {
   const unique = []
   const seen = new Set()
   for (const piece of Array.isArray(pieces) ? pieces : []) {
@@ -375,9 +378,24 @@ export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext } 
   // the exposure) rather than the two specific fields.
   const instruction = 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). When the stated conditions call for real warmth, don\'t let silhouette or hero selection alone decide which layers you even look at — bring enough candidates whose recorded construction is plausibly relevant to the exposure (insulation, substantial weight, weather protection, or other stated construction) onto the workbench to judge them fairly alongside the more polished-looking options. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
 
+  // The conditions the tools resolved, stated as a fact. Live thread_1791328194271: the stylist is
+  // told to "let the tools resolve weather", the tools did (89°F falling to 65°F that evening) and
+  // filtered the catalog by it, and she was never told — so she chose trousers, boots and a cardigan
+  // and wrote about "the cooler evening air". Above, the model "judges the completed outfit against
+  // the stated conditions itself"; this is where they are stated. No target, no instruction on what
+  // to wear.
+  const resolvedWeather = stylingContext?.weatherProfile?.resolvedWeatherContext
+  const weatherLabel = resolvedWeather?.temperature && resolvedWeather.temperature.source !== 'heuristic'
+    ? truthfulWeatherLabel(resolvedWeather.temperature, { location: resolvedWeather.location })
+    : ''
+  const conditions = weatherLabel
+    ? `${weatherWindow ? `this ${weatherWindow}: ` : ''}${weatherLabel}. These are the conditions the outfit is worn in; say them in your Stylist Note so the wearer can correct them.`
+    : ''
+
   return {
     eligible_piece_count: unique.length,
     eligible_by_category: eligibleByCategory,
+    ...(conditions ? { conditions } : {}),
     sparse_conventions: SPARSE_CATALOG_CONVENTIONS,
     instruction,
     catalog,
@@ -648,7 +666,7 @@ export async function resolveToolStylingContext({
   const carryForwardWeatherProfile = !safeExplicitLocation
     ? toolContext.weatherProfile
     : toolContext.resolvedWeatherContext?.location &&
-      normalizedWeatherLocationIdentity(toolContext.resolvedWeatherContext.location) === normalizedWeatherLocationIdentity(safeExplicitLocation)
+      sameWeatherLocation(toolContext.resolvedWeatherContext.location, safeExplicitLocation)
       ? toolContext.weatherProfile
       : null
   const establishedState = {
@@ -665,8 +683,40 @@ export async function resolveToolStylingContext({
     location: toolContext.location,
     date: toolContext.currentDate,
   }
-  const resolver = weatherResolver
-    ? createStylingContextResolver({ weatherResolver })
+  // A `user_weather` whose numbers are the thread's own stored forecast is a copy, not something the
+  // user said. Live thread_1791357375231: the follow-up passed the thread's 78/62°F back as
+  // user_weather and the cards read "78°F high / 62°F low — you said so". Dropped, so the stored
+  // forecast and its true source stand. Any other user_weather is taken as before.
+  const storedTemperature = toolContext.resolvedWeatherContext?.temperature
+  const sameDegrees = (a, b) => Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.round(Number(a)) === Math.round(Number(b))
+  const copiedFromThread = Boolean(explicitRequest.userWeather && storedTemperature
+    && !String(storedTemperature.source || '').includes('stated')
+    && sameDegrees(explicitRequest.userWeather.high_f ?? explicitRequest.userWeather.highF, storedTemperature.highF)
+    && sameDegrees(explicitRequest.userWeather.low_f ?? explicitRequest.userWeather.lowF, storedTemperature.lowF))
+  const userWeatherUnlessCopiedFromThread = copiedFromThread ? null : (explicitRequest.userWeather || null)
+  // The router's time of day (routes/ai.js) reads the forecast for those hours of the day instead
+  // of its whole envelope — the same hourly slice trip activities use (resolveExposureWindowHourly).
+  // It stands in for the day's live forecast and falls back to it when the hours are not covered.
+  const timeOfDay = toolContext.executionRouterTimeOfDay || ''
+  const windowedWeatherResolver = !weatherResolver && timeOfDay
+    ? async args => {
+        const day = args?.date instanceof Date
+          ? `${args.date.getFullYear()}-${String(args.date.getMonth() + 1).padStart(2, '0')}-${String(args.date.getDate()).padStart(2, '0')}`
+          : String(args?.date || '').slice(0, 10)
+        let sliced = null
+        try {
+          sliced = await resolveExposureWindowHourly({ location: args?.location || '', date: day, timeWindow: { period: timeOfDay } })
+        } catch {
+          sliced = null
+        }
+        toolContext.weatherWindowUsed = sliced ? timeOfDay : ''
+        return sliced
+          ? { ...sliced, weatherSource: 'live', provider: 'Open-Meteo' }
+          : getCurrentWeatherProfile(args)
+      }
+    : null
+  const resolver = weatherResolver || windowedWeatherResolver
+    ? createStylingContextResolver({ weatherResolver: weatherResolver || windowedWeatherResolver })
     : resolveStylingContext
   // On a fresh /ask turn the execution router already classified activity from the user's words.
   // That result is the authority for the whole turn. The stylist may omit activity, but may not
@@ -690,10 +740,17 @@ export async function resolveToolStylingContext({
       ...explicitRequest,
       activity: activityFromAuthority,
       season: seasonFromAuthority,
+      // The router classified the whole occasion as spent in one room (routes/ai.js). That is the
+      // existing 'indoor' stated-weather sentinel, applied here once for every tool in the turn
+      // instead of depending on the model to repeat a flag on each call. It outranks a
+      // weather_estimate the model may still volunteer, and that estimate is dropped: with one, the
+      // indoor sentinel means "indoor destination" and the estimate becomes the walk there and
+      // back, which an occasion with no travel does not have. Weather the USER stated is kept.
+      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null } : {}),
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
-      userWeather: explicitRequest.userWeather || toolContext.userWeather || null,
+      userWeather: userWeatherUnlessCopiedFromThread || toolContext.userWeather || null,
     },
     actionArtifact,
     establishedState,
@@ -1050,11 +1107,11 @@ export function coldLayerDecisionSchemaProperty() {
       mode: {
         type: 'string',
         enum: ['core_is_warm_enough', 'assigned_packed_layer', 'not_required'],
-        description: "core_is_warm_enough: piece_ids alone (either including an outerwear piece directly in piece_ids, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: pairs this outfit with a compatible packed roster layer (named by assigned_layer_piece_id) worn with this look when outdoors; when choosing assigned_packed_layer, you MUST explicitly name this assigned piece and the temperature/layering transition rationale in the outfit's reason or styling_instructions (e.g. 'bring the cream trench coat for the cooler morning stretch, shed it once temperatures climb'). not_required: this slot's cold_layer_required is false -- answer this for every outfit, even when it is false."
+        description: "core_is_warm_enough: piece_ids alone (either including an outerwear piece directly in piece_ids, or a heavy-fabric top/dress as the main piece) is already warm enough for this slot's conditions. assigned_packed_layer: pairs this outfit with a compatible packed roster layer (named by assigned_layer_piece_id) worn with this look when outdoors; say in the reason which piece it is and when it goes on and comes off. not_required: the look needs nothing added for its conditions (not allowed when the slot's cold_layer_required is true). Answer this for every outfit."
       },
       assigned_layer_piece_id: {
         type: ['integer', 'null'],
-        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity. Must be null for every other mode. When set, explicitly name this layer and explain the temperature/layering transition rationale in the outfit's reason or styling_instructions."
+        description: "The packed roster layer ID for mode 'assigned_packed_layer' only, chosen for fit with this specific outfit and its occasion/activity. Must be null for every other mode."
       }
     },
     required: ['mode', 'assigned_layer_piece_id']
@@ -1136,7 +1193,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "suggest_slot_swaps",
-    description: "For a follow-up that asks for alternatives to ONE slot in an existing outfit card (e.g. 'other tops for Coast Floral', 'same outfit, different shoes', 'swap the skirt'), generate 1-3 complete variant cards in one local tool call. Resolve against THREAD STATE's current_outfit_set by outfit_index or outfit_label. Use this instead of calling propose_outfit once per alternative. Do not use for fresh outfits, multi-slot plans, or changing the whole outfit.",
+    description: "For a follow-up that asks to change ONE slot in an existing outfit card (e.g. 'other tops for Coast Floral', 'same outfit, different shoes', 'swap the skirt', 'I don't love the jacket'). The rest of the outfit stays as it is. Two steps, and you make the choice: (1) call it with the slot and no replacement_ids to get every piece that can take that place, as recorded facts — nothing is chosen for you; look at the ones you would consider with view_pieces. (2) Call it again with replacement_ids (your pick; several only when the wearer asked for options), your reason, and your stylist_note; that returns the finished card(s). Resolve the outfit against THREAD STATE's current_outfit_set by outfit_index or outfit_label. Use this instead of propose_outfit for a one-slot change. Do not use for fresh outfits, multi-slot plans, or changing the whole outfit.",
     input_schema: {
       type: "object",
       properties: {
@@ -1145,7 +1202,9 @@ export const STYLIST_TOOLS = [
         slot_role: { type: "string", enum: ["primary_top", "primary_bottom", "dress", "shoes", "outerwear"], description: "The single outfit slot to replace." },
         category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear"], description: "Optional category filter; inferred from slot_role when omitted." },
         target_piece_id: { type: "integer", description: "Optional exact piece ID to replace when the outfit has more than one plausible target." },
-        replacement_ids: { type: "array", items: { type: "integer" }, description: "Optional specific replacement candidate IDs. When omitted, the tool searches active wardrobe pieces in the requested category." },
+        replacement_ids: { type: "array", items: { type: "integer" }, description: "The replacement(s) you chose, by ID, from the candidates this tool listed. Omit on the first call to get that list; no card is made until you supply these." },
+        reason: { type: "string", description: "With replacement_ids: why this piece suits this outfit and this occasion, in your words. It becomes the card's reason." },
+        stylist_note: { type: "string", description: "With replacement_ids: your reply to the wearer about the change, as plain prose; shown as the chat reply above the card. Answer their latest message only." },
         query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
         color: { type: "string", description: "Optional preferred color for replacements. This boosts exact structured color-tag matches without excluding other workable pieces." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
@@ -1267,7 +1326,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' request defaults to 2 options; an explicit count from 2 to 5 overrides that default. For exactly one outfit, use declare_intent + visual search_wardrobe + propose_outfit instead.",
+    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 2; an explicit count from 2 to 5 wins.",
     input_schema: {
       type: "object",
       properties: {
@@ -1438,6 +1497,7 @@ export const STYLIST_TOOLS = [
         label: { type: "string", description: "Creative outfit title." },
         occasion_context: { type: "string", description: "The occasion / vibe / style lane this outfit is for." },
         why_it_works: { type: "string", description: "Brief styling rationale — the concept, not the mechanics." },
+        stylist_note: { type: "string", description: "Your reply to the wearer for this outfit, as plain prose in your own voice; it is shown as the chat reply above the card. When your instructions describe a Stylist Note, this is it. On a follow-up, answer the wearer's latest message only — what you changed or chose and why — and leave earlier questions that were already answered alone. Do not list the garments; the card shows them." },
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
@@ -1617,7 +1677,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : ''
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), use suggest_slot_swaps (first for the candidates, then with your chosen replacement_ids); its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST keep its cards and tell the user about every gap or trim those plan_lines report, following that response's own presentation instruction — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -1907,7 +1967,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // disclaimer could not undo that practical ownership. The stylist now nominates the IDs
         // to photograph through view_pieces, and propose_outfit validates the chosen system.
         const singleOutfitCatalog = completeSingleOutfitCatalogSearch
-          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext })
+          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext, weatherWindow: toolContext.weatherWindowUsed || '' })
           : null
         if (singleOutfitCatalog) {
           toolContext.singleOutfitCatalogEligibleIds = new Set(completeEligibleResults.map(piece => Number(piece.id)))
@@ -2180,7 +2240,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate, roster_piece_ids_removed = [] } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', stylist_note = '', styling_instructions = '', missing_gaps = [], occasion, season, activity, location: proposeLocation, date: proposeDate, roster_piece_ids_removed = [] } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -2544,12 +2604,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // show the same chips the composer does.
         for (const finding of collapseWarmthAdvisoryFindings(nonBlockingFindings)) {
           let msg = finding.message
+          let cardMsg = finding.cardMessage || finding.message
           if (finding.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_UNDERSHOOT) {
-            msg = `${finding.message}. Outdoor conditions call for warmer upper coverage. Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
+            // The observation is for both readers; the remedy that follows it is an instruction to the model.
+            cardMsg = `${finding.message}. Outdoor conditions call for warmer upper coverage.`
+            msg = `${cardMsg} Swap to an insulating outer layer, add an insulating middle layer (cardigan/vest), or address this trade-off candidly in your final note.`
           }
+          // message goes back to the model in the tool result (it may carry a hint or a remedy);
+          // cardMessage is the same finding worded for the wearer, which is what the card shows.
           advisoryNotes.push({
             type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
-            message: msg
+            message: msg,
+            cardMessage: cardMsg
           })
         }
         if (isSingleOutfit) {
@@ -2666,10 +2732,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             console.warn('packing roster coverage re-check failed:', err.message)
           }
         }
+        // The rejected first attempt is recorded on the card's `engineNote` (debug) and no longer
+        // shown as a card note (owner, 2026-10-06): "validated_recovery: Approved after a
+        // substitution…" described a card the wearer never saw, in developer wording.
         const finalAnnotations = [
-          ...(supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : []),
           ...(advisoryNotes || [])
         ]
+        const cardAnnotations = finalAnnotations.map(({ cardMessage, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
+        const modelNotes = finalAnnotations.map(({ cardMessage, ...note }) => note)
         const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
@@ -2692,8 +2762,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }, {
           disposition: finalDisposition,
-          annotations: finalAnnotations,
-          findings: (advisoryNotes || []).map(n => ({ message: n.message, kind: 'advisory', severity: 'warning' })),
+          annotations: cardAnnotations,
+          findings: (advisoryNotes || []).map(n => ({ message: n.cardMessage || n.message, kind: 'advisory', severity: 'warning' })),
           provenance: {
             flow: 'freeform_propose_outfit',
             source: 'proposed',
@@ -2737,15 +2807,30 @@ async function executeToolInternal(name, args, toolContext = {}) {
               ...existingOutfits.filter(outfit => outfit !== supersededBroken),
               nextOutfit
             ]
+        // A one-card follow-up ends the same way (live thread_1791353402050): her note with the
+        // proposal was a good short reply, and the extra closing call that followed it re-answered
+        // every earlier question in the thread ("To answer your questions: …") and re-listed the
+        // outfit. Only when she wrote a note, on a follow-up, for a turn that is not building several
+        // cards or a plan; otherwise the closing call stands.
+        const followupNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
+        const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
+        if (!isSingleOutfit && followupNote && toolContext.turnMode && toolContext.turnMode !== 'new_request'
+          && declaredCount <= 1 && !toolContext.pendingPlan) {
+          toolContext.followupProposalCompleted = true
+          toolContext.followupStylistNote = followupNote
+        }
         if (isSingleOutfit) {
           toolContext.singleOutfitProposalCompleted = true
+          // The single-outfit loop ends on an accepted card, so the note has to arrive WITH the
+          // proposal; see askStylistWithTools (styling-engine/provider.js).
+          toolContext.singleOutfitStylistNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
         }
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
           status: "success",
           message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.${finalAnnotations.length ? ` System notes: ${finalAnnotations.map(a => a.message).join('; ')}` : ''}`,
           pieceNames: resolved.map(p => p.name),
-          ...(finalAnnotations.length ? { systemNotes: finalAnnotations } : {})
+          ...(modelNotes.length ? { systemNotes: modelNotes } : {})
         }
       }
       case 'view_pieces': {
@@ -2843,6 +2928,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return viewed
       }
       case 'suggest_slot_swaps': {
+        // Calling this tool is itself the cards declaration for a one-slot follow-up (as the bounded
+        // generate_outfits call is for its turn). Live thread_1791358822345 spent a model call being
+        // told to declare first. An explicit text or image declaration still stands.
+        if (!toolContext.declaredIntent?.want) {
+          toolContext.declaredIntent = { want: 'cards', outfitCount: null, turnMode: 'followup', layerRequirement: 'unspecified' }
+        }
         if (toolContext.declaredIntent?.want !== 'cards') {
           return {
             status: "validation_error",
@@ -2988,9 +3079,39 @@ async function executeToolInternal(name, args, toolContext = {}) {
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
           .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
 
+        // The stylist chooses the replacement (owner, 2026-10-06). Live thread_1791353402050: with
+        // no replacement named, the ranking above picked one piece — an everyday striped wool
+        // cardigan for an all-black satin dinner look — and slotSwapWhy wrote its reason ("…changes
+        // the layer with…"); she never saw another candidate or a photograph. Without her choice
+        // this call now returns every eligible piece as recorded facts, in id order (no ranking is
+        // implied), and makes no card. The score above still orders nothing she sees.
+        if (!replacementIds.length) {
+          const eligible = scoredCandidates.map(candidate => candidate.piece).sort((a, b) => Number(a.id) - Number(b.id))
+          if (!eligible.length) {
+            return {
+              status: "error",
+              message: `No ${category} in the wardrobe can take this place in "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion and weather.`,
+            }
+          }
+          recordRetrievedPieces(toolContext, [...basePieces.map(piece => piece.id), ...eligible.map(piece => piece.id)])
+          bumpFreeformDiagnostic(toolContext, 'slotSwapCandidateLists')
+          return {
+            status: "choose_replacement",
+            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.`,
+            replacing: { id: Number(removed.id), name: removed.name },
+            kept_pieces: basePieces.filter(piece => Number(piece.id) !== Number(removed.id)).map(piece => ({ id: Number(piece.id), facts: sparseGarmentCatalogRow(piece) })),
+            conventions: SPARSE_CATALOG_CONVENTIONS,
+            candidates: eligible.map(piece => {
+              const impression = taggerNotesText(piece)
+              return impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+            }),
+          }
+        }
+
+        const statedReason = String(args?.reason || '').trim()
         const variants = []
         const failures = []
-        for (const candidate of scoredCandidates) {
+        for (const candidate of scoredCandidates.sort((a, b) => replacementIds.indexOf(Number(a.piece.id)) - replacementIds.indexOf(Number(b.piece.id)))) {
           if (variants.length >= limit) break
           const replacement = candidate.piece
           const resolved = basePieces
@@ -3017,8 +3138,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             continue
           }
           const label = `${outfit.label || outfit.title || 'Current outfit'} — ${replacement.name}`
-          const why = slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
+          const why = statedReason || slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
           variants.push({
+            // Same occasion, same forecast: the swapped card keeps the weather the outfit was built for,
+            // so the next follow-up still finds it (a card without it broke the thread's stored context).
+            ...weatherCardFields(stylingContext),
             label,
             occasion: resolvedOccasion,
             season: resolvedSeason,
@@ -3064,6 +3188,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (!toolContext.sourceLocked) toolContext.source = 'slot_swap'
         toolContext.sourceLocked = true
         toolContext.slotSwapCompleted = true
+        // Her own words are the reply; no closing call (same ending as a one-card follow-up proposal).
+        const swapNote = String(args?.stylist_note || '').trim()
+        if (swapNote) {
+          toolContext.followupProposalCompleted = true
+          toolContext.followupStylistNote = swapNote
+        }
         if (toolContext.declaredIntent?.want === 'cards') {
           toolContext.declaredIntent.outfitCount = variants.length
         }
@@ -3392,9 +3522,26 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const rawPlanLocation = String(args?.location || toolContext.location || '').trim()
         const fallbackLocation = looksLikeTimezoneIdentifier(rawPlanLocation) ? '' : rawPlanLocation
         toolContext.freeformDiagnostics.resolvedLocation = fallbackLocation
+        // Live thread_1791015503457: the model wrote 2024 throughout. The stated range corrected the
+        // plan to 2026, but each activity kept its own 2024 date, fell outside the plan, and so did not
+        // inherit the plan's weather estimate — the call stopped for weather. When the range is
+        // corrected, an activity's own date moves by the same number of days (day 2 stays day 2); one
+        // that would land outside the trip drops its date and inherits the range.
+        const slotDateShiftDays = (() => {
+          if (dateRangeSource !== 'user_stated' || !modelDateRange.start || modelDateRange.start === planDateRange.start) return 0
+          const days = Math.round((Date.parse(`${planDateRange.start}T00:00:00Z`) - Date.parse(`${modelDateRange.start}T00:00:00Z`)) / 86400000)
+          return Number.isFinite(days) ? days : 0
+        })()
+        const shiftSlotDate = slot => {
+          const own = String(slot?.date || '').trim().slice(0, 10)
+          if (!slotDateShiftDays || !/^\d{4}-\d{2}-\d{2}$/.test(own)) return slot
+          const moved = new Date(Date.parse(`${own}T00:00:00Z`) + slotDateShiftDays * 86400000).toISOString().slice(0, 10)
+          const inside = moved >= planDateRange.start && (!planDateRange.end || moved <= planDateRange.end)
+          return inside ? { ...slot, date: moved } : { ...slot, date: '' }
+        }
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
-        )
+        ).map(slot => (slot ? shiftSlotDate(slot) : slot))
         // Spec future-trip-weather-estimate-spec.md §3.1: the free-text `weather`
         // field is removed from this schema entirely — a non-conforming caller's
         // args.weather is never read here, for gating or anything else.
@@ -3564,6 +3711,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           chooseTripRoster: typeof toolContext.chooseTripRoster === 'function'
             ? toolContext.chooseTripRoster
             : null,
+          shortlistTripRoster: typeof toolContext.shortlistTripRoster === 'function'
+            ? toolContext.shortlistTripRoster
+            : null,
+          tripRosterPhotoLimit: toolContext.tripRosterPhotoLimit || 0,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)
@@ -3963,26 +4114,75 @@ async function executeToolInternal(name, args, toolContext = {}) {
               repairResponses = []
             }
             if (Array.isArray(repairResponses) && repairResponses.length) {
-              const repairedBySlot = new Map(repairResponses.map(entry => [String(entry?.slot_id || ''), entry]))
-              const repairableSlotIds = new Set(repairable.map(entry => entry.slot_id))
-              const stillNeedsRepair = failures.filter(failure => !repairableSlotIds.has(failure.slot_id))
-              const originalBySlot = new Map(failures.map(failure => [failure.slot_id, failure.outfit]))
-              const resubmission = repairable
-                .map(entry => repairedBySlot.get(String(entry.slot_id)))
-                .filter(Boolean)
-                .map(entry => ({
-                  slot_id: entry.slot_id,
+              // Each repair response is paired with ONE card, not one slot. thread_1790926685366: a
+              // slot with two repairable cards was keyed by slot_id alone, so both cards resolved to
+              // the last response for that slot — the model repaired both correctly, the second
+              // overwrote the first, the pair then failed as a duplicate of itself, and a whole look
+              // was lost. A response is claimed once: by its own piece_ids, then its title, then
+              // slot order (the repair may legitimately revise piece_ids, so ids alone cannot key it).
+              const pieceKey = ids => (Array.isArray(ids) ? ids : []).map(Number).sort((x, y) => x - y).join(',')
+              const unclaimedResponses = [...repairResponses]
+              const claimResponseFor = card => {
+                const sameSlot = response => String(response?.slot_id || '') === String(card.slot_id)
+                let index = unclaimedResponses.findIndex(response => sameSlot(response) && Array.isArray(response.piece_ids) && response.piece_ids.length && pieceKey(response.piece_ids) === pieceKey(card.piece_ids))
+                if (index < 0) index = unclaimedResponses.findIndex(response => sameSlot(response) && response.title && response.title === card.title)
+                if (index < 0) index = unclaimedResponses.findIndex(sameSlot)
+                return index < 0 ? null : unclaimedResponses.splice(index, 1)[0]
+              }
+              const unclaimedFailures = [...failures]
+              const claimFailureFor = card => {
+                const index = unclaimedFailures.findIndex(failure => failure.slot_id === card.slot_id
+                  && (failure.outfit?.title || '') === card.title
+                  && pieceKey(failure.outfit?.pieceIds) === pieceKey(card.piece_ids))
+                return index < 0 ? null : unclaimedFailures.splice(index, 1)[0]
+              }
+              const resubmission = []
+              for (const card of repairable) {
+                const original = claimFailureFor(card)
+                const entry = claimResponseFor(card)
+                if (!entry) {
+                  // No answer for this card: it stays a failure rather than vanishing from the record.
+                  if (original) unclaimedFailures.push(original)
+                  continue
+                }
+                // When the repair swaps the layer, the card text must not keep naming the rejected one
+                // (thread_1790982306031: the card showed the trench while its reason still said
+                // "Layer with the technical hoodie"). The repair prompt allows that one edit; when the
+                // model leaves it, the rejected piece's exact name is replaced by the new layer's.
+                const rawSubmission = sanitizedOutfits.find(raw => String(raw?.slot_id || '') === String(card.slot_id)
+                  && pieceKey(raw?.piece_ids) === pieceKey(card.piece_ids))
+                const pieceName = id => (pendingPlan.piecesById?.get?.(Number(id)) || pendingPlan.piecesById?.[Number(id)])?.name || ''
+                const oldLayerName = pieceName(rawSubmission?.cold_layer_decision?.assigned_layer_piece_id)
+                const newLayerId = entry.cold_layer_decision?.assigned_layer_piece_id
+                const newLayerName = newLayerId && Number(newLayerId) !== Number(rawSubmission?.cold_layer_decision?.assigned_layer_piece_id) ? pieceName(newLayerId) : ''
+                const renameLayer = text => (oldLayerName && newLayerName ? String(text || '').split(oldLayerName).join(newLayerName) : text)
+                // The card's own words are kept: live thread_1791018137741's repair, asked only to set
+                // the layer, rewrote both cards' text — an id citation, and "walking boots" / "heeled
+                // boots" on cards wearing slip-ons and wedges. Its text is used only when it changed
+                // the pieces (the warmer-core escape hatch), since the old text then describes the
+                // wrong outfit.
+                const repairChangedPieces = Array.isArray(entry.piece_ids) && entry.piece_ids.length
+                  && pieceKey(entry.piece_ids) !== pieceKey(original?.outfit?.pieceIds || card.piece_ids)
+                const cardText = (repairText, originalText) => repairChangedPieces
+                  ? (repairText || originalText || '')
+                  : renameLayer(originalText || repairText || '')
+                resubmission.push({
+                  slot_id: card.slot_id,
                   // Carried through unchanged unless the model chose mode 'core_is_warm_enough' and
                   // supplied its own warmer piece_ids -- the repair call is instructed not to
                   // restyle otherwise, but the model still owns that one legitimate escape hatch.
                   piece_ids: Array.isArray(entry.piece_ids) && entry.piece_ids.length
                     ? entry.piece_ids
-                    : (originalBySlot.get(entry.slot_id)?.pieceIds || []),
-                  title: entry.title || originalBySlot.get(entry.slot_id)?.title || '',
-                  reason: entry.reason || originalBySlot.get(entry.slot_id)?.reason || '',
-                  styling_instructions: entry.styling_instructions || originalBySlot.get(entry.slot_id)?.stylingInstructions || '',
+                    : (original?.outfit?.pieceIds || card.piece_ids || []),
+                  title: entry.title || original?.outfit?.title || card.title || '',
+                  reason: cardText(entry.reason, original?.outfit?.reason),
+                  styling_instructions: cardText(entry.styling_instructions, original?.outfit?.stylingInstructions),
                   cold_layer_decision: entry.cold_layer_decision,
-                }))
+                })
+              }
+              // Every failure not handed to the repair resubmission, including a non-repairable card
+              // that shares a slot with a repairable one (previously dropped from the record).
+              const stillNeedsRepair = unclaimedFailures
               const repairValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, {
                 visuallySeenPieceIds: seenForValidation
               })
@@ -4029,18 +4229,42 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.generatedOutfits = planOutfits
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true
-          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          // Live thread_1790984756285: two activities had no outfit at all, and the reply still described
+          // sightseeing and dinner looks built from the packer's intent, so the user read them as covered.
+          // An activity with nothing on screen is named first, ahead of everything else the writer reads.
+          // Live thread_1790989165853: asked "what you would add to the bag", with no reason given, the
+          // writer invented one (nicer trousers) when the real cause was a jacket. Not asked to guess now.
+          const undressedActivities = (pendingPlan.slots || [])
+            .map(slot => slot.label)
+            .filter(label => label && !planOutfits.some(outfit => outfit?.label === label))
+          const undressedPreface = undressedActivities.length
+            ? `NO OUTFIT EXISTS for: ${undressedActivities.join(', ')}. Do not describe an outfit for ${undressedActivities.length === 1 ? 'it' : 'them'}; say plainly that you could not put one together, and give a cause only if not_covered states one. `
+            : ''
           return {
             status: 'success',
             bounded_composition: true,
-            message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
-            plan_lines: planLinesForResponse,
-            outfit_summaries: planOutfits.map(outfit => ({
-              slot: outfit.label,
-              coverage: outfit.coveragePosition,
-              weather: outfit.slotWeather || '',
-              pieceNames: (outfit.pieces || []).map(piece => piece.name)
-            }))
+            // The cards, the packing list and the plan lines are rendered by the client from the card
+            // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
+            // same list two or three times and no explanation. The final answer is now asked for what
+            // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
+            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected; (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            ...buildTripExplanationEvidence(pendingPlan, planOutfits, {
+              declined: (Array.isArray(toolContext.tripCompositionSlotGaps) ? toolContext.tripCompositionSlotGaps : []).map(gap => ({
+                activity: pendingPlan.slots.find(slot => String(slot.id) === String(gap?.slot_id || ''))?.label || '',
+                reason: String(gap?.gap_reason || '').trim(),
+              })),
+            }),
+            outfit_summaries: planOutfits.map(outfit => {
+              const coolEndLayer = tripOutfitCoolEndLayer(pendingPlan, outfit)
+              return {
+                slot: outfit.label,
+                coverage: outfit.coveragePosition,
+                weather: outfit.slotWeather || '',
+                pieceNames: (outfit.pieces || []).map(piece => piece.name),
+                reason: outfit.reason || '',
+                ...(coolEndLayer ? { cool_end_layer: coolEndLayer } : {}),
+              }
+            })
           }
         }
         if (isPartialReplan) {
@@ -4300,9 +4524,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const hasLow = Number.isFinite(Number(resolvedWeather.lowF))
           const roundedHigh = hasHigh ? Math.round(Number(resolvedWeather.highF)) : null
           const roundedLow = hasLow ? Math.round(Number(resolvedWeather.lowF)) : null
+          const forecastLabel = toolContext.weatherWindowUsed ? `${toolContext.weatherWindowUsed} forecast` : 'forecast'
           const forecastTemperature = hasHigh
             ? (hasLow && roundedHigh !== roundedLow
-                ? `forecast high ${roundedHigh}°F, low ${roundedLow}°F`
+                ? `${forecastLabel} high ${roundedHigh}°F, low ${roundedLow}°F`
                 : `temperature around ${roundedHigh}°F`)
             : ''
           // Cold gets the same 3-tier treatment as heat (isExtremeHeat) rather than
@@ -4324,9 +4549,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
           resolvedSeason = resolvedWeather.weatherSource === 'unavailable'
             ? 'forecast unavailable; temperature unknown; do not infer hot or cold weather from the calendar season'
             : `${stylingContext.season}; ${physicalWeather}${forecastTemperature ? `; ${forecastTemperature}` : ''}`
+          const forecastWindow = toolContext.weatherWindowUsed ? `this ${toolContext.weatherWindowUsed}'s forecast` : 'a forecast'
           toolContext.boundedWeatherSummary = hasHigh
             ? (hasLow && roundedHigh !== roundedLow
-                ? `a forecast high of ${roundedHigh}°F and low of ${roundedLow}°F`
+                ? `${forecastWindow} high of ${roundedHigh}°F and low of ${roundedLow}°F`
                 : `a temperature around ${roundedHigh}°F`)
             : ''
           toolContext.boundedLocation = stylingContext.location
@@ -4383,6 +4609,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
+            stylistNote: boundedMultiLook,
             // Same reasoning as the selected-piece branch above — this is the exact call site
             // implicated in the live $0.122-inside-a-"Gemini"-turn finding.
             providerOverride: toolContext.providerOverride || null,
@@ -4416,6 +4643,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.generatedOutfits = Object.keys(generatedWeatherFields).length
             ? result.structuredOutfits.map(outfit => ({ ...outfit, ...generatedWeatherFields }))
             : result.structuredOutfits
+          // The stylist's own reply for a set of options. Shown only when the delivered cards are
+          // exactly the ones she wrote about; otherwise the code-written line stands.
+          const deliveredLabels = result.structuredOutfits.filter(outfit => !outfit?.broken).map(outfit => String(outfit?.label || '').trim())
+          const composedLabels = Array.isArray(result.composedLabels) ? result.composedLabels : []
+          const sameCards = composedLabels.length > 0 && composedLabels.length === deliveredLabels.length
+            && result.structuredOutfits.every(outfit => !outfit?.broken)
+            && [...composedLabels].sort().join('\n') === [...deliveredLabels].sort().join('\n')
+          toolContext.boundedStylistNote = boundedMultiLook && sameCards ? String(result.stylistNote || '').trim() : ''
 
           // 2026-09-16 (owner review, thread_1789546295700): `aiReturnedCount === 0` means the
           // composer produced no model-styled output this turn — timed out, errored, or any other

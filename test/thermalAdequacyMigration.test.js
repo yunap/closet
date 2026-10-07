@@ -349,3 +349,18 @@ test('cross-flow: with no weather context the whole contract is a no-op', () => 
   assert.equal(result.applicable, false)
   assert.deepEqual(result.findings || [], [])
 })
+
+// Live replay of thread_1790984756285: on a 52–85°F week of afternoons, every card carried "even with the
+// removable layers off, this outfit carries considerably more warmth than the warm end of these
+// conditions calls for" — measured against the single hottest day, which no one card is for.
+test('the too-warm note is not raised for an activity spread over several days with a cool end; one day still gets it', () => {
+  const heavyWoolTop = { id: 30, category: 'top', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long', neckline: 'mock_neck' }
+  const outfit = [heavyWoolTop, BASE[1], BASE[2]]
+  const oneDay = W(72, 62)
+  const overshoot = weather => codes(outfit, weather).some(f => f.code === ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT)
+  assert.ok(overshoot(oneDay), 'fixture: the same outfit on one day is too warm')
+  const severalDaysCoolEnd = { ...oneDay, needsRemovableCoolLayer: true, resolvedWeatherContext: { dateRange: { start: '2026-10-12', end: '2026-10-17' } } }
+  assert.equal(overshoot(severalDaysCoolEnd), false)
+  const severalDaysNoCoolEnd = { ...oneDay, needsRemovableCoolLayer: false, isCold: false, resolvedWeatherContext: { dateRange: { start: '2026-10-12', end: '2026-10-17' } } }
+  assert.ok(overshoot(severalDaysNoCoolEnd), 'a several-day range with no cool end still gets the note')
+})

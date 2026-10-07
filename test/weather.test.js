@@ -15,7 +15,10 @@ import {
   validateUserWeather, validateWeatherEstimate, classifyTemperatureRange, resolveWeatherContext, resolveWeatherForRequest,
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
   COLD_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence, DAYPARTS,
+  setForecastClockForTests,
 } from '../styling-engine/weather.js'
+// Fixtures use fixed October 2026 trip dates; pin "today" so they stay inside the trusted forecast window.
+setForecastClockForTests('2026-10-10T12:00:00')
 import { weatherProfileFromStatedText } from '../styling-engine/stylingContext.js'
 import { STYLIST_TOOLS } from '../styling-engine/tools.js'
 
@@ -268,7 +271,7 @@ test('caching: two calls for the same date/location hit the mock fetch only once
 test('getWeatherProfileForPlan aggregates a multi-day range and allows both isHot and isCold for a wide swing', async () => {
   const fetchImpl = makeMockFetch({ highs: [90, 55], lows: [60, 30] })
   const profile = await getWeatherProfileForPlan({
-    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-05') },
+    dateRange: { start: new Date('2026-03-01'), end: new Date('2026-03-02') },
     location: 'Denver, CO',
     fetchImpl
   })
@@ -661,3 +664,152 @@ test('ambient comfort scale alignment in weather classification', () => {
   assert.equal('requiresOuterwear' in at56, false)
 })
 
+
+// 2026-10-02, live thread_1790929985430: a week of evenings was planned from the first evening only.
+function makeMockHorizonFetch(daysByDate = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (const [date, { hours = {}, defaultTemp = 60, rainHours = [], lastHour = 23 } = {}] of Object.entries(daysByDate)) {
+    for (let h = 0; h <= lastHour; h += 1) {
+      times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+      temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+      precip.push(rainHours.includes(h) ? 1.2 : 0)
+    }
+  }
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    return { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) }
+  }
+  fetchImpl.urls = urls
+  return fetchImpl
+}
+
+test('resolveExposureWindowAcrossDays takes one time of day across every trip day, not the first day alone', async () => {
+  const { resolveExposureWindowAcrossDays } = await import('../styling-engine/weather.js')
+  _clearWeatherCachesForTests()
+  const fetchImpl = makeMockHorizonFetch({
+    '2026-10-12': { defaultTemp: 67, hours: { 17: 68, 22: 67 }, rainHours: [18] },          // flat, wet evening
+    '2026-10-13': { defaultTemp: 70, hours: { 17: 78, 20: 67, 22: 62 } },
+    '2026-10-14': { defaultTemp: 60, hours: { 17: 65, 20: 58, 22: 55 } },                    // the cold evening
+    '2026-10-15': { defaultTemp: 66, lastHour: 18 },                                         // forecast ends mid-evening
+  })
+  const result = await resolveExposureWindowAcrossDays({
+    location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-16', timeWindow: { period: 'evening' }, fetchImpl,
+  })
+  assert.equal(result.weatherSource, 'live_hourly')
+  assert.equal(result.lowF, 55, 'the coldest evening of the trip sets the low, not the first evening')
+  assert.equal(result.highF, 78)
+  assert.deepEqual(result.days.map(day => day.date), ['2026-10-12', '2026-10-13', '2026-10-14'])
+  assert.deepEqual(result.uncoveredDates, ['2026-10-15', '2026-10-16'], 'a day the forecast does not reach to the end of the window is stated as not covered')
+  assert.equal(result.rainDays, 1)
+  assert.equal(result.coveredDays, 3)
+  assert.equal(result.precipitation, 'unknown', 'rain on one evening of three is a count for the stylist, not a wet-exposure verdict on every card')
+  assert.equal(result.needsRemovableCoolLayer, true)
+  const forecastUrl = fetchImpl.urls.find(url => !url.includes('geocoding-api'))
+  assert.match(forecastUrl, /forecast_days=16/)
+  assert.doesNotMatch(forecastUrl, /end_date/, 'an end date past the horizon makes the provider reject the whole request')
+})
+
+// Owner, 2026-10-02: "17th is way past 10 day forecast". Asked on Oct 2, a 12–18 October trip has
+// one day inside the trusted window; that one day must not describe the week.
+test('forecast days more than 10 days out are not used, and a trip mostly past them falls to the estimate', async () => {
+  const { resolveExposureWindowAcrossDays, lastReliableForecastDate } = await import('../styling-engine/weather.js')
+  const week = {}
+  for (const day of [12, 13, 14, 15, 16, 17, 18]) week[`2026-10-${day}`] = { defaultTemp: day === 17 ? 38 : 66 }
+  try {
+    setForecastClockForTests('2026-10-02T12:00:00')
+    assert.equal(lastReliableForecastDate(), '2026-10-11')
+    _clearWeatherCachesForTests()
+    assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-18', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) }), null)
+    assert.equal(await resolveExposureWindowHourly({ location: 'Vienna, Virginia', date: '2026-10-17', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) }), null, 'a single day past the window is not forecast either')
+    const plan = await getWeatherProfileForPlan({ dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-18') }, location: 'Vienna, Virginia', fetchImpl: makeMockFetch({ highs: [73, 68, 65, 67, 66, 51, 60], lows: [56, 50, 49, 51, 47, 38, 45] }) })
+    assert.notEqual(plan?.weatherSource, 'live', 'one forecast day of seven does not describe the trip')
+
+    setForecastClockForTests('2026-10-07T12:00:00')
+    _clearWeatherCachesForTests()
+    const mostly = await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-18', timeWindow: { period: 'morning' }, fetchImpl: makeMockHorizonFetch(week) })
+    assert.deepEqual(mostly.uncoveredDates, ['2026-10-17', '2026-10-18'], 'five of seven days covered; the far ones are not forecast yet')
+    assert.equal(mostly.lowF, 66, 'the 38°F day 15 out no longer sets the low')
+  } finally {
+    setForecastClockForTests('2026-10-10T12:00:00')
+  }
+})
+
+test('resolveExposureWindowAcrossDays: rain on every covered day is rain; no covered day, no window, or no location is null', async () => {
+  const { resolveExposureWindowAcrossDays } = await import('../styling-engine/weather.js')
+  _clearWeatherCachesForTests()
+  const wet = makeMockHorizonFetch({ '2026-10-12': { rainHours: [9] }, '2026-10-13': { rainHours: [10] } })
+  const everyDay = await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' }, fetchImpl: wet })
+  assert.equal(everyDay.precipitation, 'rain')
+  _clearWeatherCachesForTests()
+  const dry = makeMockHorizonFetch({ '2026-10-12': {} })
+  assert.equal((await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-12', timeWindow: { period: 'morning' }, fetchImpl: dry })).precipitation, 'none')
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-11-01', endDate: '2026-11-03', timeWindow: { period: 'morning' }, fetchImpl: dry }), null, 'no trip day inside the forecast')
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: null, fetchImpl: dry }), null)
+  assert.equal(await resolveExposureWindowAcrossDays({ location: '', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' }, fetchImpl: dry }), null)
+  assert.equal(await resolveExposureWindowAcrossDays({ location: 'Vienna, Virginia', startDate: '2026-10-12', endDate: '2026-10-13', timeWindow: { period: 'morning' } }), null, 'never the real network under NODE_ENV=test')
+})
+
+// Live thread_1790974353527: daily highs 81, 75, 69, 69, 70, 66 in mid-October were classified
+// "hot" because of the one 81°F day, and the suitcase came out as summer clothes under coats.
+test('a multi-day range is hot only when at least half its days are hot; cold still counts on any day', async () => {
+  _clearWeatherCachesForTests()
+  const oneWarmDay = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-17') }, location: 'Vienna, VA',
+    fetchImpl: makeMockFetch({ highs: [81, 75, 69, 69, 70, 66], lows: [64, 65, 55, 53, 53, 49] }),
+  })
+  assert.equal(oneWarmDay.isHot, false, 'one warm afternoon does not make a mild week hot')
+  assert.equal(oneWarmDay.highF, 81, 'the warmest day is still reported in the range')
+  assert.equal(oneWarmDay.needsRemovableCoolLayer, true)
+
+  _clearWeatherCachesForTests()
+  const mostlyHot = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-07-12'), end: new Date('2026-07-15') }, location: 'Paso Robles, CA',
+    fetchImpl: makeMockFetch({ highs: [92, 88, 79, 95], lows: [58, 56, 55, 60] }),
+  })
+  assert.equal(mostlyHot.isHot, true)
+
+  _clearWeatherCachesForTests()
+  const oneColdNight = await getWeatherProfileForPlan({
+    dateRange: { start: new Date('2026-10-12'), end: new Date('2026-10-15') }, location: 'Denver, CO',
+    fetchImpl: makeMockFetch({ highs: [70, 72, 68, 60], lows: [50, 48, 45, 28] }),
+  })
+  assert.equal(oneColdNight.isCold, true, 'one cold night still has to be dressed for')
+})
+
+// thread_1791277608402: "San Mateo" resolved to the Philippines (larger population) for a wearer in
+// Walnut Creek, CA. A bare name goes to the same-named match nearest the home location; a qualified
+// name is taken as the geocoder returns it.
+test('a bare city name resolves to the same-named place nearest the home location', async () => {
+  const { registerWeatherHomeLocationReader } = await import('../styling-engine/weather.js')
+  const forecastCoords = []
+  const fetchImpl = async (url) => {
+    if (url.includes('geocoding-api')) {
+      const name = decodeURIComponent(url.match(/name=([^&]+)/)[1])
+      if (name.startsWith('walnut creek')) return { ok: true, json: async () => ({ results: [{ name: 'Walnut Creek', latitude: 37.9, longitude: -122.07 }] }) }
+      return { ok: true, json: async () => ({ results: [
+        { name: 'San Mateo', latitude: 14.7, longitude: 121.12 },
+        { name: 'San Mateo', latitude: 37.56, longitude: -122.33 },
+        { name: 'San Mateo Park', latitude: 37.57, longitude: -122.35 },
+      ] }) }
+    }
+    forecastCoords.push(url.match(/latitude=([-\d.]+)/)[1])
+    return { ok: true, json: async () => ({ daily: { time: [], temperature_2m_max: [93], temperature_2m_min: [58] } }) }
+  }
+  try {
+    registerWeatherHomeLocationReader(() => 'Walnut Creek, CA')
+    _clearWeatherCachesForTests()
+    await getCurrentWeatherProfile({ date: new Date('2026-10-06'), location: 'San Mateo', fetchImpl })
+    assert.equal(forecastCoords.at(-1), '37.56', 'the California one, not the first result')
+    registerWeatherHomeLocationReader(null)
+    _clearWeatherCachesForTests()
+    await getCurrentWeatherProfile({ date: new Date('2026-10-06'), location: 'San Mateo', fetchImpl })
+    assert.equal(forecastCoords.at(-1), '14.7', 'with no home location the geocoder order stands, as before')
+  } finally {
+    registerWeatherHomeLocationReader(null)
+    _clearWeatherCachesForTests()
+  }
+})

@@ -27,7 +27,7 @@
 // repeat schedule, everything else keeps the packing-reuse headline (see
 // buildPlanReport).
 
-import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, COOL_LOW_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence } from './weather.js'
+import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, weatherHasCoolEnd, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
 import { hasMinimumWarmLayer, outerwearLayerPositivelyInadequate, advisoryFindingsToSystemFlags, collapseThermalErrorFindings } from './outfitEnvironmentalAdequacy.js'
 
@@ -263,10 +263,29 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
 }
 
 function buildWeatherLine(slotWeather = []) {
-  const parts = (Array.isArray(slotWeather) ? slotWeather : [])
-    .filter(entry => entry?.label && entry?.weather)
-    .map(entry => `${entry.label} — ${entry.weather}`)
-  return parts.length ? `Weather used: ${parts.join('; ')}` : ''
+  // Activities that share the same weather are named together, so a week's full weather sentence
+  // is shown once instead of once per activity (thread_1790982306031 repeated it three times).
+  const groups = []
+  for (const entry of (Array.isArray(slotWeather) ? slotWeather : []).filter(entry => entry?.label && entry?.weather)) {
+    const group = groups.find(existing => existing.weather === entry.weather)
+    if (group) group.labels.push(entry.label)
+    else groups.push({ weather: entry.weather, labels: [entry.label] })
+  }
+  return groups.length ? `Weather used: ${groups.map(group => `${group.labels.join(', ')} — ${group.weather}`).join('; ')}` : ''
+}
+
+// Piece-id citations the composer writes into card text ("(ID 996759)", "#105") are for the
+// engine, not the wearer; live thread_1790982306031 showed them on the cards. Same patterns
+// stripPieceIdCitations removes from chat prose, applied where a plan card's text is assembled.
+function withoutPieceIdCitations(text = '') {
+  return String(text || '')
+    .replace(/[ \t]*[([]\s*IDs?\s*:?\s*#?\d+(?:\s*(?:,|and|&)\s*#?\d+)*\s*[)\]]/gi, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/[ \t]*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+    // A bare "(996867)" (live thread_1791018137741); a four-digit year in parentheses is kept.
+    .replace(/[ \t]*\(\s*(\d{2,7})\s*\)/g, (match, digits) => (/^(19|20)\d{2}$/.test(digits) ? match : '')) // ratchet-allow: model-output integrity boundary, not garment classification
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:])/g, '$1')
+    .trim()
 }
 
 // thread_1789585467294 (owner ruling 2026-09-16): the PARTIAL-PLAN CONTRACT the atomic trip
@@ -1179,6 +1198,79 @@ export function truthfulWeatherLabel(temperature, { location = '', heuristicText
   }
 }
 
+// The weather for a trip activity, said once, the way a person would say it: the range across the
+// trip's days at that time of day, which days are the extremes, how many of those days have rain,
+// and which days the forecast does not reach. It is the fact a stylist needs to decide about
+// layers for themselves, in place of a verdict. Shown to the composer as weather_used and to the
+// user in the plan's "Weather used" line.
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const FAR_FORECAST_DAYS = 7
+function shortDate(isoDate = '') {
+  const match = /^\d{4}-(\d{2})-(\d{2})/.exec(String(isoDate))
+  return match ? `${MONTH_NAMES[Number(match[1]) - 1]} ${Number(match[2])}` : String(isoDate)
+}
+function dateSpanText(dates = []) {
+  if (!dates.length) return ''
+  return dates.length === 1 ? shortDate(dates[0]) : `${shortDate(dates[0])}–${shortDate(dates[dates.length - 1])}`
+}
+export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, location = '', today = new Date(), whenLabel = '', sourceLabel = 'hourly forecast' } = {}) {
+  const days = Array.isArray(acrossDays.days) ? acrossDays.days : []
+  if (!days.length) return ''
+  const period = String(timeWindow?.period || '').toLowerCase().trim()
+  const when = period === 'morning' ? 'mornings'
+    : (period === 'afternoon' || period === 'midday') ? 'afternoons'
+      : period === 'evening' ? 'evenings'
+        : (timeWindow?.start_local && timeWindow?.end_local) ? `${timeWindow.start_local}–${timeWindow.end_local} each day` : (whenLabel || 'this time of day')
+  const coolest = days.reduce((best, day) => (day.lowF < best.lowF ? day : best))
+  const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
+  const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
+  if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
+  // A warm day inside a mild range is easy to dress for and easy to forget; say which days they are.
+  const hotDays = days.filter(day => day.highF >= HOT_F)
+  if (days.length > 1 && hotDays.length && hotDays.length < days.length) {
+    parts.push(`${hotDays.length} of ${days.length} days ${hotDays.length === 1 ? 'reaches' : 'reach'} ${HOT_F}°F or more (${hotDays.map(day => shortDate(day.date)).join(', ')}), the rest top out at ${Math.round(Math.max(...days.filter(day => day.highF < HOT_F).map(day => day.highF)))}°F`)
+  }
+  // Rain is stated only where it was measured (the hourly slices); the whole-day path has none.
+  if (acrossDays.rainDays != null) {
+    const rainDays = Number(acrossDays.rainDays) || 0
+    parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+  }
+  const uncovered = Array.isArray(acrossDays.uncoveredDates) ? acrossDays.uncoveredDates : []
+  if (uncovered.length) parts.push(`${dateSpanText(uncovered)} not forecast yet`)
+  const lastDay = new Date(`${days[days.length - 1].date}T00:00:00Z`)
+  const daysAhead = Number.isNaN(lastDay.getTime()) ? 0 : (lastDay.getTime() - new Date(today).getTime()) / 86400000
+  const farAhead = daysAhead > FAR_FORECAST_DAYS ? '; a forecast this far ahead often changes' : ''
+  return `${parts.join('; ')} — ${sourceLabel}${location ? `, ${location}` : ''}${farAhead}`
+}
+
+// The whole-day counterpart of the sentence above, for an undated trip activity with no time of day:
+// the same facts (range, coolest and warmest day, days not forecast, far-ahead caveat) from the
+// daily series, so every activity of one trip is described to the same standard. Null when the
+// temperature is not a multi-day live series; the caller then keeps truthfulWeatherLabel.
+function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '', location = '' } = {}) {
+  const series = (Array.isArray(temperature.dailySeries) ? temperature.dailySeries : [])
+    .filter(day => Number.isFinite(day?.highF) && Number.isFinite(day?.lowF))
+    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF }))
+  if (temperature.source !== 'live' || series.length < 2) return null
+  const covered = new Set(series.map(day => day.date))
+  const uncoveredDates = []
+  if (tripStart && tripEnd) {
+    const cursor = new Date(`${tripStart}T00:00:00Z`)
+    for (let i = 0; i < 31 && !Number.isNaN(cursor.getTime()); i += 1) {
+      const key = cursor.toISOString().slice(0, 10)
+      if (key > tripEnd) break
+      if (!covered.has(key)) uncoveredDates.push(key)
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    }
+  }
+  return tripWindowWeatherSentence({
+    days: series,
+    lowF: Math.min(...series.map(day => day.lowF)),
+    highF: Math.max(...series.map(day => day.highF)),
+    uncoveredDates,
+  }, { location, whenLabel: 'whole days', sourceLabel: `daily forecast${temperature.provider ? ` (${temperature.provider})` : ''}` })
+}
+
 function isGenericSeasonText(season = '') {
   const value = String(season || '').trim().toLowerCase()
   return !value || value === 'current season' || value === 'current' || value === 'year-round'
@@ -1215,15 +1307,40 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
   // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
   const isIndoorSlot = slot.statedWeather === 'indoor'
-  if (slot.timeWindow && day && targetLocation) {
-    const hourly = await resolveExposureWindowHourly({
-      location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
-    })
+  // 2026-10-02 (live thread_1790929985430): a trip activity with no day of its own inherits the
+  // trip's FIRST day as a stand-in (normalizePlanSlots, dateInherited). Slicing that one day
+  // dressed a week of evenings for one flat, rainy evening. Such a slot now takes its time-of-day
+  // slice on every day of the trip (resolveExposureWindowAcrossDays); a slot dated to one specific
+  // day keeps the single-day slice it was built for.
+  const tripStart = String(dateRange?.start || '').slice(0, 10)
+  const tripEnd = String(dateRange?.end || '').slice(0, 10)
+  const spansTripDays = slot.dateInherited === true && Boolean(tripStart) && tripEnd > tripStart
+  if (slot.timeWindow && targetLocation && (day || spansTripDays)) {
+    const acrossDays = spansTripDays
+      ? await resolveExposureWindowAcrossDays({
+          location: targetLocation, startDate: tripStart, endDate: tripEnd, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+        })
+      : null
+    // A week-long activity whose forecast is unavailable falls to the daily path for the whole trip,
+    // never to its first day alone.
+    const hourly = acrossDays || (day && !spansTripDays
+      ? await resolveExposureWindowHourly({
+          location: targetLocation, date: day, timeWindow: slot.timeWindow, ...(fetchImpl ? { fetchImpl } : {}),
+        })
+      : null)
     if (hourly) {
       const resolvedWeatherContext = {
         status: 'resolved',
         location: targetLocation,
-        dateRange: { start: day, end: day },
+        dateRange: acrossDays
+          ? { start: acrossDays.days[0].date, end: acrossDays.days[acrossDays.days.length - 1].date }
+          : { start: day, end: day },
+        ...(acrossDays ? {
+          exposureWindowAcrossDays: {
+            days: acrossDays.days, rainDays: acrossDays.rainDays, coveredDays: acrossDays.coveredDays,
+            requestedDays: acrossDays.requestedDays, uncoveredDates: acrossDays.uncoveredDates, retrievedAt: acrossDays.retrievedAt,
+          },
+        } : {}),
         temperature: {
           highF: hourly.highF, lowF: hourly.lowF, band: null,
           isHot: hourly.isHot, isCold: isIndoorSlot ? false : hourly.isCold, isColdSevere: false,
@@ -1234,7 +1351,9 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
         wind: { value: 'unknown', source: 'unavailable' },
         overallSource: hourly.weatherSource,
       }
-      const hourlyLabel = truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+      const hourlyLabel = acrossDays
+        ? tripWindowWeatherSentence(acrossDays, { timeWindow: slot.timeWindow, location: targetLocation })
+        : truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
       if (isIndoorSlot) {
         // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
         // instead of the flat day envelope — base stays climate-controlled/permissive, transit*
@@ -1268,7 +1387,14 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       }
     }
   }
-  const resolvedDateRange = { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
+  // The same stand-in day defect on the path with NO time window (live thread_1790973141460, the
+  // run after the across-days fix above): "81°F high / 64°F low — live forecast" for a week of
+  // sightseeing was the trip's first day alone, because the inherited slot.date narrowed this range
+  // to one day. A slot with no day of its own resolves over the whole trip, as it did before
+  // 2026-09-17's date inheritance; a slot dated to one day keeps that day.
+  const resolvedDateRange = spansTripDays
+    ? { start: tripStart, end: tripEnd }
+    : { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined }
   const context = await resolveWeatherForRequest({
     location: targetLocation,
     dateRange: resolvedDateRange,
@@ -1299,7 +1425,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // alone communicates the setting, and status is read from
   // resolvedWeatherContext, not from a synthesized indoor_transit_* string.
   if (slot.statedWeather === 'indoor') {
-    const transitLabel = truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.transitSeason })
+    const transitLabel = (spansTripDays && tripDaysWeatherSentence(t, { tripStart, tripEnd, location: targetLocation }))
+      || truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.transitSeason })
     return {
       profile: {
         // Extreme heat must still constrain the base because a heavy main
@@ -1350,7 +1477,8 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       weatherSource: t.source,
       resolvedWeatherContext: context,
     },
-    label: truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
+    label: (spansTripDays && tripDaysWeatherSentence(t, { tripStart, tripEnd, location: targetLocation }))
+      || truthfulWeatherLabel(t, { location: targetLocation, heuristicText: slot.season }),
     timeSensitivity
   }
 }
@@ -3120,7 +3248,10 @@ export function tripSeasonEligiblePool(pool = [], calendarSeason = '', { tripHas
   const calendar = String(calendarSeason || '').toLowerCase().trim()
   if (!calendar) return pool
   return pool.filter(piece => {
-    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && wardrobeCategoryGroup(piece) === 'bottom') return true
+    // A hot day in a cool-season trip needs a whole warm-weather base, not only a top: a bottom, or a
+    // dress that can also take a layer when the evening cools (owner, 2026-10-02, on a fall suitcase
+    // that had tees for its 81°F day and nothing to wear them with). Dresses join bottoms here.
+    if (tripHasHotWeather && OUT_OF_SEASON[calendar] === 'warm' && ['bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) return true
     return seasonEligibleForCalendar(piece, calendar, wardrobeCategoryGroup(piece))
   })
 }
@@ -4368,12 +4499,35 @@ export function validateTripRoster(roster = [], { slots = [], pool = [] } = {}) 
 // would be exactly the roster-level styling judgment this architecture exists to avoid). The
 // fallback instead degrades honestly to the full coverage-guaranteed bench, disclosed as a
 // coverage gap rather than presented as a chosen roster.
+// The packer chooses by sight (owner, 2026-10-03: "it wasn't my decision, restore the images").
+// 2026-09-16 (thread_1789598100140) made roster selection text-only to lift a 60-piece cap that hid
+// single-use pieces; the visual-grounding lesson (models choose clothes badly from text alone) was
+// never weighed. A provider call takes at most TRIP_ROSTER_PHOTO_LIMIT photos (Claude rejects more
+// than 100 images), so a larger bench is first shortlisted BY THE MODEL from the complete text
+// catalog — no code ranking decides what is seen — and the suitcase is then chosen from the
+// shortlist with a photo of every piece.
+export const TRIP_ROSTER_PHOTO_LIMIT = 90
+// Gemini takes far more images per request. Live thread_1791015882776: flash-lite's shortlist was the
+// first 90 lines of the list (78 of 90), never reaching the newest pieces — every real layer and
+// both boots — so on Gemini the packer is shown every candidate instead (183 photos ≈ 9 MB, under
+// its ~20 MB inline limit). Owner, 2026-10-03: revert if packing does not improve; setting this
+// back to TRIP_ROSTER_PHOTO_LIMIT restores the shortlist.
+export const GEMINI_TRIP_ROSTER_PHOTO_LIMIT = 300
+// Off (owner, 2026-10-03, after live thread_1791016975094): with all 183 photos the packer made the
+// same mistakes it makes from text — sneakers for the trail, heels for a museum day, a boot named in
+// its reasoning but not packed — at ~$0.07 more per run. The photo path stays for a later trial;
+// true sends photos again (whole bench on Gemini, model shortlist elsewhere).
+export const TRIP_ROSTER_PHOTOS_ENABLED = false
+
 export async function selectTripRosterViaModel({
   pool = [],
   slots = [],
   calendarSeason = '',
   dateRange = {},
   chooseRoster = null,
+  shortlistRoster = null,
+  photoLimit = TRIP_ROSTER_PHOTO_LIMIT,
+  photos = TRIP_ROSTER_PHOTOS_ENABLED,
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4382,7 +4536,14 @@ export async function selectTripRosterViaModel({
   // threshold definition to drift out of sync with it. Any one slot running hot is enough: a trip
   // roster is chosen once for the whole trip, and a genuinely hot day anywhere in it means hot-
   // weather bottoms belong in the candidate pool regardless of the trip's overall calendar season.
-  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot))
+  // 2026-10-02: isHot now describes a range's typical day (at least half its days hot), which keeps a
+  // mild week from being packed as summer. But the ruling above is about ANY hot day: a mid-October
+  // week with one 81°F afternoon still needs something to wear on it (owner: "what am I supposed to
+  // do on the day when it's 80F?"). So warm-weather bottoms join the candidates when any day of the
+  // trip reaches HOT_F, alongside the fall ones the typical-day reading keeps; which to pack is the
+  // packer's call, told by the weather sentence which days are warm.
+  const reachesHot = profile => [profile?.highF, profile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F)
+  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || reachesHot(slot?.weatherProfile))
   const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
   const benchById = pieceMapForPieces(bench)
 
@@ -4408,7 +4569,21 @@ export async function selectTripRosterViaModel({
     const contractFailures = outsideBench.length
       ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
       : []
-    return { roster, contractFailures }
+    // The packer's own explanation: why each piece earned its place and the shape of the suitcase.
+    // It was requested and paid for on every trip and then dropped here (thread_1790924321526), so
+    // the final answer could only restate piece names. Kept as explanation, never as evidence:
+    // nothing validates a job, and a look may use the piece differently.
+    const rosterIds = new Set(roster.map(piece => Number(piece.id)))
+    // The packer cites pieces as "(#105)" in its own prose (thread_1790926685366). This text is
+    // handed on as explanation for the wearer, so the citations are removed at this boundary.
+    const withoutIdCitations = text => String(text || '')
+      .replace(/[ \t]*\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+      .replace(/[ \t]*#\d+\b/g, '') // ratchet-allow: model-output integrity boundary, not garment classification
+      .trim()
+    const jobs = (Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [])
+      .map(entry => ({ pieceId: Number(entry?.piece_id), job: withoutIdCitations(entry?.job) }))
+      .filter(entry => entry.job && rosterIds.has(entry.pieceId))
+    return { roster, contractFailures, jobs, packingReasoning: withoutIdCitations(answer?.packing_reasoning) }
   }
 
   const attemptChoose = async attemptArgs => {
@@ -4416,25 +4591,57 @@ export async function selectTripRosterViaModel({
       return resolve(await chooseRoster(attemptArgs), attemptArgs?.attempt || 1)
     } catch (err) {
       const code = err?.isTruncation ? 'provider_truncated' : 'provider_error'
-      return { roster: [], contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
+      return { roster: [], jobs: [], packingReasoning: '', contractFailures: [{ code, message: err?.message || 'Trip roster selection call failed.' }] }
+    }
+  }
+
+  // Which candidates the packer sees with photos. The whole bench when it fits; otherwise the
+  // model's own shortlist, accepted only if the suitcase could still cover every use case from it.
+  // A shortlist that cannot is retried once with the reasons; failing that, the packer chooses from
+  // the full catalog as text, as before — never from a shortlist code assembled.
+  const shortlistFrom = async (attempt, failures = [], previousShortlistIds = []) => {
+    try {
+      const answer = await shortlistRoster({ bench, slots, dateRange, limit: photoLimit, slotLabelsById, attempt, failures, previousShortlistIds })
+      const ids = [...new Set((Array.isArray(answer?.shortlist_piece_ids) ? answer.shortlist_piece_ids : []).map(Number))]
+        .filter(id => benchById.has(id)).slice(0, photoLimit)
+      const shortlist = ids.map(id => benchById.get(id))
+      return { shortlist, failures: shortlist.length ? validateTripRoster(shortlist, { slots, pool: bench }).failures : [{ code: 'empty_shortlist', message: 'the shortlist was empty; choose candidates from the list' }] }
+    } catch (err) {
+      return { shortlist: [], failures: [{ code: err?.isTruncation ? 'provider_truncated' : 'provider_error', message: err?.message || 'Trip shortlist call failed.' }] }
+    }
+  }
+  let choiceBench = bench
+  let withPhotos = photos && bench.length <= photoLimit
+  let shortlistSource = withPhotos ? 'whole_bench' : 'text_only'
+  if (photos && !withPhotos && typeof shortlistRoster === 'function') {
+    bump('tripRosterShortlistCalls')
+    let listed = await shortlistFrom(1)
+    if (listed.failures.length && listed.shortlist.length) {
+      bump('tripRosterShortlistRepairs')
+      listed = await shortlistFrom(2, listed.failures, listed.shortlist.map(piece => Number(piece.id)))
+    }
+    if (!listed.failures.length) {
+      choiceBench = listed.shortlist
+      withPhotos = true
+      shortlistSource = 'model_shortlist'
     }
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
-  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: bench }).failures
+  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
+  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: choiceBench }).failures
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', failures: [], bench, coverageGaps: [] }
+    return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench, slots, dateRange, attempt: 2, failures, slotLabelsById,
+    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
-  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: bench }).failures
+  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: choiceBench }).failures
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', failures: [], bench, coverageGaps: [] }
+    return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelFallbacks')
@@ -4447,7 +4654,7 @@ export async function selectTripRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
@@ -4523,6 +4730,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
       dateRange,
       chooseRoster: chooseTripRoster,
+      shortlistRoster: shortlistTripRoster,
+      ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}),
       onDiagnostic,
     })
   }
@@ -4776,7 +4985,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // the schema itself had already moved on, exactly the "did the model notice" failure mode Part A
     // was built to remove.
     planKind === 'trip'
-      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). When choosing mode \'assigned_packed_layer\', you must explicitly name the assigned layer in the outfit\'s reason or styling_instructions and explain the temperature/transition rationale (e.g. bring the trench coat for cool morning transit and remove it when it warms up). mode \'not_required\' applies only when the slot\'s conditions are genuinely uniform across the day. When a slot\'s conditions span a real range (whether or not the day is overall cold) or a removable cool layer is needed, you MUST choose mode \'core_is_warm_enough\' (a genuinely warm core) or \'assigned_packed_layer\' (a genuinely adequate candidate) with the disclosure above — \'not_required\' is not a valid answer for that slot.'
+      ? 'Every outfit requires a cold_layer_decision, answered for every slot regardless of whether it is required. Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode \'core_is_warm_enough\', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode \'core_is_warm_enough\'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode \'assigned_packed_layer\' (naming its ID via assigned_layer_piece_id). Use mode \'not_required\' when the look needs nothing added for its conditions. A slot marked cold_layer_required is rejected without a real warm layer (mode \'core_is_warm_enough\' or \'assigned_packed_layer\'). Whether a layer is worth taking for the rest is your judgment from weather_used and each layer\'s recorded warmth; when you assign one, say in the reason which piece it is and when it goes on and comes off.'
       : '',
     // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
     // "office/client days: structured silhouettes, no maxi skirts or
@@ -4933,6 +5142,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // provider-agnostic name a follow-up edit checks regardless of which plan kind produced it.
       tripRoster,
       tripRosterSource: tripRosterSelection?.source || '',
+      tripRosterJobs: tripRosterSelection?.jobs || [],
+      tripPackingReasoning: tripRosterSelection?.packingReasoning || '',
       tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
       packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
       tripRequirementSlots,
@@ -5176,7 +5387,13 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   // requirement — and the shared owner adds the severity-aware outdoor-capability judgment neither
   // of them could make. This specialization keeps everything else: slot register, activity, season
   // and plan requirements remain local strategy.
-  if (weatherProfile?.isHot) {
+  // Same whole-range rule as the candidate pool (weatherHasCoolEnd, weather.js; engine map 2026-10-02).
+  // Live thread_1790984756285: the pool now offered heavy trousers for a 52–85°F week of afternoons,
+  // the packer packed them, and this check then rejected every sightseeing and dinner look as "a
+  // heavy main for hot weather" — 4 of 6 looks lost to two stages disagreeing. A heavy main is wrong
+  // only when it is hot throughout; with a cool end, the outfit-level warmth note (THERMAL_OVERSHOOT)
+  // still tells the wearer it runs warm at the hot end.
+  if (weatherProfile?.isHot && !weatherHasCoolEnd(weatherProfile)) {
     for (const piece of mainPieces) {
       if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
     }
@@ -5283,16 +5500,17 @@ export function slotColdLayerPermitted(slot = {}) {
 // coverage gap instead of reaching this repair round, even though a genuinely adequate candidate
 // (a reversible hooded windbreaker) sat unused in the same roster.
 //
-// thread_1789801108635: the symmetric failure -- an assigned layer substantially too WARM for the
-// slot's own thermal demand (compareThermalFit's substantial_overshoot), not too weak. Same
-// recoverable shape; identifyColdLayerRepairableFailures' own candidate filter (below) already
-// excludes overshoot candidates too, so a repair never re-offers the same class of wrong pick.
+// thread_1789801108635 added a fifth pattern for an assigned layer substantially too WARM for the
+// slot. Since 2026-10-02 that is a card note, not a rejection, so there is no such failure to match
+// and the pattern is gone; repair candidates are ordered proportionate-first instead of filtered.
 const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
   /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
-  /^assigned layer piece \d+ \(.+\) is substantially warmer than .+'s conditions call for — its own recorded construction and insulation place it well above .+ demand; choose a lighter packed layer\.$/,
+  // thread_1790989165853: a rejected assigned layer leaves the card with no layer, so the transit
+  // check fires as well. It is the same missing layer, and a repair that supplies one fixes both.
+  /^no adequate sleeve-bearing layer for cold-weather transit \(the indoor base may stay light, but removable coverage is required for getting there and back\)$/,
 ]
 
 export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures = []) {
@@ -5306,16 +5524,27 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
     const slot = slotById.get(failure.slot_id)
     if (!slot) continue
     const repairExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
-    const repairDemand = requiredThermalBand(repairExposure)
+    const repairBand = requiredThermalBand(repairExposure)
+    // A layer answers to the walk there and the cool end, not to the destination indoors
+    // (thermalDemand.js `layer`); thread_1791007872599 measured a dinner coat against the dining room.
+    const repairDemand = repairBand?.layer?.level ? repairBand.layer : repairBand
     const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
       .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece))
-      .filter(piece => !repairDemand?.level || compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit !== 'substantial_overshoot')
+      // Proportionate layers are offered first; a substantially warmer one is still offered, last,
+      // because on a mild day it can be the only real layer the suitcase has (2026-10-02 ruling above
+      // validateSubmittedPlanOutfits' assigned-layer check).
+      .map((piece, index) => ({ piece, index, tooWarm: Boolean(repairDemand?.level) && compareThermalFit(garmentWarmthLevel(piece), repairDemand).fit === 'substantial_overshoot' }))
+      .sort((a, b) => Number(a.tooWarm) - Number(b.tooWarm) || a.index - b.index)
+      .map(entry => entry.piece)
     if (!candidates.length) continue
     repairable.push({
       slot_id: failure.slot_id,
       label: failure.label || slot.label || '',
       title: failure.outfit?.title || '',
       piece_ids: Array.isArray(failure.outfit?.pieceIds) ? failure.outfit.pieceIds.map(Number) : [],
+      // The repair is told to return these unchanged; it must be able to see them.
+      reason: failure.outfit?.reason || '',
+      styling_instructions: failure.outfit?.stylingInstructions || '',
       candidates: candidates.map(piece => ({ id: Number(piece.id), name: piece.name || `piece ${piece.id}` })),
     })
   }
@@ -5496,6 +5725,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     // the plain-omission shape and keeping this block's own new reasons scoped to genuinely new
     // validation surface (schema misuse, false claims) rather than duplicating the existing floor.
     const assignedLayers = []
+    const tooWarmLayerNotes = []
     if ((coldLayerRequired || coldLayerPermitted) && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
       const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
@@ -5524,22 +5754,33 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // borderline pick (moderate against a light target, e.g. a plain fleece coat) still
           // passes as a defensible edge case rather than being rejected outright.
           const layerExposure = resolveExposureContext({ activity: slot?.activity, environment: slot?.environment }, slot?.weatherProfile || {})
-          const layerDemand = requiredThermalBand(layerExposure)
+          const layerBand = requiredThermalBand(layerExposure)
+          const layerDemand = layerBand?.layer?.level ? layerBand.layer : layerBand
           const layerFit = layerDemand?.level ? compareThermalFit(garmentWarmthLevel(layerPiece), layerDemand) : { fit: 'unknown' }
-          if (layerFit.fit === 'substantial_overshoot') {
-            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) is substantially warmer than ${label}'s conditions call for — its own recorded construction and insulation place it well above ${layerDemand.level} demand; choose a lighter packed layer.`)
-          } else if (outerwearLayerPositivelyInadequate(layerPiece)) {
+          //
+          // 2026-10-02 (owner ruling, live thread_1790929985430): substantial overshoot is a NOTE
+          // on the card, not a rejection. As a hard gate it contradicted the layer requirement on
+          // any mild, flat day: a 64–65°F hike resolved to "very light" demand, the slot still
+          // required a removable layer, the thin hoodie was rejected as inadequate and every real
+          // jacket in the wardrobe (olive jacket, fleece coat, trench — all "moderate") as two
+          // levels too warm. No layer could pass, and the whole activity was lost. A removable
+          // layer that is warmer than ideal is something to tell the wearer; it does not make the
+          // outfit unwearable. The inadequacy check below remains a hard gate.
+          if (outerwearLayerPositivelyInadequate(layerPiece)) {
             reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
           } else {
             assignedLayers.push(layerPiece)
+            if (layerFit.fit === 'substantial_overshoot') {
+              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || 'packed layer'} is warmer than these conditions call for; it is there to take off once you warm up` })
+            }
           }
         }
       }
     }
     const outfit = {
-      title: String(raw?.title || slot.label || '').trim(),
-      reason: String(raw?.reason || '').trim(),
-      stylingInstructions: String(raw?.styling_instructions || raw?.stylingInstructions || '').trim(),
+      title: withoutPieceIdCitations(raw?.title || slot.label || ''),
+      reason: withoutPieceIdCitations(raw?.reason || ''),
+      stylingInstructions: withoutPieceIdCitations(raw?.styling_instructions || raw?.stylingInstructions || ''),
       pieces,
       pieceIds: dedupedIds,
       ...(assignedLayers.length ? { assignedLayerIds: assignedLayers.map(piece => Number(piece.id)) } : {}),
@@ -5588,6 +5829,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (Array.isArray(wearableValidation.advisoryFindings) && wearableValidation.advisoryFindings.length) {
         outfit.systemFlags = advisoryFindingsToSystemFlags(wearableValidation.advisoryFindings)
       }
+      if (tooWarmLayerNotes.length) outfit.systemFlags = [...(outfit.systemFlags || []), ...tooWarmLayerNotes]
       // The model receives every typed finding. The rejected card shown to the owner gets one primary
       // thermal explanation: the messages the collapse drops are remembered against this reasons list.
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
@@ -5657,8 +5899,17 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // the piece budget. Reuse there means mix-and-match value across a
       // season, not trip-style shoe minimization. Keep the three-pair cap for
       // trips and other packing-light plans only.
+      // 2026-10-02 (live thread_1790973141460): a pair the trip packer already put in the suitcase
+      // is not a "4th pair" to pack — it is packed. The packer chose four pairs (hiking boots,
+      // sneakers, slip-ons, ankle boots); the cap then counted pairs in card order, so both dinner
+      // looks were rejected for wearing the ankle boots packed FOR dinner, and the trip lost its
+      // dinners. The cap limits what gets packed; with a curated roster that decision is the
+      // roster's, so it applies here only to a pair outside it (or when no roster was curated).
+      const curatedSuitcaseIds = ['model', 'model_repaired'].includes(pendingPlan?.tripRosterSource)
+        ? new Set((Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []).map(piece => Number(piece.id)))
+        : new Set()
       if (reuseMode === 'maximize' && !isEnforcedCapsule) {
-        const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes')
+        const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes' && !curatedSuitcaseIds.has(Number(pair.id)))
         if (shoePair) {
           const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
           if (!usedShoes.has(shoePair.id) && usedShoes.size >= 3) {
@@ -5873,6 +6124,63 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
     }))
   }
   return cards
+}
+
+// What the final writer of a trip answer needs in order to EXPLAIN the suitcase rather than recite
+// it (docs/stylist-conversation-targets.md, check 8). Before this, the tool result carried only
+// piece names and plan lines, with an instruction to present the lines — so the prose could only
+// be a recap (thread_1790924321526). Pure projection of facts already on the plan: the packer's
+// stated job per piece, each card's own reason, and the packed pieces no card wears. The unused list
+// is computed here, not asked of a model, so "this piece is a spare" is said from a fact.
+// Live thread_1791013807691 (48–68°F): the per-card "no layer" note stands down once the suitcase
+// holds a real layer (SET vs CARD, outfitEnvironmentalAdequacy.js), so nothing told the wearer that
+// both dinner looks and two thin-hoodie day looks need the packed jacket, and the reply called the
+// UPF hoodie the layer. The cards stay quiet; the writer gets the fact. Null when the activity has no
+// cool end; otherwise the look's own real layer, or the packed real layers it can borrow.
+export function tripOutfitCoolEndLayer(pendingPlan = {}, outfit = {}) {
+  const slot = (Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).find(entry => entry?.label === outfit?.label)
+  if (!slot || !weatherHasCoolEnd(slot.weatherProfile || {})) return null
+  const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
+  const realLayer = piece => piece && wardrobeCategoryGroup(piece) === 'outerwear' && !outerwearLayerPositivelyInadequate(piece)
+  const worn = [
+    ...(outfit?.pieces || []),
+    ...(outfit?.assignedLayerIds || []).map(id => roster.find(piece => Number(piece.id) === Number(id))),
+  ].filter(realLayer)
+  if (worn.length) return `worn: ${worn.map(piece => piece.name).join(', ')}`
+  const packed = roster.filter(realLayer).map(piece => piece.name)
+  return packed.length
+    ? `none on this outfit; bring a packed layer: ${packed.join(', ')}`
+    : 'none on this outfit, and none packed'
+}
+
+export function buildTripExplanationEvidence(pendingPlan = {}, planOutfits = [], { declined = [] } = {}) {
+  const roster = Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []
+  const nameById = new Map(roster.map(piece => [Number(piece.id), piece.name || `piece ${piece.id}`]))
+  const wornIds = new Set()
+  for (const outfit of planOutfits) {
+    for (const piece of outfit?.pieces || []) wornIds.add(Number(piece.id))
+    for (const id of outfit?.assignedLayerIds || []) wornIds.add(Number(id))
+  }
+  return {
+    packing_reasoning: String(pendingPlan?.tripPackingReasoning || ''),
+    packing_notes: (Array.isArray(pendingPlan?.tripRosterJobs) ? pendingPlan.tripRosterJobs : [])
+      .filter(entry => nameById.has(Number(entry?.pieceId)) && entry?.job)
+      .map(entry => ({ piece: nameById.get(Number(entry.pieceId)), packed_for: entry.job })),
+    unused_pieces: roster.filter(piece => !wornIds.has(Number(piece.id))).map(piece => piece.name || `piece ${piece.id}`),
+    // What the plan does not cover, as counts and the composer's own stated reasons — the same facts
+    // the displayed "[coverage gap: … failed validation]" lines carry, without their engine wording,
+    // which the final answer was paraphrasing back to the user (thread_1790926685366).
+    not_covered: [
+      ...(Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).map(slot => {
+        const planned = Math.min(3, Math.max(0, Number(slot?.targetOutfits) || 0))
+        const ready = planOutfits.filter(outfit => outfit?.label === slot?.label).length
+        return ready < planned ? { activity: slot.label, outfits_planned: planned, outfits_ready: ready } : null
+      }).filter(Boolean),
+      ...(Array.isArray(declined) ? declined : [])
+        .filter(entry => entry?.activity && entry?.reason)
+        .map(entry => ({ activity: entry.activity, reason: entry.reason })),
+    ],
+  }
 }
 
 export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits = [], { source = 'plan_outfit_set' } = {}) {
@@ -6185,6 +6493,10 @@ export function normalizePlanSlots(rawSlots = [], {
         location,
         environment,
         date: resolvedSlotDate,
+        // True when the slot named no day of its own and resolvedSlotDate is only the trip's first
+        // day standing in for it. resolveSlotWeather reads this to slice the slot's time of day
+        // across the whole trip instead of on that one stand-in day.
+        dateInherited: !slotDate && Boolean(String(dateRange?.start || '').trim()),
         // thread_1789633862650 (owner correction, 2026-09-17, narrowing the Activity Time Windows
         // spec's "never inferred or defaulted by code" rule): a slot typed occasion:'evening', or
         // whose own label/best_for names a dinner/wine bar/evening use case, has already declared

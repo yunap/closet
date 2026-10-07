@@ -20,6 +20,15 @@
       "port": 3001
     },
     {
+      "name": "wardrobe-api-capture",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "STYLIST_PROVIDER_OVERRIDE=gemini WARDROBE_CAPTURE_PROVIDER_INPUT_DIR=\"$HOME/.wardrobe-captures\" node server.js"
+      ],
+      "port": 3001
+    },
+    {
       "name": "wardrobe-web",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

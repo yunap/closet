@@ -4082,7 +4082,11 @@ export function buildStylistConversationDirective(mode) {
     case 'explanation':
       return 'The user is asking for explanation or rationale. Explain how the prior answer was made naturally using listed garment details, metadata, and any images attached to this call.'
     case 'preference_reaction':
-      return 'The user is stating a style or taste preference. Accept this preference naturally, adapt your rules for their style profile, and keep your reply concise.'
+      // 2026-10-07 (live thread_1791353402050): "I like that one. Show me another outfit in the same
+      // spirit" is labelled a preference reaction by the keyword match on "I like", and this
+      // directive then described it as only a taste statement and capped the reply ("keep your
+      // reply concise"). A reaction often carries a request; length is the stylist's call.
+      return 'The user is reacting to what you showed them: a like, a dislike, a preference. Take it on board, and when the message also asks for something (another outfit, a change), do that.'
     case 'followup':
       return 'The user is asking a follow-up question. Answer it directly and naturally. Do not restart the full evaluation flow.'
     default:
@@ -4291,6 +4295,7 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
     location: routed.location || body.location || '',
     date: routed.date || '',
     season: routed.season || body.season || '',
+    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : {}),
     mood: routed.mood || body.mood || '',
     mission: routed.mission || body.mission || 'mix',
     user_weather: userWeather || null,
@@ -4309,7 +4314,9 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
                 ? 'Preserve both endpoints unchanged on every composition tool call.'
                 : 'Only one endpoint was stated; preserve it unchanged and do not supply the other — it is genuinely unknown, not zero and not equal to the stated one.'
             }`
-          : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
+          : routed.setting === 'indoor_only'
+            ? 'This occasion is spent indoors in one room for its whole duration. Dress for the room: do not supply user_weather or weather_estimate, and add no layer for warmth.'
+            : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
       ].join('\n')
     }],
     maxTokens: 1200,
@@ -4457,7 +4464,25 @@ export async function buildStylistConversationPayload(body) {
       })
     : null
   const effectiveWeatherProfile = explicitTurnWeather ? statedTurnWeatherProfile : restoredWeatherProfile
-  const extractedWeather = turnWeather
+  // The thread's stored forecast outranks a word found in earlier prose. Live
+  // thread_1791352199157: the first card's reason said "the warm late afternoon", the word match
+  // below turned that into "hot weather", and the follow-up was told "Established weather context
+  // for this turn: hot weather" while THREAD STATE's own profile read 78°F / 62°F, not hot. With
+  // numbers on record and nothing new stated this turn, the label is those numbers.
+  const restoredHigh = Number(restoredWeatherProfile?.highF)
+  const restoredLow = Number(restoredWeatherProfile?.lowF)
+  const restoredRangeText = !explicitTurnWeather && restoredWeatherProfile && Number.isFinite(restoredHigh) && restoredWeatherProfile.highF != null
+    ? (Number.isFinite(restoredLow) && restoredWeatherProfile.lowF != null && Math.round(restoredLow) !== Math.round(restoredHigh)
+        ? `a forecast high of ${Math.round(restoredHigh)}°F and low of ${Math.round(restoredLow)}°F`
+        : `a temperature around ${Math.round(restoredHigh)}°F`)
+    : ''
+  // Words the user stated earlier ("hot, highs 85F") are stored as written and still lead. A stored
+  // label with no number in it ("hot weather") is the vague kind this replaces.
+  const storedStatedWeather = /\d/.test(String(restoredEstablished.weather || '')) ? restoredEstablished.weather : ''
+  const extractedWeather = explicitTurnWeather
+    || storedStatedWeather
+    || restoredRangeText
+    || contextualTurnWeather
     || restoredEstablished.weather
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
@@ -4741,7 +4766,11 @@ export async function buildStylistConversationPayload(body) {
   } catch (err) {
     console.error('Wardrobe manifest query failed:', err)
   }
-  const wardrobeManifestText = activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+  // A fresh trip request (routes/ai.js `trip_plan`) only turns the request into activities and then
+  // writes the reply from the planner's result; the packer and the outfit step get the wardrobe
+  // themselves. Its prompt carries no wardrobe list (2026-10-07).
+  const tripPlanTurn = body?.tripPlanTurn === true
+  const wardrobeManifestText = !tripPlanTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
@@ -4792,6 +4821,10 @@ export async function buildStylistConversationPayload(body) {
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
+    ].join('\n')
+    : tripPlanTurn ? [
+      'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',

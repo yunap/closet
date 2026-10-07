@@ -1170,9 +1170,12 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   // nothing (measured at $0.0134 against a ~$0.04 follow-up).
   assert.match(tool('declare_intent').description, /Required before propose_outfit, generate_outfits or render_preview/)
   assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
-  assert.match(tool('suggest_slot_swaps').description, /alternatives to ONE slot/)
+  assert.match(tool('suggest_slot_swaps').description, /change ONE slot/)
+  assert.match(tool('suggest_slot_swaps').description, /you make the choice/, 'the stylist, not a ranking, picks the replacement (2026-10-06)')
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
-  assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' request defaults to 2 options/)
+  // Owner ruling 2026-10-02 (supersedes 2026-08-18): an ordinary request is ONE recommended outfit, not a batch of two.
+  assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' with no request for several options is ONE recommended outfit/)
+  assert.match(tool('generate_outfits').description, /asks for options without a number, compose 2/)
   assert.match(tool('plan_outfit_set').description, /multiple use-case slots/)
   // Grew from ~700 to ~890 chars when lever 1 moved the bounded exception out of the tool schemas.
   // That is the trade working: ~48 tokens of volatile text at full input price (~$0.00014/call)
@@ -1709,7 +1712,7 @@ test('whole-wardrobe composer receives wear mechanics but is told not to recite 
   const top = sharedGarmentEvidenceLine({ id: 1, name: 'shell', category: 'top', tuck_behavior: 'wear_over_only', hem_finish: 'curved', opacity: 'semi_sheer', needs_base: 'yes' })
   assert.match(top, /hem curved; opacity semi_sheer; needs a base layer; .*tuck wear_over_only/)
   assert.match(sharedGarmentEvidenceLine({ id: 2, name: 'trouser', category: 'bottom', waistband_type: 'elastic' }), /waistband elastic/)
-  assert.match(routeSrc, /sharedGarmentEvidenceLine\(p\)/)
+  assert.match(routeSrc, /composerGarmentLabel\(p\)/)
   assert.match(routeSrc, /Opacity and base-layer facts are authoritative/)
   assert.match(routeSrc, /Do not repeat a fixed fact the owner already knows/)
 })
@@ -3055,7 +3058,7 @@ test('generate_outfits rejects a whole-wardrobe one-look call before the nested 
   const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.input_schema
   assert.equal(schema?.properties?.limit?.minimum, 2)
   assert.equal(schema?.properties?.limit?.maximum, 5)
-  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.description || '', /For exactly one outfit/)
+  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits')?.description || '', /ONE recommended outfit: use declare_intent \+ visual search_wardrobe \+ propose_outfit, not this tool/)
 
   const toolContext = {
     turnMode: 'new_request',
@@ -4503,6 +4506,10 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
   assert.equal(proposed.result?.disposition, 'annotated')
   assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
   assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+  // The remedy is an instruction to the model: it stays in the tool result and never reaches the card.
+  assert.ok(result.systemNotes?.some(n => n.message.includes('address this trade-off candidly in your final note')))
+  assert.ok(!proposed.result?.annotations?.some(a => /final note|Swap to an insulating/.test(a.message)))
+  assert.ok(!result.systemNotes?.some(n => 'cardMessage' in n))
 })
 
 test('propose_outfit merges advisory findings into non-blocking notes in full_stylist', async () => {
@@ -4579,6 +4586,10 @@ test('propose_outfit merges advisory findings into non-blocking notes in full_st
   assert.equal(proposed.result?.disposition, 'annotated')
   assert.ok(proposed.result?.annotations?.some(a => a.type === 'Weather note' && a.message.includes('Outdoor conditions call for warmer upper coverage')))
   assert.ok(result.systemNotes?.some(n => n.message.includes('Outdoor conditions call for warmer upper coverage')))
+  // The remedy is an instruction to the model: it stays in the tool result and never reaches the card.
+  assert.ok(result.systemNotes?.some(n => n.message.includes('address this trade-off candidly in your final note')))
+  assert.ok(!proposed.result?.annotations?.some(a => /final note|Swap to an insulating/.test(a.message)))
+  assert.ok(!result.systemNotes?.some(n => 'cardMessage' in n))
 })
 
 test('view_pieces projects stylistCatalogLine truth across all execution profiles', async () => {
@@ -4594,3 +4605,131 @@ test('view_pieces projects stylistCatalogLine truth across all execution profile
   assert.doesNotMatch(jacket.truth, /warmth/)
 })
 
+
+// Owner ruling 2026-10-02 (docs/engine-behaviour-map.md; supersedes 2026-08-18). The router is a
+// model call, so its behaviour cannot be exercised offline; this pins the instruction it is given.
+test('the execution router sends an ordinary "what should I wear?" to the single-outfit stylist, not the two-option composer', async () => {
+  const fsMod = await import('node:fs')
+  const source = fsMod.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(source, /An ordinary "what should I wear\?" with no request for several options is single_outfit/)
+  assert.match(source, /Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options/)
+  assert.doesNotMatch(source, /An ordinary "what should I wear\?" means 2/)
+})
+
+// thread_1790928379170. (1) The single-outfit loop ends when the card is accepted, so the stylist's
+// note must arrive with the proposal. (2) An at-home evening was dressed for a model-estimated
+// 62/48 outdoor day; season:'indoor' is the existing way to say the wearing period is a room.
+test('single_outfit propose_outfit keeps the stylist note, and an indoor wearing period raises no cool-layer note where an outdoor estimate does', async () => {
+  const pieces = [
+    { id: 61, name: 'Knit Shift Dress', category: 'dress', fabric_weight: 'medium', fiber_content: JSON.stringify(['rayon']), sleeve_length: 'short' },
+    { id: 62, name: 'Flat Sandals', category: 'shoes', walk_support: 'medium' },
+  ]
+  for (const p of pieces) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.walk_support || null, p.sleeve_length || null)
+  }
+  const context = () => {
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      singleOutfitCatalogEligibleIds: new Set([61, 62]),
+      retrievedPieceIds: new Set([61, 62]),
+      visuallySeenPieceIds: new Set([61, 62]),
+      freeformDiagnostics: {},
+      activity: 'none',
+    }
+    declareSingleOutfitIntent(toolContext)
+    return toolContext
+  }
+  const args = {
+    pieces: [{ id: 61, role: 'dress' }, { id: 62, role: 'shoes' }],
+    label: 'Hosting at home',
+    why_it_works: 'Sleeveless and flat for an evening on your feet.',
+    stylist_note: 'You are hosting, so you will be on your feet.\n\nMy pick is the knit dress with flat sandals.',
+  }
+
+  const indoorContext = context()
+  const indoor = await executeTool('propose_outfit', { ...args, season: 'indoor' }, indoorContext)
+  assert.equal(indoor.status, 'success')
+  assert.equal(indoorContext.singleOutfitStylistNote, args.stylist_note)
+  const indoorCard = indoorContext.generatedOutfits[0]
+  assert.ok(!(indoorCard.result?.annotations || []).some(a => a.type === 'Weather note'), `no weather note for a room: ${JSON.stringify(indoorCard.result?.annotations)}`)
+  assert.equal(indoorCard.reason, args.why_it_works, 'the card keeps its own short reason, not the note')
+
+  const outdoorContext = context()
+  const outdoor = await executeTool('propose_outfit', { ...args, weather_estimate: { high_f: 62, low_f: 48 } }, outdoorContext)
+  assert.equal(outdoor.status, 'success')
+  assert.ok((outdoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'), 'the same outfit against an estimated 62/48 outdoor day is what drew the layer')
+
+  const withoutNote = context()
+  await executeTool('propose_outfit', { ...args, stylist_note: undefined, season: 'indoor' }, withoutNote)
+  assert.equal(withoutNote.singleOutfitStylistNote, '')
+})
+
+// thread_1790929800547: with the brief asking for both, the model marked its wardrobe search indoor
+// but not its proposal, sent a 65/50 estimate anyway, and left stylist_note empty. Both are now
+// structure rather than instructions: the router classifies the setting and code applies it to every
+// tool; the note is a required field on a single-outfit proposal.
+test('a router-classified indoor-only occasion resolves as indoor for the proposal even when the model volunteers a weather estimate', async () => {
+  for (const p of [
+    { id: 61, name: 'Knit Shift Dress', category: 'dress', fabric_weight: 'medium', fiber_content: JSON.stringify(['rayon']), sleeve_length: 'short' },
+    { id: 62, name: 'Flat Sandals', category: 'shoes', walk_support: 'medium' },
+  ]) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, fiber_content, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.fiber_content || null, p.walk_support || null, p.sleeve_length || null)
+  }
+  const context = indoorOnly => {
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      singleOutfitCatalogEligibleIds: new Set([61, 62]),
+      retrievedPieceIds: new Set([61, 62]),
+      visuallySeenPieceIds: new Set([61, 62]),
+      freeformDiagnostics: {},
+      activity: 'none',
+      executionRouterIndoorOnly: indoorOnly,
+    }
+    declareSingleOutfitIntent(toolContext)
+    return toolContext
+  }
+  const args = {
+    pieces: [{ id: 61, role: 'dress' }, { id: 62, role: 'shoes' }],
+    label: 'Hosting at home',
+    why_it_works: 'Flat and sleeveless for an evening on your feet.',
+    stylist_note: 'Intro.\n\nPick.',
+    weather_estimate: { high_f: 65, low_f: 50 },
+  }
+  const indoorContext = context(true)
+  await executeTool('propose_outfit', args, indoorContext)
+  assert.ok(!(indoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
+    `an evening at home must not be judged against an estimated outdoor day: ${JSON.stringify(indoorContext.generatedOutfits[0].result?.annotations)}`)
+
+  const outdoorContext = context(false)
+  await executeTool('propose_outfit', args, outdoorContext)
+  assert.ok((outdoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
+    'without the indoor classification the same proposal is still judged against the estimate')
+})
+
+test('the router must classify the setting, and a single-outfit proposal must carry the stylist note', async () => {
+  const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
+  assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('setting'))
+  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'includes_outdoors'])
+
+  const single = stylistToolsForTurn({ executionProfile: 'single_outfit', allowedToolNames: ['search_wardrobe', 'view_pieces', 'propose_outfit'] })
+  assert.deepEqual(single.map(tool => tool.name).sort(), ['propose_outfit', 'search_wardrobe', 'view_pieces'])
+  const singlePropose = single.find(tool => tool.name === 'propose_outfit')
+  assert.ok(singlePropose.input_schema.required.includes('stylist_note'))
+  assert.ok(singlePropose.input_schema.required.includes('why_it_works'))
+  const fullPropose = stylistToolsForTurn({}).find(tool => tool.name === 'propose_outfit')
+  assert.ok(!fullPropose.input_schema.required.includes('stylist_note'), 'the full stylist schema is unchanged')
+
+  const indoorPayload = buildSingleOutfitConversationPayload(
+    { question: 'I am hosting a small get-together at our house tonight. what should I wear?' },
+    { profile: 'single_outfit', occasion: 'casual', activity: 'none', setting: 'indoor_only', season: 'fall', limit: 1 })
+  const indoorText = indoorPayload.messages[0].content
+  assert.match(indoorText, /"setting": "indoor only"/)
+  assert.match(indoorText, /Dress for the room: do not supply user_weather or weather_estimate/)
+  const outdoorText = buildSingleOutfitConversationPayload(
+    { question: 'what should I wear to dinner downtown?' },
+    { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: 'fall', limit: 1 }).messages[0].content
+  assert.doesNotMatch(outdoorText, /"setting"/)
+  assert.match(outdoorText, /let the tools resolve weather/)
+})

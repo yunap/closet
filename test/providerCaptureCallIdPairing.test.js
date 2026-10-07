@@ -80,3 +80,28 @@ for (const provider of ['gemini', 'openai', 'anthropic']) {
     assert.equal(records.length, 3)
   })
 }
+
+test('a structured call made inside a request is stamped with that request\'s thread and turn, and with its schema name', async () => {
+  const { runWithAiTelemetryContext, updateAiTelemetryContext } = await import('../lib/aiCallTelemetry.js')
+  const records = await captured(() => runWithAiTelemetryContext(
+    { originalUrl: '/api/ai/ask', sessionId: 'thread_42' },
+    async () => {
+      updateAiTelemetryContext({ freeformTurnToken: 'turn-42' })
+      await askStylistStructuredWithUsage({
+        system: 'sys',
+        messages: [{ role: 'user', content: 'pack for a trip' }],
+        schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+        name: 'trip_plan_composition',
+        providerOverride: 'gemini',
+      })
+    }
+  ))
+  assert.deepEqual(records.map(r => r.stage).sort(), ['normalized', 'output', 'wire'])
+  for (const record of records) {
+    assert.equal(record.threadId, 'thread_42')
+    assert.equal(record.turnToken, 'turn-42')
+    assert.equal(record.requestPath, '/api/ai/ask')
+    assert.equal(record.schemaName, 'trip_plan_composition')
+    assert.equal(record.subflow, 'structured_response')
+  }
+})

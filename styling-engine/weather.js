@@ -61,6 +61,20 @@ export function normalizedWeatherLocationIdentity(value = '') {
   return normalized
 }
 
+// The same place named with and without its state or country: "Walnut Creek" and "Walnut Creek, CA".
+// Live thread_1791352199157: a follow-up search said "Walnut Creek, CA", the thread's forecast was
+// stored for "Walnut Creek", the strict comparison called it a new destination with no date, and the
+// follow-up was dressed for today's 97°F instead of Friday evening's 62–78°F.
+export function sameWeatherLocation(a = '', b = '') {
+  const first = normalizedWeatherLocationIdentity(a)
+  const second = normalizedWeatherLocationIdentity(b)
+  if (!first || !second) return false
+  if (first === second) return true
+  const [shorter, longer] = first.length <= second.length ? [first, second] : [second, first]
+  if (!longer.startsWith(`${shorter} `)) return false
+  return /^(?:[a-z]{2}|[a-z]{2} (?:us|usa)|us|usa|united states)$/.test(longer.slice(shorter.length + 1)) // ratchet-allow: location qualifier, not garment matching
+}
+
 const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
 const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
 const hourlyCache = new Map() // `${date}|${lat},${lon}` -> { data: {times, temps, precip}, expiresAt }
@@ -111,29 +125,82 @@ function dateKey(date) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
-async function geocodeQuery(query, fetchImpl) {
-  const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=1&language=en&format=json`
+// How far ahead a forecast day is trusted (owner, 2026-10-02: "17th is way past 10 day forecast").
+// Open-Meteo answers 16 days out, but its far days swing by 10°F+ between runs: Vienna, VA,
+// 12–18 October read 43–85°F one afternoon and 38–77°F that night, and a single 38°F morning on
+// the 15th day put a puffer in the suitcase. Days past this are "not forecast yet", the same as
+// days past the provider horizon, and a range mostly past it falls to the seasonal estimate.
+const RELIABLE_FORECAST_DAYS = 10
+let forecastClock = () => new Date()
+// Tests pin "today" so fixtures with fixed trip dates do not age out of the window.
+export function setForecastClockForTests(now) { forecastClock = now ? () => new Date(now) : () => new Date() }
+export function lastReliableForecastDate(now = forecastClock()) {
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  d.setUTCDate(d.getUTCDate() + RELIABLE_FORECAST_DAYS - 1)
+  return d.toISOString().slice(0, 10)
+}
+const beyondReliableForecast = date => String(dateKey(date) || '') > lastReliableForecastDate()
+// A range is described by its forecast only when the forecast covers at least half its days;
+// otherwise the first day or two would stand in for the week.
+const forecastCoversRange = (covered, requested) => covered > 0 && covered * 2 >= requested
+
+// A bare city name is ambiguous, and the geocoder ranks by population: "San Mateo" is a city in the
+// Philippines before it is the one in California (live thread_1791277608402 — 90°F/75°F for a
+// concert twenty miles from the wearer's home). With a reference point, the same-named match nearest
+// to it wins; a name the user qualified ("Vienna, Virginia") already resolves correctly and is not
+// second-guessed.
+let homeLocationReader = null
+export function registerWeatherHomeLocationReader(reader) {
+  homeLocationReader = typeof reader === 'function' ? reader : null
+}
+function distanceSquared(a, b) {
+  const dLat = a.lat - b.lat
+  const dLon = (a.lon - b.lon) * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180)
+  return dLat * dLat + dLon * dLon
+}
+
+async function geocodeQuery(query, fetchImpl, { near = null } = {}) {
+  const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=${near ? 5 : 1}&language=en&format=json`
   const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
   if (!res?.ok) return null
   const data = await res.json()
-  const first = data?.results?.[0]
-  if (!first || typeof first.latitude !== 'number' || typeof first.longitude !== 'number') return null
-  return { lat: first.latitude, lon: first.longitude }
+  const usable = (data?.results || []).filter(entry => typeof entry?.latitude === 'number' && typeof entry?.longitude === 'number')
+  if (!usable.length) return null
+  const sameName = near ? usable.filter(entry => String(entry.name || '').toLowerCase() === String(query).toLowerCase()) : []
+  const chosen = sameName.length > 1
+    ? sameName.reduce((best, entry) => (distanceSquared({ lat: entry.latitude, lon: entry.longitude }, near) < distanceSquared({ lat: best.latitude, lon: best.longitude }, near) ? entry : best))
+    : usable[0]
+  return { lat: chosen.latitude, lon: chosen.longitude }
+}
+
+async function resolveQualifiedLocation(location, fetchImpl) {
+  try {
+    return await geocodeQuery(location, fetchImpl) || await geocodeQuery(location.split(',')[0].trim(), fetchImpl)
+  } catch {
+    return null
+  }
 }
 
 async function resolveLocationToCoords(location, fetchImpl) {
-  const key = String(location || '').trim().toLowerCase()
-  if (!key) return null
+  const name = String(location || '').trim().toLowerCase()
+  if (!name) return null
+  let home = ''
+  try { home = String(homeLocationReader?.() || '').trim().toLowerCase() } catch { home = '' }
+  const ambiguous = !name.includes(',') && home && home !== name // ratchet-allow: location qualifier check, not garment matching
+  const key = ambiguous ? `${name}|near:${home}` : name
   const cached = geocodeCache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.coords
-  let coords = await geocodeQuery(key, fetchImpl)
+  // The home location carries its own qualifier or is taken as written; it is never itself
+  // resolved "near" anything.
+  const near = ambiguous ? await resolveQualifiedLocation(home, fetchImpl) : null
+  let coords = await geocodeQuery(name, fetchImpl, { near })
   if (!coords) {
     // "City, ST" / "City, State" is an extremely common way to type a US location, but Open-Meteo's
     // geocoder returns zero results for the combined string (confirmed live, 2026-07-10 — "Walnut
     // Creek, CA" silently failed and fell back to the heuristic weather guess with no error surfaced,
     // even though "Walnut Creek" alone resolves correctly). Retry with just the part before the comma.
-    const cityOnly = key.split(',')[0].trim()
-    if (cityOnly && cityOnly !== key) {
+    const cityOnly = name.split(',')[0].trim()
+    if (cityOnly && cityOnly !== name) {
       coords = await geocodeQuery(cityOnly, fetchImpl)
     }
   }
@@ -149,14 +216,33 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const cacheKey = `${start}:${end}|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
   const cached = weatherCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.data
-  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&start_date=${start}&end_date=${end}`
-  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  const dailyBase = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`
+  let res = await withTimeout(fetchImpl(`${dailyBase}&start_date=${start}&end_date=${end}`), FETCH_TIMEOUT_MS)
+  let withinHorizonOnly = false
+  // A multi-day range that runs past the provider's horizon is rejected WHOLE (an error, not a
+  // shorter answer), so a trip ending one day beyond it lost every day it does cover and fell to
+  // a seasonal estimate. Retry once over the horizon itself and keep the requested days it reaches.
+  if (!res?.ok && end > start) {
+    res = await withTimeout(fetchImpl(`${dailyBase}&forecast_days=${HORIZON_FORECAST_DAYS}`), FETCH_TIMEOUT_MS)
+    withinHorizonOnly = true
+  }
   if (!res?.ok) return null
   const data = await res.json()
-  const highs = data?.daily?.temperature_2m_max || []
-  const lows = data?.daily?.temperature_2m_min || []
-  const dates = data?.daily?.time || []
+  const rawHighs = data?.daily?.temperature_2m_max || []
+  const rawLows = data?.daily?.temperature_2m_min || []
+  // A start/end request answers from the start date, so its days are known even without `time`.
+  const requested = withinHorizonOnly ? [] : datesInRange(start, end)
+  const rawDates = data?.daily?.time?.length ? data.daily.time : (rawHighs.length === requested.length ? requested : [])
+  // The horizon's last day can come back with null temperatures; Math.max/min would read null as
+  // 0°F. A day counts only with both numbers, and on the retry only inside the requested range.
+  const keep = rawHighs.map((high, i) => Number.isFinite(high) && Number.isFinite(rawLows[i])
+    && !(rawDates[i] && beyondReliableForecast(rawDates[i]))
+    && (!withinHorizonOnly || (String(rawDates[i] || '') >= start && String(rawDates[i] || '') <= end)))
+  const highs = rawHighs.filter((_, i) => keep[i])
+  const lows = rawLows.filter((_, i) => keep[i])
+  const dates = rawDates.length === rawHighs.length ? rawDates.filter((_, i) => keep[i]) : []
   if (!highs.length || !lows.length) return null
+  if (end > start && !forecastCoversRange(highs.length, datesInRange(start, end).length)) return null
   // `fetchedAt` is captured once, at the real network call, and rides along with the cached data —
   // a cache hit must report when the underlying forecast was actually retrieved, not "now", or
   // provenance silently lies about freshness for up to CACHE_TTL_MS.
@@ -250,7 +336,7 @@ function sliceHourlyWindow(hourly, date, { startHour, endHour } = {}) {
 // horizon, or lacking hourly coverage for that date — callers degrade to the existing waking-window
 // estimate on null, never fabricate hourly certainty from a day this call could not resolve.
 export async function resolveExposureWindowHourly({ location = '', date = '', timeWindow = null, fetchImpl = defaultFetch } = {}) {
-  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  if (shouldSkipLive(fetchImpl) || !location || !date || beyondReliableForecast(date)) return null
   const hours = resolveTimeWindowHours(timeWindow)
   if (!hours) return null
   try {
@@ -274,12 +360,131 @@ export async function resolveExposureWindowHourly({ location = '', date = '', ti
   }
 }
 
+// "Hot" is the top of a range; it says nothing about the bottom. A week whose warmest afternoon
+// reaches 81°F and whose evenings fall to 50°F is hot AND has a cool end, and the hot-weather
+// exclusions were removing every real layer from it: live thread_1790973141460 offered the trip
+// packer 3 of the wardrobe's 34 layers (a sheer shrug and two light cardigans) for a week in
+// mid-October, because one day at or above HOT_F marked the whole activity hot. A layer is what
+// comes OFF in the heat, so the hot-weather exclusions for outerwear apply only when the conditions
+// are hot throughout. Garments worn through the heat (tops, bottoms, dresses) are judged as before.
+//
+// 2026-10-02, live thread_1790984215933 (the forecast moved to 43–85°F): a COLD end is a cool end
+// too. needsRemovableCoolLayer is false once the low is cold, so this read "no cool end" for a range
+// reaching 43°F, the hot exclusions stripped the warm layers again, and four looks were then
+// rejected for having no warm layer for the cold evening walk. Owner direction the same day: weather
+// is the model's judgment; code excludes only what is wrong for the WHOLE range. So both ends count.
+export function weatherHasCoolEnd(weatherProfile = {}) {
+  return Boolean(weatherProfile?.needsRemovableCoolLayer || weatherProfile?.transitNeedsRemovableCoolLayer
+    || weatherProfile?.isCold || weatherProfile?.transitIsCold)
+}
+
+// The mirror question for the cold-weather exclusions: does any part of the range reach hot?
+export function weatherHasWarmEnd(weatherProfile = {}) {
+  return Boolean(weatherProfile?.isHot || weatherProfile?.transitIsHot
+    || [weatherProfile?.highF, weatherProfile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F))
+}
+
+// A trip activity happens on SEVERAL days at one time of day ("evening dinners" across a week), not
+// on one day. Live thread_1790929985430 resolved every such activity against the trip's first day
+// only: Vienna, VA, 12–18 October became "the evening of the 12th", a flat rainy 67–68°F, while the
+// same forecast had evenings from 55°F to 78°F across the week — and the suitcase was packed for
+// the one day. The single-day slice above is right for an outing on a known day; this is the same
+// slice taken on every day of a date range, reduced to the range actually encountered across them.
+//
+// One request covers the whole forecast horizon (`forecast_days`, never start/end dates): Open-Meteo
+// rejects an end date past its horizon with an error for the WHOLE request, so a trip that runs one
+// day past it would otherwise lose every covered day too. Days it does not cover come back in
+// `uncoveredDates` — stated, never filled in.
+//
+// Precipitation follows the same "range, not a point" discipline: rain in this window on SOME days
+// is reported as a count (`rainDays` of `coveredDays`) for the stylist to weigh, and only rain on
+// every covered day is 'rain' for the wet-exposure gates. One wet day used to put a rain note on
+// every card of the trip.
+const HORIZON_FORECAST_DAYS = 16
+const MAX_TRIP_WINDOW_DAYS = 31
+
+async function fetchHourlyHorizon(coords, fetchImpl) {
+  const cacheKey = `horizon|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
+  const cached = hourlyCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&hourly=temperature_2m,precipitation&temperature_unit=fahrenheit&timezone=auto&forecast_days=${HORIZON_FORECAST_DAYS}`
+  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  if (!res?.ok) return null
+  const data = await res.json()
+  const times = data?.hourly?.time || []
+  const temps = data?.hourly?.temperature_2m || []
+  const precip = data?.hourly?.precipitation || []
+  if (!times.length) return null
+  const result = { times, temps, precip, fetchedAt: new Date().toISOString() }
+  hourlyCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
+  return result
+}
+
+function datesInRange(startDate, endDate) {
+  const start = dateKey(startDate)
+  const end = dateKey(endDate || startDate)
+  if (!start || !end || end < start) return []
+  const dates = []
+  const cursor = new Date(`${start}T00:00:00Z`)
+  while (dates.length < MAX_TRIP_WINDOW_DAYS) {
+    const key = cursor.toISOString().slice(0, 10)
+    if (key > end) break
+    dates.push(key)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+export async function resolveExposureWindowAcrossDays({ location = '', startDate = '', endDate = '', timeWindow = null, fetchImpl = defaultFetch } = {}) {
+  if (shouldSkipLive(fetchImpl) || !location) return null
+  const hours = resolveTimeWindowHours(timeWindow)
+  const requestedDates = datesInRange(startDate, endDate)
+  if (!hours || !requestedDates.length) return null
+  try {
+    const coords = await resolveLocationToCoords(location, fetchImpl)
+    if (!coords) return null
+    const hourly = await fetchHourlyHorizon(coords, fetchImpl)
+    if (!hourly) return null
+    const days = []
+    const uncoveredDates = []
+    // A day counts only when the forecast reaches the END of the window. The horizon stops partway
+    // through its last day, and two hours of an evening are not that evening's range (live: the
+    // final day's partial slice came out as the coolest "evening" of the whole trip).
+    const lastWindowHour = String(hours.endHour - 1).padStart(2, '0')
+    const reachesWindowEnd = date => hourly.times.some((timestamp, i) =>
+      String(timestamp).startsWith(`${date}T${lastWindowHour}`) && Number.isFinite(hourly.temps[i]))
+    for (const date of requestedDates) {
+      const sliced = !beyondReliableForecast(date) && reachesWindowEnd(date) ? sliceHourlyWindow(hourly, date, hours) : null
+      if (sliced) days.push({ date, highF: sliced.highF, lowF: sliced.lowF, rain: sliced.precipitation === 'rain' })
+      else uncoveredDates.push(date)
+    }
+    if (!forecastCoversRange(days.length, requestedDates.length)) return null
+    const rainDays = days.filter(day => day.rain).length
+    return {
+      // Non-exclusive, like resolveLive's own multi-day trip range: a week of evenings genuinely can
+      // hold both a hot one and a cold one.
+      ...classify(days.map(day => day.highF), days.map(day => day.lowF), { exclusive: false, dates: days.map(day => day.date) }),
+      precipitation: rainDays === days.length ? 'rain' : rainDays === 0 ? 'none' : 'unknown',
+      weatherSource: 'live_hourly',
+      scope: 'exposure_window_across_days',
+      days,
+      rainDays,
+      coveredDays: days.length,
+      requestedDays: requestedDates.length,
+      uncoveredDates,
+      retrievedAt: hourly.fetchedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
 // The no-time-stated path (spec §6): resolves the same hourly series once, sliced into all three
 // canonical dayparts, for a caller (outfitSetPlanner.js) to judge whether the plausible windows are
 // PHYSICALLY distinguishable — this function states facts only, never a materiality verdict. Returns
 // null under the same conditions resolveExposureWindowHourly does.
 export async function resolveDaypartHourlyEvidence({ location = '', date = '', fetchImpl = defaultFetch } = {}) {
-  if (shouldSkipLive(fetchImpl) || !location || !date) return null
+  if (shouldSkipLive(fetchImpl) || !location || !date || beyondReliableForecast(date)) return null
   try {
     const coords = await resolveLocationToCoords(location, fetchImpl)
     if (!coords) return null
@@ -310,7 +515,16 @@ export async function resolveDaypartHourlyEvidence({ location = '', date = '', f
 function classify(highs, lows, { exclusive = true, dates = [] } = {}) {
   const maxHigh = Math.max(...highs)
   const minLow = Math.min(...lows)
-  const isHot = maxHigh >= HOT_F
+  // Over SEVERAL days, "hot" describes the days you will mostly be in, not the single warmest one.
+  // Live thread_1790974353527 (Vienna, VA, mid-October; daily highs 81, 75, 69, 69, 70, 66): one
+  // 81°F afternoon made the whole week "hot", the hot-weather gates removed the fall bottoms
+  // (denim, corduroy, wool) and the hot-trip rule let summer bottoms in, and the suitcase came out
+  // as summer clothes under coats. A multi-day range is hot when at least half its days reach HOT_F.
+  // One day keeps the single-day reading. Cold and extreme heat still count on any day: one cold
+  // or dangerously hot day has to be dressed for.
+  const isHot = highs.length > 1
+    ? highs.filter(high => high >= HOT_F).length * 2 >= highs.length
+    : maxHigh >= HOT_F
   const isCold = minLow < COLD_F
   const observedRange = { highF: maxHigh, lowF: minLow }
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}

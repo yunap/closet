@@ -945,7 +945,7 @@ test('whole-wardrobe current-season composition receives applicable summer lesso
   assert.match(promptText, /not preferred for summer outfits/)
 })
 
-test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line (no derived warmth, tagger read or pairing cautions)', async () => {
+test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line, with the tagger impression on its own labelled line (no derived warmth or pairing cautions)', async () => {
   aiCalls = []
   const plainPiece = insertPiece({
     name: 'plain grey tee',
@@ -970,11 +970,17 @@ test('whole-wardrobe visual composer per-piece lines are the shared recorded-fac
     .map(part => part.text)
 
   const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { composerGarmentLabel } = await import('../routes/ai.js')
   const { parsePiece } = await import('../db.js')
-  const lineFor = id => sharedGarmentEvidenceLine(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)))
+  const pieceFor = id => parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id))
+  // 2026-10-06: the label is the fact line, then (when the tagger recorded one) its impression on a
+  // second line, labelled as unverified. The fact line itself is unchanged.
+  const lineFor = id => composerGarmentLabel(pieceFor(id))
   const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
   assert.ok(bottomLine)
   assert.equal(bottomLine, lineFor(seeded.bottom))
+  assert.equal(bottomLine.split('\n')[0], sharedGarmentEvidenceLine(pieceFor(seeded.bottom)), 'first line is the shared fact line, untouched')
+  assert.ok(bottomLine.split('\n').slice(1).every(line => /^\s+tagger impression \(not owner-verified\): /.test(line)), 'anything after it is the labelled impression')
   assert.match(bottomLine, /fabric linen; fibre linen; whole garment: weight light/)
   assert.doesNotMatch(bottomLine, /warmth|reads_as|do not pair/)
 
@@ -1642,7 +1648,10 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   // the roster names the garment "hooded sweatshirt". With the soft list out of the prompt, the
   // assertions now check what actually matters: the composer still SEES the pieces, and the
   // annotation path above still flags the occasion concern on the returned card.
-  assert.doesNotMatch(contentText, /\bhoodie\b|athletic running shoe/i, 'the soft list no longer reaches the model as text')
+  // 2026-10-06: the tagger's own impression of each garment is shown again, labelled, beside its
+  // photo, and these fixtures' impressions contain those words; the soft LIST is what must stay out.
+  const withoutTaggerImpressions = contentText.split('\n').filter(line => !/^\s*tagger impression \(not owner-verified\):/.test(line)).join('\n')
+  assert.doesNotMatch(withoutTaggerImpressions, /\bhoodie\b|athletic running shoe/i, 'the soft list no longer reaches the model as text')
   assert.match(contentText, /hooded sweatshirt/i, 'the piece itself is still on the composer roster')
 })
 
@@ -3956,6 +3965,10 @@ test('StylistChat shows trip explanation before cards and discloses reason and a
   assert.doesNotMatch(src, /Accessories are left out of these cards/)
   assert.match(src, /outfit\.reason \|\| assignedLayerPieces\.length > 0/)
   assert.match(src, /Packed for cooler transitions \/ temperature drops/)
+  // thread_1790928650262: a layer named both in the outfit's pieces and as the packed layer is one garment, drawn once.
+  assert.match(src, /const extraLayerPieces = assignedLayerPieces\.filter\(piece => !outfitPieceIds\.has\(Number\(piece\.id\)\)\)/)
+  assert.match(src, /\{extraLayerPieces\.map\(/)
+  assert.doesNotMatch(src, /\{assignedLayerPieces\.map\(\(piece, layerIdx\) => renderPieceItem/)
   assert.match(src, /outfit\.coveragePosition/)
   assert.match(src, /const exclusionDisplaySource = isTripCard/)
   assert.match(src, /!isTripCard && outfit\.missionLabel/)
@@ -6857,12 +6870,14 @@ test('suggest_slot_swaps treats color as an exact structured preference, not a r
   }
   const result = await executeTool('suggest_slot_swaps', {
     outfit_label: 'Coast Floral', slot_role: 'primary_top',
-    replacement_ids: [structuredFalsePositive, nonRedAlternative, taggedRedTop], color: 'red', limit: 3,
+    replacement_ids: [taggedRedTop, structuredFalsePositive, nonRedAlternative], color: 'red', limit: 3,
   }, toolContext)
 
   assert.equal(result.status, 'success')
   assert.equal(toolContext.generatedOutfits.length, 3, 'a color preference must not delete non-matching candidates')
-  assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, taggedRedTop, 'the exact structured color match gets the preference bonus')
+  // 2026-10-06: the stylist chooses and orders the replacements; her order is kept, and the colour
+  // match is still recorded as a fact about each card.
+  assert.deepEqual(toolContext.generatedOutfits.map(outfit => outfit.debug.swappedIn.id), [taggedRedTop, structuredFalsePositive, nonRedAlternative], 'cards come back in the order she chose')
   assert.deepEqual(toolContext.generatedOutfits[0].debug.colorPreference, { requested: 'red', matched: true, score: 14 })
   const falsePositiveCard = toolContext.generatedOutfits.find(outfit => outfit.debug.swappedIn.id === structuredFalsePositive)
   assert.deepEqual(falsePositiveCard.debug.colorPreference, { requested: 'red', matched: false, score: 0 }, 'structured/texture prose must not count as red')
@@ -8027,7 +8042,7 @@ async function seedRepairChoiceWardrobe() {
   const thinShell = insertPiece({
     name: 'thin unlined windbreaker', category: 'outerwear', colors: ['olive'],
     occasions: ['city', 'casual'], photo: await makeImage('thin-windbreaker.png', '#5d6b4a'),
-    fabric_weight: 'light', fiber_content: ['polyester'], fabric_category: 'nylon',
+    fabric_weight: 'ultralight', fiber_content: ['polyester'], fabric_category: 'nylon',
   })
   db.prepare("UPDATE pieces SET sleeve_length = 'long', interior_construction = 'unlined', insulating_layer_materials = ? WHERE id = ?")
     .run(JSON.stringify([]), thinShell)
@@ -8591,7 +8606,9 @@ test('DEFAULT GARMENT EVIDENCE: the Whole Wardrobe request carries shared fact l
   const garmentLines = parts.filter(t => /^ID \d+:/.test(t))
   assert.ok(garmentLines.length > 0)
   assert.ok(garmentLines.every(line => /^ID \d+: [^;]+; (top|bottom|dress|shoes|outerwear|accessory)\b/.test(line)), 'every garment line is the shared fact line')
-  assert.ok(garmentLines.every(line => !/warmth|reads_as|do not pair|tagger/.test(line)), 'no derived warmth, tagger read or pairing caution')
+  assert.ok(garmentLines.every(line => !/warmth|reads_as|do not pair|tagger/.test(line.split('\n')[0])), 'the fact line carries no derived warmth, tagger read or pairing caution')
+  assert.ok(garmentLines.every(line => line.split('\n').slice(1).every(extra => /^\s+tagger impression \(not owner-verified\): /.test(extra))), 'a tagger impression, when present, is on its own labelled line (restored 2026-10-06)')
+  assert.ok(garmentLines.every(line => !/warmth:|do not pair/.test(line)), 'still no derived warmth or pairing caution anywhere')
   assert.equal(parts.filter(t => t.startsWith('Garment facts are recorded values only.')).length, 1, 'conventions and saved-record notes arrive once')
   assert.match(text, /Temperature: 65°F high \/ 50°F low — judge the outfit against the range, not against a number/)
   assert.doesNotMatch(text, /COOL-END LAYER|TIME-OF-DAY WEATHER|ordered for these conditions|each piece states its own/)
@@ -8707,4 +8724,452 @@ test('LOG-ONLY SLEEVE GEOMETRY (propose_outfit): a sleeve-geometry verdict neith
     assert.ok(card && card.broken !== true, `${executionProfile || 'freeform'}: the card is delivered, not a broken attempt`)
     assert.ok((card.debug?.sleeveGeometryShadow || []).some(finding => finding.code === 'layer_construction_sleeve_conflict'), `${executionProfile || 'freeform'}: kept as debug shadow evidence`)
   }
+})
+
+// Live thread_1790973141460: a week in mid-October (81°F on the warmest afternoon, 50°F evenings) was
+// packed with a sheer shrug as its only layer, because one day at 80°F+ marked the whole range hot
+// and the hot-weather exclusions removed 31 of 34 layers before the packer saw them.
+test('a range that is hot at the top and cool at the bottom keeps its layers; hot throughout still excludes them', async () => {
+  const { wholeWardrobePieceTrustDecision } = await import('../styling-engine/rules.js')
+  const { weatherHasCoolEnd } = await import('../styling-engine/weather.js')
+  const hotThroughout = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: false } }
+  const hotWithCoolEnd = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: true } }
+  const hotWithCoolTransit = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false, isIndoor: true, transitNeedsRemovableCoolLayer: true } }
+  assert.equal(weatherHasCoolEnd(hotThroughout.weatherProfile), false)
+  assert.equal(weatherHasCoolEnd(hotWithCoolEnd.weatherProfile), true)
+  assert.equal(weatherHasCoolEnd(hotWithCoolTransit.weatherProfile), true)
+
+  const hotReasons = (piece, context) => wholeWardrobePieceTrustDecision(piece, context).reasons.filter(reason => reason.startsWith('hot weather'))
+  const trench = { id: 9301, name: 'cream trench coat', category: 'outerwear', fabric_weight: 'medium', fabric_category: 'cotton', sleeve_length: 'long' }
+  const fleece = { id: 9302, name: 'plaid fleece coat', category: 'outerwear', fabric_weight: 'medium', fabric_category: 'fleece', fiber_content: ['fleece'], sleeve_length: 'long' }
+  for (const layer of [trench, fleece]) {
+    assert.ok(hotReasons(layer, hotThroughout).length > 0, `${layer.name} is still excluded when it is hot throughout`)
+    assert.deepEqual(hotReasons(layer, hotWithCoolEnd), [], `${layer.name} is what comes off in the heat; with a cool end it stays available`)
+    assert.deepEqual(hotReasons(layer, hotWithCoolTransit), [])
+  }
+
+  // Owner direction 2026-10-02 widened this from layers to every garment: weather removes a piece only
+  // when the WHOLE range is wrong for it. With a cool end, a wool turtleneck or a velvet dress is the
+  // model's call; hot throughout, they are still excluded.
+  const velvetMaxi = { id: 9303, name: 'heavy velvet maxi dress', category: 'dress', fabric_weight: 'heavy', fabric_category: 'velvet', length_hits_at: 'maxi' }
+  const woolTurtleneck = { id: 9304, name: 'wool turtleneck', category: 'top', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], sleeve_length: 'long', neckline: 'turtleneck' }
+  for (const garment of [velvetMaxi, woolTurtleneck]) {
+    assert.deepEqual(hotReasons(garment, hotWithCoolEnd), [], `${garment.name}: a range with a cool end is not wrong for it as a whole`)
+    assert.ok(hotReasons(garment, hotThroughout).length > 0, `${garment.name}: still excluded when it is hot throughout`)
+  }
+
+  // The mirror rule: cold exclusions need a range with no hot end. Live thread_1790984215933: 43–85°F.
+  const { weatherHasWarmEnd } = await import('../styling-engine/weather.js')
+  const coldReasons = (piece, context) => wholeWardrobePieceTrustDecision(piece, context).reasons.filter(reason => reason.startsWith('cold weather: shorts') || reason.startsWith('cold weather: bare'))
+  const coldThroughout = { occasion: 'casual', weatherProfile: { isHot: false, isCold: true, highF: 50, lowF: 30 } }
+  const coldWithHotEnd = { occasion: 'casual', weatherProfile: { isHot: false, isCold: true, highF: 85, lowF: 43 } }
+  assert.equal(weatherHasWarmEnd(coldWithHotEnd.weatherProfile), true)
+  assert.equal(weatherHasCoolEnd(coldWithHotEnd.weatherProfile), true, 'a cold end counts as a cool end')
+  const shorts = { id: 9305, name: 'linen shorts', category: 'bottom', bottom_subtype: 'shorts', fabric_weight: 'light' }
+  assert.ok(coldReasons(shorts, coldThroughout).length > 0)
+  assert.deepEqual(coldReasons(shorts, coldWithHotEnd), [], 'shorts for the 85°F days of a 43–85°F week are the model\'s call')
+})
+
+// thread_1791277608402: "October 6th… a guitar concert in San Mateo" was dressed as "fall; mild
+// weather" on a 93°F day. The router's 'fall' is the calendar, not a hypothetical.
+test('a router season equal to the requested date\'s calendar season is the current season; any other stays a hypothetical', async () => {
+  const { routerSeasonForTurn } = await import('../routes/ai.js')
+  assert.equal(routerSeasonForTurn('fall', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('autumn', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('winter', '2026-10-06'), 'winter', '"winter looks" in October must not pull live weather')
+  assert.equal(routerSeasonForTurn('summer', '', new Date('2026-07-15T12:00:00')), 'current season', 'no date: judged against today')
+  assert.equal(routerSeasonForTurn('fall', '2027-01-20'), 'fall', 'judged against the requested date, not today')
+  assert.equal(routerSeasonForTurn('current season', '2026-10-06'), 'current season')
+  assert.equal(routerSeasonForTurn('', '2026-10-06'), '')
+})
+
+// Owner ruling 2026-10-06: the stylist asks first when information is missing or the request can go
+// different ways. The question is remembered once; the answer is joined to the original request.
+test('a pending clarifying question is taken exactly once and joined to the answer', async () => {
+  const { takePendingClarification, clarifiedRequestText } = await import('../routes/ai.js')
+  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'clarify-test-session'
+  saveStylistConversationState({ occasion: 'city', pending_clarification: { request: 'What should I wear to the party on Saturday?', question: 'Is it a sit-down dinner or more of a standing drinks thing?' } }, sessionId)
+  const pending = takePendingClarification(sessionId)
+  assert.equal(pending.question, 'Is it a sit-down dinner or more of a standing drinks thing?')
+  assert.equal(getStylistConversationState(sessionId).pending_clarification, undefined, 'cleared when read')
+  assert.equal(getStylistConversationState(sessionId).occasion, 'city', 'the rest of the state is kept')
+  assert.equal(takePendingClarification(sessionId), null, 'never attaches to a later message')
+  const joined = clarifiedRequestText(pending, 'Standing drinks, in a garden')
+  assert.match(joined, /^What should I wear to the party on Saturday\?/)
+  assert.match(joined, /You asked me: "Is it a sit-down dinner or more of a standing drinks thing\?" My answer: Standing drinks, in a garden/)
+})
+
+test('the router is asked for a clarifying question, told when to leave it empty, and the asking-is-a-mistake retry is gone', async () => {
+  const { routeFreeformExecutionProfile, evaluateTurnEnd } = await import('../styling-engine/provider.js')
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 1, location: '', date: '', subject: '', clarifying_question: 'What kind of party is it?' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: 'What should I wear to the party?' })
+    assert.equal(routed.value.clarifying_question, 'What kind of party is it?')
+    assert.match(captured.system, /a good stylist asks before choosing when she has to/)
+    assert.match(captured.system, /those are looked up, never asked/)
+    assert.match(captured.system, /do not ask again/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+  if (typeof evaluateTurnEnd === 'function') {
+    const verdict = evaluateTurnEnd({ answerText: 'Where are you headed, and what weather do you expect?', toolContext: { freeformDiagnostics: { searchCalls: 0 }, declaredIntent: { want: 'text' } }, retried: new Set() })
+    assert.notEqual(verdict?.clause, 'destinationClarification')
+  }
+})
+
+// thread_1791327434563: "Tonight I'm going to a guitar concert" was dressed for the whole day's
+// 58–90°F; the evening ran 89°F down to 64°F. The router's time of day reads the forecast for those
+// hours, and falls back to the day when they are not covered.
+test('a routed time of day reads the forecast for those hours, not the whole day', async () => {
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  const { _clearWeatherCachesForTests, setForecastClockForTests } = await import('../styling-engine/weather.js')
+  const hourlyTemps = Array.from({ length: 24 }, (_, hour) => (hour < 8 ? 58 : hour < 17 ? 90 : hour === 17 ? 89 : 64))
+  const originalFetch = globalThis.fetch
+  const originalEnv = process.env.NODE_ENV
+  globalThis.fetch = async url => {
+    const u = String(url)
+    if (u.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ name: 'San Mateo', latitude: 37.56, longitude: -122.33 }] }) }
+    if (u.includes('hourly=')) return { ok: true, json: async () => ({ hourly: { time: hourlyTemps.map((_, h) => `2026-10-06T${String(h).padStart(2, '0')}:00`), temperature_2m: hourlyTemps, precipitation: hourlyTemps.map(() => 0) } }) }
+    return { ok: true, json: async () => ({ daily: { time: ['2026-10-06'], temperature_2m_max: [90], temperature_2m_min: [58] } }) }
+  }
+  process.env.NODE_ENV = 'development'
+  setForecastClockForTests('2026-10-06T12:00:00')
+  const resolveFor = async timeOfDay => {
+    _clearWeatherCachesForTests()
+    const toolContext = { season: 'current season', executionRouterSeason: 'current season', executionRouterSeasonLocked: true, executionRouterTimeOfDay: timeOfDay, question: 'concert', freeformDiagnostics: {} }
+    const context = await resolveToolStylingContext({
+      explicitRequest: { occasion: 'concert', activity: 'none', season: 'current season', location: 'San Mateo', date: '2026-10-06', dateRange: { start: '2026-10-06', end: '2026-10-06' } },
+      toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    })
+    return { profile: context.weatherProfile, used: toolContext.weatherWindowUsed || '' }
+  }
+  try {
+    const evening = await resolveFor('evening')
+    assert.equal(evening.profile.weatherSource, 'live')
+    assert.equal(evening.profile.highF, 89)
+    assert.equal(evening.profile.lowF, 64, 'the early-morning 58°F is not part of the evening')
+    assert.equal(evening.used, 'evening')
+    const wholeDay = await resolveFor('')
+    assert.equal(wholeDay.profile.highF, 90)
+    assert.equal(wholeDay.profile.lowF, 58)
+    assert.equal(wholeDay.used, '')
+  } finally {
+    globalThis.fetch = originalFetch
+    process.env.NODE_ENV = originalEnv
+    setForecastClockForTests(null)
+    _clearWeatherCachesForTests()
+  }
+})
+
+// Owner 2026-10-06: the "a few options" reply is written by the stylist, in the composer's own call.
+test('a set of options opens with the stylist\'s own note when she wrote one about exactly these cards; otherwise the code line stands', async () => {
+  const { composerOutfitSlotsSchema } = await import('../styling-engine/composerSlots.js')
+  const { boundedAtomicMultiLookResponse } = await import('../styling-engine/provider.js')
+  assert.ok(composerOutfitSlotsSchema({ minOutfits: 2, stylistNote: true }).required.includes('stylist_note'))
+  assert.equal('stylist_note' in composerOutfitSlotsSchema({ minOutfits: 2 }).properties, false, 'no other composer call is asked for it')
+
+  const cards = [{ label: 'Botanical Vibe' }, { label: 'Textured Rhythm' }]
+  const base = { atomicMultiLookCompleted: true, atomicMultiLookRequestedCount: 2, generatedOutfits: cards, boundedWeatherSummary: "this evening's forecast high of 89°F and low of 65°F", boundedLocation: 'San Mateo' }
+  const note = 'A warm evening that cools once the sun is down. Botanical Vibe is my pick: the vest goes on when it drops. Textured Rhythm is the bolder one.'
+  assert.equal(boundedAtomicMultiLookResponse({ ...base, boundedStylistNote: note }), note)
+  assert.equal(boundedAtomicMultiLookResponse(base), "For this evening's forecast high of 89°F and low of 65°F in San Mateo, I’d compare these two directions.")
+  assert.match(boundedAtomicMultiLookResponse({ ...base, boundedStylistNote: note, boundedWeatherUnavailable: true }), /^I couldn’t verify the forecast for San Mateo[\s\S]*A warm evening/)
+})
+
+// thread_1791328194271: the single-outfit stylist was told to let the tools resolve weather and was
+// never told what they resolved; she dressed an 89°F evening in trousers, boots and a cardigan.
+test('the single-outfit wardrobe search states the resolved conditions as a fact, and says nothing when there are none', async () => {
+  const { buildSingleOutfitStylistCatalog } = await import('../styling-engine/tools.js')
+  const live = { weatherProfile: { resolvedWeatherContext: { location: 'San Mateo', temperature: { highF: 89, lowF: 65, source: 'live', provider: 'Open-Meteo' } } } }
+  const stated = buildSingleOutfitStylistCatalog([], { stylingContext: live, weatherWindow: 'evening' }).conditions
+  assert.match(stated, /^this evening: 89°F high \/ 65°F low — live forecast/)
+  assert.match(stated, /San Mateo/)
+  assert.doesNotMatch(stated, /must|should wear|layer/i, 'a fact, not a prescription')
+  assert.match(buildSingleOutfitStylistCatalog([], { stylingContext: live }).conditions, /^89°F high/)
+  const guess = { weatherProfile: { resolvedWeatherContext: { location: '', temperature: { highF: null, lowF: null, source: 'heuristic' } } } }
+  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], { stylingContext: guess }), false)
+  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], {}), false)
+})
+
+// Owner, 2026-10-06 (thread_1791328549015): word-count styling notes are not shown on cards, and the
+// too-warm note is said in plain words with the number.
+test('word-count styling notes stay off the card; the too-warm note names the temperature', async () => {
+  const { locallyGateWholeWardrobeOutfits } = await import('../styling-engine/rules.js')
+  const { evaluateOutfitEnvironmentalAdequacy, advisoryFindingsToSystemFlags, ENVIRONMENTAL_ADEQUACY_CODES: C } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const pieces = [
+    { id: 1, name: 'relaxed tee', category: 'top', formality: 'everyday', status: 'active', occasions: ['casual'] },
+    { id: 2, name: 'wide-leg flowing pants', category: 'bottom', formality: 'everyday', status: 'active', occasions: ['casual'] },
+    { id: 3, name: 'flat sandals', category: 'shoes', formality: 'everyday', status: 'active', occasions: ['casual'], heel_height: 'flat' },
+  ]
+  const card = { label: 'Easy', pieceIds: [1, 2, 3], pieces, reason: 'A relaxed, loose, flowing, wide silhouette.', strength: 'strong' }
+  const gated = locallyGateWholeWardrobeOutfits([card], 1, { mode: 'advisor', applyDiversity: false, candidatePieces: pieces, occasion: 'casual', activity: 'none' })
+  const shown = gated.outfits[0]
+  assert.ok(shown, JSON.stringify(gated.rejected))
+  assert.ok(!(shown.systemFlags || []).some(flag => /volume-heavy/.test(flag.message)), 'not on the card')
+  assert.ok((shown.advisorDiagnosticFlags || []).some(flag => /volume-heavy/.test(flag.message)), 'kept for diagnosis')
+
+  const warm = [
+    { id: 11, category: 'top', name: 'wool sweater', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' },
+    { id: 12, category: 'bottom', name: 'wool trousers', fabric_weight: 'heavy', fiber_content: ['wool'] },
+    { id: 13, category: 'shoes', name: 'boots' },
+  ]
+  const result = evaluateOutfitEnvironmentalAdequacy(warm, { weatherProfile: { isHot: true, highF: 89, lowF: 65, weatherSource: 'live' }, environment: 'outdoor' })
+  const overshoot = [...(result.findings || []), ...(result.advisoryFindings || [])].find(f => f.code === C.THERMAL_OVERSHOOT)
+  if (overshoot) {
+    assert.equal(overshoot.cardMessage, 'this outfit runs warm for a high of 89°F')
+    assert.match(advisoryFindingsToSystemFlags([overshoot])[0].message, /runs warm for a high of 89°F/)
+  }
+})
+
+// Owner, 2026-10-06 ("tagger already should record 'reads as'"): the impression the tagger recorded
+// is shown beside the garment's photo, labelled, and an owner-edited description is not presented
+// as a tagger impression.
+test('the composer label puts the tagger impression under the fact line, and leaves an owner-edited description to the saved-record notes', async () => {
+  const { composerGarmentLabel } = await import('../routes/ai.js')
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const trousers = { id: 237, name: 'Tropical pants', category: 'bottom', reads_as: 'bold tropical botanical wide-leg pants' }
+  assert.equal(composerGarmentLabel(trousers), `${sharedGarmentEvidenceLine(trousers)}\n  tagger impression (not owner-verified): bold tropical botanical wide-leg pants`)
+  const edited = { ...trousers, manual_overrides: ['reads_as'] }
+  assert.equal(composerGarmentLabel(edited), sharedGarmentEvidenceLine(edited))
+  assert.equal(composerGarmentLabel({ id: 1, name: 'tee', category: 'top' }), sharedGarmentEvidenceLine({ id: 1, name: 'tee', category: 'top' }))
+})
+
+// thread_1791352199157: a follow-up to a Friday-evening dinner in Walnut Creek (62–78°F) was told the
+// weather was "hot weather" (a word match on "warm" in an earlier card reason) and then dressed for
+// today's 97°F, because its search named "Walnut Creek, CA" and the forecast was stored for "Walnut Creek".
+test('a follow-up keeps the occasion\'s forecast: same place under another spelling reuses it, and no lookup is made', async () => {
+  const { sameWeatherLocation } = await import('../styling-engine/weather.js')
+  assert.equal(sameWeatherLocation('Walnut Creek', 'Walnut Creek, CA'), true)
+  assert.equal(sameWeatherLocation('Walnut Creek, California', 'walnut creek'), true)
+  assert.equal(sameWeatherLocation('Vienna, Virginia', 'Vienna, VA'), true)
+  assert.equal(sameWeatherLocation('San Mateo', 'San Mateo Park'), false)
+  assert.equal(sameWeatherLocation('Vienna, VA', 'Vienna, Austria'), false)
+  assert.equal(sameWeatherLocation('', 'Walnut Creek'), false)
+
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  let lookups = 0
+  const stored = { status: 'resolved', location: 'Walnut Creek', dateRange: { start: '2026-10-09', end: '2026-10-09' }, temperature: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, source: 'live', provider: 'Open-Meteo' }, precipitation: { value: 'none', source: 'model_estimate' }, wind: { value: 'calm', source: 'model_estimate' }, overallSource: 'mixed' }
+  const toolContext = {
+    season: 'current season', question: 'what would you put there instead?', freeformDiagnostics: {},
+    resolvedWeatherContext: stored,
+    weatherProfile: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, weatherSource: 'live', resolvedWeatherContext: stored },
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { occasion: 'smart casual', season: 'current season', location: 'Walnut Creek, CA' },
+    toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    weatherResolver: async () => { lookups++; return { highF: 97, lowF: 68, isHot: true, weatherSource: 'live' } },
+  })
+  assert.equal(lookups, 0, 'today\'s forecast is not fetched for the same occasion')
+  assert.equal(context.weatherProfile.highF, 77.8)
+  assert.equal(context.weatherProfile.lowF, 61.8)
+})
+
+test('a follow-up states the thread\'s stored forecast, not a weather word found in earlier prose', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'followup-weather-label'
+  saveStylistConversationState({
+    established: { occasion: 'city', weather: 'hot weather', season: 'current season' },
+    weather_profile: { source: 'live', high_f: 77.8, low_f: 61.8, is_hot: false, is_cold: false },
+    current_outfit_set: [{ index: 1, label: 'Dinner look', reason: 'works from the warm late afternoon into the cooler evening', piece_ids: [seeded.top], pieces: ['seeded top'] }],
+  }, sessionId)
+  const payload = await buildStylistConversationPayload({ question: 'What would you put there instead?', sessionId, conversationMode: 'followup', history: [] })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /Established weather context for this turn: a forecast high of 78°F and low of 62°F\./)
+  assert.doesNotMatch(system, /Established weather context for this turn: hot weather/)
+})
+
+// thread_1791353402050: on a follow-up, the note she wrote with the outfit was a good short reply,
+// and the closing call after it re-answered every earlier question. A one-card follow-up now ends
+// with that note; a fresh request, a multi-card turn, or a proposal with no note is unchanged.
+test('a one-card follow-up proposal with a stylist note ends the turn with that note', async () => {
+  const proposal = extra => ({
+    label: 'More interesting', occasion: 'city',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    why_it_works: 'a sharper mix', ...extra,
+  })
+  const contextFor = extra => ({ occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' }, retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]), generatedOutfits: [], ...extra })
+
+  const followup = contextFor({ turnMode: 'followup' })
+  assert.equal((await executeTool('propose_outfit', proposal({ stylist_note: 'Here is a bolder direction for Friday.' }), followup)).status, 'success')
+  assert.equal(followup.followupProposalCompleted, true)
+  assert.equal(followup.followupStylistNote, 'Here is a bolder direction for Friday.')
+
+  const noNote = contextFor({ turnMode: 'followup' })
+  await executeTool('propose_outfit', proposal({}), noNote)
+  assert.notEqual(noNote.followupProposalCompleted, true, 'no note: the closing reply still happens')
+
+  const fresh = contextFor({ turnMode: 'new_request' })
+  await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), fresh)
+  assert.notEqual(fresh.followupProposalCompleted, true)
+
+  const several = contextFor({ turnMode: 'followup', declaredIntent: { want: 'cards', outfitCount: 3 } })
+  await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), several)
+  assert.notEqual(several.followupProposalCompleted, true, 'a multi-card turn is not cut short after the first card')
+
+  const card = followup.generatedOutfits.find(outfit => !outfit.broken)
+  assert.ok(!(card.systemFlags || []).some(flag => flag.type === 'validated_recovery'))
+})
+
+// Owner, 2026-10-06 (thread_1791353402050): code picked the replacement and wrote its reason. The
+// stylist now gets the eligible candidates and chooses; only then is a card made, with her reason,
+// her note as the reply, and the outfit's weather kept.
+test('a one-slot swap lists every eligible candidate without choosing, then builds the card from the stylist\'s choice and words', async () => {
+  const cardigan = insertPiece({ name: 'striped knit cardigan', category: 'outerwear', colors: ['grey'], occasions: ['city', 'casual'], photo: seeded.photos.top, reads_as: 'textured relaxed cardigan', style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const blazer = insertPiece({ name: 'black crepe blazer', category: 'outerwear', colors: ['black'], occasions: ['city', 'casual'], photo: seeded.photos.top, reads_as: 'sharp evening blazer', style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const contextFor = () => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup',
+    question: "I don't love the jacket for this. What would you put there instead?",
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'Dinner look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+  })
+
+  const first = contextFor()
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, first)
+  assert.equal(listed.status, 'choose_replacement')
+  assert.equal(first.generatedOutfits.length, 0, 'no card is made until she chooses')
+  assert.notEqual(first.slotSwapCompleted, true)
+  const listedText = listed.candidates.join('\n')
+  assert.match(listedText, new RegExp(`#${cardigan} `))
+  assert.match(listedText, new RegExp(`#${blazer} `))
+  assert.doesNotMatch(listedText, new RegExp(`#${seeded.jacket} `), 'the piece being replaced is not offered back')
+  assert.match(listedText, /tagger impression \(not owner-verified\): sharp evening blazer/)
+  assert.match(listed.message, /implies no preference/)
+
+  const second = contextFor()
+  const made = await executeTool('suggest_slot_swaps', {
+    outfit_index: 1, slot_role: 'outerwear', replacement_ids: [blazer],
+    reason: 'The blazer keeps the all-black line and sharpens it for dinner.',
+    stylist_note: 'I would take the black blazer: same clean line, less biker.',
+  }, second)
+  assert.equal(made.status, 'success')
+  assert.equal(second.generatedOutfits.length, 1)
+  const card = second.generatedOutfits[0]
+  assert.equal(card.debug.swappedIn.id, blazer)
+  assert.equal(card.reason, 'The blazer keeps the all-black line and sharpens it for dinner.', 'her reason, not a template')
+  assert.equal(second.followupStylistNote, 'I would take the black blazer: same clean line, less biker.')
+  assert.equal(second.followupProposalCompleted, true)
+  assert.deepEqual(card.pieceIds.filter(id => id !== blazer).sort(), [seeded.top, seeded.bottom, seeded.shoe].sort(), 'the rest of the outfit stays')
+})
+
+// thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
+// cards read "78°F high / 62°F low — you said so".
+test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  const stored = { status: 'resolved', location: 'Walnut Creek', dateRange: { start: '2026-10-09', end: '2026-10-09' }, temperature: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, source: 'live', provider: 'Open-Meteo' }, precipitation: { value: 'none', source: 'model_estimate' }, wind: { value: 'calm', source: 'model_estimate' }, overallSource: 'mixed' }
+  const contextFor = () => ({ season: 'current season', question: 'Give me something more interesting.', freeformDiagnostics: {}, resolvedWeatherContext: stored, weatherProfile: { highF: 77.8, lowF: 61.8, weatherSource: 'live', resolvedWeatherContext: stored } })
+  const resolve = (userWeather, toolContext) => resolveToolStylingContext({
+    explicitRequest: { occasion: 'city', season: 'current season', location: 'Walnut Creek', date: '2026-10-09', dateRange: { start: '2026-10-09', end: '2026-10-09' }, userWeather },
+    toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    weatherResolver: async () => ({ highF: 99, lowF: 70, isHot: true, weatherSource: 'live' }),
+  })
+  const copied = await resolve({ high_f: 78, low_f: 62 }, contextFor())
+  assert.equal(copied.weatherProfile.resolvedWeatherContext.temperature.source, 'live', 'still the forecast, not "you said so"')
+  assert.equal(copied.weatherProfile.highF, 77.8)
+  const stated = await resolve({ high_f: 85, low_f: 70 }, contextFor())
+  assert.equal(stated.weatherProfile.resolvedWeatherContext.temperature.source, 'stated_user', 'a different range is still the user\'s statement')
+  assert.equal(stated.weatherProfile.highF, 85)
+})
+
+test('the card-explanation reply is asked for in the stylist\'s conversational voice', async () => {
+  const { compactFreeformAnswerSystem } = await import('../routes/ai.js')
+  for (const profile of ['existing_card_explanation', 'garment_fact', 'general_advice']) {
+    assert.match(compactFreeformAnswerSystem(profile), /as their stylist talking with them: plain sentences in your own voice/)
+    assert.doesNotMatch(compactFreeformAnswerSystem(profile), /one bounded text question, concisely/)
+  }
+})
+
+// Owner rulings 2026-10-06 applied to the standing stylist instructions (2026-10-07).
+test('the stylist instructions do not cap reply length, and a reaction that carries a request is treated as a request', async () => {
+  const { buildStylistConversationDirective } = await import('../styling-engine/core.js')
+  const directive = buildStylistConversationDirective('preference_reaction')
+  assert.doesNotMatch(directive, /concise/)
+  assert.match(directive, /when the message also asks for something \(another outfit, a change\), do that/)
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const system = buildPrompts({}).STYLIST_SYSTEM
+  assert.doesNotMatch(system, /Be direct, specific, and concise/)
+  assert.match(system, /This limits destination and weather questions only/)
+})
+
+// thread_1791358822345: the swap follow-up spent a model call being told to declare intent first.
+test('suggest_slot_swaps declares cards intent itself when none was declared, and still refuses after an explicit text declaration', async () => {
+  const contextFor = declaredIntent => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup', question: 'swap the shoes', generatedOutfits: [],
+    ...(declaredIntent ? { declaredIntent } : {}),
+    currentOutfitSet: [{ index: 1, label: 'Lunch look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+  })
+  const undeclared = contextFor(null)
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'shoes' }, undeclared)
+  assert.notEqual(listed.status, 'validation_error', JSON.stringify(listed).slice(0, 200))
+  assert.equal(undeclared.declaredIntent.want, 'cards')
+  const asText = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'shoes' }, contextFor({ want: 'text' }))
+  assert.equal(asText.status, 'validation_error')
+})
+
+// The lean trip turn (owner, 2026-10-07): a fresh trip request carries the stylist's instructions and
+// thread state without the wardrobe list, and is offered only the tools a trip turn uses.
+test('a fresh trip request is routed to trip_plan and gets the stylist prompt without the wardrobe list', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+  const body = { question: 'I am going to Seattle for a long weekend. What should I pack?', history: [], sessionId: 'lean-trip-contract' }
+  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
+  const full = await buildStylistConversationPayload({ ...body })
+  const lean = await buildStylistConversationPayload({ ...body, tripPlanTurn: true })
+  assert.match(text(full), /WARDROBE MANIFEST/)
+  assert.doesNotMatch(text(lean), /WARDROBE MANIFEST/)
+  assert.equal(lean.wardrobeManifestIncluded, false)
+  assert.ok(text(lean).length < text(full).length)
+  for (const kept of ['Planning a Coordinated Multi-Outfit Set', 'Destination & Weather Clarification', 'Trip Scope Clarification', 'STYLE CONSTITUTION']) {
+    assert.ok(text(lean).includes(kept), `the lean trip prompt keeps "${kept}"`)
+  }
+  assert.match(text(lean), /plan_outfit_set chooses what to pack from the whole wardrobe/)
+
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: '', time_of_day: '' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: body.question })
+    assert.equal(routed.value.profile, 'trip_plan')
+    assert.match(captured.system, /Choose trip_plan ONLY for a FRESH request to pack for/)
+    assert.match(captured.system, /Not for a capsule wardrobe/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+  const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /allowedToolNames = \['declare_intent', 'plan_outfit_set', 'store_user_correction'\]/)
+  assert.match(routeSrc, /freshExecutionRequest && compactProfile === 'trip_plan'/, 'only a fresh request; follow-ups on a plan keep the full stylist')
+})
+
+// thread_1791360025316: "I don't want to take 3 coats, what are my options?" — her advice about the
+// suitcase's own coats was rejected twice (unverified citation, then "call propose_outfit now") and
+// replaced by one new outfit card.
+test('advice about pieces already in the thread\'s plan is neither an unverified citation nor an unproposed outfit', async () => {
+  const { applyFreeformOutputChecks } = await import('../styling-engine/provider.js')
+  const advice = [
+    'Three coats is a lot for a week. You can do it with two:',
+    '1. Keep the grey textured fleece (ID 996762) for the trails and the mornings.',
+    '2. Take either the cream trench (ID 996759) or the black wool coat (ID 996867) for the city and dinner.',
+  ].join('\n')
+  const contextFor = knownOutfitPieceIds => ({ question: "I don't want to take 3 coats, what are my options?", turnMode: 'followup', generatedOutfits: [], knownOutfitPieceIds, retrievedPieceIds: new Set(), freeformDiagnostics: { searchCalls: 0, proposeCalls: 0 } })
+  const established = applyFreeformOutputChecks(advice, contextFor([996762, 996759, 996867]), new Set(), { record: false })
+  assert.equal(established.block, false, JSON.stringify(established))
+  const unknown = applyFreeformOutputChecks(advice, contextFor([]), new Set(), { record: false })
+  assert.equal(unknown.block, true, 'pieces the thread has not established are still checked')
+})
+
+// thread_1791360769989: "(`grey textured fleece`, ID 996762)" was shown as "(`grey textured fleece`,)".
+test('removing a citation does not strand its separator inside the bracket', async () => {
+  const { stripPieceIdCitations } = await import('../styling-engine/provider.js')
+  assert.equal(stripPieceIdCitations('Keep the fleece (`grey textured fleece`, ID 996762) for the trails.'), 'Keep the fleece (`grey textured fleece`) for the trails.')
+  assert.equal(stripPieceIdCitations('The loafers (ID 196) work.'), 'The loafers work.')
+  assert.equal(stripPieceIdCitations('Two coats (fleece, puffer) is plenty.'), 'Two coats (fleece, puffer) is plenty.')
 })

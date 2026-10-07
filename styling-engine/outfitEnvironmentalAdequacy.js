@@ -336,12 +336,23 @@ function demandHint(weather, resolvedContext = {}) {
   return ' — each candidate piece states its own warmth and insulation; choose accordingly'
 }
 
-function finding(code, message, { severity = 'error', evidence = {}, remedy = false } = {}) {
+// message is what a MODEL is told (it may end in a hint about how to act on the finding). cardMessage,
+// when given, is the same finding worded for the wearer and is what a card shows instead: live
+// thread_1790923286929 displayed "each candidate piece states its own warmth and insulation; choose
+// accordingly" on a card — an instruction to the composer, read by the owner as a note to her.
+// Same question as weather.js's weatherHasCoolEnd, answered locally: importing weather.js here would be
+// circular (it reaches this module through its own imports).
+function rangeHasCoolEnd(weather = {}) {
+  return Boolean(weather?.needsRemovableCoolLayer || weather?.transitNeedsRemovableCoolLayer || weather?.isCold || weather?.transitIsCold)
+}
+
+function finding(code, message, { severity = 'error', evidence = {}, remedy = false, cardMessage = '' } = {}) {
   return {
     code,
     severity,
     stage: 'environment',
     message: remedy && severity === 'error' ? `${message} — ${SUPPLY_REMEDY}` : message,
+    ...(cardMessage ? { cardMessage } : {}),
     evidence,
   }
 }
@@ -401,12 +412,12 @@ export function outerwearLayerPositivelyInadequate(piece) {
   if (thermalMaterialVerdict(piece) === 'insulating') return false
   if (fabricWeight(piece) === 'heavy') return false
 
-  const negativeSignals = [
-    pieceFabricWeightIsUltralight(piece),
-    thermalMaterialVerdict(piece) === 'non_insulating',
-    interiorConstruction(piece) === 'unlined',
-  ].filter(Boolean).length
-  return negativeSignals >= 2
+  // Ultralight is required (2026-10-02). The floor was built for the ultralight UPF hoodie above;
+  // "any two of three" also convicted every medium-weight unlined cotton or knit layer — the olive
+  // field jacket, a cotton cardigan, two zip jackets — and live thread_1790989165853 lost both dinner
+  // looks to it. The same jacket had been rejected as too WARM a week earlier (thread_1790929985430).
+  if (!pieceFabricWeightIsUltralight(piece)) return false
+  return thermalMaterialVerdict(piece) === 'non_insulating' || interiorConstruction(piece) === 'unlined'
 }
 
 // Migrated verbatim from validateSlotOutfitConstraints ([R2]). This is the MINIMUM-WARMTH FLOOR and
@@ -522,7 +533,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
         // that a removable layer was needed, so a down puffer satisfied it on a 65/48 day — seven
         // times. The demand is stated so the requirement can be met proportionately.
         corroborate(`this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed${demandHint(weather, resolvedContext)}`),
-        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false,
+          cardMessage: corroborate('this outfit has no layer to put on for the cooler part of the day; the base can stay mild, but something removable is needed') }))
     } else if (!someLayerContributesWarmth(layers)) {
       // ADJUDICATED (docs/README.md: trip roster architecture, item 3) rather than left unexamined
       // once thermal coverage moved to the SET level: does this finding own a factual/physical
@@ -559,7 +571,8 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
     if (!layers.length) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.NO_REMOVABLE_COOL_LAYER_FOR_TRANSIT,
         corroborate(`the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back${demandHint(weather, resolvedContext)}`),
-        { evidence, severity: 'warning', kind: 'advisory', remedy: false }))
+        { evidence, severity: 'warning', kind: 'advisory', remedy: false,
+          cardMessage: corroborate('the indoor destination may stay light, but this outfit has nothing to put on for the cool walk there and back') }))
     } else if (!someLayerContributesWarmth(layers)) {
       findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.COOL_LAYER_IS_SEE_THROUGH,
         corroborate('the only layer here is see-through, so the walk to and from the indoor destination is still uncovered'),
@@ -667,13 +680,23 @@ export function evaluateOutfitEnvironmentalAdequacy(pieces = [], resolvedContext
           corroborate('no way of wearing this outfit carries enough warmth for the cold end of these conditions'),
           { evidence, severity: enforceCertainRequiredLayer ? 'error' : 'advisory' }))
       }
-      if (warmFit.verdict === 'substantial_excess') {
+      // A card for an activity spread over SEVERAL days with both a hot and a cool end is not meant for
+      // the hottest of them, so "too warm for the warm end" says nothing about it (live replay of
+      // thread_1790984756285: the note on every card of a 52–85°F week). On one day it still means
+      // what it says, and a range that is hot throughout still gets it.
+      const range = weather?.resolvedWeatherContext?.dateRange
+      const spansSeveralDays = Boolean(range?.start && range?.end && String(range.start).slice(0, 10) !== String(range.end).slice(0, 10))
+      if (warmFit.verdict === 'substantial_excess' && !(spansSeveralDays && rangeHasCoolEnd(weather))) {
         // ADVISORY, never hard (§5.5): overshoot ranks, it never excludes. Judged across
         // configurations, so excess a person can simply take off is no longer reported as a fault —
         // only warmth that remains in every wearable state.
+        // The card says it in plain words with the number (owner, 2026-10-06); the model-facing
+        // message is unchanged.
+        const warmEndF = [weather?.highF, weather?.transitHighF].filter(value => value != null).map(Number).find(value => Number.isFinite(value))
+        const warmEndText = Number.isFinite(warmEndF) ? `a high of ${Math.round(warmEndF)}°F` : 'the warm end of these conditions'
         findings.push(finding(ENVIRONMENTAL_ADEQUACY_CODES.THERMAL_OVERSHOOT,
           'even with the removable layers off, this outfit carries considerably more warmth than the warm end of these conditions calls for',
-          { evidence, severity: 'advisory' }))
+          { evidence, severity: 'advisory', cardMessage: `this outfit runs warm for ${warmEndText}${layers.length ? ', even with the layer off' : ''}` }))
       }
 
       // THE WARM ENDPOINT'S OWN SHORTFALL. A required removable layer creates two worn states, and
@@ -952,6 +975,6 @@ export function advisoryFindingsToSystemFlags(findings = []) {
     type: ENVIRONMENTAL_CODE_VALUES.has(finding.code) || finding.stage === 'environment' || finding.kind === 'environment' || String(finding.code || '').startsWith('env_')
       ? 'Weather note'
       : 'Fit note',
-    message: finding.message,
+    message: finding.cardMessage || finding.message,
   }))
 }

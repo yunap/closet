@@ -21,7 +21,9 @@ process.env.ANTHROPIC_API_KEY = ''
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY, resolveToolStylingContext } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, selectPlanWorkbenchPieces, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory, slotColdLayerRequired, slotColdLayerPermitted } = await import('../styling-engine/outfitSetPlanner.js')
-const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
+const { _clearWeatherCachesForTests, setForecastClockForTests } = await import('../styling-engine/weather.js')
+// Fixtures use fixed October 2026 trip dates; pin "today" so they stay inside the trusted forecast window.
+setForecastClockForTests('2026-10-10T12:00:00')
 const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank, pieceRequiresBaseLayer } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
@@ -928,13 +930,44 @@ test('a positively-inadequate assigned layer is rejected even when the base outf
   )
 })
 
-// thread_1789801108635: the symmetric gap to the test above. A navy quilted puffer ("designed as a
-// true cold-weather outer layer with substantial insulation" per its own real notes) was assigned
-// as the removable layer for an 86°F-peak day and passed cleanly, because outerwearLayerPositivelyInadequate
-// only ever asks whether a layer is too WEAK -- nothing asked whether it was too WARM. compareThermalFit
-// already classifies a heavy, fully-lined, insulated coat against a warm slot's 'light'/'very light'
-// demand as a 2-level substantial_overshoot; this pins that as a hard rejection, not just a ranking signal.
-test('an assigned layer substantially warmer than the slot demands is rejected, even though it easily passes the inadequacy check', async () => {
+// thread_1789801108635 made this a hard rejection (a quilted puffer assigned for an 86°F-peak day).
+// Owner ruling 2026-10-02, after thread_1790929985430: it is a NOTE on the card. As a rejection it
+// contradicted the layer requirement on a mild flat day — every real jacket was "too warm", the thin
+// hoodie "too weak", and a whole activity lost its outfits.
+// thread_1791007872599: a puffer over a wrap dress for the walk to dinner (low 43°F) was told it was
+// "warmer than these conditions call for", measured against the heated dining room. A layer answers
+// to the walk there (thermalDemand.js `layer`).
+test('a coat assigned for the walk to an indoor dinner is measured against the walk, not the room', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'wrap midi dress' })
+  const bootId = insertPiece({ category: 'shoes', name: 'ankle boots', heel_height: 'flat' })
+  const puffyId = insertPiece({ category: 'outerwear', name: 'insulated puffer coat', fabric_weight: 'heavy' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
+    .run('["down"]', 'full_lining', puffyId)
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Dinners Out', occasion: 'smart casual', environment: 'indoor', count: 1, weather_estimate: { high_f: 60, low_f: 40 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with dinners out' })
+  const slot = workbench.pendingPlan.slots[0]
+  // The live run's stored dinner weather: indoors, walk there 43–75°F.
+  slot.weatherProfile = {
+    isHot: false, isCold: false, isIndoor: true, weatherSource: 'live_hourly',
+    transitIsHot: false, transitIsCold: true, transitIsColdSevere: false, transitNeedsRemovableCoolLayer: false,
+    transitHighF: 75.1, transitLowF: 42.9,
+  }
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: [Number(dressId), Number(bootId)],
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(puffyId) },
+  }])
+  assert.equal(result.accepted.length, 1, JSON.stringify(result.failures.map(f => f.reasons)))
+  assert.ok(!(result.accepted[0].systemFlags || []).some(flag => /warmer than these conditions call for/.test(flag.message)),
+    `no too-warm note for a coat on a 40°F walk: ${JSON.stringify(result.accepted[0].systemFlags)}`)
+})
+
+// Moved from 66/57 to 78/63 when the note began reading the layer's own demand: a down coat against
+// a 57°F start is one level over (ordinary overshoot, no note); against 63°F it is two.
+test('an assigned layer substantially warmer than the slot demands is accepted with a note on the card, not rejected', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'hike top' })
   const bottomId = insertPiece({ category: 'bottom', name: 'hike bottom' })
@@ -942,41 +975,45 @@ test('an assigned layer substantially warmer than the slot demands is rejected, 
   const puffyId = insertPiece({ category: 'outerwear', name: 'insulated puffer coat', fabric_weight: 'heavy' })
   db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?')
     .run('["down"]', 'full_lining', puffyId)
-  // A genuinely adequate alternative in the same roster (mirroring the real reversible windbreaker
-  // that sat unused in thread_1789801108635) so the repair round has something to offer.
   const windbreakerId = insertPiece({ category: 'outerwear', name: 'reversible windbreaker', fabric_weight: 'light' })
+  // The live hoodie: positively inadequate as a layer (ultralight, unlined, no insulation).
+  const hoodieId = insertPiece({ category: 'outerwear', name: 'thin UPF hoodie', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?').run('[]', 'unlined', hoodieId)
 
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  // The real thread_1789801108635 shape: a mild (not hot) real high/low range on an outdoor
-  // activity, where needsRemovableCoolLayer legitimately unlocks mode 'assigned_packed_layer' and
-  // the layer is gate-eligible on its own merits -- a genuinely hot slot instead excludes a heavy
-  // insulated piece from gateAllowedIds entirely before this check is ever reached, which is a
-  // different, already-correct exclusion and not what this test isolates.
   const slots = normalizePlanSlots([
-    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 78, low_f: 63 } },
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
   const slot = workbench.pendingPlan.slots[0]
   assert.equal(Boolean(slot.weatherProfile?.needsRemovableCoolLayer), true, 'fixture needs a slot where an assigned layer is a legitimate claim')
-  assert.ok(slot.gateAllowedIds.has(Number(puffyId)), 'fixture needs the coat to otherwise be gate-eligible, isolating the new overshoot check')
+  assert.ok(slot.gateAllowedIds.has(Number(puffyId)), 'fixture needs the coat to otherwise be gate-eligible')
 
-  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
-    slot_id: slot.id,
-    piece_ids: [Number(topId), Number(bottomId), Number(shoeId)],
+  const core = [Number(topId), Number(bottomId), Number(shoeId)]
+  const tooWarm = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: core,
     cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(puffyId) },
   }])
-
-  assert.equal(result.accepted.length, 0)
-  assert.equal(result.failures.length, 1)
+  assert.equal(tooWarm.failures.length, 0, `a too-warm removable layer must not cost the outfit: ${JSON.stringify(tooWarm.failures.map(f => f.reasons))}`)
+  assert.equal(tooWarm.accepted.length, 1)
+  assert.deepEqual(tooWarm.accepted[0].assignedLayerIds, [Number(puffyId)])
   assert.ok(
-    result.failures[0].reasons.some(reason => reason.includes('substantially warmer')),
-    'the substantial-overshoot rejection must fire even though the coat easily clears the inadequacy check'
-  )
+    (tooWarm.accepted[0].systemFlags || []).some(flag => flag.type === 'Weather note' && /insulated puffer coat is warmer than these conditions call for/.test(flag.message)),
+    `the wearer is told, in plain words: ${JSON.stringify(tooWarm.accepted[0].systemFlags)}`)
 
-  const repairable = identifyColdLayerRepairableFailures(workbench.pendingPlan, result.failures)
-  assert.equal(repairable.length, 1, 'this failure shape must reach the existing repair round')
-  assert.ok(!repairable[0].candidates.some(c => c.id === Number(puffyId)), 'the rejected overshoot piece must never be re-offered as its own repair candidate')
-  assert.ok(repairable[0].candidates.some(c => c.id === Number(windbreakerId)), 'a genuinely adequate alternative in the same roster must be offered')
+  // The other half of the live failure: the inadequate hoodie is still rejected, and its repair is
+  // offered every real layer — proportionate first, the warmer coat last, none withheld.
+  const tooWeak = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id, piece_ids: core,
+    cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(hoodieId) },
+  }])
+  assert.equal(tooWeak.accepted.length, 0, 'the inadequacy check stays a hard gate')
+  const repairable = identifyColdLayerRepairableFailures(workbench.pendingPlan, tooWeak.failures)
+  assert.equal(repairable.length, 1)
+  const candidateIds = repairable[0].candidates.map(c => c.id)
+  assert.ok(!candidateIds.includes(Number(hoodieId)), 'the inadequate piece is never offered back')
+  assert.ok(candidateIds.includes(Number(windbreakerId)) && candidateIds.includes(Number(puffyId)), 'a warmer layer is no longer withheld from the repair')
+  assert.ok(candidateIds.indexOf(Number(windbreakerId)) < candidateIds.indexOf(Number(puffyId)), 'the proportionate layer is offered before the warmer one')
 })
 
 // The boundary this fix must not cross: a merely borderline pick (one PET level above target, the
@@ -996,7 +1033,7 @@ test('an assigned layer only one PET level above the slot demand is accepted, no
 
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
-    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 66, low_f: 57 } },
+    { label: 'Coastal Hike', occasion: 'casual', activity: 'hiking', count: 1, weather_estimate: { high_f: 78, low_f: 63 } },
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a trip with a coastal hike' })
   const slot = workbench.pendingPlan.slots[0]
@@ -1355,6 +1392,31 @@ test('identifyColdLayerRepairableFailures excludes a card that also carries a di
   assert.equal(repairable.length, 0, 'a card with any other failure alongside the cold-layer one must never be bundled into repair')
 })
 
+// thread_1790989165853: both dinner cards assigned a jacket the layer check rejected, which left
+// them with no layer, so the transit check fired as well. The second reason kept them out of repair.
+test('a rejected assigned layer plus the transit finding it causes is still repaired', () => {
+  const fleece = { id: 902, name: 'grey textured fleece', category: 'outerwear', fabric_weight: 'medium', fiber_content: ['fleece', 'polyester'] }
+  const pendingPlan = { slots: [{ id: 'dinners', label: 'Evening & Dinners', allowedPieces: [fleece] }] }
+  const failures = [{
+    slot_id: 'dinners', label: 'Evening & Dinners',
+    reasons: [
+      'assigned layer piece 996767 (olive green lightweight jacket) has evidence it cannot serve as a cold layer for Evening & Dinners — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.',
+      'no adequate sleeve-bearing layer for cold-weather transit (the indoor base may stay light, but removable coverage is required for getting there and back)',
+    ],
+    outfit: { title: 'Mustard Knit & Boots', pieceIds: [84, 105, 191] },
+  }]
+  const repairable = identifyColdLayerRepairableFailures(pendingPlan, failures)
+  assert.equal(repairable.length, 1)
+  assert.deepEqual(repairable[0].candidates.map(c => c.id), [902])
+})
+
+test('only an ultralight layer is convicted as no layer at all; a medium unlined cotton jacket is a layer', async () => {
+  const { outerwearLayerPositivelyInadequate } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const unlinedCotton = { category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined' }
+  assert.equal(outerwearLayerPositivelyInadequate(unlinedCotton), false, 'the olive field jacket, the cotton cardigan and two zip jackets were convicted by the old two-of-three rule')
+  assert.equal(outerwearLayerPositivelyInadequate({ ...unlinedCotton, fabric_weight: 'ultralight' }), true, 'the thin UPF hoodie the floor was built for')
+})
+
 test('identifyColdLayerRepairableFailures never sends a slot with no qualifying candidate layer to repair', () => {
   // "outerwear" category but positively inadequate (ultralight + unlined -- 2 of the 3 negative
   // signals outerwearLayerPositivelyInadequate checks), so it can never satisfy the cold floor.
@@ -1489,6 +1551,57 @@ test('the exact live failure shape does not recur: an unnamed cold_layer_decisio
 
   const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
   assert.equal(debug.repaired.length, 3, 'the diagnostic must record all three cards as repaired, distinguishing "needed one narrow second chance" from "lost"')
+})
+
+// thread_1790926685366: two cards in ONE slot both needed the layer repair. The model repaired both;
+// the merge keyed responses by slot_id, so the second overwrote the first and one look was lost as a
+// "duplicate" of the other. The earlier test never caught it: its three cards sit in three slots.
+test('two cards in the same slot that both need the layer repair are both recovered, each keeping its own pieces', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topA = insertPiece({ category: 'top', name: 'walk top A' })
+  const bottomA = insertPiece({ category: 'bottom', name: 'walk bottom A' })
+  const topB = insertPiece({ category: 'top', name: 'walk top B' })
+  const bottomB = insertPiece({ category: 'bottom', name: 'walk bottom B' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', heel_height: 'flat', walk_support: 'high' })
+  const trenchId = insertPiece({ category: 'outerwear', name: 'trench coat' })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week of walks',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topA, bottomA, topB, bottomB, shoeId, trenchId] }),
+    composeTripPlanOnce: async workbench => [[topA, bottomA], [topB, bottomB]].map((core, index) => ({
+      slot_id: workbench.slots[0].id,
+      piece_ids: core.concat([shoeId]),
+      title: `Walk ${index + 1}`,
+      reason: 'r',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+    })),
+    // Answers exactly as the live model did: one response per card, same slot_id, own piece_ids.
+    repairTripColdLayerCards: async ({ cards }) => cards.map(card => ({
+      slot_id: card.slot_id,
+      title: card.title,
+      piece_ids: card.piece_ids,
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+    })),
+  }
+
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'Nature Walks', occasion: 'casual', activity: 'walking', count: 2 }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const debug = JSON.parse(toolContext.freeformDiagnostics.tripAtomicCompositionDebug)
+  assert.equal(toolContext.generatedOutfits.length, 2, `both looks must survive the repair, rejected: ${JSON.stringify(debug.rejected)}`)
+  const coreOf = ids => ids.map(Number).filter(id => id !== Number(trenchId)).sort((x, y) => x - y).join(',')
+  assert.deepEqual(
+    toolContext.generatedOutfits.map(card => coreOf(card.pieces.map(piece => piece.id))).sort(),
+    [coreOf([topA, bottomA, shoeId]), coreOf([topB, bottomB, shoeId])].sort(),
+    'each look keeps its own top and bottom')
+  assert.equal(debug.repaired.length, 2)
+  assert.deepEqual(debug.rejected, [])
 })
 
 // docs/trip-cold-layer-decision-contract-and-repair-spec.md §4.3 -- a false core_is_warm_enough
@@ -1627,9 +1740,17 @@ test('a trip composer that honestly declines one outfit via slot_gaps still acce
   assert.equal(cityCard.label, 'City Days')
   assert.ok(!('fit_confidence' in cityCard) && !('fitConfidence' in cityCard), 'an accepted card carries no confidence rating of any kind')
   assert.match(cityCard.watchFor || '', /^$|^none$/i, 'a card the composer did not flag must not be given a caveat it never wrote')
-  const coverageText = (result.plan_lines || []).join(' ')
+  // The disclosure the USER sees is the card's own plan lines, rendered by the client.
+  const coverageText = (cityCard.tripPlanLines || []).join(' ')
   assert.match(coverageText, /Hill Hiking/)
   assert.match(coverageText, /no genuinely hot-weather-suited top or bottom was available/)
+  // The final WRITER gets the same fact without the display wording (2026-10-02): the bracketed
+  // "[coverage gap: …]" lines were being paraphrased back to the user as "validation gaps".
+  assert.ok(!('plan_lines' in result), 'the display lines are not handed to the writer')
+  const declinedHike = (result.not_covered || []).find(entry => entry.activity === 'Hill Hiking' && entry.reason)
+  assert.match(declinedHike?.reason || '', /no genuinely hot-weather-suited top or bottom was available/)
+  assert.ok((result.not_covered || []).some(entry => entry.activity === 'Hill Hiking' && entry.outfits_ready === 0 && entry.outfits_planned >= 1))
+  assert.doesNotMatch(JSON.stringify(result.not_covered), /validation|coverage gap/)
 })
 
 test('atomic trip truth catalog is the shared garment fact line, with owner rules and rejections in piece_notes', async () => {
@@ -2866,7 +2987,7 @@ test('plan_outfit_set stops for an unresolved INDOOR slot too, and for a mixed p
         if (url.toLowerCase().includes('nowhereville')) return { ok: true, json: async () => ({ results: [] }) }
         return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
       }
-      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [65], temperature_2m_min: [45] } }) }
+      return { ok: true, json: async () => ({ daily: { temperature_2m_max: [65, 65, 65, 65, 65, 65, 65], temperature_2m_min: [45, 45, 45, 45, 45, 45, 45] } }) }
     }
   }
   const mixedResult = await executeTool('plan_outfit_set', {
@@ -2934,6 +3055,42 @@ test('plan_outfit_set: a wrong model date_range is corrected to the user-stated 
   assert.equal(toolContext.freeformDiagnostics.dateRangeSource, 'user_stated')
   assert.equal(toolContext.freeformDiagnostics.resolvedDateRange, '2026-10-12..2026-10-18')
   assert.equal(toolContext.freeformDiagnostics.resolvedLocation, 'Vienna, Virginia')
+})
+
+// thread_1791015503457: the model wrote 2024 for the range AND each activity's date. The range was
+// corrected to 2026; the activities kept 2024, fell outside the plan, did not inherit its estimate,
+// and the call stopped for weather.
+test('plan_outfit_set: activity dates move with a corrected trip range and keep inheriting the plan estimate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'city bottom', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'city shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const question = 'I am planning a trip to Vienna, Virginia, on October 12th. I will stay there for a week. What should I pack?'
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question,
+    location: 'Vienna, Virginia',
+    statedTripDateRange: extractStatedTripDateRange(question, { currentDate: new Date('2026-09-04T12:00:00Z') }),
+    weatherFetchImpl: async (url) => {
+      if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+      return { ok: false, json: async () => ({ error: true }) }
+    }
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    location: 'Vienna, Virginia',
+    date_range: { start: '2024-10-12', end: '2024-10-19' },
+    weather_estimate: { high_f: 68, low_f: 48, precipitation: 'none', wind: 'breezy' },
+    slots: [
+      { label: 'City Sightseeing', occasion: 'city', activity: 'walking', count: 1, date: '2024-10-13' },
+      { label: 'Late Stroll', occasion: 'city', activity: 'walking', count: 1, date: '2024-10-25' },
+    ],
+  }, toolContext)
+  assert.notEqual(result.status, 'weather_context_required', JSON.stringify(result).slice(0, 300))
+  const slots = toolContext.pendingPlan?.slots || []
+  assert.equal(slots.find(slot => slot.label === 'City Sightseeing')?.date?.slice(0, 10), '2026-10-13', 'day 2 of the trip stays day 2')
+  assert.equal(slots.find(slot => slot.label === 'Late Stroll')?.dateInherited, true, 'a date that would land past the trip falls back to the range')
 })
 
 // thread_1788501349296's rerun: start agreed at Oct 12, and the model's own end date (Oct 19) rode
@@ -9540,4 +9697,367 @@ test('validateSubmittedPlanOutfits accepts assigned_packed_layer for cool transi
     },
   }])
   assert.equal(validationNotRequired.accepted.length, 1, 'mode not_required must also be accepted when cold_layer_required is false')
+})
+
+// 2026-10-02, live thread_1790929985430. A trip activity with no day of its own used to be sliced on
+// the trip's first day only; it is now sliced on every trip day, and the composer is told once.
+function mockTripHorizonFetch(daysByDate = {}) {
+  const times = []
+  const temps = []
+  const precip = []
+  for (const [date, { hours = {}, defaultTemp = 60, rainHours = [] } = {}] of Object.entries(daysByDate)) {
+    for (let h = 0; h < 24; h += 1) {
+      times.push(`${date}T${String(h).padStart(2, '0')}:00`)
+      temps.push(Number.isFinite(hours[h]) ? hours[h] : defaultTemp)
+      precip.push(rainHours.includes(h) ? 1.2 : 0)
+    }
+  }
+  return async (url) => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    : { ok: true, json: async () => ({ hourly: { time: times, temperature_2m: temps, precipitation: precip } }) })
+}
+
+test('a trip activity with no day of its own is weathered across the whole trip; one dated to a day keeps that day', async () => {
+  const { resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const dateRange = { start: '2026-10-12', end: '2026-10-14' }
+  const forecast = {
+    '2026-10-12': { defaultTemp: 67, hours: { 17: 68, 22: 67 }, rainHours: [18] },
+    '2026-10-13': { defaultTemp: 70, hours: { 17: 78, 22: 62 } },
+    '2026-10-14': { defaultTemp: 60, hours: { 17: 65, 22: 55 } },
+  }
+  const [undated, dated] = normalizePlanSlots([
+    { label: 'Evening Dinners', occasion: 'smart casual', activity: 'none', environment: 'outdoor', count: 1, time_window: { period: 'evening' } },
+    { label: 'Opening Night', occasion: 'evening', activity: 'none', environment: 'outdoor', count: 1, date: '2026-10-12', time_window: { period: 'evening' } },
+  ], { dateRange, location: 'Vienna, Virginia' })
+  assert.equal(undated.dateInherited, true)
+  assert.equal(dated.dateInherited, false)
+
+  _clearWeatherCachesForTests()
+  const acrossTrip = await resolveSlotWeather(undated, { dateRange, location: 'Vienna, Virginia', fetchImpl: mockTripHorizonFetch(forecast) })
+  assert.equal(acrossTrip.profile.lowF, 55, 'the coldest evening of the week, not the first evening')
+  assert.equal(acrossTrip.profile.highF, 78)
+  assert.deepEqual(acrossTrip.profile.resolvedWeatherContext.dateRange, { start: '2026-10-12', end: '2026-10-14' })
+  assert.equal(acrossTrip.profile.resolvedWeatherContext.exposureWindowAcrossDays.rainDays, 1)
+  assert.ok(!acrossTrip.profile.isRainy, 'one wet evening of three does not mark the whole activity rainy')
+  assert.match(acrossTrip.label, /^evenings, Oct 12–Oct 14: 55–78°F; coolest Oct 14 \(55°F\), warmest Oct 13 \(78°F\); rain at that time on 1 of 3 days — hourly forecast, Vienna, Virginia/)
+  assert.doesNotMatch(acrossTrip.label, /sliced to this activity|live hourly forecast/)
+
+  _clearWeatherCachesForTests()
+  const oneDay = await resolveSlotWeather(dated, { dateRange, location: 'Vienna, Virginia', fetchImpl: mockTripHorizonFetch(forecast) })
+  assert.equal(oneDay.profile.lowF, 67, 'a slot dated to one day is still sliced on that day alone')
+  assert.equal(oneDay.profile.highF, 68)
+})
+
+test('the trip weather sentence states uncovered days and flags a far-ahead forecast; the composer view carries weather once', async () => {
+  const { tripWindowWeatherSentence } = await import('../styling-engine/outfitSetPlanner.js')
+  const { tripComposerSlotView } = await import('../routes/ai.js')
+  const acrossDays = {
+    lowF: 54.2, highF: 76.8, rainDays: 0, uncoveredDates: ['2026-10-17', '2026-10-18'],
+    days: [{ date: '2026-10-15', lowF: 54.2, highF: 62 }, { date: '2026-10-16', lowF: 60, highF: 76.8 }],
+  }
+  const farAhead = tripWindowWeatherSentence(acrossDays, { timeWindow: { period: 'morning' }, location: 'Vienna, Virginia', today: new Date('2026-10-02T12:00:00Z') })
+  assert.equal(farAhead, 'mornings, Oct 15–Oct 16: 54–77°F; coolest Oct 15 (54°F), warmest Oct 16 (77°F); no rain forecast at that time; Oct 17–Oct 18 not forecast yet — hourly forecast, Vienna, Virginia; a forecast this far ahead often changes')
+  const soon = tripWindowWeatherSentence(acrossDays, { timeWindow: { start_local: '09:00', end_local: '11:00' }, today: new Date('2026-10-14T12:00:00Z') })
+  assert.match(soon, /^09:00–11:00 each day, Oct 15–Oct 16: /)
+  assert.doesNotMatch(soon, /often changes/)
+  assert.equal(tripWindowWeatherSentence({ days: [] }), '')
+
+  const slot = {
+    id: 'evening_dinners', weather_used: 'evenings, Oct 12–Oct 14: 55–78°F', cold_layer_required: false,
+    styling_context: {
+      occasion: 'smart casual', activity: 'none', calendarSeason: 'fall', date: '2026-10-12T00:00:00.000Z', weatherText: '',
+      weatherProfile: { highF: 68, needsRemovableCoolLayer: false, resolvedWeatherContext: { status: 'resolved' } },
+      applicabilityContext: { weather: { rainy: true }, weatherProfile: { highF: 68 } },
+    },
+  }
+  const view = tripComposerSlotView(slot)
+  assert.deepEqual(view.styling_context, { occasion: 'smart casual', activity: 'none', calendarSeason: 'fall' })
+  assert.equal(view.weather_used, slot.weather_used)
+  assert.equal(view.cold_layer_required, false)
+  assert.ok(slot.styling_context.weatherProfile, 'the workbench itself keeps the structured copies for validation')
+  assert.deepEqual(tripComposerSlotView({ id: 'x' }), { id: 'x' })
+})
+
+// Live thread_1790973141460: the slots the model sent WITHOUT a time of day still read
+// "81°F high / 64°F low — live forecast", the trip's first day alone. Same stand-in day, other path.
+test('a trip activity with no day and no time of day resolves over the whole trip, and survives a trip that runs past the forecast', async () => {
+  const { resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const dateRange = { start: '2026-10-12', end: '2026-10-18' }
+  const horizon = {
+    time: ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17'],
+    temperature_2m_max: [90, 88, 81, 75, 69, 69, 70, null],
+    temperature_2m_min: [70, 68, 64, 65, 55, 53, 53, null],
+  }
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    // The provider rejects a range whose end is past its horizon outright.
+    if (url.includes('end_date=2026-10-18')) return { ok: false, json: async () => ({ error: true, reason: 'out of allowed range' }) }
+    if (url.includes('forecast_days=')) return { ok: true, json: async () => ({ daily: horizon }) }
+    const day = /start_date=(\d{4}-\d{2}-\d{2})/.exec(url)?.[1]
+    const i = horizon.time.indexOf(day)
+    return { ok: true, json: async () => ({ daily: { time: [day], temperature_2m_max: [horizon.temperature_2m_max[i]], temperature_2m_min: [horizon.temperature_2m_min[i]] } }) }
+  }
+  const [undated, dated] = normalizePlanSlots([
+    { label: 'Sightseeing', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 1 },
+    { label: 'Arrival Day', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 1, date: '2026-10-12' },
+  ], { dateRange, location: 'Vienna, Virginia' })
+  assert.equal(undated.timeWindow || null, null)
+
+  _clearWeatherCachesForTests()
+  const wholeTrip = await resolveSlotWeather(undated, { dateRange, location: 'Vienna, Virginia', fetchImpl })
+  assert.equal(wholeTrip.profile.weatherSource, 'live', 'the covered days are used; the trip does not fall to a seasonal estimate')
+  assert.equal(wholeTrip.profile.highF, 81)
+  assert.equal(wholeTrip.profile.lowF, 53, 'the coolest covered trip day, not the first day (64) and not a null read as zero')
+  assert.equal(wholeTrip.profile.isCold, false)
+  assert.ok(urls.some(url => url.includes('forecast_days=')), 'the rejected range is retried over the horizon')
+  // Prefix only: the trailing far-ahead caveat depends on the day the test runs.
+  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); 1 of 5 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F; Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
+  assert.doesNotMatch(wholeTrip.label, /rain/, 'the whole-day path has no rain data and must not claim any')
+
+  _clearWeatherCachesForTests()
+  const firstDay = await resolveSlotWeather(dated, { dateRange, location: 'Vienna, Virginia', fetchImpl })
+  assert.equal(firstDay.profile.highF, 81)
+  assert.equal(firstDay.profile.lowF, 64, 'a slot dated to one day still resolves that day alone')
+})
+
+// Live thread_1790973141460: the packer put four pairs of shoes in the suitcase and both dinner looks
+// were then rejected for wearing the fourth, the pair packed for dinner.
+test('a pair of shoes the trip packer already packed is never rejected as a 4th pair under reuse:maximize', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (const label of ['A', 'B', 'C', 'D']) {
+    insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
+    insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
+    insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces, question: 'four days', constraints: { reuse: 'maximize' }, planKind: 'trip',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+  })
+  assert.equal(workbench.pendingPlan.tripRosterSource, 'model', 'fixture needs a curated suitcase')
+  const [slotA, slotB, slotC, slotD] = workbench.pendingPlan.slots
+  const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
+    { slot_id: slotA.id, piece_ids: [idFor(slotA, 'A top'), idFor(slotA, 'A bottom'), idFor(slotA, 'A shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotB.id, piece_ids: [idFor(slotB, 'B top'), idFor(slotB, 'B bottom'), idFor(slotB, 'B shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotC.id, piece_ids: [idFor(slotC, 'C top'), idFor(slotC, 'C bottom'), idFor(slotC, 'C shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+    { slot_id: slotD.id, piece_ids: [idFor(slotD, 'D top'), idFor(slotD, 'D bottom'), idFor(slotD, 'D shoes')], cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+  ])
+  assert.deepEqual(result.failures.map(failure => failure.reasons), [], 'every look wears shoes that are already in the suitcase')
+  assert.equal(result.accepted.length, 4)
+})
+
+// Live thread_1790982306031: "Layer with the cream trench coat (ID 996759) during cooler morning
+// hours." reached the card, and the plan repeated one week-long weather sentence per activity.
+test('plan card text carries no piece-id citations, and activities sharing weather are named together once', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'stripe tee' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'dark denim' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'canvas sneakers', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Days', occasion: 'city', activity: 'walking', count: 1, weather_estimate: { high_f: 70, low_f: 50 } },
+    { label: 'Park Days', occasion: 'casual', activity: 'walking', count: 1, weather_estimate: { high_f: 70, low_f: 50 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'two kinds of day' })
+  const [city, park] = workbench.pendingPlan.slots
+  const { accepted } = validateSubmittedPlanOutfits(workbench.pendingPlan, [
+    { slot_id: city.id, piece_ids: [topId, bottomId, shoeId], title: 'Stripe Tee (ID 12)', reason: `Stripe tee (ID ${topId}) with dark denim (#${bottomId}) for walking [IDs ${topId}, ${shoeId}].`, styling_instructions: `Tuck the tee (ID ${topId}) lightly.` },
+    { slot_id: park.id, piece_ids: [topId, bottomId, shoeId], title: 'Park look', reason: 'Easy and walkable.' },
+  ])
+  assert.ok(accepted.length >= 1)
+  const card = accepted[0]
+  assert.equal(card.title, 'Stripe Tee')
+  assert.equal(card.reason, 'Stripe tee with dark denim for walking.')
+  assert.equal(card.stylingInstructions, 'Tuck the tee lightly.')
+
+  const outfits = assembleSubmittedPlanOutfits(workbench.pendingPlan, accepted)
+  const weatherLine = (outfits[0]?.tripPlanLines || []).find(line => line.startsWith('Weather used:')) || ''
+  assert.match(weatherLine, /^Weather used: City Days, Park Days — /, `shared weather is named once for both: ${weatherLine}`)
+  assert.doesNotMatch(weatherLine, /; Park Days — /, 'the shared sentence is not repeated per activity')
+})
+
+// Live thread_1790982306031: after the layer repair the card wore the trench but its reason still said
+// "Layer with the technical hoodie if temperatures drop".
+test('a layer repair that swaps the layer renames it in the card text when the model did not', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'stripe tee' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'dark denim' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'canvas sneakers', heel_height: 'flat', walk_support: 'high' })
+  const hoodieId = insertPiece({ category: 'outerwear', name: 'thin UPF technical hoodie', fabric_weight: 'ultralight' })
+  db.prepare('UPDATE pieces SET insulating_layer_materials = ?, interior_construction = ? WHERE id = ?').run('[]', 'unlined', hoodieId)
+  const trenchId = insertPiece({ category: 'outerwear', name: 'cream trench coat' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [topId, bottomId, shoeId, hoodieId, trenchId] }),
+    composeTripPlanOnce: async workbench => [{
+      slot_id: workbench.slots[0].id, piece_ids: [topId, bottomId, shoeId], title: 'Stripe tee and denim',
+      reason: 'Stripe tee with dark denim. Layer with the thin UPF technical hoodie if temperatures drop.',
+      styling_instructions: 'Zip the thin UPF technical hoodie over the tee in the morning.',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: hoodieId },
+    }],
+    // Answers like the live model: swaps the layer, leaves the text alone.
+    repairTripColdLayerCards: async ({ cards }) => cards.map(card => ({
+      slot_id: card.slot_id, piece_ids: card.piece_ids, title: card.title,
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: trenchId },
+    })),
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip', weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  const [card] = toolContext.generatedOutfits
+  assert.deepEqual(card.assignedLayerIds, [Number(trenchId)])
+  assert.equal(card.reason, 'Stripe tee with dark denim. Layer with the cream trench coat if temperatures drop.')
+  assert.equal(card.stylingInstructions, 'Zip the cream trench coat over the tee in the morning.')
+})
+
+// Owner, on the first coherent fall suitcase: "what am I supposed to do on the day when it's 80F?"
+// A mild week with one hot day keeps its fall pieces AND gets warm-weather candidates, and the
+// weather sentence says which day is the warm one.
+test('a mostly mild trip with one hot day: not hot overall, warm-weather bottoms still offered, the hot day named', async () => {
+  const { tripWindowWeatherSentence } = await import('../styling-engine/outfitSetPlanner.js')
+  const sentence = tripWindowWeatherSentence({
+    lowF: 49, highF: 81,
+    days: [
+      { date: '2026-10-12', lowF: 64, highF: 81 }, { date: '2026-10-13', lowF: 65, highF: 75 },
+      { date: '2026-10-14', lowF: 55, highF: 69 }, { date: '2026-10-17', lowF: 49, highF: 66 },
+    ],
+  }, { whenLabel: 'whole days', sourceLabel: 'daily forecast', today: new Date('2026-10-11T00:00:00Z') })
+  assert.match(sentence, /1 of 4 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F/)
+
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'stripe tee', season: 'year-round' })
+  const linen = insertPiece({ category: 'bottom', name: 'linen wide-leg pants', season: 'warm', fabric_weight: 'light' })
+  const denim = insertPiece({ category: 'bottom', name: 'dark denim', season: 'year-round', fabric_weight: 'heavy' })
+  insertPiece({ category: 'shoes', name: 'sneakers', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const daily = { time: ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15'], temperature_2m_max: [81, 75, 69, 66], temperature_2m_min: [64, 65, 55, 49] }
+  const fetchImpl = async url => (url.includes('geocoding-api')
+    ? { ok: true, json: async () => ({ results: [{ latitude: 38.9, longitude: -77.27 }] }) }
+    : { ok: true, json: async () => ({ daily }) })
+  const dateRange = { start: '2026-10-12', end: '2026-10-15' }
+  const slots = normalizePlanSlots([{ label: 'City Days', occasion: 'city', activity: 'walking', count: 1 }], { dateRange, location: 'Vienna, Virginia' })
+  let offered = []
+  _clearWeatherCachesForTests()
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces, dateRange, location: 'Vienna, Virginia', question: 'a mild week', planKind: 'trip', fetchImpl,
+    chooseTripRoster: async ({ bench }) => { offered = bench; return { roster_piece_ids: bench.map(piece => Number(piece.id)) } },
+  })
+  assert.equal(workbench.pendingPlan.slots[0].weatherProfile.isHot, false, 'one hot day of four does not make the week hot')
+  const offeredIds = offered.map(piece => Number(piece.id))
+  assert.ok(offeredIds.includes(Number(denim)), 'the fall bottom is offered')
+  assert.ok(offeredIds.includes(Number(linen)), 'and so is a bottom for the hot day')
+})
+
+// Live thread_1790984756285: the pool offered heavy trousers for a 52–85°F week, then the outfit check
+// rejected every look wearing them as "a heavy main for hot weather" — two stages disagreeing.
+test('the heavy-main-for-hot-weather check follows the same whole-range rule as the candidate pool', async () => {
+  const { validateSlotOutfitConstraints } = await import('../styling-engine/outfitSetPlanner.js')
+  const outfit = { pieces: [{ id: 1, name: 'stripe tee', category: 'top' }, { id: 2, name: 'heavy wide-leg trousers', category: 'bottom', fabric_weight: 'heavy' }, { id: 3, name: 'sneakers', category: 'shoes' }] }
+  const hotThroughout = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, highF: 94, lowF: 75 } })
+  assert.ok(hotThroughout.some(reason => /heavy main for hot weather/.test(reason)))
+  const hotWithCoolEnd = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, highF: 85, lowF: 52, needsRemovableCoolLayer: true } })
+  assert.ok(!hotWithCoolEnd.some(reason => /heavy main for hot weather/.test(reason)))
+  const hotWithColdEnd = validateSlotOutfitConstraints(outfit, {}, { weatherProfile: { isHot: true, isCold: true, highF: 85, lowF: 43 } })
+  assert.ok(!hotWithColdEnd.some(reason => /heavy main for hot weather/.test(reason)), 'a cold end counts as a cool end')
+})
+
+// Live thread_1790984756285: the reply described dinner and sightseeing looks that did not exist.
+test('the trip writer is told first, by name, which activities have no outfit at all', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city bottom' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'city shoes', heel_height: 'flat', walk_support: 'high' })
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a city day and a hike',
+    chooseTripRoster: async ({ bench }) => ({ roster_piece_ids: bench.map(piece => Number(piece.id)) }),
+    composeTripPlanOnce: async workbench => [
+      { slot_id: workbench.slots.find(slot => slot.occasion === 'city').id, piece_ids: [topId, bottomId, shoeId], title: 'City Look', reason: 'r' },
+      // Submitted but rejected (no shoes), as the live dinner looks were rejected.
+      { slot_id: workbench.slots.find(slot => slot.occasion !== 'city').id, piece_ids: [topId, bottomId], title: 'Hike Look', reason: 'r' },
+    ],
+  }
+  const result = await executeTool('plan_outfit_set', {
+    plan_kind: 'trip',
+    slots: [
+      { label: 'City Days', occasion: 'city', activity: 'walking', count: 1 },
+      { label: 'Hill Hiking', occasion: 'casual', activity: 'hiking', count: 1 },
+    ],
+  }, toolContext)
+  assert.equal(result.status, 'success', JSON.stringify(result).slice(0, 400))
+  assert.match(result.message, /^NO OUTFIT EXISTS for: Hill Hiking\. Do not describe an outfit for it;/)
+})
+
+// thread_1791013807691: with a real layer packed, cards stay quiet about it, so the trip writer is
+// told per look whether it carries its own layer for the cool end or should borrow a packed one.
+test('the trip writer is told which looks need a packed layer for the cool part of the day', async () => {
+  const { tripOutfitCoolEndLayer } = await import('../styling-engine/outfitSetPlanner.js')
+  const jacket = { id: 1, name: 'olive field jacket', category: 'outerwear', fabric_weight: 'medium', fiber_content: ['cotton'], interior_construction: 'unlined', insulating_layer_materials: [] }
+  const hoodie = { id: 2, name: 'thin UPF hoodie', category: 'outerwear', fabric_weight: 'ultralight', interior_construction: 'unlined', insulating_layer_materials: [] }
+  const blouse = { id: 3, name: 'white blouse', category: 'top' }
+  const pendingPlan = {
+    slots: [
+      { label: 'Dinners Out', weatherProfile: { isIndoor: true, transitNeedsRemovableCoolLayer: true, transitHighF: 68, transitLowF: 48 } },
+      { label: 'Warm Beach', weatherProfile: { isHot: true, highF: 90, lowF: 75 } },
+    ],
+    tripRoster: [jacket, hoodie, blouse],
+  }
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse] }), 'none on this outfit; bring a packed layer: olive field jacket')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse, hoodie] }), 'none on this outfit; bring a packed layer: olive field jacket', 'the ultralight hoodie is not the layer')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Dinners Out', pieces: [blouse], assignedLayerIds: [1] }), 'worn: olive field jacket')
+  assert.equal(tripOutfitCoolEndLayer(pendingPlan, { label: 'Warm Beach', pieces: [blouse] }), null, 'no cool end, nothing to say')
+})
+
+// thread_1791018137741: asked only to set the layer, and never shown the card text, the repair
+// rewrote it — an id citation, and boots the card did not have. The card keeps its own words.
+test('a layer repair that leaves the pieces unchanged keeps the card\'s own reason and styling, and is shown them', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const top = insertPiece({ category: 'top', name: 'mock-neck top' })
+  const skirt = insertPiece({ category: 'bottom', name: 'botanical midi skirt' })
+  const shoes = insertPiece({ category: 'shoes', name: 'olive slip-ons', heel_height: 'flat', walk_support: 'high' })
+  const coat = insertPiece({ category: 'outerwear', name: 'black wool coat' })
+  let shown = null
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'a cold week in the city',
+    chooseTripRoster: async () => ({ roster_piece_ids: [top, skirt, shoes, coat] }),
+    composeTripPlanOnce: async workbench => workbench.slots.map(slot => ({
+      slot_id: slot.id, piece_ids: [top, skirt, shoes], title: 'Mock-Neck and Skirt',
+      reason: 'A soft gallery look.', styling_instructions: 'Tuck the top into the skirt.',
+      cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: null },
+    })),
+    repairTripColdLayerCards: async ({ cards }) => {
+      shown = cards
+      return cards.map(card => ({
+        slot_id: card.slot_id, piece_ids: card.piece_ids, title: card.title,
+        reason: `Paired with the black wool coat (${coat}) for transit.`,
+        styling_instructions: 'Wear it with comfortable walking boots.',
+        cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: coat },
+      }))
+    },
+  }
+  await executeTool('plan_outfit_set', {
+    plan_kind: 'trip', weather_estimate: { high_f: 42, low_f: 30 },
+    slots: [{ label: 'Museum Day', occasion: 'city', activity: 'walking', count: 1 }],
+  }, toolContext)
+  assert.equal(shown?.[0]?.reason, 'A soft gallery look.', 'the repair sees the text it is told to keep')
+  const card = toolContext.generatedOutfits[0]
+  assert.equal(card.reason, 'A soft gallery look.')
+  assert.equal(card.stylingInstructions, 'Tuck the top into the skirt.')
+  assert.deepEqual(card.assignedLayerIds, [Number(coat)])
 })

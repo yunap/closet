@@ -50,7 +50,7 @@ import {
   EXTRACT_PIECES_SYSTEM,
   STYLIST_COMPETENCE_CONTRACT
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, stripSoftRankingRules } from '../styling-engine/occasions.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
@@ -71,7 +71,8 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { serializeWeatherProfile, restoreWeatherProfile } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader } from '../styling-engine/weather.js'
+import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
@@ -151,7 +152,7 @@ import {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
 import { categoryOutfitStructurePromptRule, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateWearableOutfit, isInabilityToJudgeCode, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, correctTuckInstruction } from '../styling-engine/outfitValidation.js'
-import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, GARMENT_FACT_CONVENTIONS, SPARSE_CATALOG_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
+import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, taggerNotesText, GARMENT_FACT_CONVENTIONS, SPARSE_CATALOG_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
 import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { storedGarmentRules } from '../styling-engine/ruleProvenance.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
@@ -967,7 +968,10 @@ export function compactFreeformAnswerSystem(profile = 'general_advice') {
     : profile === 'garment_fact'
       ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another: Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
       : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
-  return `${STYLIST_COMPETENCE_CONTRACT} You are answering one bounded text question, concisely. ${profileContract}
+  // Voice (2026-10-07, live thread_1791357375231): "Why that cardigan?" came back as "three
+  // practical and proportional reasons: 1. **Proportion:** … 2. **Temperature:** …" — a report, in a
+  // thread whose other replies were now conversational. Length stays the stylist's call.
+  return `${STYLIST_COMPETENCE_CONTRACT} You are answering one question from the wearer, as their stylist talking with them: plain sentences in your own voice, the way you would say it across a table, as long as the answer needs and no longer. ${profileContract}
 
 RATIFIED STYLE CONSTITUTION:
 ${prompts.BODY_CONTRACT}
@@ -1438,8 +1442,9 @@ export const composerCompleteFactsSuffix = piece => {
 }
 
 export const composerExperimentGarmentLine = (piece, garmentLine = 'production') => {
-  // The experiment baseline is the production garment line — the shared fact line (2026-09-15) — so a manifest run stays comparable.
-  const b0 = sharedGarmentEvidenceLine(piece)
+  // The experiment baseline is the production garment label — the shared fact line (2026-09-15) plus
+  // the labelled tagger impression restored 2026-10-06 — so a manifest run stays comparable.
+  const b0 = composerGarmentLabel(piece)
   return garmentLine === 'complete' ? `${b0}${composerCompleteFactsSuffix(piece)}` : b0
 }
 
@@ -2631,6 +2636,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   currentDate = null,
   adaptiveVisualDetail = false,
   comparisonSetGuidance = true,
+  // /ask's "a few options" turn: the composer also writes the reply shown above the cards, in this
+  // same call (docs/freeform-bounded-execution-spec.md item 7, amended 2026-10-06).
+  stylistNote = false,
   // Was previously absent-by-default so the two direct HTTP routes (/generate-wardrobe-outfits-
   // visual, saved-outfit variants) never saw the experimental Gemini routing flag — found live: a
   // freeform turn running under STYLIST_PROVIDER_OVERRIDE=gemini still made this nested composer
@@ -2977,7 +2985,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: adaptiveVisualDetail })
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${maxPx}:${photoFile}`, { maxPx })
         imageSizeCounts[maxPx] = (imageSizeCounts[maxPx] || 0) + 1
-        content.push({ type: 'text', text: composerExperiment ? composerExperimentGarmentLine(p, composerExperiment.garmentLine) : sharedGarmentEvidenceLine(p) })
+        content.push({ type: 'text', text: composerExperiment ? composerExperimentGarmentLine(p, composerExperiment.garmentLine) : composerGarmentLabel(p) })
         content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
         if (composerExperiment) {
           experimentImageManifest.push({ id: Number(p.id), photoFile, photoKind: photoFile === p.worn_photo ? 'worn' : 'hanger', maxPx, detail, sentSha256: createHash('sha256').update(String(thumb.data)).digest('hex') })
@@ -2989,7 +2997,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     // Shared garment evidence: the fact-line conventions once, then saved-record notes (owner rules, rejections) for shown pieces only.
     if (shownPieces.length) {
-      content.push({ type: 'text', text: [GARMENT_FACT_CONVENTIONS, garmentNotesBlock(shownPieces)].filter(Boolean).join('\n\n') })
+      content.push({ type: 'text', text: [
+        `${GARMENT_FACT_CONVENTIONS} ${COMPOSER_TAGGER_IMPRESSION_CONVENTION}`,
+        garmentNotesBlock(shownPieces)
+      ].filter(Boolean).join('\n\n') })
     }
 
     // No cache_control on the candidate manifest (removed 2026-08-26 — docs/deferred-conversational-
@@ -3118,6 +3129,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       comparisonSetGuidance && requestedLimit > 1 && !composerExperiment?.holdOutComparisonSet
         ? 'COMPARISON SET CONTRACT: These options will be compared side by side. Each card should be worthwhile on its own; meaningful alternatives are welcome, but do not choose a weaker outfit merely to avoid repeating a sound formula. Activity-safe footwear may repeat when the activity narrows the valid shoe choices.\nOUTFIT CONDITIONS FIT: Judge each complete outfit for the user\'s stated conditions and exposure; alternatives need not carry uniform thermal weight. Count a removable layer only when it is actually included in the outfit and realistically wearable in it. Do not invent indoor stops or timing to justify a lighter or heavier look.'
         : '',
+      stylistNote && !composerExperiment
+        ? 'STYLIST NOTE (stylist_note): write to the wearer directly, as their stylist, about this set of options. Open with what this occasion and its conditions ask of an outfit, as you understood the request. Then say how the options differ and when you would choose each, naming each by its label; if one is your pick for this occasion, say which and why. Be honest about a real drawback an option has for what the wearer will be doing. As long as it needs to be and no longer: a few lines when the choice is simple, more when there is a real tradeoff to explain. Do not list each outfit\'s garments (the cards show them), do not cite piece IDs, and do not describe an outfit you are not returning.'
+        : '',
       savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (exact reactions — each applies to its own combination only):\n${wholeWardrobeFeedbackText}` : '',
@@ -3144,12 +3158,14 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerErrorIsTimeout = false
     let composerUsage = null
     const composerStartedAt = Date.now()
-    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit)
+    const wantsStylistNote = Boolean(stylistNote && !composerExperiment)
+    // The /ask options turn also thinks at 'medium' (below); Gemini counts thinking against this cap.
+    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 4000 : 0)
     const productionSystemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     const sleeveSystemPrompt = composerExperiment?.sleeveGuidance === 'neutral' ? withNeutralSleeveGuidance(productionSystemPrompt) : productionSystemPrompt
     const explainDayWear = composerExperiment?.dayWearGuidance === 'explain'
     const systemPrompt = explainDayWear ? withDayWearExplanation(sleeveSystemPrompt) : sleeveSystemPrompt
-    const composerSchema = composerOutfitSlotsSchema({ minOutfits: requestedLimit, wearThroughDay: explainDayWear })
+    const composerSchema = composerOutfitSlotsSchema({ minOutfits: requestedLimit, wearThroughDay: explainDayWear, stylistNote: wantsStylistNote })
     const composerRequestIdentityRecord = composerExperiment
       ? composerRequestIdentity({ system: systemPrompt, content, schema: composerSchema, model: resolveAiTarget(providerOverride).model, maxTokens: composerMaxTokens })
       : null
@@ -3168,6 +3184,12 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         name: 'wardrobe_outfits',
         description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
         subflow: 'whole_wardrobe_visual_composer',
+        // Live thread_1791328549015: told "hot weather; evening forecast high 89°F", with sandals,
+        // espadrilles and canvas shoes in view, the composer put cool-season leather ankle boots
+        // under warm-season tropical trousers — on 592 output tokens for two outfits and a note,
+        // i.e. no reasoning. Same lever that fixed the trip packer (item 25). Scoped to the /ask
+        // options turn; the Use-my-wardrobe screen keeps the default.
+        ...(wantsStylistNote ? { thinkingLevel: 'medium' } : {}),
         signal,
       }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
@@ -4287,6 +4309,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     return {
       feedback,
       structuredOutfits,
+      // Her note describes the outfits she composed; the caller shows it only when those are the
+      // cards delivered (a dropped or backfilled card would leave it describing something not shown).
+      stylistNote: wantsStylistNote ? String(parsed?.stylist_note || '').trim() : '',
+      composedLabels: (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => String(outfit?.label || '').trim()),
       // Tier 2(a): said once at the SET level. Cards keep their own advisory and are never mutated,
       // dropped, or completed by the engine — this only stops the set from shipping a known
       // deficiency silently. Empty string when nothing is deficient.
@@ -5038,6 +5064,54 @@ router.post('/compare-outfits', async (req, res) => {
 // 2026-07-10: server-side default, deliberately not left to the model to infer (see the timezone-as-
 // location bug this replaced). Only used as a fallback when the conversation hasn't already
 // established a real place — an explicitly named destination always takes priority.
+// The router names the season a dated request falls in ("October 6th" -> 'fall'). That is the
+// calendar, not a hypothetical, but every forecast lookup is gated on the literal 'current season'
+// placeholder (stylingContext.js isCurrentSeason: an explicitly chosen season such as "summer looks"
+// must not pull live weather). Since the 2026-09-16 season lock made the router's word the turn's
+// season, every such turn skipped the forecast — live thread_1791277608402 dressed a 93°F day in San
+// Mateo as "fall; mild weather". A router season equal to the calendar season of the requested date
+// is recorded as 'current season', which resolves to the same calendar season everywhere else
+// (resolveCalendarSeason) and lets the forecast through. Any other season stays a hypothetical.
+export function routerSeasonForTurn(season, date, now = new Date()) {
+  const named = extractSeasonRequest(season)
+  if (!named || named === 'current season') return season || ''
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00`) : null
+  const reference = isoDay && !Number.isNaN(isoDay.getTime()) ? isoDay : now
+  return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
+}
+
+// One-shot: the pending question is read and cleared together, so an unanswered or abandoned
+// question cannot attach itself to some later message.
+export function takePendingClarification(sessionId = 'default') {
+  const state = getStylistConversationState(sessionId) || {}
+  const pending = state.pending_clarification
+  if (!pending) return null
+  const { pending_clarification: _taken, ...rest } = state
+  saveStylistConversationState(rest, sessionId)
+  return pending.request && pending.question ? pending : null
+}
+
+export function clarifiedRequestText(pending = {}, answer = '') {
+  return `${pending.request}\n\n(You asked me: "${pending.question}" My answer: ${String(answer || '').trim()})`
+}
+
+// What sits beside each garment photograph in the Whole Wardrobe composer: the shared fact line,
+// then the tagger's "reads as" on its own line, labelled as an unverified impression.
+// History: 2026-07-18 the owner ruled reads_as onto these lines after the composer paired athletic
+// trousers with an elevated top; 2026-09-15's evidence-parity change removed it from 82 of 83 lines
+// and recorded the removal as quality-relevant ("whether card reasons lose visual character that the
+// photo alone did not convey"). Live thread_1791328549015 paired warm-season tropical trousers with
+// an elevated black top and leather boots for a night concert; owner, 2026-10-06: "tagger already
+// should record 'reads as'". It is restored in the form that parity ruling allows — a source-labelled
+// note where the garment is individually shown, never on the fact line (taggerNotesText omits a
+// description the owner edited; that travels in the saved-record notes).
+export const COMPOSER_TAGGER_IMPRESSION_CONVENTION = 'A line under a garment beginning `tagger impression (not owner-verified)` is the tagger\'s own read of what the garment is and how it comes across; it is not a recorded fact, so check it against the photograph.'
+
+export function composerGarmentLabel(piece = {}) {
+  const impression = taggerNotesText(piece)
+  return impression ? `${sharedGarmentEvidenceLine(piece)}\n  ${impression}` : sharedGarmentEvidenceLine(piece)
+}
+
 function getHomeLocation() {
   try {
     const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
@@ -5046,6 +5120,8 @@ function getHomeLocation() {
     return ''
   }
 }
+// A bare destination name ("San Mateo") is resolved to the match nearest the wearer's home.
+registerWeatherHomeLocationReader(getHomeLocation)
 
 function normalizedCapsuleExpansionContext(raw = {}) {
   const rosterIds = [...new Set((Array.isArray(raw?.roster_ids) ? raw.roster_ids : [])
@@ -5586,43 +5662,36 @@ export function tripRosterSelectionSchema() {
 export function tripRosterSelectionSystemPrompt() {
   return `You are choosing what to pack for a trip. The conversational stylist has already interpreted the request and fixed the trip's use-case slots (Sightseeing Days, Museum Days, Nature Walks, and so on); a deterministic engine has already gated the candidates you are given to what is structurally eligible for at least one of those use cases.
 
-Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY from the supplied candidates. There is no fixed count: packing efficiency is your own judgment call for THIS trip, not a formula. A roster that is too small leaves a use case unwearable; a roster that is too large defeats the point of packing light. Both are real failures, weighed against each other, not just against a target number.
+Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY from the supplied candidates. There is no fixed count: the right size is the one at which every use case can be dressed the number of different ways it states, with nothing packed that no look would wear. A roster that is too small leaves a use case unwearable or worn the same way every day; one that is too large carries pieces nobody wears.
 
-SUITCASE SCALE & PACKING EFFICIENCY:
-A suitcase is a compact, curated travel capsule, not a whole wardrobe. Aim for a focused suitcase that covers the trip's use cases with combinatorial headroom while packing light. Every piece in the suitcase should earn its luggage space through high utility or versatility across the planned use cases.
+HOW TO DECIDE. Before choosing, picture the trip: for each use case, the looks it needs, what the wearer is physically doing, and the weather. Then choose the pieces those looks need, and check the result against each use case in turn.
 
-Cover every stated use case. A roster that leaves one use case without a complete, gate-valid outfit is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits, with footwear that suits it.
+Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster that leaves one use case without a complete, gate-valid outfit is rejected, and you get one chance to repair it.
 
-Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster where one use case's need for 3 distinct outfits can only actually produce 1 before every remaining option is a piece-for-piece repeat has not covered that use case, even though every individual outfit in isolation would pass its gates.
+REUSE ACROSS USE CASES IS A STRENGTH, NOT AN AUTOMATIC WIN. A top or a layer that genuinely suits both sightseeing and a nature walk earns its place twice over. But reuse only counts when the shared piece actually suits each use case on its own merits, not merely because it is eligible for it — a piece that reads as elevated city wear does not become a good hike just by also being packed for dinner. Never prefer a cross-use-case piece over a narrower, purpose-suited candidate for a specific use case; each use case still needs its own strongest fit first.
 
-REUSE ACROSS USE CASES IS A STRENGTH, NOT AN AUTOMATIC WIN. This is a suitcase, not a capsule wardrobe: a top or a layer that is genuinely well-suited to both sightseeing and a nature walk earns its place twice over. But reuse only counts when the shared piece actually suits each use case on its own merits, not merely because it is eligible for it — a piece that reads as elevated city wear does not become a good hike just by also being packed for dinner. Never prefer a cross-use-case piece over a narrower, purpose-suited candidate for a specific use case; each use case still needs its own strongest fit first. Judge each candidate by how well it serves every use case it is meant to cover, not by how many it can technically be worn for.
-
-CROSS-REGISTER VERSATILITY & SUITCASE EFFICIENCY:
-Versatile pieces that transition naturally between daytime exploration and evening dining are valuable for travel. Select footwear that comfortably covers the itinerary's walking and dining needs without packing redundant pairs or separate entire wardrobes for each use case.
-
-BOTTOMS VARIETY & ACTIVITY SEPARATION:
-A multi-day suitcase spanning varied activities benefits from distinct bottoms suited to different registers and wear contexts. Where activities contrast significantly (e.g. active outdoor trails versus tailored evening dining), provide practical separation rather than relying on a single piece across conflicting physical demands.
-
-TOPS VARIETY & FUNCTIONAL COVERAGE: an active or outdoor use case (a hike, a trail, sustained outdoor exertion) needs a top that is actually suited to it — a genuinely functional, casual/active top (a plain or lightweight tee, a tank, a breathable knit), not merely a bottom and shoes with no matching top at all, and not a delicate, dressy, or elevated top pressed into service because it happens to share the slot's occasion tag. A roster with several bottoms and shoes but no top that can credibly cover an active slot has not covered that slot, whatever its individual pieces are eligible for — weigh top coverage exactly as seriously as bottoms and footwear coverage, not as an afterthought once those are filled.
+TOPS VARIETY & FUNCTIONAL COVERAGE: an active or outdoor use case (a hike, a trail, sustained outdoor exertion) needs a top that is actually suited to it — a genuinely functional, casual/active top (a plain or lightweight tee, a tank, a breathable knit), not a delicate, dressy, or elevated top pressed into service because it happens to share the slot's occasion tag. Tops matter as much as bottoms and shoes: a use case that needs several looks needs several tops that suit it. Where activities contrast (active trails versus tailored dinners), give each bottoms that suit it rather than one pair stretched across conflicting demands.
 
 INDEPENDENT WEARABILITY:
 Default to independently wearable garments. A piece that always needs something else under it (\`needs_base: yes\`) costs two packing places to produce one look. Select a piece that needs a base only if you deliberately pack a compatible underlayer for it; otherwise prefer standalone tops. When you do take a piece that needs a base, its base must be a genuine visual and physical match, not merely present: check opacity, fit, neckline, strap or sleeve shape, and whether it sits right under that garment.
 
 OCCASION REALISM & PRACTICAL UTILITY: FOOTWEAR THAT SUITS EACH JOB:
-When a trip spans distinct activities, pack shoes appropriate for each register without manufacturing duplicates: durable walking shoes or sneakers for daytime exploration or hikes; polished boots, loafers, or elevated flats for evening dining. For outdoor walks, coastal trails, or hikes, choose practical, durable garments and supportive walking shoes or sneakers. Avoid delicate or high-maintenance pieces for active outdoor slots when practical alternatives exist in the candidate bench. A shoe earning a place by covering a genuinely distinct job is not the same as packing every pair that happens to be eligible — weigh each additional pair against whether its job is truly distinct from a pair already packed, and against whether that suitcase space would serve the trip better as a top or a layer instead.
+Every use case needs shoes suited to what is done in them. Pack shoes appropriate for each register: shoes made for walking for walking-heavy days (not heels or wedges); for a trail, nature walk or hike, footwear with real grip and support when the wardrobe has it; polished boots, loafers, or elevated flats for evening dining. One pair may cover several use cases only when it genuinely suits each. A second pair earns its place by doing a job no packed pair does — trail footing and an evening out are different jobs from city walking — and weigh each additional pair against whether its job is truly distinct from a pair already packed, rather than being another option for the same job. For outdoor walks and trails, choose practical, durable garments; avoid delicate or high-maintenance pieces there when practical alternatives exist.
 
 LAYERING / OUTERWEAR THAT SUITS THE TRIP:
-Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions. Ensure the outerwear you pack covers the real outdoor activities on the trip. Never rely solely on dressy, elevated, or high-maintenance outerwear when the trip includes trail walking, nature hikes, or active outdoor exploration — pack a practical, casual layer suited to the activity. A button-up, popover, or collared woven blouse is a base top, not a layering garment or a substitute for outerwear — do not count one toward the trip's layering coverage, and do not double the same top as both a base look and its own layer. Avoid packing rainwear or heavy storm layers unless wet weather or rain is actually indicated in the trip context.
+Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a compact layering strategy that is practical across the stated activities and conditions, covering the real outdoor activities on the trip. Never rely solely on dressy, elevated, or high-maintenance outerwear when the trip includes trail walking, nature hikes, or active outdoor exploration — pack a practical, casual layer suited to the activity. A button-up, popover, or collared woven blouse is a base top, not a layering garment or a substitute for outerwear — do not count one toward the trip's layering coverage, and do not double the same top as both a base look and its own layer. Avoid packing rainwear or heavy storm layers unless wet weather or rain is actually indicated in the trip context. A layer recorded as ultralight, unlined and with no insulation is not accepted as the warm layer for an outfit that needs one; it can still be packed for sun or wind.
 
-A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this cover that nothing else here does, across the whole trip?" If your own job line for a piece could be written about another piece you already chose, one of them is probably not earning its suitcase space.
+A DISTINCT JOB PER PIECE. If two pieces would do the same job for the same use case, keep the one that does it better.
 
 For every selected ID, give exactly one piece_jobs entry naming the job it does on this trip — which use case(s) it serves and why it earned a place. Include no unselected IDs and do not repeat an ID.
 
-In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible.
+In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible. Name only pieces you actually selected; a piece you left out is described as left out.
+
+Both piece_jobs and packing_reasoning are read by the traveller. Write them in plain words: name garments by name, never by ID or number, and say what the piece is for on this trip rather than describing the plan (no "use case", "register", "roster", "capsule" or "combinatorial").
 
 On an initial selection, return an empty repair_changes array. On a repair, record every swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in packing_reasoning; never return an unchanged rejected roster without explaining why.
 
-Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether it is worth the suitcase space.
+When photographs follow the list, each is labelled with its ID; use the record and the photograph together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads, what it looks like beside the others you are packing, and whether it is worth the suitcase space.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -5732,15 +5801,14 @@ ${truthCatalog.join('\n')}${repairBlock}${notesBlock ? `\n\n${notesBlock}` : ''}
 // cache_control breakpoint is identical on attempt 1 and attempt 2, so the repair reads the cache
 // the initial call wrote instead of re-paying for the whole catalog.
 //
-// thread_1789598100140 (owner ruling 2026-09-16): text-only, no images. Roster selection previously
-// attached a base64 photo thumbnail per bench candidate, which is what made a large bench
-// prohibitively expensive and forced the reuse-ranked 60-piece cap that starved single-use-case
-// pieces (see buildTripBench). The candidate catalog is now the same sparse text format /ask's
-// single_outfit whole-wardrobe catalog uses for its own full candidate list, at a fraction of the
-// token cost of even the old 60-image bench. composeTripPlanOnce still attaches real photos, for the
-// much smaller chosen roster, when actual outfits are being judged for drape/volume/layering.
+// thread_1789598100140 (2026-09-16) made roster selection text-only to lift the reuse-ranked
+// 60-piece cap that starved single-use-case pieces; the code called that an owner ruling, and the
+// owner has since said it was not theirs (2026-10-03). Photos are restored: the catalog stays the
+// complete sparse text list, and `imageParts` (one labelled photo per candidate, from
+// tripRosterImageParts) follow it inside the cached prefix. A bench over TRIP_ROSTER_PHOTO_LIMIT is
+// first shortlisted by the model (shortlistTripRosterWithProvider), never cut by code.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = []
 } = {}) {
   const content = [{
     type: 'text',
@@ -5749,6 +5817,11 @@ export function tripRosterSelectionContent({
     }),
     cache_control: { type: 'ephemeral' }
   }]
+  // Photos sit inside the cached prefix, as in capsuleRosterSelectionContent: the repair reuses them.
+  content.push(...imageParts)
+  if (content.length > 1) {
+    content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } }
+  }
   if (attempt > 1) {
     content.push({ type: 'text', text: tripRosterRepairText({ failures, previousRosterIds }) })
   }
@@ -5762,7 +5835,69 @@ export function tripRosterSelectionContent({
 // production. thread_1788484052964 and thread_1788488744055 are both real live runs that resolved
 // plan_kind:'trip' (once the boundary fix landed) yet still produced ordinary coordinated-plan
 // output, because this function did not exist to be wired in.
-export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById }, toolContext) {
+// One labelled photo per candidate, sized like the capsule packer's (pieceVisualDetailPolicy: larger
+// for prints, textures and statement pieces, small and low-detail for plain basics).
+async function tripRosterImageParts(bench = []) {
+  const imageParts = []
+  for (const piece of bench) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece)
+      const thumb = await prepareWardrobeThumb(filePath, `trip-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
+      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.error(`Error loading trip roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  return imageParts
+}
+
+export function tripRosterShortlistSystemPrompt(limit = TRIP_ROSTER_PHOTO_LIMIT) {
+  return `You are about to pack for a trip, and first you choose which garments to look at closely. Below is every eligible candidate as a line of recorded facts. Pick up to ${limit} of them by ID; next you will see a photograph of each one you pick and choose the suitcase from those alone.
+
+Pick generously: anything that could plausibly earn a place in this suitcase for any of the trip's use cases, so that the final choice has real options. Make sure every use case keeps enough tops, bottoms or dresses, shoes and layers to dress it several different ways, including what each activity physically needs (footwear for the walking, a layer for the cool part of the day). Leave out what plainly does not suit this trip. A piece left out here cannot be packed.`
+}
+
+export function tripRosterShortlistSchema(limit = TRIP_ROSTER_PHOTO_LIMIT) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      shortlist_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: limit, uniqueItems: true },
+    },
+    required: ['shortlist_piece_ids'],
+  }
+}
+
+export async function shortlistTripRosterWithProvider({ bench, slots, dateRange = {}, limit = TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt = 1, failures = [], previousShortlistIds = [] }, toolContext) {
+  const content = [{
+    type: 'text',
+    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById }),
+    cache_control: { type: 'ephemeral' }
+  }]
+  if (attempt > 1) {
+    content.push({ type: 'text', text: `YOUR SHORTLIST LEFT A USE CASE WITHOUT ENOUGH TO PACK FROM. Previous IDs: [${previousShortlistIds.join(', ')}]\nKeep them and add what fixes these problems, staying within ${limit}:\n${failures.map(entry => `- ${entry.message}`).join('\n')}` })
+  }
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: tripRosterShortlistSystemPrompt(limit),
+    messages: [{ role: 'user', content }],
+    schema: tripRosterShortlistSchema(limit),
+    name: 'trip_roster_shortlist',
+    description: 'Choose which candidates to look at before packing.',
+    providerOverride: toolContext?.providerOverride || null,
+    // Live thread_1791015503457: 1,480 tokens truncated the list; Gemini counts its thinking against
+    // this cap, and ninety ids alone are ~400 tokens.
+    maxTokens: structuredResponseMaxTokens(limit, { tokensPerItem: 20, base: 3000, floor: 3000, ceiling: 6000 })
+  })
+  if (toolContext) recordToolLoopUsage(toolContext, usage)
+  return value || {}
+}
+
+export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById, withPhotos = false }, toolContext) {
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
     contexts: slots.map(slot => projectStylingApplicabilityContext(slot?.stylingContext || {}, {
@@ -5774,9 +5909,10 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
       requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
+  const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
-    attempt, failures, previousRosterIds, slotLabelsById
+    attempt, failures, previousRosterIds, slotLabelsById, imageParts
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
@@ -5786,10 +5922,15 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
     name: 'trip_roster_selection',
     description: 'Choose what to pack for this trip from the supplied candidates.',
     providerOverride: toolContext?.providerOverride || null,
+    // Every packer call at the default 'low' produced ~730 output tokens for a 13-piece answer with
+    // a job line per piece — almost no reasoning before choosing from ~180 candidates — and the
+    // suitcases showed it (no trail shoes, reasoning naming a boot it did not pack). 2026-10-03.
+    thinkingLevel: 'medium',
     // No budget to scale against (the whole point is the model decides the count), so size against
     // the candidate bench itself — same reasoning as the capsule roster's per-item scaling, applied
     // to the pool the model is choosing from rather than a fixed target.
-    maxTokens: structuredResponseMaxTokens(bench.length, { tokensPerItem: 90, base: 1500, floor: 1500, ceiling: 6000 })
+    // Thinking counts against this cap on Gemini, so the ceiling leaves room for it.
+    maxTokens: structuredResponseMaxTokens(bench.length, { tokensPerItem: 90, base: 1500, floor: 1500, ceiling: 12000 })
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}
@@ -5807,7 +5948,7 @@ export function capsulePlanCompositionSystemPrompt() {
 
 The rotation is what proves the capsule works. Every piece in the roster was chosen for a job, so the set of looks you return must demonstrate those jobs — a layer worn somewhere, a piece that cannot stand alone shown over a base, a specialised shoe in a look that genuinely calls for it — and not merely touch most of the pieces. A rotation that uses almost every ID while never showing a whole function has not demonstrated the capsule. Where a piece's job genuinely cannot be shown well, say so plainly in the reason of the look that comes closest rather than passing over it in silence.
 
-Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably — except a required layering disclosure (naming an assigned packed layer and its transition rationale), which must be included in full even if it makes that card's reason slightly longer than the others. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit. Allowed pieces include the whole roster; you must read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably; a sentence on which layer goes with a look, and when, is worth its length. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit. Allowed pieces include the whole roster; you must read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -5836,9 +5977,9 @@ ${prompts.WORKING_STYLE}`
 export function tripPlanCompositionSystemPrompt() {
   return `You are the composition stage of a trip-packing tool. The conversational stylist has already interpreted the request, chosen the trip's use-case slots, and the packing roster is already fixed.
 
-Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. CRITICAL CROSS-SLOT DEDUPLICATION: Submitting the identical complete set of piece_ids in two looks — even across different slots (e.g. a city museum look and a nature walk look) — is rejected by the engine and creates a coverage gap. Every look must be distinct in its full piece set; vary at least one garment (such as the top, bottom, outer layer, or footwear). Reuse across different looks is the foundation of a packed suitcase (a top or layer that earns its place across multiple use cases is a strength, not a compromise), but each outfit card must represent a distinct wearable combination. (Note: in enforced capsule mode, core combinations of top+bottom or dress must also be unique across looks; for standard trips, complete outfit uniqueness is enforced.) Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably — except a required layering disclosure (naming an assigned packed layer and its transition rationale), which must be included in full even if it makes that card's reason slightly longer than the others. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+Return the complete representative rotation for this trip in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. CRITICAL CROSS-SLOT DEDUPLICATION: Submitting the identical complete set of piece_ids in two looks — even across different slots (e.g. a city museum look and a nature walk look) — is rejected by the engine and creates a coverage gap. Every look must be distinct in its full piece set; vary at least one garment (such as the top, bottom, outer layer, or footwear). Reuse across different looks is the foundation of a packed suitcase (a top or layer that earns its place across multiple use cases is a strength, not a compromise), but each outfit card must represent a distinct wearable combination. (Note: in enforced capsule mode, core combinations of top+bottom or dress must also be unique across looks; for standard trips, complete outfit uniqueness is enforced.) Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably; a sentence on which layer goes with a look, and when, is worth its length. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth and the attached photographs. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit — read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
-This is a suitcase you are packing against a real itinerary and its weather and activities: slot quality outranks showcasing the packed roster. Judge each combination on whether it genuinely suits its stated use case and conditions first; only once a slot has its strongest available combination does using more of the packed suitcase become a secondary, tie-breaking preference. An unused packed piece is a better outcome than a worse-fitting outfit chosen just to give that piece a look. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. If the allowed roster for a specific outfit within a slot does not contain a genuinely credible combination for its use case, DECLINE it: omit that outfit from 'outfits' and add an entry to 'slot_gaps' naming the slot and the concrete reason, rather than submitting a weak combination described as if it were a good one. This is a real option, not a last resort — an honest decline is a correct answer. A card you do submit stands on its own reason text; it does not carry or need a separate confidence rating. OCCASION REALISM & ACTIVITY SEPARATION: Align pieces with their appropriate use-case contexts: wear practical, durable garments and supportive shoes for active outdoor slots, and tailored or elevated pieces for evening dining or cultural visits when distinct options exist in the packed roster. Avoid pairing high-maintenance or delicate layers with active outdoor trails when practical alternatives exist in the suitcase. Every separates outfit needs a top: [bottom, shoes] alone or [bottom, shoes, outerwear] alone is not a complete look and fails validation — never submit an active or casual outfit missing a top or dress, whatever the roster's own balance of tops to bottoms happens to be. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). mode 'not_required' applies only when the slot's conditions are genuinely uniform across the day. When a slot's conditions span a real range (see diurnal_range and the Thermal Adequacy guidance below) or needs_removable_cool_layer is set, you MUST choose 'core_is_warm_enough' (a genuinely warm core) or 'assigned_packed_layer' (a genuinely adequate candidate) — 'not_required' is not a valid answer for that slot. See the Thermal Adequacy guidance below for what the disclosure must say.
+This is a suitcase you are packing against a real itinerary and its weather and activities: slot quality outranks showcasing the packed roster. Judge each combination on whether it genuinely suits its stated use case and conditions first; only once a slot has its strongest available combination does using more of the packed suitcase become a secondary, tie-breaking preference. An unused packed piece is a better outcome than a worse-fitting outfit chosen just to give that piece a look. Occasion realism and practical utility govern piece choice: suitcase reuse efficiency must never compromise the functional reality of an occasion. If the allowed roster for a specific outfit within a slot does not contain a genuinely credible combination for its use case, DECLINE it: omit that outfit from 'outfits' and add an entry to 'slot_gaps' naming the slot and the concrete reason, rather than submitting a weak combination described as if it were a good one. This is a real option, not a last resort — an honest decline is a correct answer. A card you do submit stands on its own reason text; it does not carry or need a separate confidence rating. OCCASION REALISM & ACTIVITY SEPARATION: Align pieces with their appropriate use-case contexts: wear practical, durable garments and supportive shoes for active outdoor slots, and tailored or elevated pieces for evening dining or cultural visits when distinct options exist in the packed roster. Avoid pairing high-maintenance or delicate layers with active outdoor trails when practical alternatives exist in the suitcase. Every separates outfit needs a top: [bottom, shoes] alone or [bottom, shoes, outerwear] alone is not a complete look and fails validation — never submit an active or casual outfit missing a top or dress, whatever the roster's own balance of tops to bottoms happens to be. Every outfit requires a cold_layer_decision: Outerwear is fully welcomed directly in piece_ids whenever the outfit is meant to be worn with it (mode 'core_is_warm_enough', assigned_layer_piece_id null), or use a heavy-fabric top/dress as the main piece (mode 'core_is_warm_enough'). When an outfit presents an indoor base or core separates, you may pair it with an already packed outerwear layer from the suitcase via mode 'assigned_packed_layer' (naming its ID via assigned_layer_piece_id). Use mode 'not_required' when the look needs nothing added for its conditions; a slot marked cold_layer_required is rejected without a real warm layer. Otherwise whether a layer is worth taking is your judgment from weather_used and each layer's recorded warmth.
 
 ${PHYSICAL_WEARABILITY_REALISM_RULES}
 
@@ -5993,6 +6134,22 @@ export function tripPlanPieceNotes(rosterPieces = []) {
 // since occasions are stated per piece here unlike every other fact-line consumer.
 export const TRIP_GARMENT_FACT_CONVENTIONS = `${GARMENT_FACT_CONVENTIONS} Occasions are stated per piece here (unlike other paths' fact line) because a trip roster spans multiple slot occasions rather than one already-filtered request occasion; a piece's occasions are its recorded tags, not a suitability verdict for any specific slot — read them alongside formality and the slot's own best_for text.`
 
+// What the trip composer is shown of a slot. Live capture (thread_1790929985430): each slot carried
+// its weather about four times over — weather_used, then styling_context.weatherProfile,
+// styling_context.applicabilityContext.weather, applicabilityContext.weatherProfile, and a
+// resolvedWeatherContext nested inside both profiles — as flags and numbers that could disagree with
+// each other, plus the stand-in first-day date. The composer now gets the weather once, as the
+// plain sentence in weather_used (and the slot's exposure_conditions). The structured copies stay
+// on the workbench for validation; they are only left out of the prompt.
+export function tripComposerSlotView(slot = {}) {
+  const context = slot?.styling_context
+  if (!context || typeof context !== 'object') return slot
+  // provenance/conflicts/debug are the resolver's own bookkeeping (which field came from where); they
+  // also restated the stand-in date and a weatherProfile pointer (thread_1790973141460).
+  const { weatherProfile, applicabilityContext, weatherText, resolvedWeatherContext, date, provenance, provenanceByField, conflicts, debug, ...plainContext } = context
+  return { ...slot, styling_context: plainContext }
+}
+
 async function composeTripPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -6010,7 +6167,7 @@ async function composeTripPlanOnce(workbench, toolContext) {
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    slots: workbench.slots,
+    slots: (workbench.slots || []).map(tripComposerSlotView),
     piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog,
     piece_catalog_conventions: TRIP_GARMENT_FACT_CONVENTIONS,
     piece_notes: tripPlanPieceNotes(rosterPieces)
@@ -6501,7 +6658,13 @@ router.post('/ask', async (req, res) => {
   // success path.
   let diagnosticsContext = null
   try {
-    const currentQuestion = req.body.question || ''
+    // The stylist asked a question last turn (pendingClarification below); this message is the
+    // answer. The paths that compose an outfit see only the current message, so the original
+    // request and the exchange are joined into it, once.
+    const typedQuestion = req.body.question || ''
+    const pendingClarification = takePendingClarification(req.body.sessionId || 'default')
+    const currentQuestion = pendingClarification ? clarifiedRequestText(pendingClarification, typedQuestion) : typedQuestion
+    if (pendingClarification) req.body.question = currentQuestion
     // Item 12's deferred fast path (feedback-routing-proposal.md): a simple, explicit, self-
     // contained prohibition needs no model turn at all — extractOwnerGuidanceApplicability already
     // resolves it deterministically. Applies regardless of thread state, since the whole point is
@@ -6575,7 +6738,7 @@ router.post('/ask', async (req, res) => {
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
       statedTripDateRange,
-      history: priorStylistConversationHistory(req.body.history, currentQuestion),
+      history: priorStylistConversationHistory(req.body.history, typedQuestion),
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.
@@ -6626,9 +6789,13 @@ router.post('/ask', async (req, res) => {
     }
     if (modelTripRosterEnabled()) {
       toolContext.chooseTripRoster = request => chooseTripRosterWithProvider(request, toolContext)
+      toolContext.shortlistTripRoster = request => shortlistTripRosterWithProvider(request, toolContext)
+      toolContext.tripRosterPhotoLimit = toolContext.resolvedProviderTarget?.provider === 'gemini'
+        ? GEMINI_TRIP_ROSTER_PHOTO_LIMIT
+        : TRIP_ROSTER_PHOTO_LIMIT
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
-    const priorConversationHistory = priorStylistConversationHistory(req.body.history, currentQuestion)
+    const priorConversationHistory = priorStylistConversationHistory(req.body.history, typedQuestion)
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
     // full_stylist answer actually discussed (cited in prose AND verified that turn) — not raw
     // search candidates. Read-only here: informs the router's contextSummary (§5.4) and, if the
@@ -6680,6 +6847,7 @@ router.post('/ask', async (req, res) => {
       && !req.body.image
       && !req.body.imageData
     let singleOutfitRoute = null
+    let tripPlanRoute = null
     if (routerEligible) {
       try {
         updateAiTelemetryContext({
@@ -6744,9 +6912,27 @@ router.post('/ask', async (req, res) => {
           toolContext.activity = normalizeActivity(routed.value?.activity)
           toolContext.executionRouterActivity = toolContext.activity
           toolContext.executionRouterActivityLocked = true
-          toolContext.season = routed.value?.season || toolContext.season
+          toolContext.season = routerSeasonForTurn(routed.value?.season, routed.value?.date) || toolContext.season
           toolContext.executionRouterSeason = toolContext.season
           toolContext.executionRouterSeasonLocked = true
+          // Third turn-level fact from the router, same authority as activity and season above.
+          // thread_1790928379170 / thread_1790929800547: an evening hosted at home was dressed for
+          // a model-estimated outdoor day, twice, and asking the composer to flag it per tool call
+          // did not hold (it marked the search and not the proposal). resolveToolStylingContext
+          // reads this and resolves the turn's weather as indoor for every tool.
+          toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
+          // Fourth turn-level fact. Live thread_1791327434563: "Tonight I'm going to a guitar concert"
+          // was dressed for "a forecast high of 90°F and low of 58°F" — the 4pm peak and the
+          // early-morning low — while the evening itself ran 89°F down to 64°F.
+          toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(routed.value?.time_of_day)
+            ? routed.value.time_of_day
+            : ''
+        } else if (routed.value?.setting === 'indoor_only') {
+          // A follow-up to an at-home occasion is still at home. Live thread_1791358745720: hosting
+          // at home was dressed indoors on the first turn, and the follow-up ("I'll be cooking most
+          // of the evening") — which the router again read as indoor_only — was dressed for today's
+          // 96°F outdoor forecast, because the setting was applied to fresh requests only.
+          toolContext.executionRouterIndoorOnly = true
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
@@ -6764,6 +6950,37 @@ router.post('/ask', async (req, res) => {
         toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
         if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
           singleOutfitRoute = routed.value
+        }
+        if (freshExecutionRequest && compactProfile === 'trip_plan') {
+          tripPlanRoute = routed.value
+        }
+        // Owner ruling 2026-10-06: "stylist may absolutely ask the question first! in fact she must
+        // if she is missing information or can take different approaches." The router judges that
+        // and writes the question; the request is kept so the answer can be joined to it. Never
+        // twice in a row: an answer to her own question is composed from, not questioned again.
+        const askFirst = String(routed.value?.clarifying_question || '').trim()
+        if (askFirst && freshExecutionRequest && !pendingClarification && ['single_outfit', 'bounded_multi'].includes(compactProfile)) {
+          saveStylistConversationState(
+            { ...compactState, pending_clarification: { request: currentQuestion, question: askFirst } },
+            req.body.sessionId || 'default'
+          )
+          toolContext.freeformDiagnostics.executionProfile = 'clarifying_question'
+          recordFreeformToolIteration(toolContext, ['clarifying_question'])
+          const freeformDiagnostics = toolContext.freeformDiagnostics
+          persistFreeformGenerationRun({
+            sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
+            diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
+          })
+          return res.json({
+            answer: askFirst,
+            savedCorrections: [], renderedBoards: [],
+            provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
+            model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
+            structuredOutfits: [], structuredOutfitsSource: null,
+            structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
+            structuredOutfitsMood: null, structuredOutfitsMission: null,
+            structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
+          })
         }
         if (compactProfile === 'wardrobe_inventory') {
           const categoryRows = db.prepare("SELECT category, COUNT(*) AS count FROM pieces WHERE status = 'active' GROUP BY category").all()
@@ -7003,8 +7220,19 @@ router.post('/ask', async (req, res) => {
           ...req.body,
           occasion: req.body.occasion,
           season: req.body.season,
-          activity: req.body.activity
+          activity: req.body.activity,
+          ...(tripPlanRoute ? { tripPlanTurn: true } : {})
         })
+    // The lean trip turn (owner, 2026-10-07; measurements in docs/freeform-prompt-cache-levers.md).
+    // A fresh trip request used the full stylist request — the 273-piece wardrobe list and all 14
+    // tool definitions, ~46k tokens — only to call plan_outfit_set and then write the reply. It now
+    // gets the same instructions and thread state without the wardrobe list, and only the tools a
+    // trip turn uses. Follow-ups on a plan are not fresh and keep the full stylist.
+    if (tripPlanRoute) {
+      toolContext.allowedToolNames = ['declare_intent', 'plan_outfit_set', 'store_user_correction']
+      toolContext.freeformDiagnostics ||= {}
+      toolContext.freeformDiagnostics.executionProfile = 'trip_plan'
+    }
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
     toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
@@ -7019,6 +7247,15 @@ router.post('/ask', async (req, res) => {
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
+    // A follow-up is about the same occasion until the user says otherwise. The thread's current
+    // outfit carries the place and day its forecast was resolved for; restoring it lets a tool call
+    // that names the same place (and no other date) reuse that forecast instead of fetching today's
+    // (live thread_1791352199157). Only when every current card shares one context.
+    if (!toolContext.resolvedWeatherContext) {
+      const storedContexts = toolContext.currentOutfitSet.map(outfit => outfit?.resolved_weather_context).filter(context => context?.status === 'resolved' && context?.location)
+      const distinct = new Set(storedContexts.map(context => `${context.location}|${context.date_range?.start || ''}|${context.date_range?.end || ''}`))
+      if (storedContexts.length && distinct.size === 1) toolContext.resolvedWeatherContext = restoreResolvedWeatherContext(storedContexts[0])
+    }
     // The active trip packing roster (docs/README.md: trip roster architecture) — read the same
     // way currentOutfitSet is, so search_wardrobe/propose_outfit see this turn's roster regardless
     // of whether it came from a fresh plan or was carried forward from an earlier one.
@@ -7034,6 +7271,12 @@ router.post('/ask', async (req, res) => {
       [
         ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),
         ...(payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []),
+        // A card's assigned packed layer and the accepted suitcase are part of what the thread has
+        // already established. Live thread_1791360025316: asked "I don't want to take 3 coats, what
+        // are my options?", she answered about the trench — the assigned layer on the plan's own
+        // museum card — and was told it was "cited without verifying".
+        ...(payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.assigned_layer_piece_ids) ? outfit.assigned_layer_piece_ids : []),
+        ...(payload.threadState?.packing_roster?.roster_ids || []),
       ]
         .map(Number).filter(Boolean)
     )]

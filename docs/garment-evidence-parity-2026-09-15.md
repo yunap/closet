@@ -217,6 +217,9 @@ These are intentional removals that can change what the stylist selects or claim
 | `/ask` discovery catalog | **derived warmth** level removed | 187 of 237 rows | Derived warmth level removed: the stylist judges thermal suitability from recorded construction (fabric, fibre, whole-garment weight, insulation, interior) without a precomputed level. Watch base and layer choices at the edges of the stated range, and whether explanations invent warmth claims. |
 | Whole Wardrobe garment lines (check 2) | **derived warmth** removed from the line beside each photo | 68 of 83 lines | Same as above; the composer also loses the `warmth:` it was told to compare against the range. |
 | Whole Wardrobe garment lines (check 2) | tagger **reads_as** removed | 82 of 83 lines | Whether card reasons lose visual character that the photo alone did not convey. |
+
+**[amended 2026-10-06 — restored as a labelled note.]** The watched-for loss was observed live (`thread_1791328549015`). The tagger impression is shown again beside each Whole Wardrobe photograph, on its own line under the unchanged fact line, labelled `tagger impression (not owner-verified)` — the selective, source-labelled channel §4 defines. See `engine-behaviour-map.md`, 2026-10-02 amendment item 33.
+
 | Whole Wardrobe garment lines (check 2) | tagger **do-not-pair** cautions removed (production already carried them inline) | 66 of 83 lines | Whether cards pair pieces the cautions warned against (for example two loud patterns); a caution is tagger guidance, not a recorded fact. |
 
 **Found and fixed while building this inventory.** These were losses in the first sparse version, and each is now preserved:

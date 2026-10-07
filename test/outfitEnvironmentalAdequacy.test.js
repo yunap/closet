@@ -853,6 +853,21 @@ test('CHIPS: that same outfit shows ONE weather chip, not three', () => {
   assert.match(flags[0].message, /no layer to put on/)
 })
 
+// thread_1790923286929: the card showed "each candidate piece states its own warmth and insulation;
+// choose accordingly" -- an instruction to the composer. The model still receives it; the card does not.
+test('CHIPS: a card shows the finding worded for the wearer, while the model keeps the hint about how to act on it', () => {
+  const result = evaluateOutfitEnvironmentalAdequacy([top({ fabric_weight: 'light' }), bottom(), shoes()], {
+    weatherProfile: WALNUT_CREEK_65_46,
+  })
+  const coolLayer = result.advisoryFindings.find(f => f.code === C.NO_REMOVABLE_COOL_LAYER)
+  assert.match(coolLayer.message, /choose accordingly/, 'the model-facing message keeps its hint')
+  assert.doesNotMatch(coolLayer.cardMessage, /choose accordingly|candidate piece/)
+  const flags = advisoryFindingsToSystemFlags(result.advisoryFindings)
+  assert.equal(flags.length, 1)
+  assert.match(flags[0].message, /no layer to put on/)
+  assert.doesNotMatch(flags[0].message, /choose accordingly|candidate piece/, 'no instruction to the model reaches the card')
+})
+
 test('CHIPS: the overlapping warmth family collapses to the most specific note', () => {
   const findings = [
     { code: C.WARM_LAYER_RECOMMENDED, message: 'a warm or midweight layer is recommended for cool weather' },
@@ -1007,7 +1022,7 @@ test('user-facing thermal errors collapse to one primary explanation while every
   // Through the shared evaluator, with the presence requirement the styling-context resolver attaches
   // to a verified severe outdoor exposure (resolveColdLayerPresenceRequirement) — without it the floor
   // has no requirement to enforce.
-  const unlined = { ...LINED_TRENCH, id: 32, name: 'unlined cotton jacket', interior_construction: 'unlined', length_hits_at: 'hip' }
+  const unlined = { ...LINED_TRENCH, id: 32, name: 'unlined cotton jacket', interior_construction: 'unlined', fabric_weight: 'ultralight', length_hits_at: 'hip' }
   const pieces = [
     { ...cottonTee(), role: 'primary_top' },
     { ...bottom(), role: 'primary_bottom' },
@@ -1015,7 +1030,7 @@ test('user-facing thermal errors collapse to one primary explanation while every
     { ...unlined, role: 'outerwear' },
   ]
   const result = evaluateWearableOutfit(pieces, { requireShoes: true, roleAware: true, weatherContext: { weatherProfile: { ...severeRange(45, 35), coldPresenceRequirement: { state: 'required' } }, activity: 'none' } })
-  assert.ok(hardCodes(result).includes(C.NO_WARM_LAYER_FOR_COLD) && hardCodes(result).includes(ADJ), `both typed errors are kept: ${JSON.stringify(hardCodes(result))}`)
+  assert.ok(hardCodes(result).includes(C.NO_WARM_LAYER_FOR_COLD) && hardCodes(result).includes(C.THERMAL_CAPACITY_INSUFFICIENT), `both typed errors are kept: ${JSON.stringify(hardCodes(result))}`)
   const shown = collapseThermalErrorFindings(result.hardFindings)
   assert.deepEqual(shown.map(f => f.code), [C.NO_WARM_LAYER_FOR_COLD])
 })
@@ -1084,7 +1099,7 @@ test('KNOWN UNRESOLVED: a fully-lined, wind-protective, non-insulating trench at
 })
 
 test('NEUTRAL VERDICTS (experiment flag): the warm-layer advisory is stated as the recorded facts, not a recommendation', () => {
-  const thinJacket = { id: 35, category: 'outerwear', name: 'unlined cotton jacket', fabric_weight: 'medium', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', sleeve_length: 'long' }
+  const thinJacket = { id: 35, category: 'outerwear', name: 'unlined cotton jacket', fabric_weight: 'ultralight', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', sleeve_length: 'long' }
   const weatherProfile = { ...severeRange(60, 48), coldPresenceRequirement: { state: 'recommended' } }
   const run = () => evaluateOutfitEnvironmentalAdequacy([top({ fiber_content: ['cotton'] }), bottom(), shoes(), thinJacket], { weatherProfile, environment: 'outdoor' })
     .findings.find(finding => finding.code === C.WARM_LAYER_RECOMMENDED)

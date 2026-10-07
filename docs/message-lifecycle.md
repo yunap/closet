@@ -221,6 +221,8 @@ structured-output call, `maxTokens: 350`, against `FREEFORM_EXECUTION_ROUTER_SYS
 ([:1087](../styling-engine/provider.js#L1087)). It sees the question, the date, and a one-line
 `contextSummary` — **never the wardrobe.** Its opening line says so explicitly.
 
+**[amended 2026-10-02]** The router’s answer also carries a required `setting` (`indoor_only | includes_outdoors`). Like its activity and season, it is a turn-level fact the later tool calls cannot override: `indoor_only` makes every tool in the turn resolve weather as indoor. An ordinary “what should I wear?” now routes to `single_outfit`, not `bounded_multi` (owner ruling the same day).
+
 ### The six profiles
 
 | Profile | Ends the turn as | Model calls |

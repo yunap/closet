@@ -300,11 +300,13 @@ test('a single-use-case-only piece survives the bench even when 60+ cross-slot-r
   // calendar `fall` (OUT_OF_SEASON.fall === 'warm') but ran up to 94.9°F -- the hard exclusion above
   // purged every warm-tagged bottom before the model ever saw one, leaving a single non-hiking
   // fallback pair to cover every casual/outdoor slot. This narrow override reuses weather.js's own
-  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Deliberately
-  // scoped to `bottom` only -- dress/outerwear keep the unconditional exclusion from the tests above.
-  test('tripSeasonEligiblePool keeps a warm-tagged bottom on a fall/winter trip when tripHasHotWeather is true', () => {
+  // HOT_F (80°F) threshold, already carried as each slot's `weatherProfile.isHot`. Originally scoped
+  // to `bottom` only. Owner direction 2026-10-02 widened it to dresses: a hot day in a fall trip needs
+  // a whole warm-weather base, and a dress that can take a layer for the evening is one. Shoes and
+  // outerwear keep the unconditional exclusion.
+  test('tripSeasonEligiblePool keeps a warm-tagged bottom and dress on a fall/winter trip when tripHasHotWeather is true', () => {
     const result = tripSeasonEligiblePool([WARM_BOTTOM, WARM_SHOES, WARM_DRESS, WARM_OUTERWEAR], 'fall', { tripHasHotWeather: true })
-    assert.deepEqual(result, [WARM_BOTTOM], 'only the bottom is spared -- shoes/dress/outerwear stay excluded even on a hot day')
+    assert.deepEqual(result, [WARM_BOTTOM, WARM_DRESS], 'the bottom and the dress are spared -- shoes/outerwear stay excluded even on a hot day')
   })
 
   test('tripSeasonEligiblePool still excludes a warm-tagged bottom on a fall/winter trip when the trip is not actually hot', () => {
@@ -466,7 +468,7 @@ const THIN_UNLINED_SHELL = piece(11, 'outerwear', {
   // Two independent negative warmth signals — non-insulating construction and an unlined interior —
   // which is what `outerwearLayerPositivelyInadequate` requires. A provable thermal claim, unlike
   // the formality label this fixture used to lean on.
-  fabric_weight: 'light',
+  fabric_weight: 'ultralight',
   fiber_content: ['polyester'],
   fabric_category: 'nylon',
   insulating_layer_materials: [],
@@ -1042,10 +1044,9 @@ test('the trip roster system prompt distinguishes making a use case wearable onc
   assert.match(brief, /without repeating the same core piece-for-piece/)
 })
 
-// thread_1789598100140 (owner ruling 2026-09-16): roster selection is now text-only (no thumbnails),
-// so there is only ever one text block to cache -- the repair call must still reuse it verbatim
-// (byte-identical) rather than rebuilding it, so the repair round reads the cache the initial call
-// wrote instead of re-paying for the whole catalog.
+// The repair call must reuse the initial call's catalog block verbatim (byte-identical) rather than
+// rebuilding it, so the repair round reads the cache the initial call wrote instead of re-paying for
+// the whole catalog. (Text-only here; the photo variant is the next test.)
 test('the trip roster repair call reuses the initial call cache prefix instead of rebuilding the catalog', () => {
   const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
   const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
@@ -1054,11 +1055,31 @@ test('the trip roster repair call reuses the initial call cache prefix instead o
   const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, failures: [], previousRosterIds: [] })
   const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures, previousRosterIds: [1] })
 
-  assert.equal(initial.length, 1, 'sanity: text-only content has exactly one part with nothing to attach images to')
+  assert.equal(initial.length, 1, 'sanity: with no photos supplied, the content is the catalog block alone')
   assert.equal(initial[0].cache_control?.type, 'ephemeral')
   assert.deepEqual(repair[0], initial[0], 'the cached catalog block must be byte-identical between the initial call and the repair')
   assert.equal(repair.length, 2, 'the repair appends exactly one additional block, not more')
   assert.match(repair[1].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+})
+
+// Owner, 2026-10-03: photos are restored to roster selection. They sit inside the cached prefix
+// (catalog, then every labelled photo, breakpoint on the last), so the repair reuses them and its
+// own text comes after.
+test('trip roster photos go inside the cached prefix, ahead of the repair text', () => {
+  const bench = [{ id: 1, name: 'city top' }, { id: 2, name: 'city bottom' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', bestFor: 'sightseeing' }]
+  const imageParts = [
+    { type: 'text', text: 'ID 1: city top' }, { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAA' } },
+    { type: 'text', text: 'ID 2: city bottom' }, { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBB' } },
+  ]
+  const initial = tripRosterSelectionContent({ bench, slots, attempt: 1, imageParts })
+  const repair = tripRosterSelectionContent({ bench, slots, attempt: 2, failures: [{ message: 'x' }], previousRosterIds: [1], imageParts })
+  assert.equal(initial.length, 5)
+  assert.equal(initial[4].type, 'image')
+  assert.equal(initial[4].cache_control?.type, 'ephemeral', 'the breakpoint sits on the last photo')
+  assert.deepEqual(repair.slice(0, 5), initial, 'catalog and photos are identical on the repair')
+  assert.match(repair[5].text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.match(tripRosterSelectionSystemPrompt(), /When photographs follow the list, each is labelled with its ID/)
 })
 
 // ─── VISUAL-ROLE EVIDENCE (thread_1788518048013 arc, superseded by thread_1789598100140) ────────
@@ -1403,4 +1424,194 @@ test('a piece genuinely tagged outdoor, with no low-confidence marker, still get
   }
   await selectTripRosterViaModel({ pool: POOL, slots: [hikingSlot], chooseRoster })
   assert.ok((capturedLabels.get(4) || []).includes('Hiking'), 'a genuinely outdoor-tagged piece must keep its Hiking label')
+})
+
+// docs/stylist-conversation-targets.md check 8; live thread_1790924321526. The packer's reasons used
+// to be discarded after the roster call, so the trip answer could only recite the packing list.
+test('trip roster selection keeps the packer\'s piece jobs and packing reasoning for pieces it actually packed', async () => {
+  const { selectTripRosterViaModel, buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 2, name: 'blue jeans', category: 'bottom', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 3, name: 'canvas sneakers', category: 'shoes', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 4, name: 'grey cardigan', category: 'outerwear', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+  ]
+  const slots = [{ id: 'city', label: 'City Days', occasion: 'casual', activity: 'none', count: 1, weatherProfile: {} }]
+  const selection = await selectTripRosterViaModel({
+    pool, slots,
+    chooseRoster: async ({ bench }) => ({
+      roster_piece_ids: bench.map(piece => piece.id),
+      packing_reasoning: 'Four pieces, one outfit and a layer.',
+      piece_jobs: [
+        ...bench.map(piece => ({ piece_id: piece.id, job: `job for ${piece.name}` })),
+        { piece_id: 999, job: 'a piece that was never packed' },
+      ],
+    }),
+  })
+  assert.equal(selection.packingReasoning, 'Four pieces, one outfit and a layer.')
+  assert.ok(selection.jobs.length > 0)
+  assert.ok(selection.jobs.every(entry => selection.roster.some(piece => Number(piece.id) === entry.pieceId)), 'no job for an unpacked piece')
+
+  const evidence = buildTripExplanationEvidence(
+    { tripRoster: selection.roster, tripRosterJobs: selection.jobs, tripPackingReasoning: selection.packingReasoning },
+    [{ pieces: selection.roster.filter(piece => piece.category !== 'outerwear'), assignedLayerIds: [] }]
+  )
+  assert.equal(evidence.packing_reasoning, 'Four pieces, one outfit and a layer.')
+  assert.ok(evidence.packing_notes.every(note => note.piece && note.packed_for && !('pieceId' in note)), 'the writer is given names, never ids')
+  const packedLayers = selection.roster.filter(piece => piece.category === 'outerwear').map(piece => piece.name)
+  assert.deepEqual(evidence.unused_pieces, packedLayers, 'a packed piece no look wears is reported as unused')
+})
+
+test('trip explanation evidence counts an assigned packed layer as worn, and is empty-safe', async () => {
+  const { buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const roster = [{ id: 1, name: 'white tee' }, { id: 4, name: 'grey cardigan' }]
+  const evidence = buildTripExplanationEvidence({ tripRoster: roster }, [{ pieces: [{ id: 1 }], assignedLayerIds: [4] }])
+  assert.deepEqual(evidence.unused_pieces, [])
+  assert.deepEqual(buildTripExplanationEvidence(), { packing_reasoning: '', packing_notes: [], unused_pieces: [], not_covered: [] })
+})
+
+test('the packer\'s reasons reach the writer without piece-number citations', async () => {
+  const { selectTripRosterViaModel } = await import('../styling-engine/outfitSetPlanner.js')
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 2, name: 'blue jeans', category: 'bottom', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+    { id: 3, name: 'canvas sneakers', category: 'shoes', season: 'year-round', occasions: '["casual","city"]', formality: 'everyday' },
+  ]
+  const selection = await selectTripRosterViaModel({
+    pool,
+    slots: [{ id: 'city', label: 'City Days', occasion: 'casual', activity: 'none', count: 1, weatherProfile: {} }],
+    chooseRoster: async ({ bench }) => ({
+      roster_piece_ids: bench.map(piece => piece.id),
+      packing_reasoning: 'Denim (#2) and a tee (#1, #3) cover the city days.',
+      piece_jobs: bench.map(piece => ({ piece_id: piece.id, job: `the ${piece.name} #${piece.id} for city days` })),
+    }),
+  })
+  assert.equal(selection.packingReasoning, 'Denim and a tee cover the city days.')
+  assert.ok(selection.jobs.length > 0)
+  assert.ok(selection.jobs.every(entry => !/#\d/.test(entry.job)))
+})
+
+test('trip explanation evidence reports an activity with fewer outfits than planned as a count, in plain fields', async () => {
+  const { buildTripExplanationEvidence } = await import('../styling-engine/outfitSetPlanner.js')
+  const evidence = buildTripExplanationEvidence(
+    { slots: [{ id: 'a', label: 'Nature Walks', targetOutfits: 2 }, { id: 'b', label: 'Museums', targetOutfits: 1 }] },
+    [{ label: 'Nature Walks', pieces: [] }, { label: 'Museums', pieces: [] }],
+    { declined: [{ activity: 'Nature Walks', reason: 'nothing light enough for the afternoon' }, { activity: '', reason: 'dropped' }] }
+  )
+  assert.deepEqual(evidence.not_covered, [
+    { activity: 'Nature Walks', outfits_planned: 2, outfits_ready: 1 },
+    { activity: 'Nature Walks', reason: 'nothing light enough for the afternoon' },
+  ])
+})
+
+// Owner, 2026-10-02: a fall suitcase had tees for its one 81°F day and nothing to wear them with.
+test('a cool-season trip with a hot day admits warm-weather dresses as well as bottoms; shoes stay season-filtered', () => {
+  const pool = [
+    { id: 1, name: 'linen pants', category: 'bottom', season: 'warm' },
+    { id: 2, name: 'sundress', category: 'dress', season: 'warm' },
+    { id: 3, name: 'sandals', category: 'shoes', season: 'warm' },
+    { id: 4, name: 'denim', category: 'bottom', season: 'year-round' },
+  ]
+  const ids = list => list.map(piece => piece.id).sort()
+  assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: false })), [4])
+  assert.deepEqual(ids(tripSeasonEligiblePool(pool, 'fall', { tripHasHotWeather: true })), [1, 2, 4])
+})
+
+// Owner, 2026-10-03: the packer chooses by sight again. A bench within the photo limit is shown
+// whole; a larger one is shortlisted by the model from the full text list, then shown.
+test('a bench within the photo limit goes to the packer whole, with photos, and no shortlist call', async () => {
+  const { TRIP_ROSTER_PHOTO_LIMIT } = await import('../styling-engine/outfitSetPlanner.js')
+  assert.equal(TRIP_ROSTER_PHOTO_LIMIT, 90)
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: POOL, slots: SLOTS, photos: true,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(result.source, 'model')
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, true)
+  assert.equal(seen[0].bench.length, result.bench.length)
+  assert.equal(result.shortlistSource, 'whole_bench')
+})
+
+const manyCityTops = Array.from({ length: 95 }, (_, i) => piece(1000 + i, 'top'))
+
+test('a bench over the photo limit is shortlisted by the model, and the packer sees only the shortlist, with photos', async () => {
+  const shortlist = [1, 2, 3, 4, 5, 6, 8, 1000, 1001]
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true,
+    shortlistRoster: async ({ bench, limit }) => {
+      assert.ok(bench.length > limit, 'the shortlist call gets the complete list')
+      return { shortlist_piece_ids: shortlist }
+    },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(result.source, 'model')
+  assert.equal(result.shortlistSource, 'model_shortlist')
+  assert.equal(seen[0].withPhotos, true)
+  assert.deepEqual(seen[0].bench.map(p => Number(p.id)), shortlist)
+})
+
+test('a shortlist that cannot dress every use case is retried once, then the packer falls back to the full text list without photos', async () => {
+  const shortlistAttempts = []
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true,
+    // No shoes at all: neither use case can be dressed from it.
+    shortlistRoster: async ({ attempt, failures }) => { shortlistAttempts.push({ attempt, codes: failures.map(f => f.code) }); return { shortlist_piece_ids: [1, 2, 1000] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.deepEqual(shortlistAttempts.map(a => a.attempt), [1, 2])
+  assert.ok(shortlistAttempts[1].codes.includes('use_case_uncoverable'), 'the retry is told what is missing')
+  assert.equal(result.shortlistSource, 'text_only')
+  assert.equal(seen[0].withPhotos, false)
+  assert.ok(seen[0].bench.length > 90, 'never a shortlist assembled by code')
+})
+
+// Live thread_1791015882776: flash-lite's shortlist was the first 90 lines of the list. On Gemini the
+// packer is shown every candidate instead; the shortlist remains for the 90-photo providers.
+test('with a higher provider photo limit the packer sees the whole bench with photos and no shortlist call', async () => {
+  const { GEMINI_TRIP_ROSTER_PHOTO_LIMIT } = await import('../styling-engine/outfitSetPlanner.js')
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS, photos: true, photoLimit: GEMINI_TRIP_ROSTER_PHOTO_LIMIT,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, true)
+  assert.ok(seen[0].bench.length > 90)
+  assert.equal(result.shortlistSource, 'whole_bench')
+})
+
+// Owner, 2026-10-03 (thread_1791016975094): photos made no difference to the packer's mistakes at
+// ~$0.07 more per run, so roster selection is text-only by default again.
+test('by default the packer chooses from the full text list, with no photos and no shortlist call', async () => {
+  const { TRIP_ROSTER_PHOTOS_ENABLED } = await import('../styling-engine/outfitSetPlanner.js')
+  assert.equal(TRIP_ROSTER_PHOTOS_ENABLED, false)
+  let shortlistCalls = 0
+  const seen = []
+  const result = await selectTripRosterViaModel({
+    pool: [...POOL, ...manyCityTops], slots: SLOTS,
+    shortlistRoster: async () => { shortlistCalls++; return { shortlist_piece_ids: [] } },
+    chooseRoster: async args => { seen.push(args); return { roster_piece_ids: [1, 2, 3, 4, 5, 6, 8] } },
+  })
+  assert.equal(shortlistCalls, 0)
+  assert.equal(seen[0].withPhotos, false)
+  assert.equal(seen[0].bench.length, result.bench.length)
+  assert.equal(result.shortlistSource, 'text_only')
+})
+
+test('the packer brief sizes the suitcase by the looks it must make, keeps distinct-job shoes, and keeps its reasoning to packed pieces', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.doesNotMatch(brief, /defeats the point of packing light/)
+  assert.doesNotMatch(brief, /would serve the trip better as a top or a layer instead/, 'the clause that argued against trail shoes')
+  assert.match(brief, /HOW TO DECIDE\. Before choosing, picture the trip/)
+  assert.match(brief, /trail footing and an evening out are different jobs from city walking/)
+  assert.match(brief, /shoes made for walking for walking-heavy days \(not heels or wedges\)/)
+  assert.match(brief, /Name only pieces you actually selected/)
 })

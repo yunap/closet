@@ -304,7 +304,7 @@ test('locallyGateWholeWardrobeOutfits rejects with one primary thermal explanati
   const tee = { ...base, id: 401, name: 'cotton long sleeve tee', category: 'top', formality: 'everyday', fabric_weight: 'medium', fiber_content: ['cotton'], sleeve_length: 'long' }
   const trousers = { ...base, id: 402, name: 'cotton trousers', category: 'bottom', formality: 'everyday', fabric_weight: 'medium', fiber_content: ['cotton'] }
   const boots = { ...base, id: 403, name: 'leather boots', category: 'shoes', formality: 'everyday', heel_height: 'flat', walk_support: 'high' }
-  const jacket = { ...base, id: 404, name: 'unlined cotton jacket', category: 'outerwear', formality: 'everyday', fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', weather_protection: ['wind'], sleeve_length: 'long', opacity: 'opaque' }
+  const jacket = { ...base, id: 404, name: 'unlined cotton jacket', category: 'outerwear', formality: 'everyday', fabric_weight: 'ultralight', fabric_category: 'cotton', fiber_content: ['cotton'], insulating_layer_materials: [], interior_construction: 'unlined', weather_protection: ['wind'], sleeve_length: 'long', opacity: 'opaque' }
   const candidatePieces = [tee, trousers, boots, jacket]
 
   const typed = evaluateWearableOutfit(
@@ -312,14 +312,14 @@ test('locallyGateWholeWardrobeOutfits rejects with one primary thermal explanati
     { requireShoes: true, weatherContext: { weatherProfile, activity: 'none' } },
   )
   const typedCodes = typed.hardFindings.map(finding => finding.code)
-  assert.ok(typedCodes.includes(C.NO_WARM_LAYER_FOR_COLD) && typedCodes.includes(C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE),
+  assert.ok(typedCodes.includes(C.NO_WARM_LAYER_FOR_COLD) && typedCodes.includes(C.THERMAL_CAPACITY_INSUFFICIENT),
     `both typed errors exist: ${JSON.stringify(typedCodes)}`)
 
   const card = normalizeWholeWardrobeOutfitObject({ label: 'Cotton jacket card', pieceIds: [401, 402, 403, 404] }, candidatePieces)
   const gated = locallyGateWholeWardrobeOutfits([card], 1, { mode: 'advisor', applyDiversity: false, candidatePieces, occasion: 'casual', weatherProfile, activity: 'none' })
   assert.equal(gated.outfits.length, 0)
   const noWarm = typed.hardFindings.find(finding => finding.code === C.NO_WARM_LAYER_FOR_COLD).message
-  const adjacent = typed.hardFindings.find(finding => finding.code === C.THERMAL_CAPACITY_SHORT_WITHOUT_INSULATION_EVIDENCE).message
+  const adjacent = typed.hardFindings.find(finding => finding.code === C.THERMAL_CAPACITY_INSUFFICIENT).message
   assert.equal(gated.rejected[0].reason, noWarm, 'the owner-facing reason is the approved primary')
   assert.ok(!gated.rejected[0].reason.includes(adjacent), 'the lower-precedence thermal error is not repeated to the owner')
 })
