@@ -1170,7 +1170,8 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   // nothing (measured at $0.0134 against a ~$0.04 follow-up).
   assert.match(tool('declare_intent').description, /Required before propose_outfit, generate_outfits or render_preview/)
   assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
-  assert.match(tool('suggest_slot_swaps').description, /alternatives to ONE slot/)
+  assert.match(tool('suggest_slot_swaps').description, /change ONE slot/)
+  assert.match(tool('suggest_slot_swaps').description, /you make the choice/, 'the stylist, not a ranking, picks the replacement (2026-10-06)')
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   // Owner ruling 2026-10-02 (supersedes 2026-08-18): an ordinary request is ONE recommended outfit, not a batch of two.
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' with no request for several options is ONE recommended outfit/)

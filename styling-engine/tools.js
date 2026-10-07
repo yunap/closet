@@ -1182,7 +1182,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "suggest_slot_swaps",
-    description: "For a follow-up that asks for alternatives to ONE slot in an existing outfit card (e.g. 'other tops for Coast Floral', 'same outfit, different shoes', 'swap the skirt'), generate 1-3 complete variant cards in one local tool call. Resolve against THREAD STATE's current_outfit_set by outfit_index or outfit_label. Use this instead of calling propose_outfit once per alternative. Do not use for fresh outfits, multi-slot plans, or changing the whole outfit.",
+    description: "For a follow-up that asks to change ONE slot in an existing outfit card (e.g. 'other tops for Coast Floral', 'same outfit, different shoes', 'swap the skirt', 'I don't love the jacket'). The rest of the outfit stays as it is. Two steps, and you make the choice: (1) call it with the slot and no replacement_ids to get every piece that can take that place, as recorded facts — nothing is chosen for you; look at the ones you would consider with view_pieces. (2) Call it again with replacement_ids (your pick; several only when the wearer asked for options), your reason, and your stylist_note; that returns the finished card(s). Resolve the outfit against THREAD STATE's current_outfit_set by outfit_index or outfit_label. Use this instead of propose_outfit for a one-slot change. Do not use for fresh outfits, multi-slot plans, or changing the whole outfit.",
     input_schema: {
       type: "object",
       properties: {
@@ -1191,7 +1191,9 @@ export const STYLIST_TOOLS = [
         slot_role: { type: "string", enum: ["primary_top", "primary_bottom", "dress", "shoes", "outerwear"], description: "The single outfit slot to replace." },
         category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear"], description: "Optional category filter; inferred from slot_role when omitted." },
         target_piece_id: { type: "integer", description: "Optional exact piece ID to replace when the outfit has more than one plausible target." },
-        replacement_ids: { type: "array", items: { type: "integer" }, description: "Optional specific replacement candidate IDs. When omitted, the tool searches active wardrobe pieces in the requested category." },
+        replacement_ids: { type: "array", items: { type: "integer" }, description: "The replacement(s) you chose, by ID, from the candidates this tool listed. Omit on the first call to get that list; no card is made until you supply these." },
+        reason: { type: "string", description: "With replacement_ids: why this piece suits this outfit and this occasion, in your words. It becomes the card's reason." },
+        stylist_note: { type: "string", description: "With replacement_ids: your reply to the wearer about the change, as plain prose; shown as the chat reply above the card. Answer their latest message only." },
         query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
         color: { type: "string", description: "Optional preferred color for replacements. This boosts exact structured color-tag matches without excluding other workable pieces." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
@@ -1664,7 +1666,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : ''
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST keep its cards and tell the user about every gap or trim those plan_lines report, following that response's own presentation instruction — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}${layerRequirement === 'required' ? '; removable layer explicitly required' : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}${boundedBatchContract}Contract: for a SINGLE outfit, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${layerRequirement === 'required' ? "The user's explicit layer request is mechanical: search outerwear visually and include one real outerwear piece in the card's ordinary piece IDs; if no eligible owned layer exists, report that wardrobe gap instead of omitting the layer or inventing one. " : ''}When the bounded multi-look contract above is absent, a small fixed set follows that same serial contract. Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), use suggest_slot_swaps (first for the candidates, then with your chosen replacement_ids); its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST keep its cards and tell the user about every gap or trim those plan_lines report, following that response's own presentation instruction — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -3060,9 +3062,39 @@ async function executeToolInternal(name, args, toolContext = {}) {
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
           .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
 
+        // The stylist chooses the replacement (owner, 2026-10-06). Live thread_1791353402050: with
+        // no replacement named, the ranking above picked one piece — an everyday striped wool
+        // cardigan for an all-black satin dinner look — and slotSwapWhy wrote its reason ("…changes
+        // the layer with…"); she never saw another candidate or a photograph. Without her choice
+        // this call now returns every eligible piece as recorded facts, in id order (no ranking is
+        // implied), and makes no card. The score above still orders nothing she sees.
+        if (!replacementIds.length) {
+          const eligible = scoredCandidates.map(candidate => candidate.piece).sort((a, b) => Number(a.id) - Number(b.id))
+          if (!eligible.length) {
+            return {
+              status: "error",
+              message: `No ${category} in the wardrobe can take this place in "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion and weather.`,
+            }
+          }
+          recordRetrievedPieces(toolContext, [...basePieces.map(piece => piece.id), ...eligible.map(piece => piece.id)])
+          bumpFreeformDiagnostic(toolContext, 'slotSwapCandidateLists')
+          return {
+            status: "choose_replacement",
+            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.`,
+            replacing: { id: Number(removed.id), name: removed.name },
+            kept_pieces: basePieces.filter(piece => Number(piece.id) !== Number(removed.id)).map(piece => ({ id: Number(piece.id), facts: sparseGarmentCatalogRow(piece) })),
+            conventions: SPARSE_CATALOG_CONVENTIONS,
+            candidates: eligible.map(piece => {
+              const impression = taggerNotesText(piece)
+              return impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+            }),
+          }
+        }
+
+        const statedReason = String(args?.reason || '').trim()
         const variants = []
         const failures = []
-        for (const candidate of scoredCandidates) {
+        for (const candidate of scoredCandidates.sort((a, b) => replacementIds.indexOf(Number(a.piece.id)) - replacementIds.indexOf(Number(b.piece.id)))) {
           if (variants.length >= limit) break
           const replacement = candidate.piece
           const resolved = basePieces
@@ -3089,8 +3121,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             continue
           }
           const label = `${outfit.label || outfit.title || 'Current outfit'} — ${replacement.name}`
-          const why = slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
+          const why = statedReason || slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
           variants.push({
+            // Same occasion, same forecast: the swapped card keeps the weather the outfit was built for,
+            // so the next follow-up still finds it (a card without it broke the thread's stored context).
+            ...weatherCardFields(stylingContext),
             label,
             occasion: resolvedOccasion,
             season: resolvedSeason,
@@ -3136,6 +3171,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (!toolContext.sourceLocked) toolContext.source = 'slot_swap'
         toolContext.sourceLocked = true
         toolContext.slotSwapCompleted = true
+        // Her own words are the reply; no closing call (same ending as a one-card follow-up proposal).
+        const swapNote = String(args?.stylist_note || '').trim()
+        if (swapNote) {
+          toolContext.followupProposalCompleted = true
+          toolContext.followupStylistNote = swapNote
+        }
         if (toolContext.declaredIntent?.want === 'cards') {
           toolContext.declaredIntent.outfitCount = variants.length
         }

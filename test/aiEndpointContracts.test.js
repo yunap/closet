@@ -6870,12 +6870,14 @@ test('suggest_slot_swaps treats color as an exact structured preference, not a r
   }
   const result = await executeTool('suggest_slot_swaps', {
     outfit_label: 'Coast Floral', slot_role: 'primary_top',
-    replacement_ids: [structuredFalsePositive, nonRedAlternative, taggedRedTop], color: 'red', limit: 3,
+    replacement_ids: [taggedRedTop, structuredFalsePositive, nonRedAlternative], color: 'red', limit: 3,
   }, toolContext)
 
   assert.equal(result.status, 'success')
   assert.equal(toolContext.generatedOutfits.length, 3, 'a color preference must not delete non-matching candidates')
-  assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, taggedRedTop, 'the exact structured color match gets the preference bonus')
+  // 2026-10-06: the stylist chooses and orders the replacements; her order is kept, and the colour
+  // match is still recorded as a fact about each card.
+  assert.deepEqual(toolContext.generatedOutfits.map(outfit => outfit.debug.swappedIn.id), [taggedRedTop, structuredFalsePositive, nonRedAlternative], 'cards come back in the order she chose')
   assert.deepEqual(toolContext.generatedOutfits[0].debug.colorPreference, { requested: 'red', matched: true, score: 14 })
   const falsePositiveCard = toolContext.generatedOutfits.find(outfit => outfit.debug.swappedIn.id === structuredFalsePositive)
   assert.deepEqual(falsePositiveCard.debug.colorPreference, { requested: 'red', matched: false, score: 0 }, 'structured/texture prose must not count as red')
@@ -9012,4 +9014,46 @@ test('a one-card follow-up proposal with a stylist note ends the turn with that 
 
   const card = followup.generatedOutfits.find(outfit => !outfit.broken)
   assert.ok(!(card.systemFlags || []).some(flag => flag.type === 'validated_recovery'))
+})
+
+// Owner, 2026-10-06 (thread_1791353402050): code picked the replacement and wrote its reason. The
+// stylist now gets the eligible candidates and chooses; only then is a card made, with her reason,
+// her note as the reply, and the outfit's weather kept.
+test('a one-slot swap lists every eligible candidate without choosing, then builds the card from the stylist\'s choice and words', async () => {
+  const cardigan = insertPiece({ name: 'striped knit cardigan', category: 'outerwear', colors: ['grey'], occasions: ['city', 'casual'], photo: seeded.photos.top, reads_as: 'textured relaxed cardigan', style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const blazer = insertPiece({ name: 'black crepe blazer', category: 'outerwear', colors: ['black'], occasions: ['city', 'casual'], photo: seeded.photos.top, reads_as: 'sharp evening blazer', style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const contextFor = () => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup',
+    question: "I don't love the jacket for this. What would you put there instead?",
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'Dinner look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+  })
+
+  const first = contextFor()
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, first)
+  assert.equal(listed.status, 'choose_replacement')
+  assert.equal(first.generatedOutfits.length, 0, 'no card is made until she chooses')
+  assert.notEqual(first.slotSwapCompleted, true)
+  const listedText = listed.candidates.join('\n')
+  assert.match(listedText, new RegExp(`#${cardigan} `))
+  assert.match(listedText, new RegExp(`#${blazer} `))
+  assert.doesNotMatch(listedText, new RegExp(`#${seeded.jacket} `), 'the piece being replaced is not offered back')
+  assert.match(listedText, /tagger impression \(not owner-verified\): sharp evening blazer/)
+  assert.match(listed.message, /implies no preference/)
+
+  const second = contextFor()
+  const made = await executeTool('suggest_slot_swaps', {
+    outfit_index: 1, slot_role: 'outerwear', replacement_ids: [blazer],
+    reason: 'The blazer keeps the all-black line and sharpens it for dinner.',
+    stylist_note: 'I would take the black blazer: same clean line, less biker.',
+  }, second)
+  assert.equal(made.status, 'success')
+  assert.equal(second.generatedOutfits.length, 1)
+  const card = second.generatedOutfits[0]
+  assert.equal(card.debug.swappedIn.id, blazer)
+  assert.equal(card.reason, 'The blazer keeps the all-black line and sharpens it for dinner.', 'her reason, not a template')
+  assert.equal(second.followupStylistNote, 'I would take the black blazer: same clean line, less biker.')
+  assert.equal(second.followupProposalCompleted, true)
+  assert.deepEqual(card.pieceIds.filter(id => id !== blazer).sort(), [seeded.top, seeded.bottom, seeded.shoe].sort(), 'the rest of the outfit stays')
 })
