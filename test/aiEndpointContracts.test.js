@@ -9112,3 +9112,39 @@ test('suggest_slot_swaps declares cards intent itself when none was declared, an
   const asText = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'shoes' }, contextFor({ want: 'text' }))
   assert.equal(asText.status, 'validation_error')
 })
+
+// The lean trip turn (owner, 2026-10-07): a fresh trip request carries the stylist's instructions and
+// thread state without the wardrobe list, and is offered only the tools a trip turn uses.
+test('a fresh trip request is routed to trip_plan and gets the stylist prompt without the wardrobe list', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+  const body = { question: 'I am going to Seattle for a long weekend. What should I pack?', history: [], sessionId: 'lean-trip-contract' }
+  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
+  const full = await buildStylistConversationPayload({ ...body })
+  const lean = await buildStylistConversationPayload({ ...body, tripPlanTurn: true })
+  assert.match(text(full), /WARDROBE MANIFEST/)
+  assert.doesNotMatch(text(lean), /WARDROBE MANIFEST/)
+  assert.equal(lean.wardrobeManifestIncluded, false)
+  assert.ok(text(lean).length < text(full).length)
+  for (const kept of ['Planning a Coordinated Multi-Outfit Set', 'Destination & Weather Clarification', 'Trip Scope Clarification', 'STYLE CONSTITUTION']) {
+    assert.ok(text(lean).includes(kept), `the lean trip prompt keeps "${kept}"`)
+  }
+  assert.match(text(lean), /plan_outfit_set chooses what to pack from the whole wardrobe/)
+
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: '', time_of_day: '' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: body.question })
+    assert.equal(routed.value.profile, 'trip_plan')
+    assert.match(captured.system, /Choose trip_plan ONLY for a FRESH request to pack for/)
+    assert.match(captured.system, /Not for a capsule wardrobe/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+  const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /allowedToolNames = \['declare_intent', 'plan_outfit_set', 'store_user_correction'\]/)
+  assert.match(routeSrc, /freshExecutionRequest && compactProfile === 'trip_plan'/, 'only a fresh request; follow-ups on a plan keep the full stylist')
+})

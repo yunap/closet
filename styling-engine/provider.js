@@ -1468,7 +1468,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   additionalProperties: false,
   required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day'],
   properties: {
-    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'full_stylist'] },
+    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
     setting: { type: 'string', enum: ['indoor_only', 'includes_outdoors'] },
@@ -1497,6 +1497,8 @@ Choose garment_fact only when compact context says an active/verified garment su
 Choose general_advice only for general styling education that does not claim to inspect, select, compare, or discuss the user's owned garments: definitions, broad principles, and non-wardrobe-specific technique. "My", "mine", "this blouse", a named owned piece, or a request for what to wear is not general_advice.
 
 Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
+
+Choose trip_plan ONLY for a FRESH request to pack for, or plan what to wear on, a trip or stay away from home lasting more than one day ("what should I pack for…", "I'm going to X for a week/weekend"), including when the user is answering your question about such a trip. Not for a capsule wardrobe, a work week at home, a single outing in another city, or any change to a plan or cards that already exist; those are full_stylist. Use limit 0.
 
 Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
 

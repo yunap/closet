@@ -461,8 +461,14 @@ written by code, or an extra closing call (see `engine-behaviour-map.md`, 2026-1
   describes a reaction that carries a request ("I like that one. Show me another…") as only a taste
   statement.
 
-Not done, with the reason: a lean trip-planning prompt (a trip turn uses this prompt only to emit
-`plan_outfit_set` and to write the reply) would cut that request by roughly 80%, about a cent per cold
-trip turn; and taking the manifest out of the standing prompt, which `search-payload-spec.md` ties to
-what search returns. Both are cost work with a small, measured prize.
+**The lean trip turn — done the same day (owner: "I meant the trip work you were planning on doing
+earlier").** A fresh trip request is routed to a new profile, `trip_plan`, and gets the same stylist
+instructions and thread state with two subtractions: no wardrobe manifest (`tripPlanTurn` on
+`buildStylistConversationPayload`), and only `declare_intent`, `plan_outfit_set` and
+`store_user_correction` as tools. Nothing in the instruction block was rewritten or moved, which is
+what the reverted Part A got wrong. Measured on the owner's wardrobe for the Vienna request: system
+135,100 → 64,819 characters, tool schemas 59,596 → 22,053, ~46,400 → ~20,700 tokens (−55%). Only fresh
+requests take it; any follow-up on an existing plan stays on the full stylist, because it may need to
+search, view or swap. Not done: taking the manifest out of the standing prompt for the other
+full-stylist turns, which `search-payload-spec.md` ties to what search returns.
 

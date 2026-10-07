@@ -6847,6 +6847,7 @@ router.post('/ask', async (req, res) => {
       && !req.body.image
       && !req.body.imageData
     let singleOutfitRoute = null
+    let tripPlanRoute = null
     if (routerEligible) {
       try {
         updateAiTelemetryContext({
@@ -6949,6 +6950,9 @@ router.post('/ask', async (req, res) => {
         toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
         if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
           singleOutfitRoute = routed.value
+        }
+        if (freshExecutionRequest && compactProfile === 'trip_plan') {
+          tripPlanRoute = routed.value
         }
         // Owner ruling 2026-10-06: "stylist may absolutely ask the question first! in fact she must
         // if she is missing information or can take different approaches." The router judges that
@@ -7216,8 +7220,19 @@ router.post('/ask', async (req, res) => {
           ...req.body,
           occasion: req.body.occasion,
           season: req.body.season,
-          activity: req.body.activity
+          activity: req.body.activity,
+          ...(tripPlanRoute ? { tripPlanTurn: true } : {})
         })
+    // The lean trip turn (owner, 2026-10-07; measurements in docs/freeform-prompt-cache-levers.md).
+    // A fresh trip request used the full stylist request — the 273-piece wardrobe list and all 14
+    // tool definitions, ~46k tokens — only to call plan_outfit_set and then write the reply. It now
+    // gets the same instructions and thread state without the wardrobe list, and only the tools a
+    // trip turn uses. Follow-ups on a plan are not fresh and keep the full stylist.
+    if (tripPlanRoute) {
+      toolContext.allowedToolNames = ['declare_intent', 'plan_outfit_set', 'store_user_correction']
+      toolContext.freeformDiagnostics ||= {}
+      toolContext.freeformDiagnostics.executionProfile = 'trip_plan'
+    }
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
     toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)

@@ -4766,7 +4766,11 @@ export async function buildStylistConversationPayload(body) {
   } catch (err) {
     console.error('Wardrobe manifest query failed:', err)
   }
-  const wardrobeManifestText = activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+  // A fresh trip request (routes/ai.js `trip_plan`) only turns the request into activities and then
+  // writes the reply from the planner's result; the packer and the outfit step get the wardrobe
+  // themselves. Its prompt carries no wardrobe list (2026-10-07).
+  const tripPlanTurn = body?.tripPlanTurn === true
+  const wardrobeManifestText = !tripPlanTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
@@ -4817,6 +4821,10 @@ export async function buildStylistConversationPayload(body) {
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
+    ].join('\n')
+    : tripPlanTurn ? [
+      'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',
