@@ -1711,7 +1711,7 @@ test('whole-wardrobe composer receives wear mechanics but is told not to recite 
   const top = sharedGarmentEvidenceLine({ id: 1, name: 'shell', category: 'top', tuck_behavior: 'wear_over_only', hem_finish: 'curved', opacity: 'semi_sheer', needs_base: 'yes' })
   assert.match(top, /hem curved; opacity semi_sheer; needs a base layer; .*tuck wear_over_only/)
   assert.match(sharedGarmentEvidenceLine({ id: 2, name: 'trouser', category: 'bottom', waistband_type: 'elastic' }), /waistband elastic/)
-  assert.match(routeSrc, /sharedGarmentEvidenceLine\(p\)/)
+  assert.match(routeSrc, /composerGarmentLabel\(p\)/)
   assert.match(routeSrc, /Opacity and base-layer facts are authoritative/)
   assert.match(routeSrc, /Do not repeat a fixed fact the owner already knows/)
 })

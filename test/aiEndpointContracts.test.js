@@ -945,7 +945,7 @@ test('whole-wardrobe current-season composition receives applicable summer lesso
   assert.match(promptText, /not preferred for summer outfits/)
 })
 
-test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line (no derived warmth, tagger read or pairing cautions)', async () => {
+test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line, with the tagger impression on its own labelled line (no derived warmth or pairing cautions)', async () => {
   aiCalls = []
   const plainPiece = insertPiece({
     name: 'plain grey tee',
@@ -970,11 +970,17 @@ test('whole-wardrobe visual composer per-piece lines are the shared recorded-fac
     .map(part => part.text)
 
   const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { composerGarmentLabel } = await import('../routes/ai.js')
   const { parsePiece } = await import('../db.js')
-  const lineFor = id => sharedGarmentEvidenceLine(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)))
+  const pieceFor = id => parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id))
+  // 2026-10-06: the label is the fact line, then (when the tagger recorded one) its impression on a
+  // second line, labelled as unverified. The fact line itself is unchanged.
+  const lineFor = id => composerGarmentLabel(pieceFor(id))
   const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
   assert.ok(bottomLine)
   assert.equal(bottomLine, lineFor(seeded.bottom))
+  assert.equal(bottomLine.split('\n')[0], sharedGarmentEvidenceLine(pieceFor(seeded.bottom)), 'first line is the shared fact line, untouched')
+  assert.ok(bottomLine.split('\n').slice(1).every(line => /^\s+tagger impression \(not owner-verified\): /.test(line)), 'anything after it is the labelled impression')
   assert.match(bottomLine, /fabric linen; fibre linen; whole garment: weight light/)
   assert.doesNotMatch(bottomLine, /warmth|reads_as|do not pair/)
 
@@ -1642,7 +1648,10 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   // the roster names the garment "hooded sweatshirt". With the soft list out of the prompt, the
   // assertions now check what actually matters: the composer still SEES the pieces, and the
   // annotation path above still flags the occasion concern on the returned card.
-  assert.doesNotMatch(contentText, /\bhoodie\b|athletic running shoe/i, 'the soft list no longer reaches the model as text')
+  // 2026-10-06: the tagger's own impression of each garment is shown again, labelled, beside its
+  // photo, and these fixtures' impressions contain those words; the soft LIST is what must stay out.
+  const withoutTaggerImpressions = contentText.split('\n').filter(line => !/^\s*tagger impression \(not owner-verified\):/.test(line)).join('\n')
+  assert.doesNotMatch(withoutTaggerImpressions, /\bhoodie\b|athletic running shoe/i, 'the soft list no longer reaches the model as text')
   assert.match(contentText, /hooded sweatshirt/i, 'the piece itself is still on the composer roster')
 })
 
@@ -8595,7 +8604,9 @@ test('DEFAULT GARMENT EVIDENCE: the Whole Wardrobe request carries shared fact l
   const garmentLines = parts.filter(t => /^ID \d+:/.test(t))
   assert.ok(garmentLines.length > 0)
   assert.ok(garmentLines.every(line => /^ID \d+: [^;]+; (top|bottom|dress|shoes|outerwear|accessory)\b/.test(line)), 'every garment line is the shared fact line')
-  assert.ok(garmentLines.every(line => !/warmth|reads_as|do not pair|tagger/.test(line)), 'no derived warmth, tagger read or pairing caution')
+  assert.ok(garmentLines.every(line => !/warmth|reads_as|do not pair|tagger/.test(line.split('\n')[0])), 'the fact line carries no derived warmth, tagger read or pairing caution')
+  assert.ok(garmentLines.every(line => line.split('\n').slice(1).every(extra => /^\s+tagger impression \(not owner-verified\): /.test(extra))), 'a tagger impression, when present, is on its own labelled line (restored 2026-10-06)')
+  assert.ok(garmentLines.every(line => !/warmth:|do not pair/.test(line)), 'still no derived warmth or pairing caution anywhere')
   assert.equal(parts.filter(t => t.startsWith('Garment facts are recorded values only.')).length, 1, 'conventions and saved-record notes arrive once')
   assert.match(text, /Temperature: 65°F high \/ 50°F low — judge the outfit against the range, not against a number/)
   assert.doesNotMatch(text, /COOL-END LAYER|TIME-OF-DAY WEATHER|ordered for these conditions|each piece states its own/)
@@ -8911,4 +8922,17 @@ test('word-count styling notes stay off the card; the too-warm note names the te
     assert.equal(overshoot.cardMessage, 'this outfit runs warm for a high of 89°F')
     assert.match(advisoryFindingsToSystemFlags([overshoot])[0].message, /runs warm for a high of 89°F/)
   }
+})
+
+// Owner, 2026-10-06 ("tagger already should record 'reads as'"): the impression the tagger recorded
+// is shown beside the garment's photo, labelled, and an owner-edited description is not presented
+// as a tagger impression.
+test('the composer label puts the tagger impression under the fact line, and leaves an owner-edited description to the saved-record notes', async () => {
+  const { composerGarmentLabel } = await import('../routes/ai.js')
+  const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const trousers = { id: 237, name: 'Tropical pants', category: 'bottom', reads_as: 'bold tropical botanical wide-leg pants' }
+  assert.equal(composerGarmentLabel(trousers), `${sharedGarmentEvidenceLine(trousers)}\n  tagger impression (not owner-verified): bold tropical botanical wide-leg pants`)
+  const edited = { ...trousers, manual_overrides: ['reads_as'] }
+  assert.equal(composerGarmentLabel(edited), sharedGarmentEvidenceLine(edited))
+  assert.equal(composerGarmentLabel({ id: 1, name: 'tee', category: 'top' }), sharedGarmentEvidenceLine({ id: 1, name: 'tee', category: 'top' }))
 })

@@ -152,7 +152,7 @@ import {
   selectAutomaticUseCandidatesForOutfitGeneration,
 } from '../styling-engine/eligibility.js'
 import { categoryOutfitStructurePromptRule, evaluateLayerPairConstruction, evaluateLayerPairConstructionFor, evaluateWearableOutfit, isInabilityToJudgeCode, layerConstructionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, correctTuckInstruction } from '../styling-engine/outfitValidation.js'
-import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, GARMENT_FACT_CONVENTIONS, SPARSE_CATALOG_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
+import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, taggerNotesText, GARMENT_FACT_CONVENTIONS, SPARSE_CATALOG_CONVENTIONS } from '../styling-engine/garmentEvidenceLine.js'
 import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { storedGarmentRules } from '../styling-engine/ruleProvenance.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
@@ -1439,8 +1439,9 @@ export const composerCompleteFactsSuffix = piece => {
 }
 
 export const composerExperimentGarmentLine = (piece, garmentLine = 'production') => {
-  // The experiment baseline is the production garment line — the shared fact line (2026-09-15) — so a manifest run stays comparable.
-  const b0 = sharedGarmentEvidenceLine(piece)
+  // The experiment baseline is the production garment label — the shared fact line (2026-09-15) plus
+  // the labelled tagger impression restored 2026-10-06 — so a manifest run stays comparable.
+  const b0 = composerGarmentLabel(piece)
   return garmentLine === 'complete' ? `${b0}${composerCompleteFactsSuffix(piece)}` : b0
 }
 
@@ -2981,7 +2982,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: adaptiveVisualDetail })
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${maxPx}:${photoFile}`, { maxPx })
         imageSizeCounts[maxPx] = (imageSizeCounts[maxPx] || 0) + 1
-        content.push({ type: 'text', text: composerExperiment ? composerExperimentGarmentLine(p, composerExperiment.garmentLine) : sharedGarmentEvidenceLine(p) })
+        content.push({ type: 'text', text: composerExperiment ? composerExperimentGarmentLine(p, composerExperiment.garmentLine) : composerGarmentLabel(p) })
         content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
         if (composerExperiment) {
           experimentImageManifest.push({ id: Number(p.id), photoFile, photoKind: photoFile === p.worn_photo ? 'worn' : 'hanger', maxPx, detail, sentSha256: createHash('sha256').update(String(thumb.data)).digest('hex') })
@@ -2993,7 +2994,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     // Shared garment evidence: the fact-line conventions once, then saved-record notes (owner rules, rejections) for shown pieces only.
     if (shownPieces.length) {
-      content.push({ type: 'text', text: [GARMENT_FACT_CONVENTIONS, garmentNotesBlock(shownPieces)].filter(Boolean).join('\n\n') })
+      content.push({ type: 'text', text: [
+        `${GARMENT_FACT_CONVENTIONS} ${COMPOSER_TAGGER_IMPRESSION_CONVENTION}`,
+        garmentNotesBlock(shownPieces)
+      ].filter(Boolean).join('\n\n') })
     }
 
     // No cache_control on the candidate manifest (removed 2026-08-26 — docs/deferred-conversational-
@@ -5086,6 +5090,23 @@ export function takePendingClarification(sessionId = 'default') {
 
 export function clarifiedRequestText(pending = {}, answer = '') {
   return `${pending.request}\n\n(You asked me: "${pending.question}" My answer: ${String(answer || '').trim()})`
+}
+
+// What sits beside each garment photograph in the Whole Wardrobe composer: the shared fact line,
+// then the tagger's "reads as" on its own line, labelled as an unverified impression.
+// History: 2026-07-18 the owner ruled reads_as onto these lines after the composer paired athletic
+// trousers with an elevated top; 2026-09-15's evidence-parity change removed it from 82 of 83 lines
+// and recorded the removal as quality-relevant ("whether card reasons lose visual character that the
+// photo alone did not convey"). Live thread_1791328549015 paired warm-season tropical trousers with
+// an elevated black top and leather boots for a night concert; owner, 2026-10-06: "tagger already
+// should record 'reads as'". It is restored in the form that parity ruling allows — a source-labelled
+// note where the garment is individually shown, never on the fact line (taggerNotesText omits a
+// description the owner edited; that travels in the saved-record notes).
+export const COMPOSER_TAGGER_IMPRESSION_CONVENTION = 'A line under a garment beginning `tagger impression (not owner-verified)` is the tagger\'s own read of what the garment is and how it comes across; it is not a recorded fact, so check it against the photograph.'
+
+export function composerGarmentLabel(piece = {}) {
+  const impression = taggerNotesText(piece)
+  return impression ? `${sharedGarmentEvidenceLine(piece)}\n  ${impression}` : sharedGarmentEvidenceLine(piece)
 }
 
 function getHomeLocation() {
