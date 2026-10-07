@@ -1026,6 +1026,16 @@ test('the trip roster user text states where the traveller lives and how far the
   assert.match(tripRosterSelectionSystemPrompt(), /When TRIP CONTEXT says where the traveller lives and how far away the destination is, judge the journey from that/)
 })
 
+// Owner, 2026-10-07: "the stylist should also have a good idea of the destination and suggest
+// styling appropriate for it." The model's own knowledge of the place is invited, never supplied
+// by code, and never guessed.
+test('the trip packer and composer are asked to use what they know of the destination, without guessing', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /Picture the place as well\. Use what you know of this destination/)
+  assert.match(brief, /Use only what you actually know of this specific place; when you do not know it, pack from the use cases and the weather and do not guess/)
+  assert.match(tripPlanCompositionSystemPrompt(), /The destination is a real place: where you know it/)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],
