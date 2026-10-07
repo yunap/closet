@@ -9279,3 +9279,13 @@ test('a museum visit away from home is a day on foot; near home it may be one ve
   assert.match(prompts, /In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city/)
   assert.match(prompts, /when they do not, do not assume the walking/)
 })
+
+// Live thread_1791415285620: after plan_outfit_set accepted six trip cards, Gemini returned a turn
+// with no text and no tool call, and the user saw "Something went wrong." beside a finished plan.
+test('an empty model turn is retried once and never ends the turn with a blank answer', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(src, /if \(turn\.noMessage\) \{\s*if \(!retriedChecks\.has\('providerEmptyTurn'\)\)/)
+  assert.match(src, /Your last turn came back empty: no reply and no tool call/)
+  assert.doesNotMatch(src, /if \(turn\.noMessage\) return \{ answer: '', savedCorrections \}/)
+})

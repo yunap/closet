@@ -2163,7 +2163,25 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
     }
 
-    if (turn.noMessage) return { answer: '', savedCorrections }
+    // A turn with no text and no tool call (live thread_1791415285620: Gemini spent 574 output
+    // tokens thinking and returned nothing after plan_outfit_set had accepted six cards, so the
+    // user saw "Something went wrong." beside a finished trip plan). Ask once more, as for a
+    // truncated turn; if it is empty again, say what was delivered instead of a blank answer.
+    if (turn.noMessage) {
+      if (!retriedChecks.has('providerEmptyTurn')) {
+        retriedChecks.add('providerEmptyTurn')
+        bumpFreeformDiagnostic(toolContext, 'providerEmptyIterations')
+        toolContext._pendingFreeformRetryReason = 'providerEmptyTurn'
+        currentMessages.push({
+          role: 'user',
+          content: 'Your last turn came back empty: no reply and no tool call. Continue from where you were and give your reply now.'
+        })
+        continue
+      }
+      bumpFreeformDiagnostic(toolContext, 'providerEmptyIterationsUnrecovered')
+      const delivered = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
+      return { answer: delivered ? freeformToolLoopFallbackAnswer(toolContext) : 'I did not manage to write a reply that time. Please ask again.', savedCorrections }
+    }
 
     if (turn.hasToolCalls) {
       recordFreeformToolIteration(toolContext, turn.toolCalls.map(tc => tc.name))
