@@ -1484,7 +1484,7 @@ export const STYLIST_TOOLS = [
         label: { type: "string", description: "Creative outfit title." },
         occasion_context: { type: "string", description: "The occasion / vibe / style lane this outfit is for." },
         why_it_works: { type: "string", description: "Brief styling rationale — the concept, not the mechanics." },
-        stylist_note: { type: "string", description: "Only when your instructions ask for a Stylist Note with this proposal: the note itself, written to the wearer as plain prose. It is shown as your chat reply above the card. Omit otherwise." },
+        stylist_note: { type: "string", description: "Your reply to the wearer for this outfit, as plain prose in your own voice; it is shown as the chat reply above the card. When your instructions describe a Stylist Note, this is it. On a follow-up, answer the wearer's latest message only — what you changed or chose and why — and leave earlier questions that were already answered alone. Do not list the garments; the card shows them." },
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
@@ -2719,8 +2719,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
             console.warn('packing roster coverage re-check failed:', err.message)
           }
         }
+        // The rejected first attempt is recorded on the card's `engineNote` (debug) and no longer
+        // shown as a card note (owner, 2026-10-06): "validated_recovery: Approved after a
+        // substitution…" described a card the wearer never saw, in developer wording.
         const finalAnnotations = [
-          ...(supersededEngineNote ? [{ type: 'validated_recovery', message: supersededEngineNote }] : []),
           ...(advisoryNotes || [])
         ]
         const cardAnnotations = finalAnnotations.map(({ cardMessage, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
@@ -2792,6 +2794,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
               ...existingOutfits.filter(outfit => outfit !== supersededBroken),
               nextOutfit
             ]
+        // A one-card follow-up ends the same way (live thread_1791353402050): her note with the
+        // proposal was a good short reply, and the extra closing call that followed it re-answered
+        // every earlier question in the thread ("To answer your questions: …") and re-listed the
+        // outfit. Only when she wrote a note, on a follow-up, for a turn that is not building several
+        // cards or a plan; otherwise the closing call stands.
+        const followupNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
+        const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
+        if (!isSingleOutfit && followupNote && toolContext.turnMode && toolContext.turnMode !== 'new_request'
+          && declaredCount <= 1 && !toolContext.pendingPlan) {
+          toolContext.followupProposalCompleted = true
+          toolContext.followupStylistNote = followupNote
+        }
         if (isSingleOutfit) {
           toolContext.singleOutfitProposalCompleted = true
           // The single-outfit loop ends on an accepted card, so the note has to arrive WITH the

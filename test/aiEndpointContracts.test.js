@@ -8981,3 +8981,35 @@ test('a follow-up states the thread\'s stored forecast, not a weather word found
   assert.match(system, /Established weather context for this turn: a forecast high of 78°F and low of 62°F\./)
   assert.doesNotMatch(system, /Established weather context for this turn: hot weather/)
 })
+
+// thread_1791353402050: on a follow-up, the note she wrote with the outfit was a good short reply,
+// and the closing call after it re-answered every earlier question. A one-card follow-up now ends
+// with that note; a fresh request, a multi-card turn, or a proposal with no note is unchanged.
+test('a one-card follow-up proposal with a stylist note ends the turn with that note', async () => {
+  const proposal = extra => ({
+    label: 'More interesting', occasion: 'city',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
+    why_it_works: 'a sharper mix', ...extra,
+  })
+  const contextFor = extra => ({ occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' }, retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]), generatedOutfits: [], ...extra })
+
+  const followup = contextFor({ turnMode: 'followup' })
+  assert.equal((await executeTool('propose_outfit', proposal({ stylist_note: 'Here is a bolder direction for Friday.' }), followup)).status, 'success')
+  assert.equal(followup.followupProposalCompleted, true)
+  assert.equal(followup.followupStylistNote, 'Here is a bolder direction for Friday.')
+
+  const noNote = contextFor({ turnMode: 'followup' })
+  await executeTool('propose_outfit', proposal({}), noNote)
+  assert.notEqual(noNote.followupProposalCompleted, true, 'no note: the closing reply still happens')
+
+  const fresh = contextFor({ turnMode: 'new_request' })
+  await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), fresh)
+  assert.notEqual(fresh.followupProposalCompleted, true)
+
+  const several = contextFor({ turnMode: 'followup', declaredIntent: { want: 'cards', outfitCount: 3 } })
+  await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), several)
+  assert.notEqual(several.followupProposalCompleted, true, 'a multi-card turn is not cut short after the first card')
+
+  const card = followup.generatedOutfits.find(outfit => !outfit.broken)
+  assert.ok(!(card.systemFlags || []).some(flag => flag.type === 'validated_recovery'))
+})

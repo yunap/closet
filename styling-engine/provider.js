@@ -2162,6 +2162,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }
       }
+      if (toolContext.followupProposalCompleted && toolContext.followupStylistNote) {
+        return { answer: toolContext.followupStylistNote, savedCorrections }
+      }
       if (toolContext.executionProfile === 'single_outfit' && toolContext.singleOutfitProposalCompleted) {
         const outfit = Array.isArray(toolContext.generatedOutfits)
           ? toolContext.generatedOutfits.find(o => !o?.broken)
