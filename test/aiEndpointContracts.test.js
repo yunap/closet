@@ -9254,3 +9254,11 @@ test('a follow-up reuses the thread\'s forecast: one shared context as is, the w
   assert.equal(trip.location, 'Vienna, Virginia')
   assert.equal(threadWeatherContextFromOutfitSet([ctx('Vienna, Virginia', 79, 41), ctx('Seattle', 60, 50)]), null)
 })
+
+// Owner, 2026-10-07: starting a new chat from /stylist/<old id> left the old id in the address,
+// and the first save (which only rewrites a bare /stylist) never replaced it.
+test('starting a new chat clears the previous thread id from the address', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+  assert.match(src, /localStorage\.setItem\('stylist_current_thread_id', 'new_chat'\)\s*\} catch \{\}[\s\S]{0,400}if \(location\.pathname !== '\/stylist'\) navigate\('\/stylist'\)/)
+})
