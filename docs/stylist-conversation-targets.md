@@ -29,7 +29,7 @@ Every check can be applied by reading the reply. None needs a model call.
 | 2 | **Makes one recommendation.** | One outfit is named as the pick. Others are alternatives, each labelled with when to choose it. |
 | 3 | **Reasons belong to this occasion.** | Swap test: move the sentence under a different outfit or a different occasion. If it still reads fine, it fails. |
 | 4 | **Honest about tradeoffs.** | A concern is stated as a concern. The stylist does not pick something its own note warns against. |
-| 5 | **No engine language.** | No piece IDs, slots, missions, gates, validation, "bounded pass", bracketed system lines, or role lists. |
+| 5 | **No engine language.** | No slots, missions, gates, validation, "bounded pass", bracketed system lines, or role lists. Piece IDs in text are fine (owner, 2026-10-06: "I do not mind piece IDs in the text!"). |
 | 6 | **Says each thing once.** | The cards show the garments. The prose does not list them again. |
 | 7 | **A follow-up changes what was asked.** | The correction is taken plainly, the reply says what changed, and nothing else changes without a reason. A miss is admitted, not defended. |
 | 8 | **A trip can be packed and worn from it.** | Every activity has an outfit, each packed piece has a job, re-wear is stated, and the day's temperature swing has an answer. |
