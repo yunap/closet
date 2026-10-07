@@ -9289,3 +9289,13 @@ test('an empty model turn is retried once and never ends the turn with a blank a
   assert.match(src, /Your last turn came back empty: no reply and no tool call/)
   assert.doesNotMatch(src, /if \(turn\.noMessage\) return \{ answer: '', savedCorrections \}/)
 })
+
+// Live thread_1791416150174: the trip stylist turned "carry-on" into constraints.piece_budget: 10,
+// a hard limit nobody stated, and the second dinner look was rejected ("would exceed the 10-piece
+// budget").
+test('a piece budget is set only from a number the user states, never from how they pack', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it/)
+  assert.match(tools, /'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out/)
+})

@@ -1040,6 +1040,16 @@ test('the trip packer and composer are asked to use what they know of the destin
   assert.match(tripPlanCompositionSystemPrompt(), /The destination is a real place: where you know it/)
 })
 
+// Live thread_1791416150174: the packer mistyped the hiking boots' ID (6865 for 996865); the repair
+// "fixed" it by trading the dinner boots away for the hiking boots, because the repair text spoke of
+// what to "drop to make room". There is no fixed count, so nothing has to be dropped.
+test('the trip roster repair text does not ask for a piece to be dropped, and treats an unknown ID as a typo', () => {
+  const repair = tripRosterRepairText({ failures: [{ message: 'pieces 6865 are not in the supplied candidate list; choose only from it' }], previousRosterIds: [1, 2] })
+  assert.match(repair, /Nothing has to be dropped to fix a problem: there is no fixed count/)
+  assert.match(repair, /usually a mistyped one — correct it to the piece you meant; do not trade a different piece away for it/)
+  assert.doesNotMatch(repair, /Whatever you drop to make room/)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],

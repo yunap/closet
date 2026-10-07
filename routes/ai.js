@@ -5769,7 +5769,7 @@ export function tripRosterRepairText({ failures = [], previousRosterIds = [] } =
 Fix exactly these problems, keeping the rest of your selection:
 ${(failures || []).map(entry => `- ${entry.message}`).join('\n')}
 
-The replacements you bring in are held to the same standard as the original picks: cover the use case(s) that need it, prefer a piece that also works for other use cases already in the roster, and give it a distinct job. Whatever you drop to make room should be the piece doing the least work across the trip, not simply the easiest one to remove.`
+The replacements you bring in are held to the same standard as the original picks: cover the use case(s) that need it, prefer a piece that also works for other use cases already in the roster, and give it a distinct job. Nothing has to be dropped to fix a problem: there is no fixed count, so add what is missing and keep the rest. An ID that is not in the candidate list is usually a mistyped one — correct it to the piece you meant; do not trade a different piece away for it. Drop a piece only when a stated problem is about that piece, or when the fix makes it redundant; then it should be the piece doing the least work across the trip, not simply the easiest one to remove.`
 }
 
 // thread_1789598100140 (owner ruling 2026-09-16): the roster-selection catalog previously used
