@@ -334,6 +334,9 @@ export function stripPieceIdCitations(answerText = '', { knownPieceIds = null } 
     // Tidy what removal leaves behind, without touching line structure.
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([,.;:!?])/g, '$1')
+    // "(`grey textured fleece`, ID 996762)" became "(`grey textured fleece`,)" (live
+    // thread_1791360769989): a separator stranded just inside a closing bracket goes with the citation.
+    .replace(/[ \t]*[,;:][ \t]*([)\]])/g, '$1')
     .replace(/\(\s*\)|\[\s*\]/g, '')
     // Removing a mid-sentence citation leaves its separators behind: "the loafers, ID 196, work"
     // became "the loafers,, work". The bracketed form the prompt actually mandates never hits this,

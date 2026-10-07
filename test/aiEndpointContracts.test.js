@@ -9165,3 +9165,11 @@ test('advice about pieces already in the thread\'s plan is neither an unverified
   const unknown = applyFreeformOutputChecks(advice, contextFor([]), new Set(), { record: false })
   assert.equal(unknown.block, true, 'pieces the thread has not established are still checked')
 })
+
+// thread_1791360769989: "(`grey textured fleece`, ID 996762)" was shown as "(`grey textured fleece`,)".
+test('removing a citation does not strand its separator inside the bracket', async () => {
+  const { stripPieceIdCitations } = await import('../styling-engine/provider.js')
+  assert.equal(stripPieceIdCitations('Keep the fleece (`grey textured fleece`, ID 996762) for the trails.'), 'Keep the fleece (`grey textured fleece`) for the trails.')
+  assert.equal(stripPieceIdCitations('The loafers (ID 196) work.'), 'The loafers work.')
+  assert.equal(stripPieceIdCitations('Two coats (fleece, puffer) is plenty.'), 'Two coats (fleece, puffer) is plenty.')
+})
