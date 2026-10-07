@@ -382,6 +382,11 @@ This supersedes the earlier "one unified collection ordered by recency" arrangem
 answer different questions, so the reader benefits from the split even though creation path is not
 otherwise a user-facing concept.
 
+**[by design, 2026-10-07] Runs cold / runs warm is a line in Body & comfort.** The onboarding
+comfort step asks "Do you run cold or warm?" (about what the forecast says · I run cold · I run
+warm) and writes one prose line into the `body_contract` layer; the neutral answer writes nothing.
+There is no separate field: it is read, edited and versioned like any other foundation line.
+
 **[by design, 2026-08-12] The foundation reads as notes, not fields.** Collapsed, the card shows
 seven labelled tiles. **Review foundation** expands it into one row per layer, and:
 

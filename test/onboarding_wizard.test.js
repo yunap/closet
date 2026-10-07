@@ -30,6 +30,17 @@ test('every constitution step previews editable text before saving', () => {
   }
 })
 
+// Owner, 2026-10-07: whether the wearer runs cold or warm belongs in the Body & comfort foundation,
+// as a fact the stylist weighs for layers. 'About what the forecast says' writes nothing.
+test('the comfort step asks whether the wearer runs cold or warm and writes it into Body & comfort', () => {
+  const src = read('src/views/Onboarding.jsx')
+  assert.match(src, /Do you run cold or warm\?/)
+  assert.match(src, /cold: '- Runs cold: usually feels colder than the temperature suggests/)
+  assert.match(src, /warm: '- Runs warm: usually feels warmer than the temperature suggests/)
+  assert.match(src, /if \(THERMAL_LINES\[thermal\]\) lines\.push\(THERMAL_LINES\[thermal\]\)/)
+  assert.doesNotMatch(src, /neutral: '-/, 'the neutral answer adds no line')
+})
+
 test('app shell wires the wizard: routes, first-run redirect, settings nav', () => {
   const src = read('src/App.jsx')
   assert.match(src, /path="\/onboarding" element=\{<Onboarding \/>\}/)

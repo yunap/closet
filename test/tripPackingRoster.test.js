@@ -997,6 +997,16 @@ test('the trip roster system prompt states what travels well as things to weigh,
   assert.doesNotMatch(brief, /(never|do not|don't|avoid) pack(ing)? (linen|silk|white)/i)
 })
 
+// Owner, 2026-10-07: "I like to keep my trips flexible... if you are actually doing some traveling,
+// not just a trip like a wedding or a work trip, you need to keep your options open." The packer is
+// told the use cases are not a day-by-day schedule; no per-day activity plan is invented for it.
+test('the trip roster system prompt says the use cases are not a schedule and open-ended travel keeps options open', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /THE USE CASES ARE NOT A SCHEDULE/)
+  assert.match(brief, /A trip built around fixed events \(a wedding, work days, a booked dinner\) is dressed for those events/)
+  assert.match(brief, /pack so the traveller can decide on the day/)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],
