@@ -95,6 +95,11 @@ test('normalize styling intent defaults and preserves valid values', () => {
   assert.equal(normalizeOccasion('gallery / art event'), 'gallery / art event')
   assert.equal(normalizeOccasion('Evening'), 'evening')
   assert.equal(normalizeOccasion('dinner'), 'evening')
+  // thread_1791411318500: the engine's own profile ids must not fall through to 'casual'.
+  assert.equal(normalizeOccasion('city_smart_casual'), 'city')
+  assert.equal(normalizeOccasion('evening_social'), 'evening')
+  assert.equal(normalizeOccasion('home_loungewear'), 'casual')
+  assert.equal(normalizeOccasion('smart-casual'), 'smart casual')
   assert.equal(normalizeOccasion('wine bar'), 'evening')
   assert.equal(normalizeOccasion('wedding'), 'evening')
   assert.equal(normalizeOccasion('brunch'), 'city')

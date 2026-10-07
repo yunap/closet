@@ -990,6 +990,9 @@ test('the trip roster system prompt states what travels well as things to weigh,
   assert.match(brief, /WHAT TRAVELS WELL\. A suitcase is not a wardrobe/)
   assert.match(brief, /How it comes out of the bag/)
   assert.match(brief, /The room it takes/)
+  // thread_1791411318500: a carry-on packed three outer layers and four pairs of shoes with two tees
+  // carrying four of the six day looks.
+  assert.match(brief, /Shoes and outer layers are the bulkiest things in a bag; tops are the smallest/)
   assert.match(brief, /How it behaves through a long day/)
   assert.match(brief, /How much of the suitcase it works with/)
   assert.match(brief, /Wearing it again/)
