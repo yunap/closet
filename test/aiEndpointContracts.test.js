@@ -9262,3 +9262,20 @@ test('starting a new chat clears the previous thread id from the address', async
   const src = readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
   assert.match(src, /localStorage\.setItem\('stylist_current_thread_id', 'new_chat'\)\s*\} catch \{\}[\s\S]{0,400}if \(location\.pathname !== '\/stylist'\) navigate\('\/stylist'\)/)
 })
+
+// Owner, 2026-10-07: "I'd expect 'I am going to a museum in Paris' to mean that I am walking around
+// the city, then walking into the museum", and "it might be different from 'I am going to SFMOMA' —
+// I am home, so it can be a destination I am driving to." thread_1791411318500 planned Museum Days
+// as an indoor slot because the tool description listed galleries as indoor. Facts for the model's
+// judgment only: the walking footwear gate still needs walking the user stated (stylingIntent.js).
+test('a museum visit away from home is a day on foot; near home it may be one venue', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  const prompts = readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
+  assert.match(tools, /Use 'indoor' only when the wearer is inside from arrival to leaving/)
+  assert.match(tools, /Visiting museums, galleries, shops or sights while away on a trip is a day on foot in that place/)
+  assert.doesNotMatch(tools, /climate-controlled slots \(offices, restaurants, galleries\)/)
+  assert.match(prompts, /Near home, a museum, gallery, show or restaurant can be the whole outing/)
+  assert.match(prompts, /In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city/)
+  assert.match(prompts, /when they do not, do not assume the walking/)
+})
