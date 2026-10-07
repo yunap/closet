@@ -4476,12 +4476,25 @@ export async function buildStylistConversationPayload(body) {
         ? `a forecast high of ${Math.round(restoredHigh)}°F and low of ${Math.round(restoredLow)}°F`
         : `a temperature around ${Math.round(restoredHigh)}°F`)
     : ''
+  // A trip thread stores no single profile: each card carries its own window of one forecast. Live
+  // thread_1791416150174 (49–83°F week): with no profile to read, the word match on card prose won
+  // again and every follow-up was told "Established weather context for this turn: hot weather".
+  // The label is the widest range the cards themselves record.
+  const cardRanges = !explicitTurnWeather && !restoredRangeText && requestedConversationMode !== 'new_request'
+    ? (Array.isArray(restoredState.current_outfit_set) ? restoredState.current_outfit_set : [])
+        .map(outfit => outfit?.resolved_weather_context)
+        .filter(context => context?.status === 'resolved' && Number.isFinite(Number(context?.temperature?.high_f)) && Number.isFinite(Number(context?.temperature?.low_f)))
+    : []
+  const cardRangeText = cardRanges.length
+    ? `a forecast across the planned days from a low of ${Math.round(Math.min(...cardRanges.map(context => Number(context.temperature.low_f))))}°F to a high of ${Math.round(Math.max(...cardRanges.map(context => Number(context.temperature.high_f))))}°F`
+    : ''
   // Words the user stated earlier ("hot, highs 85F") are stored as written and still lead. A stored
   // label with no number in it ("hot weather") is the vague kind this replaces.
   const storedStatedWeather = /\d/.test(String(restoredEstablished.weather || '')) ? restoredEstablished.weather : ''
   const extractedWeather = explicitTurnWeather
     || storedStatedWeather
     || restoredRangeText
+    || cardRangeText
     || contextualTurnWeather
     || restoredEstablished.weather
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
@@ -4931,6 +4944,11 @@ export async function buildStylistConversationPayload(body) {
       ? 'This turn asks about a FACT of the plan already generated (its assumed weather, budget, date range, or location), not for a revision. No tool that produces new outfits is available this turn on purpose. Answer from THREAD STATE\'s current_outfit_set — each card carries its own weather_used and resolved_weather_context — and from the plan details already shown above. If a specific number was never resolved (e.g. weatherSource was a heuristic guess with no high_f/low_f), say so plainly instead of inventing one.'
       : '',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
+    // Live thread_1791416150174: after a trip plan, "I'll do some sightseeing in Alexandria first,
+    // then check out the fall foliage in the surrounding parks" got the plan described again by
+    // activity ("switch over to…"), then "swap your shoes and pull the tee over your top in the car",
+    // then a retraction. Three turns, and never an outfit for a day that does both.
+    'When the user tells you more about their plans after outfits or a plan are on screen, that is new information about what they will need to wear, not a request to hear the plan again. Work out what it changes before you answer: activities that now share one day need one outfit that works for all of them, from the first stop to the last, without going back to change; a new place or event may need a look the plan does not have. Say what changes and show it — revise the look that is closest (suggest_slot_swaps) or propose the one that is missing, from the packed pieces first. If you cannot tell what they mean (the same day, or different days?), ask that one question. Do not describe again what is already on the cards. If a suggestion of yours turns out not to work for how their day will actually go, say so plainly and give the one that does; never rescue it with an impractical workaround.',
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
     '',

@@ -9299,3 +9299,30 @@ test('a piece budget is set only from a number the user states, never from how t
   assert.match(tools, /Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it/)
   assert.match(tools, /'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out/)
 })
+
+// Live thread_1791416150174 (a 49–83°F week): a trip thread stores no single forecast profile, so
+// the follow-up label fell back to a word match and read "hot weather". The cards' own stored
+// ranges now supply it. Same turn: new information about the plans must change the answer.
+test('a trip follow-up states the range the cards record, and is told what new plans mean', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-weather-label'
+  const context = (high_f, low_f) => ({ status: 'resolved', location: 'Vienna, Virginia', temperature: { high_f, low_f } })
+  saveStylistConversationState({
+    established: { occasion: 'travel', weather: 'hot weather', season: 'current season' },
+    current_outfit_set: [
+      { index: 1, label: 'Sightseeing', reason: 'conditions range from mild to warm', piece_ids: [seeded.top], pieces: ['seeded top'], resolved_weather_context: context(82.9, 48.6) },
+      { index: 2, label: 'Dinners', reason: 'a warm evening', piece_ids: [seeded.top], pieces: ['seeded top'], resolved_weather_context: context(78.4, 55.7) },
+    ],
+  }, sessionId)
+  const payload = await buildStylistConversationPayload({ question: 'I think I will do some sightseeing first, then the parks.', sessionId, conversationMode: 'followup', history: [] })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /Established weather context for this turn: a forecast across the planned days from a low of 49°F to a high of 83°F\./)
+  assert.doesNotMatch(system, /Established weather context for this turn: hot weather/)
+  assert.match(system, /that is new information about what they will need to wear, not a request to hear the plan again/)
+  assert.match(system, /activities that now share one day need one outfit that works for all of them/)
+  assert.match(system, /never rescue it with an impractical workaround/)
+  const { readFileSync } = await import('node:fs')
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /is not a card explanation: the answer may need a different outfit, so choose full_stylist/)
+})
