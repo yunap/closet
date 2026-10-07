@@ -9229,3 +9229,28 @@ test('the packing approach: asked for a trip when unknown, carried to the packer
   assert.equal(toolContext.tripPackingApproach, '', 'a usual approach on record is not applied to this trip')
   db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
 })
+
+// thread_1791362754936 (2026-10-07).
+test('the proactive-alternative rule answers first and revises the existing look; an answer to a clarifying question keeps its fresh route', async () => {
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const system = buildPrompts({}).STYLIST_SYSTEM
+  assert.doesNotMatch(system, /you MUST immediately call the 'search_wardrobe' tool/)
+  assert.match(system, /first answer what was raised, in a sentence or two/)
+  assert.match(system, /when the garment is in an existing card or plan, use 'suggest_slot_swaps' for that slot/)
+  assert.match(system, /instead of asking if \S+ would like recommendations/, 'the rule keeps its purpose: offer replacements, do not ask whether she wants them')
+  const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /Boolean\(pendingClarification\) && executionContextEvidence\.every\(kind => kind === 'history'\)/)
+  assert.match(routeSrc, /normalizedWeatherLocationIdentity \} from '\.\.\/styling-engine\/weather\.js'/)
+})
+
+test('a follow-up reuses the thread\'s forecast: one shared context as is, the widest window of a trip, nothing across places', async () => {
+  const { threadWeatherContextFromOutfitSet } = await import('../routes/ai.js')
+  const ctx = (location, high_f, low_f, start = '2026-10-12', end = '2026-10-16') => ({ resolved_weather_context: { status: 'resolved', location, date_range: { start, end }, temperature: { high_f, low_f, source: 'live' } } })
+  assert.equal(threadWeatherContextFromOutfitSet([]), null)
+  assert.equal(threadWeatherContextFromOutfitSet([{ label: 'no weather' }]), null)
+  assert.equal(threadWeatherContextFromOutfitSet([ctx('Walnut Creek', 78, 62)]).temperature.highF, 78)
+  const trip = threadWeatherContextFromOutfitSet([ctx('Vienna, Virginia', 79, 46), ctx('Vienna, Virginia', 79, 41), { label: 'card without weather' }])
+  assert.equal(trip.temperature.lowF, 41, 'the widest window of the same place')
+  assert.equal(trip.location, 'Vienna, Virginia')
+  assert.equal(threadWeatherContextFromOutfitSet([ctx('Vienna, Virginia', 79, 41), ctx('Seattle', 60, 50)]), null)
+})

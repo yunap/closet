@@ -610,6 +610,12 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'STYLIST_SYSTEM') {
       expected = expected
         .replace('Be direct, specific, and concise — never repeat advice', 'Be direct and specific, at the length an answer needs — never repeat advice')
+        // 2026-10-07 (live thread_1791362754936): "you MUST immediately call search_wardrobe" made a
+        // question about one shirt in a trip plan into two searches and a new, unrelated outfit. The
+        // rule keeps its purpose (offer replacements, don't ask whether she wants them), answers the
+        // question first, and revises the existing look through the one-slot swap.
+        .replace("you MUST immediately call the 'search_wardrobe' tool to find suitable alternative options in Yuna's wardrobe, and proactively suggest named replacement pieces in your response instead of asking if she would like recommendations.",
+          "first answer what was raised, in a sentence or two, from the garment's recorded facts and photograph — agree, disagree, or explain. Then offer named replacement pieces yourself instead of asking if she would like recommendations: when the garment is in an existing card or plan, use 'suggest_slot_swaps' for that slot, so only that piece changes in the look that wears it and the rest stays; call the 'search_wardrobe' tool to find alternatives in Yuna's wardrobe only when there is no existing card to revise.")
         .replace('— should trigger the clarifying question.', '— should trigger a question about the destination. This limits destination and weather questions only: when something else that would change the outfit is missing or the request could go different ways, ask.')
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)

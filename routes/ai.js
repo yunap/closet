@@ -71,7 +71,7 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader, normalizedWeatherLocationIdentity } from '../styling-engine/weather.js'
 import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
@@ -5136,6 +5136,21 @@ export function composerGarmentLabel(piece = {}) {
   return impression ? `${sharedGarmentEvidenceLine(piece)}\n  ${impression}` : sharedGarmentEvidenceLine(piece)
 }
 
+// The forecast a thread's current cards were built for, for a follow-up to reuse. One shared context
+// is taken as is. A trip's cards carry different windows of one place's forecast (whole days,
+// evenings); a follow-up about the trip takes the widest of them, so a question about one packed
+// shirt is not answered against today's weather at home (live thread_1791362754936: 96°F). Cards for
+// different places share nothing and return null.
+export function threadWeatherContextFromOutfitSet(currentOutfitSet = []) {
+  const stored = (Array.isArray(currentOutfitSet) ? currentOutfitSet : [])
+    .map(outfit => outfit?.resolved_weather_context)
+    .filter(context => context?.status === 'resolved' && context?.location)
+  if (!stored.length) return null
+  if (new Set(stored.map(context => normalizedWeatherLocationIdentity(context.location))).size !== 1) return null
+  const span = context => (Number(context?.temperature?.high_f) || 0) - (Number(context?.temperature?.low_f) || 0)
+  return restoreResolvedWeatherContext([...stored].sort((a, b) => span(b) - span(a))[0])
+}
+
 function getHomeLocation() {
   try {
     const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
@@ -6864,7 +6879,11 @@ router.post('/ask', async (req, res) => {
     // tone label for full-stylist conversation behavior, but do not let prose classification own
     // whether a context-free request may reach a bounded execution profile.
     const executionContextEvidence = freeformExecutionContextEvidence(req.body, compactState, recentlyDiscussedPieceIds)
+    // An answer to the stylist's own clarifying question continues the fresh request it interrupted:
+    // the only "context" is that one exchange. Live thread_1791362754936: the router chose trip_plan
+    // for the answer turn and the lean path was skipped because the thread now had history.
     const freshExecutionRequest = executionContextEvidence.length === 0
+      || (Boolean(pendingClarification) && executionContextEvidence.every(kind => kind === 'history'))
     const boundedRouterEligible = freshExecutionRequest
       && !req.body.activeContext
       && !(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)
@@ -7293,9 +7312,7 @@ router.post('/ask', async (req, res) => {
     // that names the same place (and no other date) reuse that forecast instead of fetching today's
     // (live thread_1791352199157). Only when every current card shares one context.
     if (!toolContext.resolvedWeatherContext) {
-      const storedContexts = toolContext.currentOutfitSet.map(outfit => outfit?.resolved_weather_context).filter(context => context?.status === 'resolved' && context?.location)
-      const distinct = new Set(storedContexts.map(context => `${context.location}|${context.date_range?.start || ''}|${context.date_range?.end || ''}`))
-      if (storedContexts.length && distinct.size === 1) toolContext.resolvedWeatherContext = restoreResolvedWeatherContext(storedContexts[0])
+      toolContext.resolvedWeatherContext = threadWeatherContextFromOutfitSet(toolContext.currentOutfitSet) || toolContext.resolvedWeatherContext
     }
     // The active trip packing roster (docs/README.md: trip roster architecture) — read the same
     // way currentOutfitSet is, so search_wardrobe/propose_outfit see this turn's roster regardless
