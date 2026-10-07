@@ -264,8 +264,17 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // the normal state of an ordinary prose answer, and the old clause would have fired on exactly
   // the conversational turns this change makes cheap -- spending a retry to save a round-trip.
   // Prose that actually describes an unproposed outfit is still caught, by inspecting the prose.
+  // Advice about pieces the thread already holds is not an unproposed outfit. Live
+  // thread_1791360025316: her answer to "I don't want to take 3 coats, what are my options?" was a
+  // numbered list naming the suitcase's own three coats; the numbered-list-with-ids shape tripped
+  // this check, she was told to "call propose_outfit now", and the advice was replaced by one new
+  // outfit card. When every piece the prose cites is already in the thread's cards or suitcase,
+  // there is nothing unproposed in it.
+  const establishedIds = new Set((Array.isArray(toolContext?.knownOutfitPieceIds) ? toolContext.knownOutfitPieceIds : []).map(Number))
+  const citedInAnswer = extractPieceIdsFromProse(answerText)
+  const discussesEstablishedPieces = citedInAnswer.length > 0 && citedInAnswer.every(id => establishedIds.has(Number(id)))
   if (!boundedCompositionCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
-      looksLikeUnproposedOutfitProse(answerText)) {
+      !discussesEstablishedPieces && looksLikeUnproposedOutfitProse(answerText)) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
       ? ` You already referenced these exact piece IDs: ${priorIds.join(', ')} — reuse exactly these IDs and roles, do not substitute or invent different pieces.`

@@ -9148,3 +9148,20 @@ test('a fresh trip request is routed to trip_plan and gets the stylist prompt wi
   assert.match(routeSrc, /allowedToolNames = \['declare_intent', 'plan_outfit_set', 'store_user_correction'\]/)
   assert.match(routeSrc, /freshExecutionRequest && compactProfile === 'trip_plan'/, 'only a fresh request; follow-ups on a plan keep the full stylist')
 })
+
+// thread_1791360025316: "I don't want to take 3 coats, what are my options?" — her advice about the
+// suitcase's own coats was rejected twice (unverified citation, then "call propose_outfit now") and
+// replaced by one new outfit card.
+test('advice about pieces already in the thread\'s plan is neither an unverified citation nor an unproposed outfit', async () => {
+  const { applyFreeformOutputChecks } = await import('../styling-engine/provider.js')
+  const advice = [
+    'Three coats is a lot for a week. You can do it with two:',
+    '1. Keep the grey textured fleece (ID 996762) for the trails and the mornings.',
+    '2. Take either the cream trench (ID 996759) or the black wool coat (ID 996867) for the city and dinner.',
+  ].join('\n')
+  const contextFor = knownOutfitPieceIds => ({ question: "I don't want to take 3 coats, what are my options?", turnMode: 'followup', generatedOutfits: [], knownOutfitPieceIds, retrievedPieceIds: new Set(), freeformDiagnostics: { searchCalls: 0, proposeCalls: 0 } })
+  const established = applyFreeformOutputChecks(advice, contextFor([996762, 996759, 996867]), new Set(), { record: false })
+  assert.equal(established.block, false, JSON.stringify(established))
+  const unknown = applyFreeformOutputChecks(advice, contextFor([]), new Set(), { record: false })
+  assert.equal(unknown.block, true, 'pieces the thread has not established are still checked')
+})

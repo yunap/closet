@@ -7271,6 +7271,12 @@ router.post('/ask', async (req, res) => {
       [
         ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),
         ...(payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []),
+        // A card's assigned packed layer and the accepted suitcase are part of what the thread has
+        // already established. Live thread_1791360025316: asked "I don't want to take 3 coats, what
+        // are my options?", she answered about the trench — the assigned layer on the plan's own
+        // museum card — and was told it was "cited without verifying".
+        ...(payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.assigned_layer_piece_ids) ? outfit.assigned_layer_piece_ids : []),
+        ...(payload.threadState?.packing_roster?.roster_ids || []),
       ]
         .map(Number).filter(Boolean)
     )]
