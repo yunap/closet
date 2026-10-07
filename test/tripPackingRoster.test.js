@@ -979,6 +979,24 @@ test('the trip roster system prompt asks the model to judge layering/outerwear s
   assert.doesNotMatch(brief, /cardigans? (is|are) not (enough|sufficient|adequate)/i, 'must not single out cardigans as inherently inadequate — the judgment is contextual, not garment-kind-based')
 })
 
+// thread_1791362754936 (owner, 2026-10-07): the packer chose an oversized, tunic-length linen-blend
+// shirt with extra-long sleeves for a carry-on week, reasoning from its name ("polished white
+// button-down"). It had the facts; the brief said nothing about what makes a piece good to travel
+// with. The section states what a traveller weighs, as considerations read from recorded facts --
+// never a ban on a fabric or a garment kind (dont-overgeneralize ruling).
+test('the trip roster system prompt states what travels well as things to weigh, not as bans', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /^You are a personal stylist packing a suitcase for a client you know well/)
+  assert.match(brief, /WHAT TRAVELS WELL\. A suitcase is not a wardrobe/)
+  assert.match(brief, /How it comes out of the bag/)
+  assert.match(brief, /The room it takes/)
+  assert.match(brief, /How it behaves through a long day/)
+  assert.match(brief, /How much of the suitcase it works with/)
+  assert.match(brief, /Wearing it again/)
+  assert.match(brief, /None of them rules a garment out on its own/)
+  assert.doesNotMatch(brief, /(never|do not|don't|avoid) pack(ing)? (linen|silk|white)/i)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],
