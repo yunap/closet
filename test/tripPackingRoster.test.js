@@ -994,6 +994,9 @@ test('the trip roster system prompt states what travels well as things to weigh,
   // carrying four of the six day looks.
   assert.match(brief, /Shoes and outer layers are the bulkiest things in a bag; tops are the smallest/)
   assert.match(brief, /How it behaves through a long day/)
+  // thread_1791411318500: four tops, one long-sleeved, no knit, for five days with highs in the 60s.
+  assert.match(brief, /Where the warmth comes from: a coat comes off indoors/)
+  assert.match(brief, /Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures/)
   // Owner, 2026-10-07: "not everything goes into a suitcase, the person also has to wear something on
   // the plane. Unless it can't be reused after a 7 hour flight."
   assert.match(brief, /What is worn on the journey is not in the bag/)
@@ -1012,6 +1015,15 @@ test('the trip roster system prompt says the use cases are not a schedule and op
   assert.match(brief, /THE USE CASES ARE NOT A SCHEDULE/)
   assert.match(brief, /A trip built around fixed events \(a wedding, work days, a booked dinner\) is dressed for those events/)
   assert.match(brief, /pack so the traveller can decide on the day/)
+})
+
+test('the trip roster user text states where the traveller lives and how far the trip is, when known', () => {
+  const bench = [{ id: 1, name: 'city top', category: 'top' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', activity: 'walking', bestFor: 'sightseeing', location: 'Vienna, Virginia' }]
+  const journey = 'The traveller lives in Walnut Creek, CA, about 2,400 miles from Vienna, Virginia'
+  assert.match(tripRosterSelectionUserText({ bench, slots, journey }), /^TRIP CONTEXT: Destination: Vienna, Virginia\. The traveller lives in Walnut Creek, CA, about 2,400 miles from Vienna, Virginia\n/)
+  assert.doesNotMatch(tripRosterSelectionUserText({ bench, slots }), /traveller lives/)
+  assert.match(tripRosterSelectionSystemPrompt(), /When TRIP CONTEXT says where the traveller lives and how far away the destination is, judge the journey from that/)
 })
 
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {

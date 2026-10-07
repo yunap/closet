@@ -5718,7 +5718,8 @@ TOPS VARIETY & FUNCTIONAL COVERAGE: an active or outdoor use case (a hike, a tra
 WHAT TRAVELS WELL. A suitcase is not a wardrobe: every piece is carried, lives folded in a bag, and is worn on days spent mostly on foot away from home. These are things an experienced traveller weighs for each piece, from its recorded facts, alongside whether it suits the use case. None of them rules a garment out on its own; a piece that is the best answer for a use case can be worth its trouble.
 - How it comes out of the bag: its fabric, fibre and weight say whether it will be creased after folding and whether that shows, when there may be nothing to press it with.
 - The room it takes: volume, length and bulk are paid for in space, and matter most when the traveller is packing light. Shoes and outer layers are the bulkiest things in a bag; tops are the smallest, and they are what makes one day look different from the last. A light suitcase is usually short on coats and shoes and generous with tops, not the other way round.
-- What is worn on the journey is not in the bag: the traveller wears one outfit there and one home, chosen from these same pieces, and it takes no suitcase room. The bulkiest shoes and the heaviest layer are usually the ones worn rather than packed, so count them against the trip, not against the bag. Whether the journey outfit can be worn again on the trip depends on the journey: after a short one it can; after many hours on a plane it may need washing first, so do not rely on it for the first days unless the request says otherwise.
+- What is worn on the journey is not in the bag: the traveller wears one outfit there and one home, chosen from these same pieces, and it takes no suitcase room. The bulkiest shoes and the heaviest layer are usually the ones worn rather than packed, so count them against the trip, not against the bag. Whether the journey outfit can be worn again on the trip depends on the journey: after a short one it can; after many hours on a plane it may need washing first, so do not rely on it for the first days unless the request says otherwise. When TRIP CONTEXT says where the traveller lives and how far away the destination is, judge the journey from that.
+- Where the warmth comes from: a coat comes off indoors, at a table and in a museum, so on a cool trip the tops and knits worn all day are what keep the traveller warm. Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures, not only the coats against the coldest hour; a suitcase of short sleeves under a good coat is cold for most of the day.
 - How it behaves through a long day: sleeves, length, hems and closures that need managing, or a piece worn only one way, are harder to live in while walking, sitting, eating and carrying a bag than they are at home.
 - How much of the suitcase it works with: a piece earns its place by going with several of the other bottoms, tops, layers and shoes you are packing, not with one partner. A group of colours that sit together lets a small suitcase make many looks.
 - Wearing it again: on a trip most pieces are worn more than once between washes; some fabrics and colours take that better than others, and a piece worn on a trail is not fresh for dinner.
@@ -5792,7 +5793,7 @@ function tripRosterCandidateLine(piece = {}, slotLabelsById = null) {
 }
 
 export function tripRosterSelectionUserText({
-  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = '', slotLabelsById = null, packingApproach = ''
+  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = '', slotLabelsById = null, packingApproach = '', journey = ''
 } = {}) {
   const truthCatalog = bench.map(piece => tripRosterCandidateLine(piece, slotLabelsById))
   const destination = slots[0]?.location || slots[0]?.stylingContext?.location || ''
@@ -5840,7 +5841,9 @@ export function tripRosterSelectionUserText({
   const approachBlock = approach
     ? `HOW THE TRAVELLER PACKS (their words): ${approach}\n\n`
     : ''
-  const headerBlock = `${contextHeader ? `TRIP CONTEXT: ${contextHeader}\n\n` : ''}${approachBlock}`
+  const journeyLine = String(journey || '').trim()
+  const tripContext = [contextHeader, journeyLine].filter(Boolean).join('. ')
+  const headerBlock = `${tripContext ? `TRIP CONTEXT: ${tripContext}\n\n` : ''}${approachBlock}`
   // The sparse fact line carries no owner rules/rejections (that's a separate, source-labelled
   // channel — docs/garment-evidence-parity-2026-09-15.md) — buildPieceText used to fold "RULES
   // (authoritative)"/"REJECTED" inline, so switching formats without this would have silently
@@ -5867,12 +5870,12 @@ ${truthCatalog.join('\n')}${repairBlock}${notesBlock ? `\n\n${notesBlock}` : ''}
 // tripRosterImageParts) follow it inside the cached prefix. A bench over TRIP_ROSTER_PHOTO_LIMIT is
 // first shortlisted by the model (shortlistTripRosterWithProvider), never cut by code.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = [], packingApproach = ''
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = [], packingApproach = '', journey = ''
 } = {}) {
   const content = [{
     type: 'text',
     text: tripRosterSelectionUserText({
-      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: [], slotLabelsById, packingApproach
+      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: [], slotLabelsById, packingApproach, journey
     }),
     cache_control: { type: 'ephemeral' }
   }]
@@ -5935,7 +5938,7 @@ export function tripRosterShortlistSchema(limit = TRIP_ROSTER_PHOTO_LIMIT) {
 export async function shortlistTripRosterWithProvider({ bench, slots, dateRange = {}, limit = TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt = 1, failures = [], previousShortlistIds = [] }, toolContext) {
   const content = [{
     type: 'text',
-    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById, packingApproach: toolContext?.tripPackingApproach || '' }),
+    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById, packingApproach: toolContext?.tripPackingApproach || '', journey: toolContext?.tripJourney || '' }),
     cache_control: { type: 'ephemeral' }
   }]
   if (attempt > 1) {
@@ -5972,7 +5975,7 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
     attempt, failures, previousRosterIds, slotLabelsById, imageParts,
-    packingApproach: toolContext?.tripPackingApproach || ''
+    packingApproach: toolContext?.tripPackingApproach || '', journey: toolContext?.tripJourney || ''
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({

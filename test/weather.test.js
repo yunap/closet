@@ -16,6 +16,7 @@ import {
   serializeResolvedWeatherContext, restoreResolvedWeatherContext, normalizedWeatherLocationIdentity,
   COLD_F, resolveExposureWindowHourly, resolveDaypartHourlyEvidence, DAYPARTS,
   setForecastClockForTests,
+  describeJourneyFromHome, registerWeatherHomeLocationReader,
 } from '../styling-engine/weather.js'
 // Fixtures use fixed October 2026 trip dates; pin "today" so they stay inside the trusted forecast window.
 setForecastClockForTests('2026-10-10T12:00:00')
@@ -811,5 +812,28 @@ test('a bare city name resolves to the same-named place nearest the home locatio
   } finally {
     registerWeatherHomeLocationReader(null)
     _clearWeatherCachesForTests()
+  }
+})
+
+// Owner, 2026-10-07: the app has the home location, so the packer can be told how far the trip is
+// and judge the journey itself. A fact only: no mode of travel is named.
+test('describeJourneyFromHome states the distance from the saved home location, or nothing when unknown', async () => {
+  const places = { 'walnut creek': [37.9, -122.06], 'vienna': [38.9, -77.26] }
+  const fetchImpl = async url => {
+    const name = decodeURIComponent(String(url).match(/name=([^&]+)/)?.[1] || '').toLowerCase()
+    const hit = places[name]
+    return { ok: true, json: async () => ({ results: hit ? [{ name, latitude: hit[0], longitude: hit[1] }] : [] }) }
+  }
+  try {
+    registerWeatherHomeLocationReader(() => 'Walnut Creek, CA')
+    const text = await describeJourneyFromHome('Vienna, Virginia', { fetchImpl })
+    assert.match(text, /^The traveller lives in Walnut Creek, CA, about 2,[34]00 miles from Vienna, Virginia$/)
+    assert.doesNotMatch(text, /fl(y|ight)|plane|drive/i)
+    assert.equal(await describeJourneyFromHome('Walnut Creek, CA', { fetchImpl }), '', 'same place: nothing to say')
+    assert.equal(await describeJourneyFromHome('Nowhereville, ZZ', { fetchImpl }), '', 'unresolved destination: nothing to say')
+    registerWeatherHomeLocationReader(() => '')
+    assert.equal(await describeJourneyFromHome('Vienna, Virginia', { fetchImpl }), '', 'no home saved: nothing to say')
+  } finally {
+    registerWeatherHomeLocationReader(null)
   }
 })

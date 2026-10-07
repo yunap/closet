@@ -27,7 +27,7 @@ import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
   TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
-  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation,
+  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation, describeJourneyFromHome,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -3476,6 +3476,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // trip (owner: "packing preference might change depending on a trip"). Read by the packer
         // (chooseTripRosterWithProvider).
         toolContext.tripPackingApproach = String(args?.packing_approach || '').trim().slice(0, 400)
+        // Where the trip is from, as a fact for the packer: what is worn on the journey is not packed,
+        // and how long the journey is decides whether it can be worn again.
+        toolContext.tripJourney = args?.plan_kind === 'trip' ? await describeJourneyFromHome(String(args?.location || '').trim()) : ''
         const modelDateRange = {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()
