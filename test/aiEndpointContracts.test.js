@@ -9173,3 +9173,59 @@ test('removing a citation does not strand its separator inside the bracket', asy
   assert.equal(stripPieceIdCitations('The loafers (ID 196) work.'), 'The loafers work.')
   assert.equal(stripPieceIdCitations('Two coats (fleece, puffer) is plenty.'), 'Two coats (fleece, puffer) is plenty.')
 })
+
+// Owner, 2026-10-07: "there are lots of ways trip packing is approached… if there is no real
+// preference why doesn't she ask the user?" The trip turn asks how the traveller packs when it is
+// not known, carries the answer to the planner and the packer, and remembers a standing preference.
+test('the packing approach: asked for a trip when unknown, carried to the packer, remembered when it is a standing preference', async () => {
+  const { getSavedPackingApproach, savePackingApproach, tripRosterSelectionUserText, tripRosterSelectionSystemPrompt } = await import('../routes/ai.js')
+  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+
+  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
+  assert.equal(getSavedPackingApproach(), '')
+  assert.equal(savePackingApproach(''), '', 'nothing stated, nothing saved')
+  assert.equal(getSavedPackingApproach(), '')
+  assert.equal(savePackingApproach('carry-on only, I re-wear and do laundry'), 'carry-on only, I re-wear and do laundry')
+  assert.equal(getSavedPackingApproach(), 'carry-on only, I re-wear and do laundry')
+  savePackingApproach('something different most days')
+  assert.equal(getSavedPackingApproach(), 'something different most days', 'a newer statement replaces the old one')
+
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: 'Do you like to pack light and re-wear, or have something different most days?', time_of_day: '', remember_packing_approach: '' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: 'I am going to Seattle for a week. What should I pack?', contextSummary: 'no current outfit set; no saved packing approach' })
+    assert.match(routed.value.clarifying_question, /pack light/)
+    assert.match(captured.system, /For trip_plan, clarifying_question asks how the traveller likes to pack/)
+    assert.match(captured.system, /remember_packing_approach is usually empty/)
+    assert.match(captured.system, /how someone packs changes from trip to trip/)
+    assert.match(captured.system, /do not assume it applies: use it to ask whether this trip is the same as usual or different/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+
+  const planTool = STYLIST_TOOLS.find(tool => tool.name === 'plan_outfit_set')
+  assert.match(planTool.input_schema.properties.packing_approach.description, /how the traveller packs, in their own words/)
+
+  const slots = [{ label: 'Sightseeing', occasion: 'city', bestFor: 'sightseeing', targetOutfits: 2 }]
+  const withApproach = tripRosterSelectionUserText({ bench: [{ id: 1, name: 'stripe tee', category: 'top' }], slots, dateRange: { start: '2026-10-12', end: '2026-10-18' }, packingApproach: 'something different most days' })
+  assert.match(withApproach, /HOW THE TRAVELLER PACKS \(their words\): something different most days/)
+  assert.match(withApproach, /7 days/)
+  assert.doesNotMatch(tripRosterSelectionUserText({ bench: [], slots, dateRange: {} }), /HOW THE TRAVELLER PACKS/)
+  assert.match(tripRosterSelectionSystemPrompt(), /HOW THE TRAVELLER PACKS\. When the request states this, it decides how much re-wear the suitcase assumes/)
+
+  // Owner: "packing preference might change depending on a trip" — an earlier trip's answer is
+  // never applied; the plan carries only what was said for this trip.
+  const payload = await buildStylistConversationPayload({ question: 'Seattle for a week, what should I pack?', history: [], sessionId: 'packing-approach-contract', tripPlanTurn: true })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /How the traveller is packing for this trip \(from the request or their answer to your question\) goes in plan_outfit_set/)
+  savePackingApproach('carry-on only')
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'Seattle for a week', savedPackingApproach: 'carry-on only', weatherFetchImpl: async () => ({ ok: false, json: async () => ({}) }) }
+  await executeTool('plan_outfit_set', { plan_kind: 'trip', weather_estimate: { high_f: 60, low_f: 48 }, slots: [{ label: 'City', occasion: 'city', activity: 'walking', count: 1 }] }, toolContext)
+  assert.equal(toolContext.tripPackingApproach, '', 'a usual approach on record is not applied to this trip')
+  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
+})

@@ -4824,6 +4824,7 @@ export async function buildStylistConversationPayload(body) {
     ].join('\n')
     : tripPlanTurn ? [
       'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
+      'How the traveller is packing for this trip (from the request or their answer to your question) goes in plan_outfit_set\'s packing_approach, in their words.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [

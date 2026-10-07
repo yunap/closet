@@ -1351,6 +1351,7 @@ export const STYLIST_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
+        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. Omit when they have not said." },
         plan_kind: {
           type: "string",
           enum: ["trip", "seasonal_capsule", "coordinated_plan"],
@@ -1425,7 +1426,7 @@ export const STYLIST_TOOLS = [
           type: "object",
           description: "Shared rules across the whole set. Set these from the objective: packing wants reuse maximized; an at-home work week wants looks diversified (repeats are the failure there, not the win).",
           properties: {
-            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. 'maximize' for packing (recombine a few pieces — fewer to carry). 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
+            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
             no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule: recombination is the point of a capsule, so it is discarded there unless the person explicitly asked for no repeats." },
             allow_repeat: { type: "array", items: { type: "string" }, description: "Category groups explicitly allowed to repeat even when diversifying — e.g. ['shoes'] since the same shoes across a week is normal. Overrides no_repeat for that group." },
             shared_anchor_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to pin across the set — e.g. styling several outfits around one new piece. Anchors recur in every slot they fit and are exempt from no_repeat." },
@@ -3471,6 +3472,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
               dayBreakdown: String(args?.day_breakdown || '').trim()
             }
           : null
+        // How the traveller is packing for THIS trip, in their words. Never defaulted from an earlier
+        // trip (owner: "packing preference might change depending on a trip"). Read by the packer
+        // (chooseTripRosterWithProvider).
+        toolContext.tripPackingApproach = String(args?.packing_approach || '').trim().slice(0, 400)
         const modelDateRange = {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()

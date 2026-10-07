@@ -5080,6 +5080,30 @@ export function routerSeasonForTurn(season, date, now = new Date()) {
   return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
 }
 
+// How this user usually packs for trips, when they have said so (owner, 2026-10-07: "there are lots
+// of ways trip packing is approached… if there is no real preference why doesn't she ask the
+// user?", and then: "packing preference might change depending on a trip"). So it is never applied
+// to a trip on its own: it only lets the stylist ask "same as usual, or different this time?".
+// Per-user global context beside home_location and the profile keys (feedback-and-memory-map.md
+// category 10); written only from the router's `remember_packing_approach`.
+export function getSavedPackingApproach() {
+  try {
+    return String(db.prepare("SELECT value FROM app_meta WHERE key = 'packing_approach'").get()?.value || '').trim()
+  } catch {
+    return ''
+  }
+}
+export function savePackingApproach(text = '') {
+  const value = String(text || '').trim().slice(0, 400)
+  if (!value) return ''
+  try {
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('packing_approach', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(value)
+  } catch (err) {
+    console.error('Error saving packing approach:', err)
+  }
+  return value
+}
+
 // One-shot: the pending question is read and cleared together, so an unanswered or abandoned
 // question cannot attach itself to some later message.
 export function takePendingClarification(sessionId = 'default') {
@@ -5666,6 +5690,8 @@ Pick the pieces that should go in the suitcase, using their IDs. Choose ONLY fro
 
 HOW TO DECIDE. Before choosing, picture the trip: for each use case, the looks it needs, what the wearer is physically doing, and the weather. Then choose the pieces those looks need, and check the result against each use case in turn.
 
+HOW THE TRAVELLER PACKS. When the request states this, it decides how much re-wear the suitcase assumes over the trip's days: packing light means fewer pieces, each worn more than once; wanting something different most days means enough different tops, and where it matters bottoms and layers, that the days are not dressed the same, even beyond the looks the use cases list. When nothing is stated, use your own judgment for the length of the trip.
+
 Each use case below states how many distinct outfits it needs — that number is not a suggestion for how many pieces to pack, it is how many genuinely different representative looks the engine will ask you to build from this roster later. "Cover the use case" means more than making it wearable once: it means provisioning enough combinatorial room — enough distinct tops, bottoms, or dresses, not just enough outerwear or shoes — that the stylist can build that many outfits from your roster without repeating the same core piece-for-piece. A roster that leaves one use case without a complete, gate-valid outfit is rejected, and you get one chance to repair it.
 
 REUSE ACROSS USE CASES IS A STRENGTH, NOT AN AUTOMATIC WIN. A top or a layer that genuinely suits both sightseeing and a nature walk earns its place twice over. But reuse only counts when the shared piece actually suits each use case on its own merits, not merely because it is eligible for it — a piece that reads as elevated city wear does not become a good hike just by also being packed for dinner. Never prefer a cross-use-case piece over a narrower, purpose-suited candidate for a specific use case; each use case still needs its own strongest fit first.
@@ -5740,7 +5766,7 @@ function tripRosterCandidateLine(piece = {}, slotLabelsById = null) {
 }
 
 export function tripRosterSelectionUserText({
-  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = '', slotLabelsById = null
+  bench = [], slots = [], dateRange = {}, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = '', slotLabelsById = null, packingApproach = ''
 } = {}) {
   const truthCatalog = bench.map(piece => tripRosterCandidateLine(piece, slotLabelsById))
   const destination = slots[0]?.location || slots[0]?.stylingContext?.location || ''
@@ -5781,7 +5807,14 @@ export function tripRosterSelectionUserText({
   const acceptedLessonsBlock = String(acceptedLessons || '').trim()
     ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
     : ''
-  const headerBlock = contextHeader ? `TRIP CONTEXT: ${contextHeader}\n\n` : ''
+  // The traveller's own way of packing, stated as a fact for the packer to size the suitcase by
+  // (owner, 2026-10-07). Live thread_1791360769989: with nothing said, a week was packed as six looks
+  // from three usable tops, because the only sizing input was the looks per activity.
+  const approach = String(packingApproach || '').trim()
+  const approachBlock = approach
+    ? `HOW THE TRAVELLER PACKS (their words): ${approach}\n\n`
+    : ''
+  const headerBlock = `${contextHeader ? `TRIP CONTEXT: ${contextHeader}\n\n` : ''}${approachBlock}`
   // The sparse fact line carries no owner rules/rejections (that's a separate, source-labelled
   // channel — docs/garment-evidence-parity-2026-09-15.md) — buildPieceText used to fold "RULES
   // (authoritative)"/"REJECTED" inline, so switching formats without this would have silently
@@ -5808,12 +5841,12 @@ ${truthCatalog.join('\n')}${repairBlock}${notesBlock ? `\n\n${notesBlock}` : ''}
 // tripRosterImageParts) follow it inside the cached prefix. A bench over TRIP_ROSTER_PHOTO_LIMIT is
 // first shortlisted by the model (shortlistTripRosterWithProvider), never cut by code.
 export function tripRosterSelectionContent({
-  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = []
+  bench = [], slots = [], dateRange = {}, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], slotLabelsById = null, imageParts = [], packingApproach = ''
 } = {}) {
   const content = [{
     type: 'text',
     text: tripRosterSelectionUserText({
-      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: [], slotLabelsById
+      bench, slots, dateRange, ownerRules, acceptedLessons, attempt: 1, failures: [], previousRosterIds: [], slotLabelsById, packingApproach
     }),
     cache_control: { type: 'ephemeral' }
   }]
@@ -5876,7 +5909,7 @@ export function tripRosterShortlistSchema(limit = TRIP_ROSTER_PHOTO_LIMIT) {
 export async function shortlistTripRosterWithProvider({ bench, slots, dateRange = {}, limit = TRIP_ROSTER_PHOTO_LIMIT, slotLabelsById, attempt = 1, failures = [], previousShortlistIds = [] }, toolContext) {
   const content = [{
     type: 'text',
-    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById }),
+    text: tripRosterSelectionUserText({ bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], slotLabelsById, packingApproach: toolContext?.tripPackingApproach || '' }),
     cache_control: { type: 'ephemeral' }
   }]
   if (attempt > 1) {
@@ -5912,7 +5945,8 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
   const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
-    attempt, failures, previousRosterIds, slotLabelsById, imageParts
+    attempt, failures, previousRosterIds, slotLabelsById, imageParts,
+    packingApproach: toolContext?.tripPackingApproach || ''
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
@@ -6848,6 +6882,8 @@ router.post('/ask', async (req, res) => {
       && !req.body.imageData
     let singleOutfitRoute = null
     let tripPlanRoute = null
+    const savedPackingApproach = getSavedPackingApproach()
+    toolContext.savedPackingApproach = savedPackingApproach
     if (routerEligible) {
       try {
         updateAiTelemetryContext({
@@ -6872,7 +6908,8 @@ router.post('/ask', async (req, res) => {
             // profile is reachable. Populated by the full_stylist end-of-turn write below.
             recentlyDiscussedPieceIds.length
               ? `previous answer discussed ${recentlyDiscussedPieceIds.length} specific verified wardrobe piece(s)`
-              : 'no recently discussed wardrobe pieces'
+              : 'no recently discussed wardrobe pieces',
+            savedPackingApproach ? `usual packing approach (not assumed for this trip): "${savedPackingApproach}"` : 'no usual packing approach on record'
           ].filter(Boolean).join('; '),
           // Just the immediately preceding turn (docs/deferred-conversational-cache-spec.md's sibling
           // finding: the router was classifying purely from an isolated sentence, so a reply that only
@@ -6958,8 +6995,12 @@ router.post('/ask', async (req, res) => {
         // if she is missing information or can take different approaches." The router judges that
         // and writes the question; the request is kept so the answer can be joined to it. Never
         // twice in a row: an answer to her own question is composed from, not questioned again.
+        // A standing packing preference the user just stated is saved before anything else, so it
+        // holds for this trip and the next.
+        const rememberedPackingApproach = savePackingApproach(routed.value?.remember_packing_approach)
+        if (rememberedPackingApproach) toolContext.savedPackingApproach = rememberedPackingApproach
         const askFirst = String(routed.value?.clarifying_question || '').trim()
-        if (askFirst && freshExecutionRequest && !pendingClarification && ['single_outfit', 'bounded_multi'].includes(compactProfile)) {
+        if (askFirst && freshExecutionRequest && !pendingClarification && ['single_outfit', 'bounded_multi', 'trip_plan'].includes(compactProfile)) {
           saveStylistConversationState(
             { ...compactState, pending_clarification: { request: currentQuestion, question: askFirst } },
             req.body.sessionId || 'default'

@@ -1478,7 +1478,7 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
@@ -1493,6 +1493,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     subject: { type: 'string' },
     clarifying_question: { type: 'string' },
     time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
+    remember_packing_approach: { type: 'string' },
   }
 }
 
@@ -1522,7 +1523,11 @@ time_of_day is when the outing happens, when the request says so or plainly impl
 
 Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
 
-clarifying_question is for single_outfit and bounded_multi requests only, and is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
+For trip_plan, clarifying_question asks how the traveller likes to pack, because there are real, different ways to pack and none is the default: packing light and re-wearing a few pieces, or having something different most days; carry-on or checked; laundry on the trip or not. Ask it, as one short natural question in a stylist's voice, whenever the request itself does not say how they are packing for THIS trip — how someone packs changes from trip to trip. When the compact context holds a "usual packing approach", do not assume it applies: use it to ask whether this trip is the same as usual or different. If the request also names no activities, ask about those in the same question. Leave it empty when the request says how they are packing, and when the request contains the user's answer to a question of yours.
+
+remember_packing_approach is usually empty. Fill it only when the user states how they ALWAYS or usually pack — a standing preference, not a choice for this one trip — with that preference in their own words (for example "carry-on only, I re-wear and do laundry"). It is kept only so a later trip can be asked "same as usual?"; it is never applied without asking.
+
+For single_outfit and bounded_multi requests, clarifying_question is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 

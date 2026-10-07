@@ -129,7 +129,7 @@ Counts regenerate via script §1.
 | 7 | Thread-scoped conversation state | `chat_threads.payload`, `stylist_conversation_state.state_json` | **thread-only** |
 | 8 | Short-lived recency / diversity | `whole_wardrobe_sessions` | **score** (suppression) |
 | 9 | Tasks created from feedback | `todos` (`retag-suggestion`, `metadata`) | display → owner action |
-| **10** | **Style constitution and global user context** | `style_constitution`, `app_meta` (`home_location`, `profile_display_name`, `profile_pronouns`) | **system prompt** + structured context |
+| **10** | **Style constitution and global user context** | `style_constitution`, `app_meta` (`home_location`, `packing_approach`, `profile_display_name`, `profile_pronouns`) | **system prompt** + structured context |
 | **11** | **Visual evidence** | the uploads filesystem, referenced by `pieces.photo` / `worn_photo`, `outfits.photo`, board and calibration rows | **model evidence** + hard availability gate |
 | **12** | **Intake and provenance** | `import_*`, `piece_import_evidence`, `constitution_history` | staging / provenance; accepted output flows into 1 and 4 |
 
@@ -323,6 +323,15 @@ Item 12's review surface is deferred, but its bounded storage, routing and undo 
   interpolates the layers **into the system prompts** and caches per user until the next write.
   `home_location` additionally feeds weather resolution (`routes/ai.js`), and therefore garment
   eligibility.
+  `packing_approach` (added 2026-10-07) is how the user said they USUALLY pack for trips, in their
+  own words. **Written** only when the `/ask` execution router returns `remember_packing_approach`
+  — the user stated a standing preference ("I always travel carry-on") — via `savePackingApproach`
+  (`routes/ai.js`); a newer statement replaces it. **Read** by `getSavedPackingApproach` on every
+  `/ask` turn and given to the router as "usual packing approach (not assumed for this trip)".
+  **Authority: none over a plan.** Owner, same day: "packing preference might change depending on
+  a trip" — so it is never applied to a trip; its only use is to let the stylist ask "same as
+  usual, or different this time?". What the packer reads is `plan_outfit_set.packing_approach`,
+  which comes from this trip's request or answer. There is no UI to view or clear it yet.
 - **Authority** — **system prompt.** Stronger and broader than an owner rule: an owner rule is one
   line in a user message, a constitution layer is part of the stylist's standing instructions.
 - Seven active layers at time of writing — `aesthetic_gravity`, `body_contract`, `editorial_shoes`,
