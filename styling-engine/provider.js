@@ -554,6 +554,16 @@ export const GEMINI_MODEL = process.env.GEMINI_STYLIST_MODEL || 'gemini-3.7-flas
 // to find out whether the unset default itself is the latency driver before trusting any number
 // run against it).
 const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
+// The stylist's own tool loop — the calls that choose and justify garments in a single-outfit turn
+// and in every follow-up. The comment above planned "medium for the stylist" and it was never done.
+// Evidence that 'low' means no reasoning on this model: the trip packer (730 output tokens, thin
+// suitcases; fixed at medium), the options composer (592 tokens, boots under tropical trousers on an
+// 89°F evening; fixed at medium), and live thread_1791352199157, where a follow-up asked to replace
+// one blouse rebuilt the outfit and put a cropped short-sleeved shrug over a billowy 3/4-sleeve
+// satin top it had been shown photographs of. Gemini counts thinking against max_output_tokens, so
+// the loop's cap gets headroom. Set GEMINI_STYLIST_LOOP_THINKING_LEVEL=low to revert.
+const GEMINI_STYLIST_LOOP_THINKING_LEVEL = process.env.GEMINI_STYLIST_LOOP_THINKING_LEVEL || 'medium'
+const GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS = 4000
 
 // The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
 // generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
@@ -1884,7 +1894,10 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     model,
     ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
     input,
-    generation_config: { max_output_tokens: maxTokens, thinking_level: GEMINI_THINKING_LEVEL },
+    generation_config: {
+      max_output_tokens: maxTokens + (GEMINI_STYLIST_LOOP_THINKING_LEVEL === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
+      thinking_level: GEMINI_STYLIST_LOOP_THINKING_LEVEL,
+    },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
   }
   // Note for comparison purposes: on a continuation call (iteration 2+ within one turn), this wire

@@ -61,6 +61,20 @@ export function normalizedWeatherLocationIdentity(value = '') {
   return normalized
 }
 
+// The same place named with and without its state or country: "Walnut Creek" and "Walnut Creek, CA".
+// Live thread_1791352199157: a follow-up search said "Walnut Creek, CA", the thread's forecast was
+// stored for "Walnut Creek", the strict comparison called it a new destination with no date, and the
+// follow-up was dressed for today's 97°F instead of Friday evening's 62–78°F.
+export function sameWeatherLocation(a = '', b = '') {
+  const first = normalizedWeatherLocationIdentity(a)
+  const second = normalizedWeatherLocationIdentity(b)
+  if (!first || !second) return false
+  if (first === second) return true
+  const [shorter, longer] = first.length <= second.length ? [first, second] : [second, first]
+  if (!longer.startsWith(`${shorter} `)) return false
+  return /^(?:[a-z]{2}|[a-z]{2} (?:us|usa)|us|usa|united states)$/.test(longer.slice(shorter.length + 1)) // ratchet-allow: location qualifier, not garment matching
+}
+
 const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
 const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
 const hourlyCache = new Map() // `${date}|${lat},${lon}` -> { data: {times, temps, precip}, expiresAt }

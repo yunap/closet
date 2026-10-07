@@ -4460,7 +4460,25 @@ export async function buildStylistConversationPayload(body) {
       })
     : null
   const effectiveWeatherProfile = explicitTurnWeather ? statedTurnWeatherProfile : restoredWeatherProfile
-  const extractedWeather = turnWeather
+  // The thread's stored forecast outranks a word found in earlier prose. Live
+  // thread_1791352199157: the first card's reason said "the warm late afternoon", the word match
+  // below turned that into "hot weather", and the follow-up was told "Established weather context
+  // for this turn: hot weather" while THREAD STATE's own profile read 78°F / 62°F, not hot. With
+  // numbers on record and nothing new stated this turn, the label is those numbers.
+  const restoredHigh = Number(restoredWeatherProfile?.highF)
+  const restoredLow = Number(restoredWeatherProfile?.lowF)
+  const restoredRangeText = !explicitTurnWeather && restoredWeatherProfile && Number.isFinite(restoredHigh) && restoredWeatherProfile.highF != null
+    ? (Number.isFinite(restoredLow) && restoredWeatherProfile.lowF != null && Math.round(restoredLow) !== Math.round(restoredHigh)
+        ? `a forecast high of ${Math.round(restoredHigh)}°F and low of ${Math.round(restoredLow)}°F`
+        : `a temperature around ${Math.round(restoredHigh)}°F`)
+    : ''
+  // Words the user stated earlier ("hot, highs 85F") are stored as written and still lead. A stored
+  // label with no number in it ("hot weather") is the vague kind this replaces.
+  const storedStatedWeather = /\d/.test(String(restoredEstablished.weather || '')) ? restoredEstablished.weather : ''
+  const extractedWeather = explicitTurnWeather
+    || storedStatedWeather
+    || restoredRangeText
+    || contextualTurnWeather
     || restoredEstablished.weather
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''

@@ -71,7 +71,7 @@ import {
   normalizeActivity,
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
-import { serializeWeatherProfile, restoreWeatherProfile, registerWeatherHomeLocationReader } from '../styling-engine/weather.js'
+import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader } from '../styling-engine/weather.js'
 import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
 
@@ -7223,6 +7223,15 @@ router.post('/ask', async (req, res) => {
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
+    // A follow-up is about the same occasion until the user says otherwise. The thread's current
+    // outfit carries the place and day its forecast was resolved for; restoring it lets a tool call
+    // that names the same place (and no other date) reuse that forecast instead of fetching today's
+    // (live thread_1791352199157). Only when every current card shares one context.
+    if (!toolContext.resolvedWeatherContext) {
+      const storedContexts = toolContext.currentOutfitSet.map(outfit => outfit?.resolved_weather_context).filter(context => context?.status === 'resolved' && context?.location)
+      const distinct = new Set(storedContexts.map(context => `${context.location}|${context.date_range?.start || ''}|${context.date_range?.end || ''}`))
+      if (storedContexts.length && distinct.size === 1) toolContext.resolvedWeatherContext = restoreResolvedWeatherContext(storedContexts[0])
+    }
     // The active trip packing roster (docs/README.md: trip roster architecture) — read the same
     // way currentOutfitSet is, so search_wardrobe/propose_outfit see this turn's roster regardless
     // of whether it came from a fresh plan or was carried forward from an earlier one.

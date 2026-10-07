@@ -27,7 +27,7 @@ import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
   TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
-  resolveExposureWindowHourly, getCurrentWeatherProfile,
+  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -666,7 +666,7 @@ export async function resolveToolStylingContext({
   const carryForwardWeatherProfile = !safeExplicitLocation
     ? toolContext.weatherProfile
     : toolContext.resolvedWeatherContext?.location &&
-      normalizedWeatherLocationIdentity(toolContext.resolvedWeatherContext.location) === normalizedWeatherLocationIdentity(safeExplicitLocation)
+      sameWeatherLocation(toolContext.resolvedWeatherContext.location, safeExplicitLocation)
       ? toolContext.weatherProfile
       : null
   const establishedState = {

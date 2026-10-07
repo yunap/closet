@@ -2,7 +2,7 @@ import { resolveActivityProfile, resolveComfortFootwearConstraint } from './foot
 import { resolveOccasionProfile } from './occasions.js'
 import { weatherProfileFromContext } from './rules.js'
 import { normalizeActivity, normalizeOccasion } from './stylingIntent.js'
-import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, resolveWeatherContext, validateUserWeather, validateWeatherEstimate, wetExposureFromPrecipitation } from './weather.js'
+import { getCurrentWeatherProfile, normalizedWeatherLocationIdentity, sameWeatherLocation, resolveWeatherContext, validateUserWeather, validateWeatherEstimate, wetExposureFromPrecipitation } from './weather.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
 import { resolveExposureContext } from './exposure.js'
 import { resolveColdLayerPresenceRequirement } from './environmentalRequirements.js'
@@ -285,7 +285,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   // context that erases it.
   const resolutionLocation = explicitLocation || ((requestedDateRange?.start || hasFreshStructuredWeather) ? text(cached?.location) : '')
   const cachedLocationMatches = Boolean(cached) &&
-    normalizedWeatherLocationIdentity(cached.location) === normalizedWeatherLocationIdentity(resolutionLocation)
+    sameWeatherLocation(cached.location, resolutionLocation)
   const resolutionDateRange = requestedDateRange ||
     (hasFreshStructuredWeather && cachedLocationMatches ? cached.dateRange : null)
 
@@ -322,7 +322,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
     // no location was named this call, or it matches the cached one; a
     // mismatch falls through to null so the caller reaches the legacy
     // live-for-today/heuristic branch instead of a stale destination's cache.
-    if (cached && explicitLocation && normalizedWeatherLocationIdentity(cached.location) !== normalizedWeatherLocationIdentity(explicitLocation)) return null
+    if (cached && explicitLocation && !sameWeatherLocation(cached.location, explicitLocation)) return null
     if (cached && requestedDateRange?.start) {
       const cachedEnd = cached.dateRange?.end || cached.dateRange?.start
       const requestedEnd = requestedDateRange.end || requestedDateRange.start
@@ -334,7 +334,7 @@ async function resolveNamedDestinationWeather({ explicitRequest = {}, toolContex
   const cachedEnd = cached?.dateRange?.end || cached?.dateRange?.start
   const requestedEnd = resolutionDateRange ? (resolutionDateRange.end || resolutionDateRange.start) : null
   const identityMatches = cached &&
-    normalizedWeatherLocationIdentity(cached.location) === normalizedWeatherLocationIdentity(resolutionLocation) &&
+    sameWeatherLocation(cached.location, resolutionLocation) &&
     (cached.dateRange?.start || null) === (resolutionDateRange?.start || null) &&
     cachedEnd === requestedEnd
   if (identityMatches && !userWeather && !modelEstimate) return cached

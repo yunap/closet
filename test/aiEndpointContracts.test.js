@@ -8936,3 +8936,48 @@ test('the composer label puts the tagger impression under the fact line, and lea
   assert.equal(composerGarmentLabel(edited), sharedGarmentEvidenceLine(edited))
   assert.equal(composerGarmentLabel({ id: 1, name: 'tee', category: 'top' }), sharedGarmentEvidenceLine({ id: 1, name: 'tee', category: 'top' }))
 })
+
+// thread_1791352199157: a follow-up to a Friday-evening dinner in Walnut Creek (62–78°F) was told the
+// weather was "hot weather" (a word match on "warm" in an earlier card reason) and then dressed for
+// today's 97°F, because its search named "Walnut Creek, CA" and the forecast was stored for "Walnut Creek".
+test('a follow-up keeps the occasion\'s forecast: same place under another spelling reuses it, and no lookup is made', async () => {
+  const { sameWeatherLocation } = await import('../styling-engine/weather.js')
+  assert.equal(sameWeatherLocation('Walnut Creek', 'Walnut Creek, CA'), true)
+  assert.equal(sameWeatherLocation('Walnut Creek, California', 'walnut creek'), true)
+  assert.equal(sameWeatherLocation('Vienna, Virginia', 'Vienna, VA'), true)
+  assert.equal(sameWeatherLocation('San Mateo', 'San Mateo Park'), false)
+  assert.equal(sameWeatherLocation('Vienna, VA', 'Vienna, Austria'), false)
+  assert.equal(sameWeatherLocation('', 'Walnut Creek'), false)
+
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  let lookups = 0
+  const stored = { status: 'resolved', location: 'Walnut Creek', dateRange: { start: '2026-10-09', end: '2026-10-09' }, temperature: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, source: 'live', provider: 'Open-Meteo' }, precipitation: { value: 'none', source: 'model_estimate' }, wind: { value: 'calm', source: 'model_estimate' }, overallSource: 'mixed' }
+  const toolContext = {
+    season: 'current season', question: 'what would you put there instead?', freeformDiagnostics: {},
+    resolvedWeatherContext: stored,
+    weatherProfile: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, weatherSource: 'live', resolvedWeatherContext: stored },
+  }
+  const context = await resolveToolStylingContext({
+    explicitRequest: { occasion: 'smart casual', season: 'current season', location: 'Walnut Creek, CA' },
+    toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    weatherResolver: async () => { lookups++; return { highF: 97, lowF: 68, isHot: true, weatherSource: 'live' } },
+  })
+  assert.equal(lookups, 0, 'today\'s forecast is not fetched for the same occasion')
+  assert.equal(context.weatherProfile.highF, 77.8)
+  assert.equal(context.weatherProfile.lowF, 61.8)
+})
+
+test('a follow-up states the thread\'s stored forecast, not a weather word found in earlier prose', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'followup-weather-label'
+  saveStylistConversationState({
+    established: { occasion: 'city', weather: 'hot weather', season: 'current season' },
+    weather_profile: { source: 'live', high_f: 77.8, low_f: 61.8, is_hot: false, is_cold: false },
+    current_outfit_set: [{ index: 1, label: 'Dinner look', reason: 'works from the warm late afternoon into the cooler evening', piece_ids: [seeded.top], pieces: ['seeded top'] }],
+  }, sessionId)
+  const payload = await buildStylistConversationPayload({ question: 'What would you put there instead?', sessionId, conversationMode: 'followup', history: [] })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /Established weather context for this turn: a forecast high of 78°F and low of 62°F\./)
+  assert.doesNotMatch(system, /Established weather context for this turn: hot weather/)
+})
