@@ -2928,6 +2928,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return viewed
       }
       case 'suggest_slot_swaps': {
+        // Calling this tool is itself the cards declaration for a one-slot follow-up (as the bounded
+        // generate_outfits call is for its turn). Live thread_1791358822345 spent a model call being
+        // told to declare first. An explicit text or image declaration still stands.
+        if (!toolContext.declaredIntent?.want) {
+          toolContext.declaredIntent = { want: 'cards', outfitCount: null, turnMode: 'followup', layerRequirement: 'unspecified' }
+        }
         if (toolContext.declaredIntent?.want !== 'cards') {
           return {
             status: "validation_error",

@@ -6926,6 +6926,12 @@ router.post('/ask', async (req, res) => {
           toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(routed.value?.time_of_day)
             ? routed.value.time_of_day
             : ''
+        } else if (routed.value?.setting === 'indoor_only') {
+          // A follow-up to an at-home occasion is still at home. Live thread_1791358745720: hosting
+          // at home was dressed indoors on the first turn, and the follow-up ("I'll be cooking most
+          // of the evening") — which the router again read as indoor_only — was dressed for today's
+          // 96°F outdoor forecast, because the setting was applied to fresh requests only.
+          toolContext.executionRouterIndoorOnly = true
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {

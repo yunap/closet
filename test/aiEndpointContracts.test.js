@@ -9096,3 +9096,19 @@ test('the stylist instructions do not cap reply length, and a reaction that carr
   assert.doesNotMatch(system, /Be direct, specific, and concise/)
   assert.match(system, /This limits destination and weather questions only/)
 })
+
+// thread_1791358822345: the swap follow-up spent a model call being told to declare intent first.
+test('suggest_slot_swaps declares cards intent itself when none was declared, and still refuses after an explicit text declaration', async () => {
+  const contextFor = declaredIntent => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup', question: 'swap the shoes', generatedOutfits: [],
+    ...(declaredIntent ? { declaredIntent } : {}),
+    currentOutfitSet: [{ index: 1, label: 'Lunch look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+  })
+  const undeclared = contextFor(null)
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'shoes' }, undeclared)
+  assert.notEqual(listed.status, 'validation_error', JSON.stringify(listed).slice(0, 200))
+  assert.equal(undeclared.declaredIntent.want, 'cards')
+  const asText = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'shoes' }, contextFor({ want: 'text' }))
+  assert.equal(asText.status, 'validation_error')
+})
