@@ -9057,3 +9057,30 @@ test('a one-slot swap lists every eligible candidate without choosing, then buil
   assert.equal(second.followupProposalCompleted, true)
   assert.deepEqual(card.pieceIds.filter(id => id !== blazer).sort(), [seeded.top, seeded.bottom, seeded.shoe].sort(), 'the rest of the outfit stays')
 })
+
+// thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
+// cards read "78°F high / 62°F low — you said so".
+test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
+  const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
+  const stored = { status: 'resolved', location: 'Walnut Creek', dateRange: { start: '2026-10-09', end: '2026-10-09' }, temperature: { highF: 77.8, lowF: 61.8, isHot: false, isCold: false, needsRemovableCoolLayer: true, source: 'live', provider: 'Open-Meteo' }, precipitation: { value: 'none', source: 'model_estimate' }, wind: { value: 'calm', source: 'model_estimate' }, overallSource: 'mixed' }
+  const contextFor = () => ({ season: 'current season', question: 'Give me something more interesting.', freeformDiagnostics: {}, resolvedWeatherContext: stored, weatherProfile: { highF: 77.8, lowF: 61.8, weatherSource: 'live', resolvedWeatherContext: stored } })
+  const resolve = (userWeather, toolContext) => resolveToolStylingContext({
+    explicitRequest: { occasion: 'city', season: 'current season', location: 'Walnut Creek', date: '2026-10-09', dateRange: { start: '2026-10-09', end: '2026-10-09' }, userWeather },
+    toolContext, inferred: { requestText: 'x' }, policy: { mode: 'freeform_action', allowLiveWeather: true },
+    weatherResolver: async () => ({ highF: 99, lowF: 70, isHot: true, weatherSource: 'live' }),
+  })
+  const copied = await resolve({ high_f: 78, low_f: 62 }, contextFor())
+  assert.equal(copied.weatherProfile.resolvedWeatherContext.temperature.source, 'live', 'still the forecast, not "you said so"')
+  assert.equal(copied.weatherProfile.highF, 77.8)
+  const stated = await resolve({ high_f: 85, low_f: 70 }, contextFor())
+  assert.equal(stated.weatherProfile.resolvedWeatherContext.temperature.source, 'stated_user', 'a different range is still the user\'s statement')
+  assert.equal(stated.weatherProfile.highF, 85)
+})
+
+test('the card-explanation reply is asked for in the stylist\'s conversational voice', async () => {
+  const { compactFreeformAnswerSystem } = await import('../routes/ai.js')
+  for (const profile of ['existing_card_explanation', 'garment_fact', 'general_advice']) {
+    assert.match(compactFreeformAnswerSystem(profile), /as their stylist talking with them: plain sentences in your own voice/)
+    assert.doesNotMatch(compactFreeformAnswerSystem(profile), /one bounded text question, concisely/)
+  }
+})

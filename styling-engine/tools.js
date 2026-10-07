@@ -683,6 +683,17 @@ export async function resolveToolStylingContext({
     location: toolContext.location,
     date: toolContext.currentDate,
   }
+  // A `user_weather` whose numbers are the thread's own stored forecast is a copy, not something the
+  // user said. Live thread_1791357375231: the follow-up passed the thread's 78/62°F back as
+  // user_weather and the cards read "78°F high / 62°F low — you said so". Dropped, so the stored
+  // forecast and its true source stand. Any other user_weather is taken as before.
+  const storedTemperature = toolContext.resolvedWeatherContext?.temperature
+  const sameDegrees = (a, b) => Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.round(Number(a)) === Math.round(Number(b))
+  const copiedFromThread = Boolean(explicitRequest.userWeather && storedTemperature
+    && !String(storedTemperature.source || '').includes('stated')
+    && sameDegrees(explicitRequest.userWeather.high_f ?? explicitRequest.userWeather.highF, storedTemperature.highF)
+    && sameDegrees(explicitRequest.userWeather.low_f ?? explicitRequest.userWeather.lowF, storedTemperature.lowF))
+  const userWeatherUnlessCopiedFromThread = copiedFromThread ? null : (explicitRequest.userWeather || null)
   // The router's time of day (routes/ai.js) reads the forecast for those hours of the day instead
   // of its whole envelope — the same hourly slice trip activities use (resolveExposureWindowHourly).
   // It stands in for the day's live forecast and falls back to it when the hours are not covered.
@@ -739,7 +750,7 @@ export async function resolveToolStylingContext({
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
-      userWeather: explicitRequest.userWeather || toolContext.userWeather || null,
+      userWeather: userWeatherUnlessCopiedFromThread || toolContext.userWeather || null,
     },
     actionArtifact,
     establishedState,
