@@ -997,6 +997,10 @@ test('the trip roster system prompt states what travels well as things to weigh,
   // thread_1791411318500: four tops, one long-sleeved, no knit, for five days with highs in the 60s.
   assert.match(brief, /Where the warmth comes from: a coat comes off indoors/)
   assert.match(brief, /Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures/)
+  // thread_1791415285620: after the cool-end fact alone, the bag held four long-sleeved tops and
+  // nothing for the one forecast day in the 80s. Both ends are stated.
+  assert.match(brief, /Read them against the warm end too/)
+  assert.match(brief, /worn alone on the warm day and under a layer on the cool ones/)
   // Owner, 2026-10-07: "not everything goes into a suitcase, the person also has to wear something on
   // the plane. Unless it can't be reused after a 7 hour flight."
   assert.match(brief, /What is worn on the journey is not in the bag/)
