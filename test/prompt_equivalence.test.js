@@ -604,6 +604,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         `Return ONLY valid JSON. No markdown.\n\n${STYLIST_COMPETENCE_CONTRACT}\n\nYour job:`
       )
     }
+    // 2026-10-07 (owner rulings 2026-10-06: reply length is the stylist's judgment; she asks when
+    // she needs to). "concise" is no longer asked for, and the destination-question limit says it
+    // limits destination and weather questions only.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected
+        .replace('Be direct, specific, and concise — never repeat advice', 'Be direct and specific, at the length an answer needs — never repeat advice')
+        .replace('— should trigger the clarifying question.', '— should trigger a question about the destination. This limits destination and weather questions only: when something else that would change the outfit is missing or the request could go different ways, ask.')
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

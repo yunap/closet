@@ -429,3 +429,40 @@ clause 12 actually said. **When moving a clause, move that clause — not the pa
 
 Category B stays untouched until someone wants to state the bet per line, per the standing rule that
 several of these exist because a model once face-planted confidently.
+
+## 2026-10-07 — re-measured on Gemini; the block rewrite stays declined
+
+The stylist conversation-quality phase proposed a "prompt diet" as its step 6. Measured again before
+touching anything, on `gemini-3.5-flash-lite` (the provider since 2026-09-07):
+
+| Component of a full-stylist request | Characters | Share |
+|---|---:|---:|
+| Wardrobe manifest (273 pieces) | ~70,500 | 36% |
+| Tool schemas (14 tools; `plan_outfit_set` alone 16,700) | ~58,800 | 30% |
+| `AESTHETIC NEUTRALITY & CONVERSATIONAL CONSTRAINTS` (53 rules) | ~38,900 | 20% |
+| Constitution, saved feedback, discipline, controller | ~27,000 | 14% |
+
+That is ~46,000 tokens on the first call of a turn; later calls in the same turn continue the
+interaction and are billed ~15–20k, mostly cached. Across turns Gemini's implicit cache does hit when
+turns are minutes apart: in `thread_1791357375231` the first call cost $0.017 cold and $0.0035–0.0048
+warm. From 2026-09-25 to 2026-10-06 the 36 first calls cost $0.49 of $1.43 total `/ask` spend. Of 233
+turns since 2026-09-01, 144 used this prompt (101 plans, 43 other full-stylist turns).
+
+**Decision.** The clause inventory above stands: a rewrite of the instruction block is still declined.
+The prize is about a cent per cold turn, and every conversational fault found in this phase had another
+cause — a call that did no reasoning (`thinking_level` 'low'), a fact never stated to the model, text
+written by code, or an extra closing call (see `engine-behaviour-map.md`, 2026-10-02 amendment, items
+25–36). What was done instead is disposition 4 only — instructions that contradicted owner rulings of
+2026-10-06 (reply length is the stylist's judgment; she asks when she needs to):
+
+- `Be direct, specific, and concise` → `Be direct and specific, at the length an answer needs`.
+- The destination-question limit now says it limits destination and weather questions only.
+- The `preference_reaction` turn directive no longer says "keep your reply concise" and no longer
+  describes a reaction that carries a request ("I like that one. Show me another…") as only a taste
+  statement.
+
+Not done, with the reason: a lean trip-planning prompt (a trip turn uses this prompt only to emit
+`plan_outfit_set` and to write the reply) would cut that request by roughly 80%, about a cent per cold
+trip turn; and taking the manifest out of the standing prompt, which `search-payload-spec.md` ties to
+what search returns. Both are cost work with a small, measured prize.
+

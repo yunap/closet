@@ -9084,3 +9084,15 @@ test('the card-explanation reply is asked for in the stylist\'s conversational v
     assert.doesNotMatch(compactFreeformAnswerSystem(profile), /one bounded text question, concisely/)
   }
 })
+
+// Owner rulings 2026-10-06 applied to the standing stylist instructions (2026-10-07).
+test('the stylist instructions do not cap reply length, and a reaction that carries a request is treated as a request', async () => {
+  const { buildStylistConversationDirective } = await import('../styling-engine/core.js')
+  const directive = buildStylistConversationDirective('preference_reaction')
+  assert.doesNotMatch(directive, /concise/)
+  assert.match(directive, /when the message also asks for something \(another outfit, a change\), do that/)
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const system = buildPrompts({}).STYLIST_SYSTEM
+  assert.doesNotMatch(system, /Be direct, specific, and concise/)
+  assert.match(system, /This limits destination and weather questions only/)
+})

@@ -4082,7 +4082,11 @@ export function buildStylistConversationDirective(mode) {
     case 'explanation':
       return 'The user is asking for explanation or rationale. Explain how the prior answer was made naturally using listed garment details, metadata, and any images attached to this call.'
     case 'preference_reaction':
-      return 'The user is stating a style or taste preference. Accept this preference naturally, adapt your rules for their style profile, and keep your reply concise.'
+      // 2026-10-07 (live thread_1791353402050): "I like that one. Show me another outfit in the same
+      // spirit" is labelled a preference reaction by the keyword match on "I like", and this
+      // directive then described it as only a taste statement and capped the reply ("keep your
+      // reply concise"). A reaction often carries a request; length is the stylist's call.
+      return 'The user is reacting to what you showed them: a like, a dislike, a preference. Take it on board, and when the message also asks for something (another outfit, a change), do that.'
     case 'followup':
       return 'The user is asking a follow-up question. Answer it directly and naturally. Do not restart the full evaluation flow.'
     default:
