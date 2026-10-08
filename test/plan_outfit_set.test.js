@@ -965,6 +965,44 @@ test('a coat assigned for the walk to an indoor dinner is measured against the w
     `no too-warm note for a coat on a 40°F walk: ${JSON.stringify(result.accepted[0].systemFlags)}`)
 })
 
+// Owner, 2026-10-08: a week of 46–80°F days produced no look with a middle layer and no middle
+// layer in the suitcase; "the middle layer can also be a pullover or a sweater, not only the
+// cardigan". The trip composer was told one layer per look. The structure it may now use: a base,
+// one layer worn over it that stays on indoors (recorded as a top or as outerwear), one outer layer.
+test('a trip look may wear a middle layer over its base and under its coat, whether the wardrobe files it as a top or as outerwear', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const teeId = insertPiece({ category: 'top', name: 'cotton tee' })
+  const sweaterId = insertPiece({ category: 'top', name: 'wool pullover', fabric_weight: 'medium' })
+  const secondSweaterId = insertPiece({ category: 'top', name: 'second pullover', fabric_weight: 'medium' })
+  const cardiganId = insertPiece({ category: 'outerwear', name: 'knit cardigan', fabric_weight: 'medium' })
+  const jeansId = insertPiece({ category: 'bottom', name: 'jeans' })
+  const shoeId = insertPiece({ category: 'shoes', name: 'sneakers', heel_height: 'flat', walk_support: 'high' })
+  const coatId = insertPiece({ category: 'outerwear', name: 'trench coat', fabric_weight: 'medium' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Sightseeing', occasion: 'city', activity: 'walking', count: 3, weather_estimate: { high_f: 80, low_f: 46 } },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week of sightseeing', planKind: 'trip' })
+  const slot = workbench.pendingPlan.slots[0]
+  const look = piece_ids => ({ slot_id: slot.id, piece_ids: piece_ids.map(Number), cold_layer_decision: { mode: 'assigned_packed_layer', assigned_layer_piece_id: Number(coatId) } })
+  const verdict = piece_ids => validateSubmittedPlanOutfits(workbench.pendingPlan, [look(piece_ids)])
+  const reasons = result => JSON.stringify(result.failures.map(f => f.reasons))
+
+  const pullover = verdict([teeId, sweaterId, jeansId, shoeId])
+  assert.equal(pullover.accepted.length, 1, `a pullover over a tee, coat on top: ${reasons(pullover)}`)
+  const cardigan = verdict([teeId, cardiganId, jeansId, shoeId])
+  assert.equal(cardigan.accepted.length, 1, `a cardigan over a tee, coat on top: ${reasons(cardigan)}`)
+  const pile = verdict([teeId, sweaterId, cardiganId, coatId, jeansId, shoeId])
+  assert.equal(pile.accepted.length, 0, 'a base under three layers is still a pile')
+  const twoSweaters = verdict([teeId, sweaterId, secondSweaterId, jeansId, shoeId])
+  assert.equal(twoSweaters.accepted.length, 0, 'a base takes one layer over it, not two')
+
+  const workbenchText = JSON.stringify(workbench.workbench || workbench)
+  assert.match(workbenchText, /at most one MIDDLE layer and at most one OUTER layer/)
+  assert.match(workbenchText, /not on where the wardrobe files it/)
+  assert.doesNotMatch(workbenchText, /at most 1 optional outerwear layer/)
+})
+
 // Moved from 66/57 to 78/63 when the note began reading the layer's own demand: a down coat against
 // a 57°F start is one level over (ordinary overshoot, no note); against 63°F it is two.
 test('an assigned layer substantially warmer than the slot demands is accepted with a note on the card, not rejected', async () => {
@@ -9739,7 +9777,7 @@ test('a trip activity with no day of its own is weathered across the whole trip;
   assert.deepEqual(acrossTrip.profile.resolvedWeatherContext.dateRange, { start: '2026-10-12', end: '2026-10-14' })
   assert.equal(acrossTrip.profile.resolvedWeatherContext.exposureWindowAcrossDays.rainDays, 1)
   assert.ok(!acrossTrip.profile.isRainy, 'one wet evening of three does not mark the whole activity rainy')
-  assert.match(acrossTrip.label, /^evenings, Oct 12–Oct 14: 55–78°F; coolest Oct 14 \(55°F\), warmest Oct 13 \(78°F\); rain at that time on 1 of 3 days — hourly forecast, Vienna, Virginia/)
+  assert.match(acrossTrip.label, /^evenings, Oct 12–Oct 14: 55–78°F; coolest Oct 14 \(55°F\), warmest Oct 13 \(78°F\); the widest swing on a single day is Oct 13, 62°F to 78°F; rain at that time on 1 of 3 days — hourly forecast, Vienna, Virginia/)
   assert.doesNotMatch(acrossTrip.label, /sliced to this activity|live hourly forecast/)
 
   _clearWeatherCachesForTests()
@@ -9756,7 +9794,16 @@ test('the trip weather sentence states uncovered days and flags a far-ahead fore
     days: [{ date: '2026-10-15', lowF: 54.2, highF: 62 }, { date: '2026-10-16', lowF: 60, highF: 76.8 }],
   }
   const farAhead = tripWindowWeatherSentence(acrossDays, { timeWindow: { period: 'morning' }, location: 'Vienna, Virginia', today: new Date('2026-10-02T12:00:00Z') })
-  assert.equal(farAhead, 'mornings, Oct 15–Oct 16: 54–77°F; coolest Oct 15 (54°F), warmest Oct 16 (77°F); no rain forecast at that time; Oct 17–Oct 18 not forecast yet — hourly forecast, Vienna, Virginia; a forecast this far ahead often changes')
+  assert.equal(farAhead, 'mornings, Oct 15–Oct 16: 54–77°F; coolest Oct 15 (54°F), warmest Oct 16 (77°F); the widest swing on a single day is Oct 16, 60°F to 77°F; no rain forecast at that time; Oct 17–Oct 18 not forecast yet — hourly forecast, Vienna, Virginia; a forecast this far ahead often changes')
+  // Owner, 2026-10-08: the range across a week does not say that one day runs from cool to warm,
+  // which is what a middle layer is for. The live forecast of thread_1791444946137:
+  const vienna = { lowF: 49.7, highF: 82.2, days: [
+    { date: '2026-10-12', lowF: 62.7, highF: 70.4 }, { date: '2026-10-13', lowF: 58.2, highF: 82.2 }, { date: '2026-10-14', lowF: 49.7, highF: 65.4 },
+    { date: '2026-10-15', lowF: 50.1, highF: 69.7 }, { date: '2026-10-16', lowF: 55.7, highF: 79.1 }, { date: '2026-10-17', lowF: 54.2, highF: 72.4 },
+  ] }
+  assert.match(tripWindowWeatherSentence(vienna, { whenLabel: 'whole days', today: new Date('2026-10-08T12:00:00Z') }), /warmest Oct 13 \(82°F\); the widest swing on a single day is Oct 13, 58°F to 82°F; 1 of 6 days reaches 80°F or more/)
+  const steady = { lowF: 60, highF: 72, days: [{ date: '2026-10-12', lowF: 60, highF: 70 }, { date: '2026-10-13', lowF: 62, highF: 72 }] }
+  assert.doesNotMatch(tripWindowWeatherSentence(steady, { whenLabel: 'whole days', today: new Date('2026-10-08T12:00:00Z') }), /widest swing/, 'days that each stay within a narrow band say nothing about a swing')
   const soon = tripWindowWeatherSentence(acrossDays, { timeWindow: { start_local: '09:00', end_local: '11:00' }, today: new Date('2026-10-14T12:00:00Z') })
   assert.match(soon, /^09:00–11:00 each day, Oct 15–Oct 16: /)
   assert.doesNotMatch(soon, /often changes/)
@@ -9813,7 +9860,7 @@ test('a trip activity with no day and no time of day resolves over the whole tri
   assert.equal(wholeTrip.profile.isCold, false)
   assert.ok(urls.some(url => url.includes('forecast_days=')), 'the rejected range is retried over the horizon')
   // Prefix only: the trailing far-ahead caveat depends on the day the test runs.
-  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); 1 of 5 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F; Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
+  assert.match(wholeTrip.label, /^whole days, Oct 12–Oct 16: 53–81°F; coolest Oct 15 \(53°F\), warmest Oct 12 \(81°F\); the widest swing on a single day is Oct 12, 64°F to 81°F; 1 of 5 days reaches 80°F or more \(Oct 12\), the rest top out at 75°F; Oct 17–Oct 18 not forecast yet — daily forecast \(Open-Meteo\), Vienna, Virginia/)
   assert.doesNotMatch(wholeTrip.label, /rain/, 'the whole-day path has no rain data and must not claim any')
 
   _clearWeatherCachesForTests()

@@ -1225,6 +1225,16 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
   const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
   if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
+  // The range across the trip does not say whether cool and warm fall on different days or in the
+  // same one, and only the second needs something that comes off by noon. Owner, 2026-10-08: a week
+  // with a 46–80°F day "did not produce a single outfit with a middle layer and no middle layers
+  // are packed either" — packer and composer had been told "50–82°F; coolest Oct 14, warmest Oct
+  // 13". The widest single day is stated when it spans the 15°F the composition brief already
+  // treats as a real range across the day.
+  const widest = days.reduce((best, day) => ((day.highF - day.lowF) > (best.highF - best.lowF) ? day : best))
+  if (days.length > 1 && Number.isFinite(widest.highF - widest.lowF) && (widest.highF - widest.lowF) >= 15) {
+    parts.push(`the widest swing on a single day is ${shortDate(widest.date)}, ${Math.round(widest.lowF)}°F to ${Math.round(widest.highF)}°F`)
+  }
   // A warm day inside a mild range is easy to dress for and easy to forget; say which days they are.
   const hotDays = days.filter(day => day.highF >= HOT_F)
   if (days.length > 1 && hotDays.length && hotDays.length < days.length) {
@@ -4967,7 +4977,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 4 (spec 24): third confirmed occurrence of cardigan+shawl stacking
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
-    'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // 2026-10-08: on a trip this sentence, with "at most 1 optional outerwear layer" below, meant a
+    // week of 46–80°F days was dressed and packed with no middle layer at all (every cardigan is
+    // filed as outerwear, so it competed with the coat for the one place). The trip composer now
+    // gets the shared layering contract, which keeps what this sentence was written for: one
+    // middle layer at most, so a cardigan and a shawl are still not stacked. Other plan kinds keep it.
+    ...(planKind === 'trip' ? [] : ['At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.']),
     // A 15°F swing spans across adjacent PET comfort bands (e.g. 55°F cool to 70°F mild, or 70°F mild to 85°F warm),
     // where clothing flexibility and layering become physically necessary even when only coarse daily high/low is known.
     slots.some(s => s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15)))
@@ -5053,7 +5068,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const target = Math.max(0, Number(workbenchSlot.target_outfits) || 0)
     const requirements = [
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
-      categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
+      categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowMiddleLayer: planKind === 'trip' })
     ]
     // Only project the sleeve-layering guidance (the neutral statement; the geometry verdict is log-only)
     // when the slot's own roster can actually form a

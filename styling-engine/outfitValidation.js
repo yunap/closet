@@ -58,6 +58,18 @@ export function categoryOutfitStructurePromptRule({
     // bound the gate actually holds instead of asking the model to hold it.
     return 'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and outerwear never replaces the required top. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer worn over the base (a cardigan, vest, or overshirt) and at most one OUTER layer over that (a coat or jacket). Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. Put each garment in the slot for the job it does in the outfit, and name the relationship in styling_instructions. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
   }
+  if (strictSingleTop && maxOuterwear === 1 && allowMiddleLayer) {
+    // The trip composer's layering contract (outfitSetPlanner.js, plan kind `trip`). Until
+    // 2026-10-08 a trip look was told "at most 1 optional outerwear layer" and "At most one layer
+    // (cardigan, jacket, or shawl) per outfit": a week of 46–80°F days was dressed and packed with
+    // no middle layer at all, because every cardigan is filed as outerwear and competed with the
+    // coat for the one place. Owner, same day: "the middle layer can also be a pullover or a
+    // sweater, not only the cardigan" — so a layer is described here by how it is worn, not by its
+    // kind or by the category it is filed under (a pullover over a tee is two tops, which
+    // evaluateOutfitStructure accepts). The whole-wardrobe text above is pinned to its own answer
+    // slots and still names the middle layer by garment; it is not changed here.
+    return 'Each outfit: EXACTLY one base — one top with one bottom, or one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and a layer never replaces the base. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer and at most one OUTER layer. A middle layer is worn over the base and stays on indoors; an outer layer goes over everything and comes off indoors. Which of the two a garment is depends on how it is worn in this outfit, not on where the wardrobe files it: a middle layer may be recorded as a top or as outerwear. Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. Name the relationship (what is worn over what) in styling_instructions.'
+  }
   if (strictSingleTop && maxOuterwear === 1 && !allowAccessories) {
     // Preserve the ratcheted visual-composer contract byte-for-byte while moving its ownership
     // here. Capsule expansion deliberately selects the same strict, accessory-free policy.
