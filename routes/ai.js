@@ -6990,6 +6990,11 @@ router.post('/ask', async (req, res) => {
           timezone: req.body.timezone || 'America/Los_Angeles',
           contextSummary: [
             compactContext.outfits.length ? `verified current outfit set: ${compactContext.outfits.length} card(s)` : 'no current outfit set',
+            // A fact the router could not otherwise know from one preceding exchange (live
+            // thread_1791444946137: "redo the plan", six turns after the plan was made).
+            Array.isArray(compactState.packing_roster?.roster_ids) && compactState.packing_roster.roster_ids.length
+              ? `this thread holds a trip plan (${compactState.packing_roster.roster_ids.length} pieces packed)`
+              : '',
             compactContext.pieceIds.length ? `${exactNamedPieceIds.length ? 'exact active garment name resolved' : 'verified garment subjects available'}: ${compactContext.pieceIds.length}` : 'no verified garment subject',
             compactSavedPhotoCount ? `saved garment photographs available: ${compactSavedPhotoCount} resolved subject(s)` : 'no saved garment photographs for resolved subjects',
             req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : '',
@@ -7372,7 +7377,10 @@ router.post('/ask', async (req, res) => {
       // plan_outfit_set packs a new suitcase from scratch and replaces the plan on screen. Live
       // thread_1791423893034: "for all 7 days?" (about one at-home look) was answered by re-planning
       // the whole trip with a different suitcase. It is offered on a follow-up only when the router
-      // read the message as a request to plan or pack a trip.
+      // read the message as a request to plan or pack a trip — which includes asking for this
+      // thread's plan to be made again as a whole. Live thread_1791444946137: until the router's
+      // rule said so, "Can you redo the plan…" was full_stylist by that rule ("any change to a plan
+      // … that already exist"), the tool was withheld, and the answer was one look.
       const replanRequested = toolContext.freeformDiagnostics?.executionRouterProfile === 'trip_plan'
       toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', ...(replanRequested ? ['plan_outfit_set'] : []), 'store_user_correction']
       toolContext.freeformDiagnostics ||= {}

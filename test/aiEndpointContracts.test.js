@@ -9184,7 +9184,12 @@ test('a fresh trip request is routed to trip_plan and gets the stylist prompt wi
   try {
     const routed = await routeFreeformExecutionProfile({ question: body.question })
     assert.equal(routed.value.profile, 'trip_plan')
-    assert.match(captured.system, /Choose trip_plan ONLY for a FRESH request to pack for/)
+    assert.match(captured.system, /Choose trip_plan ONLY for a request to pack for/)
+    // thread_1791444946137: "redo the plan" was full_stylist under "any change to a plan … that
+    // already exist", so the follow-up was never offered plan_outfit_set and answered with one look.
+    assert.match(captured.system, /when the user asks for a trip plan this thread already holds to be made again as a whole/)
+    assert.match(captured.system, /a change to, part of a plan or cards that already exist \(one look, one piece, one day\); those are full_stylist/)
+    assert.doesNotMatch(captured.system, /any change to a plan or cards that already exist/)
     assert.match(captured.system, /Not for a capsule wardrobe/)
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
@@ -9409,6 +9414,7 @@ test('a trip follow-up cannot re-plan unless the router read a request to plan, 
   const { readFileSync } = await import('node:fs')
   const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
+  assert.match(route, /`this thread holds a trip plan \(\$\{compactState\.packing_roster\.roster_ids\.length\} pieces packed\)`/, 'the router is told the thread holds a plan')
   assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.
