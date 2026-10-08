@@ -1641,7 +1641,35 @@ export async function executeTool(name, args, toolContext = {}) {
   }
 }
 
-async function executeToolInternal(name, args, toolContext = {}) {
+// `user_weather` is for weather the USER stated; it outranks the live forecast. Live
+// thread_1791447317199: the trip stylist sent weather_estimate {65, 45} and the same numbers again as
+// user_weather. Nobody had said a temperature. The forecast for those days was about 50–82°F; the
+// whole plan was packed for 45–65°F and every card read "65°F high / 45°F low — you said so". A
+// user_weather that only repeats the call's own estimate, on a turn whose request states no weather,
+// is the model's guess in the wrong field: it is dropped, and the estimate keeps its own rank (below
+// the forecast). The same test as the thread-copy check in resolveToolStylingContext; a user_weather
+// that differs from the estimate, or any on a request that does state weather, is taken as before.
+export function withoutEchoedUserWeather(args, toolContext = {}) {
+  if (!args || typeof args !== 'object') return args
+  const requestText = [toolContext.request, toolContext.question].filter(Boolean).join(' ')
+  if (requestStatesWeather(requestText)) return args
+  const degrees = (weather, key) => Number(weather?.[`${key}_f`] ?? weather?.[`${key}F`])
+  const echoes = (userWeather, estimate) => Boolean(userWeather && estimate)
+    && ['high', 'low'].every(key => Number.isFinite(degrees(userWeather, key)) && Math.round(degrees(userWeather, key)) === Math.round(degrees(estimate, key)))
+  const slots = Array.isArray(args.slots) ? args.slots : null
+  const slotEchoes = slot => echoes(slot?.user_weather, slot?.weather_estimate || args.weather_estimate)
+  const topEchoes = echoes(args.user_weather, args.weather_estimate)
+  if (!topEchoes && !(slots && slots.some(slotEchoes))) return args
+  bumpFreeformDiagnostic(toolContext, 'userWeatherEchoedEstimateDropped')
+  const { user_weather: echoed, ...rest } = args
+  return {
+    ...(topEchoes ? rest : args),
+    ...(slots ? { slots: slots.map(slot => { if (!slotEchoes(slot)) return slot; const { user_weather: dropped, ...kept } = slot; return kept }) } : {}),
+  }
+}
+
+async function executeToolInternal(name, rawArgs, toolContext = {}) {
+  let args = withoutEchoedUserWeather(rawArgs, toolContext)
   switch (name) {
       case 'declare_intent': {
         // Step 4 (model-declared intent): the model states what this turn should
