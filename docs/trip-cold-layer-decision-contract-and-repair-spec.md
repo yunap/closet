@@ -253,3 +253,19 @@ afterward. A slot whose roster genuinely cannot satisfy the cold floor still fai
 attempt to force a recovery that isn't there. Five cards silently disappearing because of an omitted
 optional relation, as in `thread_1788667759424`, cannot recur undetected — the exact failure shape is
 pinned as its own test.
+
+## Amendment (2026-10-07, owner-approved): a second narrow repair, for an incomplete look
+
+Part B's bounded second chance now has a sibling. A trip look whose **only** rejection is
+`missing shoes` or `missing top or dress`, in a slot whose allowed pieces can supply what is
+missing, is sent back to the composer once (`trip_incomplete_look_repair`) to be completed from
+those candidates. Evidence: live `thread_1791421976583` — a blouse, utility pants and a second top
+submitted for Museum Visits with the sneakers allowed for the slot; the look was lost and the reply
+told the user to pack more.
+
+The same limits as Part B apply: the model chooses, code never picks the piece; a completion is
+accepted only when every added piece is one of the offered candidates; the completed look passes
+the same `validateSubmittedPlanOutfits`; a look it does not fix stays a failure; no other failure
+kind is repaired. This still does not extend capsule's shoes/bottom/top auto-completion to trips —
+that fills the gap in code, this asks the composer. See `engine-behaviour-map.md`, 2026-10-02
+amendment, item 54.

@@ -9272,9 +9272,10 @@ test('a museum visit away from home is a day on foot; near home it may be one ve
   const { readFileSync } = await import('node:fs')
   const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
   const prompts = readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
-  assert.match(tools, /Use 'indoor' only when the wearer is inside from arrival to leaving/)
-  assert.match(tools, /Visiting museums, galleries, shops or sights while away on a trip is a day on foot in that place/)
-  assert.doesNotMatch(tools, /climate-controlled slots \(offices, restaurants, galleries\)/)
+  // Owner ruling 2026-07-30 stands (a museum slot is dressed for the room, with the outside forecast
+  // governing the layer for getting there); 2026-10-07 adds that it is a walking day for shoes.
+  assert.match(tools, /Use 'indoor' for climate-controlled slots \(offices, restaurants, galleries, museums\)/)
+  assert.match(tools, /A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking'/)
   assert.match(prompts, /Near home, a museum, gallery, show or restaurant can be the whole outing/)
   assert.match(prompts, /In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city/)
   assert.match(prompts, /when they do not, do not assume the walking/)

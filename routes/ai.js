@@ -6368,6 +6368,57 @@ async function repairTripColdLayerCards({ cards } = {}, toolContext) {
   return Array.isArray(value?.cards) ? value.cards : []
 }
 
+// The second narrow repair (identifyIncompleteLookRepairableFailures, outfitSetPlanner.js): a trip
+// look rejected only because it has no shoes, or no top or dress. Text-only and scoped to those
+// looks, like the cold-layer repair above.
+export function repairTripIncompleteLooksSchema(count) {
+  const exactCount = Math.max(1, Number(count) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      cards: {
+        type: 'array', minItems: exactCount, maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            original_piece_ids: { type: 'array', items: { type: 'integer' }, description: 'The piece_ids exactly as given, so the answer can be matched to its look.' },
+            piece_ids: { type: 'array', items: { type: 'integer' }, description: 'The completed look: the original pieces plus what was missing, chosen from that look\'s candidates.' },
+            title: { type: 'string' },
+            reason: { type: 'string' }
+          },
+          required: ['slot_id', 'original_piece_ids', 'piece_ids']
+        }
+      }
+    },
+    required: ['cards']
+  }
+}
+
+export function repairTripIncompleteLooksSystemPrompt() {
+  return `You are completing a small set of trip outfits you composed. Each was rejected for one reason only: it is incomplete — \`missing\` says what it lacks (shoes, or a top or dress).
+
+For EACH look, choose what is missing from that look's own \`candidates\`, picking the one that best suits the look and what it is for, and return the completed piece_ids. Keep every original piece, with one exception: if the look holds two pieces doing the same job (two tops and no shoes is the usual slip), you may drop the one that does not belong, and then also return a title and reason that describe the look as it now is. Otherwise leave title and reason out; the look keeps its own words. Add nothing that is not in the candidates. Return original_piece_ids exactly as given.`
+}
+
+async function repairTripIncompleteLooks({ cards } = {}, toolContext) {
+  const list = Array.isArray(cards) ? cards : []
+  if (!list.length) return []
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: repairTripIncompleteLooksSystemPrompt(),
+    messages: [{ role: 'user', content: [{ type: 'text', text: `Complete exactly these ${list.length} look(s):\n${JSON.stringify(list)}` }] }],
+    schema: repairTripIncompleteLooksSchema(list.length),
+    name: 'trip_incomplete_look_repair',
+    description: 'Complete a small set of trip outfits that were rejected only for missing shoes or a top.',
+    providerOverride: toolContext?.providerOverride || null,
+    maxTokens: structuredResponseMaxTokens(list.length, { tokensPerItem: 200, base: 300, floor: 500, ceiling: 2000 })
+  })
+  recordToolLoopUsage(toolContext, usage)
+  return Array.isArray(value?.cards) ? value.cards : []
+}
+
 // A capsule expansion is deliberately not a freeform tool loop. The original plan already paid
 // to choose the roster and resolve the slot's weather/register context. Reusing that structured
 // state turns "show one more" into one bounded composition call: no declare/search/view/propose
@@ -6845,6 +6896,7 @@ router.post('/ask', async (req, res) => {
     // repair pass for cold-layer-decision-only failures; always wired alongside composeTripPlanOnce
     // since both are the same ratified atomic-composition arc.
     toolContext.repairTripColdLayerCards = payload => repairTripColdLayerCards(payload, toolContext)
+    toolContext.repairTripIncompleteLooks = payload => repairTripIncompleteLooks(payload, toolContext)
     // Stage 2 roster selection is opt-in. With the flag off, toolContext never
     // gets a chooser and the capsule path is byte-identical to what shipped.
     if (modelCapsuleRosterEnabled()) {

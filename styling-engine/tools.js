@@ -55,7 +55,8 @@ import {
   truthfulWeatherLabel,
   slotColdLayerRequired,
   slotColdLayerPermitted,
-  identifyColdLayerRepairableFailures
+  identifyColdLayerRepairableFailures,
+  identifyIncompleteLookRepairableFailures
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -1375,7 +1376,7 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' only when the wearer is inside from arrival to leaving and the time outdoors is just getting there: an office day, a dinner, an event at one venue — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Visiting museums, galleries, shops or sights while away on a trip is a day on foot in that place that goes indoors for part of it: the wearer walks the streets to them and between them, so it is 'outdoor' with activity 'walking'. At home it can be different (a museum driven to and back is one venue). Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               user_weather: USER_WEATHER_SCHEMA,
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -4197,6 +4198,51 @@ async function executeToolInternal(name, args, toolContext = {}) {
               repairedOutfits = repairValidation.accepted
               accepted = [...accepted, ...repairedOutfits]
               failures = [...stillNeedsRepair, ...repairValidation.failures]
+            }
+          }
+          // A second narrow chance, same shape as the cold-layer one above: a look rejected ONLY for
+          // being incomplete (no shoes, or no top or dress) goes back to the composer once to be
+          // completed from that slot's own allowed pieces. The completed look is validated by the
+          // same function as every other; a look it does not fix stays a failure.
+          const incomplete = identifyIncompleteLookRepairableFailures(pendingPlan, failures)
+          if (incomplete.length && typeof toolContext.repairTripIncompleteLooks === 'function') {
+            let completions = []
+            try {
+              completions = await toolContext.repairTripIncompleteLooks({ cards: incomplete })
+            } catch (err) {
+              completions = []
+            }
+            const keyOf = ids => (Array.isArray(ids) ? ids : []).map(Number).sort((x, y) => x - y).join(',')
+            const remaining = [...failures]
+            const resubmission = []
+            for (const card of incomplete) {
+              const entry = (Array.isArray(completions) ? completions : []).find(response => String(response?.slot_id || '') === String(card.slot_id)
+                && keyOf(response?.original_piece_ids) === keyOf(card.piece_ids))
+              const candidateIds = new Set(card.candidates.map(candidate => candidate.id))
+              const newIds = Array.isArray(entry?.piece_ids) ? entry.piece_ids.map(Number) : []
+              const added = newIds.filter(id => !card.piece_ids.includes(id))
+              // Only a completion: every added piece is one of the offered candidates, and nothing
+              // outside the original look comes in.
+              if (!entry || !added.length || added.some(id => !candidateIds.has(id))) continue
+              const index = remaining.findIndex(failure => failure.slot_id === card.slot_id && keyOf(failure.outfit?.pieceIds) === keyOf(card.piece_ids))
+              if (index < 0) continue
+              const [original] = remaining.splice(index, 1)
+              const raw = sanitizedOutfits.find(submitted => String(submitted?.slot_id || '') === String(card.slot_id) && keyOf(submitted?.piece_ids) === keyOf(card.piece_ids))
+              const removedAny = card.piece_ids.some(id => !newIds.includes(id))
+              resubmission.push({
+                ...(raw || {}),
+                slot_id: card.slot_id,
+                piece_ids: newIds,
+                title: (removedAny && entry.title) || original.outfit?.title || card.title || '',
+                reason: (removedAny && entry.reason) || original.outfit?.reason || card.reason || '',
+              })
+            }
+            if (resubmission.length) {
+              const completionValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, { visuallySeenPieceIds: seenForValidation })
+              repairedOutfits = [...repairedOutfits, ...completionValidation.accepted]
+              accepted = [...accepted, ...completionValidation.accepted]
+              failures = [...remaining, ...completionValidation.failures]
+              bumpFreeformDiagnostic(toolContext, 'tripIncompleteLooksCompleted', completionValidation.accepted.length)
             }
           }
           // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the

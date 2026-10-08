@@ -5551,6 +5551,47 @@ export function identifyColdLayerRepairableFailures(pendingPlan = {}, failures =
   return repairable
 }
 
+// A look rejected only because it is incomplete — no shoes, or no top or dress — when the slot's own
+// allowed pieces could complete it (owner, 2026-10-07, extending the cold-layer repair's "one narrow
+// second chance" to a second mechanical slip). Live thread_1791421976583: the composer submitted a
+// blouse, utility pants and a second top for Museum Visits; the sneakers were allowed for the slot,
+// the look was rejected for "missing shoes", and the reply told the user to pack more. The composer
+// is asked to complete its own look; code never picks the piece.
+const INCOMPLETE_LOOK_FAILURES = [
+  { pattern: /^missing shoes$/, missing: 'shoes', groups: ['shoes'] },
+  { pattern: /^missing top or dress$/, missing: 'a top or dress', groups: ['top', 'dress'] },
+]
+
+export function identifyIncompleteLookRepairableFailures(pendingPlan = {}, failures = []) {
+  const slotById = new Map((Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).map(slot => [slot.id, slot]))
+  const repairable = []
+  for (const failure of Array.isArray(failures) ? failures : []) {
+    const reasons = Array.isArray(failure?.reasons) ? failure.reasons : []
+    if (!reasons.length) continue
+    const kinds = reasons.map(reason => INCOMPLETE_LOOK_FAILURES.find(kind => kind.pattern.test(reason)))
+    if (kinds.some(kind => !kind)) continue
+    const slot = slotById.get(failure.slot_id)
+    const pieceIds = Array.isArray(failure.outfit?.pieceIds) ? failure.outfit.pieceIds.map(Number) : []
+    if (!slot || !pieceIds.length) continue
+    const groups = new Set(kinds.flatMap(kind => kind.groups))
+    const candidates = (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : [])
+      .filter(piece => groups.has(wardrobeCategoryGroup(piece)) && !pieceIds.includes(Number(piece.id)))
+    if (!candidates.length) continue
+    const nameOf = id => (Array.isArray(slot.allowedPieces) ? slot.allowedPieces : []).find(piece => Number(piece.id) === Number(id))?.name || `piece ${id}`
+    repairable.push({
+      slot_id: failure.slot_id,
+      label: failure.label || slot.label || '',
+      title: failure.outfit?.title || '',
+      piece_ids: pieceIds,
+      pieces: pieceIds.map(id => ({ id, name: nameOf(id) })),
+      reason: failure.outfit?.reason || '',
+      missing: [...new Set(kinds.map(kind => kind.missing))].join(' and '),
+      candidates: candidates.map(piece => ({ id: Number(piece.id), name: piece.name || `piece ${piece.id}`, category: wardrobeCategoryGroup(piece) })),
+    })
+  }
+  return repairable
+}
+
 export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set(), verifiedNonRosterPiecesById = new Map() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
