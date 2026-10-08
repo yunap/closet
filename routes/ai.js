@@ -855,6 +855,10 @@ export function mergeTripThreadOutfitSet(priorSet = [], freshSet = []) {
       ...(revised.in_plan ? { in_plan: true } : {}),
       ...(revised.added_after_plan ? { added_after_plan: true } : {}),
       ...(!entry.assigned_layer_piece_ids && keptLayers.length ? { assigned_layer_piece_ids: keptLayers } : {}),
+      // Same occasion, same days: a revision that resolved no forecast of its own keeps the look's.
+      ...(!entry.resolved_weather_context && revised.resolved_weather_context
+        ? { resolved_weather_context: revised.resolved_weather_context, ...(revised.weather_used ? { weather_used: revised.weather_used } : {}) }
+        : {}),
       shown_last_turn: true,
     }
   }
@@ -5199,7 +5203,15 @@ export function composerGarmentLabel(piece = {}) {
 // shirt is not answered against today's weather at home (live thread_1791362754936: 96°F). Cards for
 // different places share nothing and return null.
 export function threadWeatherContextFromOutfitSet(currentOutfitSet = []) {
-  const stored = (Array.isArray(currentOutfitSet) ? currentOutfitSet : [])
+  // On a trip thread the set also holds looks added after the plan, which can be for another place
+  // (a day in a nearby town) or carry no forecast (an evening indoors). The trip's forecast is the
+  // plan's: live thread_1791447317199, once an "Alexandria" look sat beside the Vienna plan, the
+  // one-place test below returned nothing, the next swap fell back to the heuristic ("hot",
+  // "extreme heat" in October), and a medium-weight skirt and linen trousers were refused as
+  // "hot weather: insulating".
+  const all = Array.isArray(currentOutfitSet) ? currentOutfitSet : []
+  const planLooks = all.filter(outfit => outfit?.in_plan === true)
+  const stored = (planLooks.length ? planLooks : all)
     .map(outfit => outfit?.resolved_weather_context)
     .filter(context => context?.status === 'resolved' && context?.location)
   if (!stored.length) return null
