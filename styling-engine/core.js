@@ -4672,7 +4672,15 @@ export async function buildStylistConversationPayload(body) {
     ).map(Number).filter(Boolean),
     pieces: (Array.isArray(o?.pieces) ? o.pieces : []).map(piece => piece?.name).filter(Boolean),
   }))
-  const currentOutfitSet = outfitSetFromBody.length
+  // The body echoes only the cards of the latest reply. On a thread whose stored set holds a trip
+  // plan's looks (routes/ai.js mergeTripThreadOutfitSet) that echo is one card of a larger set, and
+  // taking it here both hid the plan from the stylist and overwrote the stored set a few lines below.
+  const storedSetHoldsTripPlan = requestedConversationMode !== 'new_request'
+    && Array.isArray(restoredState.current_outfit_set)
+    && restoredState.current_outfit_set.some(entry => entry?.in_plan === true)
+  const currentOutfitSet = storedSetHoldsTripPlan
+    ? restoredState.current_outfit_set
+    : outfitSetFromBody.length
     ? outfitSetFromBody
     : (requestedConversationMode !== 'new_request' && Array.isArray(restoredState.current_outfit_set)
       ? restoredState.current_outfit_set

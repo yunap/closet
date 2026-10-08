@@ -818,6 +818,51 @@ export function clearRecentlyDiscussedPieceIds(sessionId) {
   }, sessionId || 'default')
 }
 
+// A trip plan is a set the thread keeps (owner, 2026-10-08: a swapped look replaces the look it
+// revises). Until now every turn's cards replaced current_outfit_set, which is right when a new set
+// supersedes the old one and wrong for a plan: live thread_1791444946137, one turn after a swap the
+// stylist was sent that single card and none of the plan's eight looks, under a note saying THREAD
+// STATE "lists its looks". On a thread whose set holds plan looks, a later turn's cards are merged
+// into it instead: a one-slot swap takes the place of the look it revised (keeping that look's
+// packed layer unless the layer is what was swapped out), and any other card is kept after the plan
+// as `added_after_plan`. `shown_last_turn` marks what the latest reply showed, so "that look"
+// resolves. A new plan, or a turn the conversation treats as a new request, replaces the set as before.
+export const TRIP_PLAN_LOOK_CAP = 16
+const TRIP_THREAD_ADDED_LOOK_CAP = 4
+
+export function tripThreadHoldsPlanLooks(outfitSet) {
+  return Array.isArray(outfitSet) && outfitSet.some(entry => entry?.in_plan === true)
+}
+
+export function mergeTripThreadOutfitSet(priorSet = [], freshSet = []) {
+  const merged = (Array.isArray(priorSet) ? priorSet : []).map(({ shown_last_turn, swap_source_index, ...entry }) => entry)
+  const fresh = Array.isArray(freshSet) ? freshSet : []
+  const revisionsOf = sourceIndex => fresh.filter(entry => entry?.swap_source_index === sourceIndex).length
+  for (const { swap_source_index: sourceIndex, ...entry } of fresh) {
+    // Several alternatives for one look are options to choose between, not a revision of it.
+    const at = Number.isInteger(sourceIndex) && revisionsOf(sourceIndex) === 1
+      ? merged.findIndex(prior => prior.index === sourceIndex)
+      : -1
+    if (at < 0) {
+      merged.push({ ...entry, added_after_plan: true, shown_last_turn: true })
+      continue
+    }
+    const revised = merged[at]
+    const swappedOut = new Set((revised.piece_ids || []).filter(id => !(entry.piece_ids || []).includes(id)))
+    const keptLayers = (revised.assigned_layer_piece_ids || []).filter(id => !swappedOut.has(id))
+    merged[at] = {
+      ...entry,
+      ...(revised.in_plan ? { in_plan: true } : {}),
+      ...(revised.added_after_plan ? { added_after_plan: true } : {}),
+      ...(!entry.assigned_layer_piece_ids && keptLayers.length ? { assigned_layer_piece_ids: keptLayers } : {}),
+      shown_last_turn: true,
+    }
+  }
+  const added = merged.filter(entry => !entry.in_plan)
+  const dropped = new Set(added.slice(0, Math.max(0, added.length - TRIP_THREAD_ADDED_LOOK_CAP)))
+  return merged.filter(entry => !dropped.has(entry)).map((entry, index) => ({ ...entry, index: index + 1 }))
+}
+
 export function boundedConversationStateFromToolContext(toolContext = {}) {
   // Rejected diagnostic cards remain visible in the turn that produced them, but they are not an
   // accepted outfit set and must never become follow-up authority. A two-step retry used to leave
@@ -825,9 +870,13 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
   const outfits = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken)
     : []
-  const currentOutfitSet = outfits.slice(0, 8).map((outfit, index) => ({
+  // A trip plan is kept whole (TRIP_PLAN_LOOK_CAP); any other set keeps its first eight cards.
+  const isTripPlanSet = outfits.some(outfit => outfit?.tripPlanContext)
+  const currentOutfitSet = outfits.slice(0, isTripPlanSet ? TRIP_PLAN_LOOK_CAP : 8).map((outfit, index) => ({
     index: index + 1,
     label: outfit?.label || outfit?.title || `Outfit ${index + 1}`,
+    ...(outfit?.tripPlanContext ? { in_plan: true } : {}),
+    ...(Number.isInteger(outfit?.swapSourceIndex) ? { swap_source_index: outfit.swapSourceIndex } : {}),
     ...(outfit?.occasion ? { occasion: outfit.occasion } : {}),
     ...(outfit?.activity ? { activity: outfit.activity } : {}),
     ...(outfit?.dominantDirection ? { direction: outfit.dominantDirection } : {}),
@@ -934,6 +983,13 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   const priorConversationState = getStylistConversationState(sessionId) || {}
   const hasFreshCards = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
   const freshState = hasFreshCards ? boundedConversationStateFromToolContext(toolContext) : null
+  // A follow-up's cards join a trip plan instead of replacing it (mergeTripThreadOutfitSet).
+  if (freshState?.current_outfit_set
+    && !tripThreadHoldsPlanLooks(freshState.current_outfit_set)
+    && tripThreadHoldsPlanLooks(priorConversationState.current_outfit_set)
+    && toolContext.turnMode !== 'new_request') {
+    freshState.current_outfit_set = mergeTripThreadOutfitSet(priorConversationState.current_outfit_set, freshState.current_outfit_set)
+  }
   saveStylistConversationState({
     ...priorConversationState,
     ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),

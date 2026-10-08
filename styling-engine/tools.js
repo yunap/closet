@@ -3191,6 +3191,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
               thermal: thermalFactsForPieceLine(replacement) || undefined
             },
             engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
+            // Which look of the thread's set this revises, so a trip plan can take the revision in
+            // place (routes/ai.js mergeTripThreadOutfitSet). Absent for a card made this same turn.
+            ...(Number.isInteger(Number(outfit.index)) && Number(outfit.index) > 0 && !(toolContext.generatedOutfits || []).includes(outfit)
+              ? { swapSourceIndex: Number(outfit.index) }
+              : {}),
             // A replacement from outside the suitcase is a packing-set change, recorded the way
             // propose_outfit records one, so the roster the next turn reads includes it. Nothing is
             // removed: the piece swapped out of this look is still packed for the others.

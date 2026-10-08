@@ -9103,6 +9103,89 @@ test('on a trip thread a one-slot swap says which candidates are in the suitcase
   assert.equal(fromSuitcase.pendingRosterChange, undefined, 'a packed replacement changes nothing in the suitcase')
 })
 
+// thread_1791444946137: one turn after a swap, THREAD STATE held that one card and none of the trip
+// plan's eight looks. Owner, 2026-10-08: a swapped look replaces the look it revises.
+test('a trip plan stays in the thread state: a swap replaces its look in place and another look is added after the plan', async () => {
+  const { mergeTripThreadOutfitSet, tripThreadHoldsPlanLooks, boundedConversationStateFromToolContext, persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState, saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const look = (index, label, piece_ids, extra = {}) => ({ index, label, piece_ids, pieces: piece_ids.map(String), in_plan: true, ...extra })
+  const plan = [
+    look(1, 'City Sightseeing', [260, 105, 214], { assigned_layer_piece_ids: [996767] }),
+    look(2, 'Fall Foliage Walks', [1, 996784, 996865], { assigned_layer_piece_ids: [996759] }),
+    look(3, 'Dinners Out', [260, 183, 191]),
+  ]
+  assert.equal(tripThreadHoldsPlanLooks(plan), true)
+  assert.equal(tripThreadHoldsPlanLooks([{ index: 1, label: 'Dinner look', piece_ids: [1, 2] }]), false)
+
+  const afterSwap = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'Fall Foliage Walks', piece_ids: [1, 230, 996865], pieces: ['a'], swap_source_index: 2 }])
+  assert.deepEqual(afterSwap.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out'], 'still three looks, in the plan\'s order')
+  assert.deepEqual(afterSwap[1].piece_ids, [1, 230, 996865])
+  assert.equal(afterSwap[1].in_plan, true)
+  assert.equal(afterSwap[1].index, 2)
+  assert.deepEqual(afterSwap[1].assigned_layer_piece_ids, [996759], 'the look keeps its packed layer')
+  assert.equal(afterSwap[1].shown_last_turn, true)
+  assert.equal('swap_source_index' in afterSwap[1], false)
+  assert.deepEqual(afterSwap[0], plan[0], 'the other looks are untouched')
+
+  const afterSecondSwap = mergeTripThreadOutfitSet(afterSwap, [{ index: 1, label: 'Fall Foliage Walks', piece_ids: [1, 230, 990397], pieces: ['a'], swap_source_index: 2 }])
+  assert.deepEqual(afterSecondSwap[1].piece_ids, [1, 230, 990397], 'a second swap on the same look revises it again')
+  assert.equal(afterSecondSwap.length, 3)
+
+  const afterExtra = mergeTripThreadOutfitSet(afterSecondSwap, [{ index: 1, label: 'Cozy Evening In', piece_ids: [5, 6], pieces: ['a'] }])
+  assert.equal(afterExtra.length, 4)
+  assert.deepEqual({ index: afterExtra[3].index, added: afterExtra[3].added_after_plan, plan: afterExtra[3].in_plan, last: afterExtra[3].shown_last_turn }, { index: 4, added: true, plan: undefined, last: true })
+  assert.equal(afterExtra[1].shown_last_turn, undefined, 'only the latest reply\'s cards are marked')
+
+  const layerSwapped = mergeTripThreadOutfitSet([look(1, 'Dinner', [1, 2, 3, 9], { assigned_layer_piece_ids: [9] })], [{ index: 1, label: 'Dinner', piece_ids: [1, 2, 3, 8], pieces: [], swap_source_index: 1 }])
+  assert.equal(layerSwapped[0].assigned_layer_piece_ids, undefined, 'a layer that was swapped out is not kept as the look\'s layer')
+
+  const options = mergeTripThreadOutfitSet(plan, [
+    { index: 1, label: 'A', piece_ids: [1, 2], pieces: [], swap_source_index: 3 },
+    { index: 2, label: 'B', piece_ids: [1, 3], pieces: [], swap_source_index: 3 },
+  ])
+  assert.deepEqual(options.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out', 'A', 'B'], 'several alternatives for one look are not a revision of it')
+
+  let many = plan
+  for (let n = 0; n < 6; n += 1) many = mergeTripThreadOutfitSet(many, [{ index: 1, label: `Extra ${n}`, piece_ids: [n + 1], pieces: [] }])
+  assert.deepEqual(many.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out', 'Extra 2', 'Extra 3', 'Extra 4', 'Extra 5'], 'the plan is never dropped; only the oldest added looks are')
+
+  // The plan turn marks its looks, and the swap tool says which look it revised.
+  const planState = boundedConversationStateFromToolContext({ generatedOutfits: Array.from({ length: 10 }, (_, n) => ({ label: `Look ${n + 1}`, pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [], tripPlanContext: { roster_ids: [seeded.top], roster_pieces: [], slots: [] } })) })
+  assert.equal(planState.current_outfit_set.length, 10, 'a plan of more than eight looks is kept whole')
+  assert.ok(planState.current_outfit_set.every(entry => entry.in_plan === true))
+
+  const sessionId = 'trip-plan-merge-test'
+  saveStylistConversationState({ current_outfit_set: [
+    look(1, 'City Sightseeing', [seeded.top, seeded.bottom, seeded.shoe]),
+    look(2, 'Dinner look', [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket]),
+  ] }, sessionId)
+  const coat = insertPiece({ name: 'plan merge coat', category: 'outerwear', colors: ['navy'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const toolContext = {
+    occasion: 'city', season: 'current season', turnMode: 'followup', question: 'swap the jacket in the dinner look',
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: getStylistConversationState(sessionId).current_outfit_set,
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+  }
+  const made = await executeTool('suggest_slot_swaps', { outfit_index: 2, slot_role: 'outerwear', replacement_ids: [coat], reason: 'r', stylist_note: 'n' }, toolContext)
+  assert.equal(made.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].swapSourceIndex, 2)
+  persistFullStylistTurnState({ toolContext, answer: 'n', freeformTurnToken: 't', sessionId })
+  const stored = getStylistConversationState(sessionId).current_outfit_set
+  assert.deepEqual(stored.map(entry => entry.label), ['City Sightseeing', 'Dinner look — plan merge coat'])
+  assert.ok(stored[1].piece_ids.includes(coat) && !stored[1].piece_ids.includes(seeded.jacket))
+  assert.equal(stored[0].in_plan, true)
+
+  // An ordinary thread is unchanged: the latest cards replace the set.
+  const plainSession = 'plain-thread-merge-test'
+  saveStylistConversationState({ current_outfit_set: [{ index: 1, label: 'Old', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket], pieces: [] }] }, plainSession)
+  const plainContext = { ...toolContext, generatedOutfits: [], currentOutfitSet: getStylistConversationState(plainSession).current_outfit_set }
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [coat], reason: 'r', stylist_note: 'n' }, plainContext)
+  persistFullStylistTurnState({ toolContext: plainContext, answer: 'n', freeformTurnToken: 't', sessionId: plainSession })
+  const plainStored = getStylistConversationState(plainSession).current_outfit_set
+  assert.equal(plainStored.length, 1)
+  assert.equal(plainStored[0].in_plan, undefined)
+})
+
 // thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
 // cards read "78°F high / 62°F low — you said so".
 test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
