@@ -3087,7 +3087,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             question: toolContext.question || '',
           })
         })
-        const scoredCandidates = candidates
+        const evaluatedCandidates = candidates
           .map(piece => {
             const trust = swapEligibility.decisionsById.get(Number(piece.id))
             const ruleFit = (occasionProfile || activityProfile)
@@ -3109,8 +3109,29 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
               score: newnessScore + occasionScore + queryScore + colorScore - ((tierRank[ruleFit.tier] ?? 1) * 8)
             }
           })
-          .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
+        const passesSwapGates = candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited'
+        const scoredCandidates = evaluatedCandidates
+          .filter(passesSwapGates)
           .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
+        // A replacement the stylist named and the gates refused is reported with its reason. Live
+        // thread_1791447317199: she chose the packed knit skirt, and later the trousers the user
+        // asked for by ID; both came back "No valid bottom swaps were found" with `rejected: []`,
+        // because pieces dropped here never reached the failure list. She could not tell the user
+        // why, and reached outside the suitcase instead.
+        const namedButRefused = replacementIds.length
+          ? [
+              ...evaluatedCandidates.filter(candidate => !passesSwapGates(candidate)).map(candidate => ({
+                id: Number(candidate.piece.id),
+                name: candidate.piece.name,
+                issues: candidate.trust.allowed
+                  ? [`${candidate.ruleFit.label || 'not permitted'} for ${resolvedOccasion}${resolvedActivity && resolvedActivity !== 'none' ? ` / ${resolvedActivity}` : ''}`]
+                  : (candidate.trust.reasons?.length ? candidate.trust.reasons : ['excluded by the current occasion and weather']),
+              })),
+              ...replacementIds.filter(id => !candidates.some(piece => Number(piece.id) === id)).map(id => ({
+                id, name: '', issues: [`not an active ${category} in the wardrobe`],
+              })),
+            ]
+          : []
 
         const swapRosterIds = toolContext.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
         // The stylist chooses the replacement (owner, 2026-10-06). Live thread_1791353402050: with
@@ -3154,7 +3175,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
 
         const statedReason = String(args?.reason || '').trim()
         const variants = []
-        const failures = []
+        const failures = [...namedButRefused]
         for (const candidate of scoredCandidates.sort((a, b) => replacementIds.indexOf(Number(a.piece.id)) - replacementIds.indexOf(Number(b.piece.id)))) {
           if (variants.length >= limit) break
           const replacement = candidate.piece
@@ -3242,7 +3263,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         if (!variants.length) {
           return {
             status: "error",
-            message: `No valid ${category} swaps were found for "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion/weather gates.`,
+            message: `No valid ${category} swaps were found for "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion/weather gates.${failures.length ? ` Refused: ${failures.slice(0, 8).map(failure => `${failure.name || `#${failure.id}`} (${failure.issues.join('; ')})`).join('; ')}.` : ''}`,
             rejected: failures.slice(0, 8)
           }
         }

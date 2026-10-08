@@ -9186,6 +9186,50 @@ test('a trip plan stays in the thread state: a swap replaces its look in place a
   assert.equal(plainStored[0].in_plan, undefined)
 })
 
+// thread_1791447317199, three faults that fed each other. The plan was packed for 45–65°F because the
+// stylist repeated her own estimate as user_weather (forecast: about 50–82°F). Then, with an
+// "Alexandria" look added beside the Vienna plan, the thread's forecast could not be restored, swaps
+// were judged against a heuristic "hot" day, and refusals came back with no reason.
+test('an estimate repeated as user_weather is not the user\'s; a trip thread restores the plan\'s forecast; a refused swap says why', async () => {
+  const { withoutEchoedUserWeather } = await import('../styling-engine/tools.js')
+  const { threadWeatherContextFromOutfitSet, mergeTripThreadOutfitSet } = await import('../routes/ai.js')
+  const estimate = { high_f: 65, low_f: 45, wind: 'breezy', precipitation: 'none' }
+  const echoed = { location: 'Vienna, Virginia', weather_estimate: estimate, user_weather: { scope: 'daily_forecast', high_f: 65, low_f: 45 }, slots: [{ label: 'City' }] }
+  const quiet = { question: 'I am planning a trip to Vienna, Virginia, on October 12th. What should I pack?', freeformDiagnostics: {} }
+  const cleaned = withoutEchoedUserWeather(echoed, quiet)
+  assert.equal('user_weather' in cleaned, false, 'her own estimate, sent twice, is not something the user said')
+  assert.deepEqual(cleaned.weather_estimate, estimate)
+  assert.equal(quiet.freeformDiagnostics.userWeatherEchoedEstimateDropped, 1)
+  assert.equal(echoed.user_weather.high_f, 65, 'the caller\'s arguments are not mutated')
+  const stated = withoutEchoedUserWeather(echoed, { question: 'It will be 65 degrees and 45 at night in Vienna. What should I pack?' })
+  assert.ok(stated.user_weather, 'a request that states the weather keeps user_weather even when the estimate agrees')
+  const differs = withoutEchoedUserWeather({ ...echoed, user_weather: { high_f: 70, low_f: 50 } }, quiet)
+  assert.ok(differs.user_weather, 'a user_weather that is not the estimate is taken as before')
+  assert.ok(withoutEchoedUserWeather({ user_weather: { high_f: 70, low_f: 50 } }, quiet).user_weather, 'and so is one with no estimate beside it')
+  const slotEcho = withoutEchoedUserWeather({ weather_estimate: estimate, slots: [{ label: 'A', user_weather: { high_f: 65, low_f: 45 } }, { label: 'B', user_weather: { high_f: 80, low_f: 60 } }] }, quiet)
+  assert.equal('user_weather' in slotEcho.slots[0], false)
+  assert.ok(slotEcho.slots[1].user_weather)
+
+  const forecast = (location, high_f, low_f) => ({ status: 'resolved', location, date_range: { start: '2026-10-12', end: '2026-10-18' }, temperature: { high_f, low_f, needs_removable_cool_layer: true, source: 'live' } })
+  const plan = [
+    { index: 1, label: 'City Sightseeing', in_plan: true, piece_ids: [1, 2, 3], pieces: [], resolved_weather_context: forecast('Vienna, VA', 82, 50), weather_used: '50–82°F' },
+    { index: 2, label: 'Dinner Out', in_plan: true, piece_ids: [4, 5], pieces: [], resolved_weather_context: forecast('Vienna, VA', 78, 55) },
+  ]
+  const withOtherPlace = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'Alexandria & Park Stroll', piece_ids: [1, 2, 6], pieces: [], resolved_weather_context: forecast('Alexandria, Virginia', 71, 65) }])
+  assert.equal(threadWeatherContextFromOutfitSet(withOtherPlace)?.location, 'Vienna, VA', 'the trip\'s forecast is the plan\'s, whatever was added after it')
+  assert.equal(threadWeatherContextFromOutfitSet([plan[0], { index: 2, label: 'Elsewhere', piece_ids: [1], pieces: [], resolved_weather_context: forecast('Paris', 60, 50) }].map(({ in_plan, ...entry }) => entry)), null, 'a set with no plan and two places still shares nothing')
+  const swapped = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'City Sightseeing', piece_ids: [1, 9, 3], pieces: [], swap_source_index: 1 }])
+  assert.equal(swapped[0].resolved_weather_context.location, 'Vienna, VA', 'a swapped look that resolved no forecast keeps the look\'s')
+  assert.equal(swapped[0].weather_used, '50–82°F')
+
+  const context = { occasion: 'city', season: 'current season', turnMode: 'followup', question: 'how about this one?', declaredIntent: { want: 'cards' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'Dinner look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }], knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }
+  const refused = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [seeded.shoe], reason: 'r', stylist_note: 'n' }, context)
+  assert.equal(refused.status, 'error')
+  assert.equal(refused.rejected.length, 1, 'the piece she named is in the refusal, with its reason')
+  assert.match(refused.message, /Refused: .*not an active outerwear in the wardrobe/)
+})
+
 // thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
 // cards read "78°F high / 62°F low — you said so".
 test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
