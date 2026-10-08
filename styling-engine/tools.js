@@ -1206,6 +1206,7 @@ export const STYLIST_TOOLS = [
         replacement_ids: { type: "array", items: { type: "integer" }, description: "The replacement(s) you chose, by ID, from the candidates this tool listed. Omit on the first call to get that list; no card is made until you supply these." },
         reason: { type: "string", description: "With replacement_ids: why this piece suits this outfit and this occasion, in your words. It becomes the card's reason." },
         stylist_note: { type: "string", description: "With replacement_ids: your reply to the wearer about the change, as plain prose; shown as the chat reply above the card. Answer their latest message only." },
+        label: { type: "string", description: "With replacement_ids: a short title for the look as it now is. Give one whenever the current title names the piece being replaced." },
         query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
         color: { type: "string", description: "Optional preferred color for replacements. This boosts exact structured color-tag matches without excluding other workable pieces." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
@@ -3139,7 +3140,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             failures.push({ id: replacement.id, name: replacement.name, issues: [...roleIssues, ...hardGateIssues] })
             continue
           }
-          const label = `${outfit.label || outfit.title || 'Current outfit'} — ${replacement.name}`
+          // The stylist titles the revised look. Without her title, the original title is kept with
+          // the new piece's name — never a chain of every earlier swap (live thread_1791434178633:
+          // "Brushstroke Evening Dress Look — charcoal ribbed knit sheath dress — charcoal wrap midi
+          // dress with draped ruching", on a card wearing neither of the first two).
+          const statedLabel = String(args?.label || '').trim().slice(0, 80)
+          const baseLabel = String(outfit.label || outfit.title || 'Current outfit').split(' — ')[0]
+          const label = statedLabel || `${baseLabel} — ${replacement.name}`
           const why = statedReason || slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
           variants.push({
             // Same occasion, same forecast: the swapped card keeps the weather the outfit was built for,

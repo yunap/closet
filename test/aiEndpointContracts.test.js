@@ -9372,3 +9372,18 @@ test('a trip follow-up cannot re-plan unless the router read a request to plan, 
   const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.match(core, /The plan on screen stays as it is\. A new need/)
 })
+
+// Live thread_1791434178633: three swaps in a row titled the card "Brushstroke Evening Dress Look —
+// charcoal ribbed knit sheath dress — charcoal wrap midi dress with draped ruching"; and the router
+// was told "For full_stylist use includes_outdoors", so an at-home look on a follow-up could never
+// be judged indoor.
+test('a swapped card takes the stylist\'s title or one suffix only, and the router judges setting on any profile', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /label: \{ type: "string", description: "With replacement_ids: a short title for the look as it now is/)
+  assert.match(tools, /const baseLabel = String\(outfit\.label \|\| outfit\.title \|\| 'Current outfit'\)\.split\(' — '\)\[0\]/)
+  assert.match(tools, /const label = statedLabel \|\| `\$\{baseLabel\} — \$\{replacement\.name\}`/)
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(provider, /For full_stylist use includes_outdoors/)
+  assert.match(provider, /Judge setting from what the current message says the clothes are for, whatever the profile/)
+})
