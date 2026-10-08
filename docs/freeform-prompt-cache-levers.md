@@ -472,3 +472,11 @@ requests take it; any follow-up on an existing plan stays on the full stylist, b
 search, view or swap. Not done: taking the manifest out of the standing prompt for the other
 full-stylist turns, which `search-payload-spec.md` ties to what search returns.
 
+
+### 2026-10-07 (later): trip follow-ups also drop the manifest
+
+A text follow-up on a trip plan no longer carries the wardrobe list or the six tools it cannot use
+(`tripFollowupTurn`, `executionProfile: trip_followup`). Offline, on a live thread's saved state:
+system text 156,598 → 85,858 characters. The remaining weight is the instruction block and THREAD
+STATE (each card's stored forecast with its daily series). Revert with
+`TRIP_FOLLOWUP_LEAN_PROMPT=false`. Details: `engine-behaviour-map.md`, 2026-10-02 amendment, item 55.

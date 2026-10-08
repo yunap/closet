@@ -35,6 +35,18 @@ const SHOE_OPTIONS = [
   ['low', 'Low heels at most — comfort first'],
   ['flat', 'Flats only']
 ]
+// Whether the wearer usually feels colder or warmer than the temperature suggests (owner,
+// 2026-10-07). A fact for the stylist to weigh when choosing layers, not a rule and not a gate:
+// thermal-comfort-band-spec.md §11.6 names personal sensitivity as a legitimate, small input.
+const THERMAL_OPTIONS = [
+  ['neutral', 'About what the forecast says'],
+  ['cold', 'I run cold'],
+  ['warm', 'I run warm']
+]
+const THERMAL_LINES = {
+  cold: '- Runs cold: usually feels colder than the temperature suggests, so a warmer layer than the forecast alone calls for is welcome.',
+  warm: '- Runs warm: usually feels warmer than the temperature suggests, so lighter layers than the forecast alone calls for are welcome.'
+}
 const TUCK_OPTIONS = [
   ['fine', 'Tucking is fine'],
   ['simple', 'Simple tucks only — no outfit engineering'],
@@ -83,6 +95,7 @@ export default function Onboarding() {
   const [coverage, setCoverage] = useState([])
   const [shoes, setShoes] = useState('any')
   const [tuck, setTuck] = useState('fine')
+  const [thermal, setThermal] = useState('neutral')
   const [lowMaintenance, setLowMaintenance] = useState(true)
   const [comfortFree, setComfortFree] = useState('')
   const [noRestrictions, setNoRestrictions] = useState(false)
@@ -123,9 +136,10 @@ export default function Onboarding() {
       if (tuck === 'avoid') lines.push('- No tucking — always suggest untucked pairings.')
       if (comfortFree.trim()) for (const raw of comfortFree.split('\n')) { const t = raw.trim(); if (t) lines.push(`- ${t}`) }
     }
+    if (THERMAL_LINES[thermal]) lines.push(THERMAL_LINES[thermal])
     if (lowMaintenance) lines.push('- Maintenance burden matters: prefer low-maintenance dressing; flag pieces that need special handling rather than silently styling around them.')
     return lines.join('\n')
-  }, [cling, coverage, shoes, tuck, lowMaintenance, comfortFree, noRestrictions, comfortSelectionEmpty])
+  }, [cling, coverage, shoes, tuck, thermal, lowMaintenance, comfortFree, noRestrictions, comfortSelectionEmpty])
 
   const composedAesthetic = useMemo(() => {
     const lines = ['Layer 3 — Aesthetic Gravity (soft preferences — weighted, never walled):']
@@ -271,6 +285,12 @@ export default function Onboarding() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {TUCK_OPTIONS.map(([key, text]) => (
               <button key={key} style={chipStyle(tuck === key)} onClick={() => { setTuck(key); setComfortPreview(null) }}>{text}</button>
+            ))}
+          </div>
+          <label style={label}>Do you run cold or warm?</label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {THERMAL_OPTIONS.map(([key, text]) => (
+              <button key={key} style={chipStyle(thermal === key)} onClick={() => { setThermal(key); setComfortPreview(null) }}>{text}</button>
             ))}
           </div>
           <label style={label}>Anything else that's a hard rule? (one per line)</label>

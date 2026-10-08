@@ -27,7 +27,7 @@ import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
   TEMPERATURE_BAND_VALUES, TEMPERATURE_SCOPE_VALUES, PRECIPITATION_VALUES, WIND_VALUES,
-  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation,
+  resolveExposureWindowHourly, getCurrentWeatherProfile, sameWeatherLocation, describeJourneyFromHome,
 } from './weather.js'
 import {
   normalizePlanSlots,
@@ -55,7 +55,8 @@ import {
   truthfulWeatherLabel,
   slotColdLayerRequired,
   slotColdLayerPermitted,
-  identifyColdLayerRepairableFailures
+  identifyColdLayerRepairableFailures,
+  identifyIncompleteLookRepairableFailures
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -1205,6 +1206,7 @@ export const STYLIST_TOOLS = [
         replacement_ids: { type: "array", items: { type: "integer" }, description: "The replacement(s) you chose, by ID, from the candidates this tool listed. Omit on the first call to get that list; no card is made until you supply these." },
         reason: { type: "string", description: "With replacement_ids: why this piece suits this outfit and this occasion, in your words. It becomes the card's reason." },
         stylist_note: { type: "string", description: "With replacement_ids: your reply to the wearer about the change, as plain prose; shown as the chat reply above the card. Answer their latest message only." },
+        label: { type: "string", description: "With replacement_ids: a short title for the look as it now is. Give one whenever the current title names the piece being replaced." },
         query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
         color: { type: "string", description: "Optional preferred color for replacements. This boosts exact structured color-tag matches without excluding other workable pieces." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
@@ -1351,6 +1353,7 @@ export const STYLIST_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
+        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. Omit when they have not said." },
         plan_kind: {
           type: "string",
           enum: ["trip", "seasonal_capsule", "coordinated_plan"],
@@ -1374,7 +1377,7 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               user_weather: USER_WEATHER_SCHEMA,
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -1425,11 +1428,11 @@ export const STYLIST_TOOLS = [
           type: "object",
           description: "Shared rules across the whole set. Set these from the objective: packing wants reuse maximized; an at-home work week wants looks diversified (repeats are the failure there, not the win).",
           properties: {
-            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. 'maximize' for packing (recombine a few pieces — fewer to carry). 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
+            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
             no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule: recombination is the point of a capsule, so it is discarded there unless the person explicitly asked for no repeats." },
             allow_repeat: { type: "array", items: { type: "string" }, description: "Category groups explicitly allowed to repeat even when diversifying — e.g. ['shoes'] since the same shoes across a week is normal. Overrides no_repeat for that group." },
             shared_anchor_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to pin across the set — e.g. styling several outfits around one new piece. Anchors recur in every slot they fit and are exempt from no_repeat." },
-            piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
+            piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it. Never derive a number from how they pack: 'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out. The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
           }
         },
         user_weather: { ...USER_WEATHER_SCHEMA, description: `${USER_WEATHER_SCHEMA.description} Applies to every slot sharing the plan's own location/date_range; a slot at a different location or a date outside date_range needs its own user_weather.` },
@@ -3137,7 +3140,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             failures.push({ id: replacement.id, name: replacement.name, issues: [...roleIssues, ...hardGateIssues] })
             continue
           }
-          const label = `${outfit.label || outfit.title || 'Current outfit'} — ${replacement.name}`
+          // The stylist titles the revised look. Without her title, the original title is kept with
+          // the new piece's name — never a chain of every earlier swap (live thread_1791434178633:
+          // "Brushstroke Evening Dress Look — charcoal ribbed knit sheath dress — charcoal wrap midi
+          // dress with draped ruching", on a card wearing neither of the first two).
+          const statedLabel = String(args?.label || '').trim().slice(0, 80)
+          const baseLabel = String(outfit.label || outfit.title || 'Current outfit').split(' — ')[0]
+          const label = statedLabel || `${baseLabel} — ${replacement.name}`
           const why = statedReason || slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
           variants.push({
             // Same occasion, same forecast: the swapped card keeps the weather the outfit was built for,
@@ -3471,6 +3480,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
               dayBreakdown: String(args?.day_breakdown || '').trim()
             }
           : null
+        // How the traveller is packing for THIS trip, in their words. Never defaulted from an earlier
+        // trip (owner: "packing preference might change depending on a trip"). Read by the packer
+        // (chooseTripRosterWithProvider).
+        toolContext.tripPackingApproach = String(args?.packing_approach || '').trim().slice(0, 400)
+        // Where the trip is from, as a fact for the packer: what is worn on the journey is not packed,
+        // and how long the journey is decides whether it can be worn again.
+        toolContext.tripJourney = args?.plan_kind === 'trip' ? await describeJourneyFromHome(String(args?.location || '').trim()) : ''
         const modelDateRange = {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()
@@ -4191,6 +4207,51 @@ async function executeToolInternal(name, args, toolContext = {}) {
               failures = [...stillNeedsRepair, ...repairValidation.failures]
             }
           }
+          // A second narrow chance, same shape as the cold-layer one above: a look rejected ONLY for
+          // being incomplete (no shoes, or no top or dress) goes back to the composer once to be
+          // completed from that slot's own allowed pieces. The completed look is validated by the
+          // same function as every other; a look it does not fix stays a failure.
+          const incomplete = identifyIncompleteLookRepairableFailures(pendingPlan, failures)
+          if (incomplete.length && typeof toolContext.repairTripIncompleteLooks === 'function') {
+            let completions = []
+            try {
+              completions = await toolContext.repairTripIncompleteLooks({ cards: incomplete })
+            } catch (err) {
+              completions = []
+            }
+            const keyOf = ids => (Array.isArray(ids) ? ids : []).map(Number).sort((x, y) => x - y).join(',')
+            const remaining = [...failures]
+            const resubmission = []
+            for (const card of incomplete) {
+              const entry = (Array.isArray(completions) ? completions : []).find(response => String(response?.slot_id || '') === String(card.slot_id)
+                && keyOf(response?.original_piece_ids) === keyOf(card.piece_ids))
+              const candidateIds = new Set(card.candidates.map(candidate => candidate.id))
+              const newIds = Array.isArray(entry?.piece_ids) ? entry.piece_ids.map(Number) : []
+              const added = newIds.filter(id => !card.piece_ids.includes(id))
+              // Only a completion: every added piece is one of the offered candidates, and nothing
+              // outside the original look comes in.
+              if (!entry || !added.length || added.some(id => !candidateIds.has(id))) continue
+              const index = remaining.findIndex(failure => failure.slot_id === card.slot_id && keyOf(failure.outfit?.pieceIds) === keyOf(card.piece_ids))
+              if (index < 0) continue
+              const [original] = remaining.splice(index, 1)
+              const raw = sanitizedOutfits.find(submitted => String(submitted?.slot_id || '') === String(card.slot_id) && keyOf(submitted?.piece_ids) === keyOf(card.piece_ids))
+              const removedAny = card.piece_ids.some(id => !newIds.includes(id))
+              resubmission.push({
+                ...(raw || {}),
+                slot_id: card.slot_id,
+                piece_ids: newIds,
+                title: (removedAny && entry.title) || original.outfit?.title || card.title || '',
+                reason: (removedAny && entry.reason) || original.outfit?.reason || card.reason || '',
+              })
+            }
+            if (resubmission.length) {
+              const completionValidation = validateSubmittedPlanOutfits(pendingPlan, resubmission, { visuallySeenPieceIds: seenForValidation })
+              repairedOutfits = [...repairedOutfits, ...completionValidation.accepted]
+              accepted = [...accepted, ...completionValidation.accepted]
+              failures = [...remaining, ...completionValidation.failures]
+              bumpFreeformDiagnostic(toolContext, 'tripIncompleteLooksCompleted', completionValidation.accepted.length)
+            }
+          }
           // Diagnostic-only, persisted regardless of outcome (thread_1788577086327/run 1336: the
           // console.log below was the ONLY record of a rejected card's content/reason, and it went
           // to a process stdout with no accessible log afterward). `submitted` stays the composer's
@@ -4247,7 +4308,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
             // same list two or three times and no explanation. The final answer is now asked for what
             // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
-            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected; (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected, and, where you know the destination, what the place itself is like for these activities and how that shaped the bag (only what you actually know of this specific place; never a guess); (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
             ...buildTripExplanationEvidence(pendingPlan, planOutfits, {
               declined: (Array.isArray(toolContext.tripCompositionSlotGaps) ? toolContext.tripCompositionSlotGaps : []).map(gap => ({
                 activity: pendingPlan.slots.find(slot => String(slot.id) === String(gap?.slot_id || ''))?.label || '',

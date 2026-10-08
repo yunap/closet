@@ -17,6 +17,14 @@ export function normalizeOccasion(value) {
   if (['outdoor daytime social', 'outdoor daytime', 'daytime social', 'wine festival', 'outdoor cafe', 'picnic'].includes(v)) {
     return 'outdoor_daytime_social'
   }
+  // The engine's own occasion-profile ids and the garment tag's spelling. Live thread_1791411318500:
+  // the trip stylist sent `city_smart_casual` (a profile id it reads in its prompt) for sightseeing
+  // and museum days; it fell through to 'casual', the city-tagged tailored pieces lost eligibility,
+  // and the museum look was rejected. Same mapping as tools.js PROFILE_TO_CANONICAL_OCCASION.
+  if (v === 'city_smart_casual') return 'city'
+  if (v === 'evening_social') return 'evening'
+  if (v === 'home_loungewear') return 'casual'
+  if (['smart-casual', 'smart_casual', 'smartcasual'].includes(v)) return 'smart casual'
   console.warn(`[stylingIntent] off-vocabulary occasion "${value}" -> defaulting to "casual"`)
   return 'casual'
 }

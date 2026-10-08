@@ -964,6 +964,10 @@ export default function StylistChat({
       try {
         localStorage.setItem('stylist_current_thread_id', 'new_chat')
       } catch {}
+      // A new chat has no id yet, so the address must stop naming the previous thread. Left on
+      // /stylist/<old id>, it kept showing the old chat's id, and the first save (which only
+      // rewrites a bare /stylist) never put the new id there either.
+      if (location.pathname !== '/stylist') navigate('/stylist')
       return
     }
 

@@ -208,3 +208,31 @@ test('normalizeAiUsage(gemini) maps an assumed max-tokens-shaped stop reason to 
   )
   assert.equal(usage.stopReason, 'max_tokens')
 })
+
+// Live thread_1791423893034 (2026-10-07): on the first call of a turn there is no
+// previous_interaction_id, and the assistant entries are the stylist's own replies from earlier
+// turns. They were dropped too, so every follow-up on Gemini saw the user's messages back to back
+// with none of her answers between them ("for all 7 days?" re-planned a whole trip).
+test('on the first call of a turn, canonicalHistoryToGeminiInput sends the stylist\'s earlier replies as model_output steps', () => {
+  const thread = [
+    { role: 'user', content: 'What should I pack for a week in Vienna?' },
+    { role: 'assistant', content: 'Carry-on, or a checked bag?' },
+    { role: 'user', content: 'Carry-on.' },
+    { role: 'user', content: 'What should I pack for a week in Vienna?\n\n(You asked me… My answer: Carry-on.)' },
+    { role: 'assistant', content: 'Here is a look for relaxing at your friend\'s house.' },
+    { role: 'user', content: 'for all 7 days?' },
+  ]
+  const steps = canonicalHistoryToGeminiInput(thread, { firstCall: true })
+  assert.deepEqual(steps.map(step => step.type), ['user_input', 'model_output', 'user_input', 'model_output', 'user_input'])
+  assert.equal(steps[1].content[0].text, 'Carry-on, or a checked bag?')
+  assert.equal(steps[2].content.length, 2, 'consecutive user entries stay one user turn')
+  assert.equal(steps[3].content[0].text, 'Here is a look for relaxing at your friend\'s house.')
+  assert.equal(steps[4].content[0].text, 'for all 7 days?')
+
+  // Later calls of the same turn: the server already holds her turns; nothing changes.
+  const later = canonicalHistoryToGeminiInput(thread)
+  assert.ok(later.every(item => item.type === 'text'), 'without firstCall the flat form and the drop are unchanged')
+  assert.equal(later.length, 4)
+  // A thread with no earlier reply keeps the flat content form on the first call.
+  assert.deepEqual(canonicalHistoryToGeminiInput([{ role: 'user', content: 'hello' }], { firstCall: true }), [{ type: 'text', text: 'hello' }])
+})

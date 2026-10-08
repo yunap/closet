@@ -9173,3 +9173,217 @@ test('removing a citation does not strand its separator inside the bracket', asy
   assert.equal(stripPieceIdCitations('The loafers (ID 196) work.'), 'The loafers work.')
   assert.equal(stripPieceIdCitations('Two coats (fleece, puffer) is plenty.'), 'Two coats (fleece, puffer) is plenty.')
 })
+
+// Owner, 2026-10-07: "there are lots of ways trip packing is approached… if there is no real
+// preference why doesn't she ask the user?" The trip turn asks how the traveller packs when it is
+// not known, carries the answer to the planner and the packer, and remembers a standing preference.
+test('the packing approach: asked for a trip when unknown, carried to the packer, remembered when it is a standing preference', async () => {
+  const { getSavedPackingApproach, savePackingApproach, tripRosterSelectionUserText, tripRosterSelectionSystemPrompt } = await import('../routes/ai.js')
+  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+
+  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
+  assert.equal(getSavedPackingApproach(), '')
+  assert.equal(savePackingApproach(''), '', 'nothing stated, nothing saved')
+  assert.equal(getSavedPackingApproach(), '')
+  assert.equal(savePackingApproach('carry-on only, I re-wear and do laundry'), 'carry-on only, I re-wear and do laundry')
+  assert.equal(getSavedPackingApproach(), 'carry-on only, I re-wear and do laundry')
+  savePackingApproach('something different most days')
+  assert.equal(getSavedPackingApproach(), 'something different most days', 'a newer statement replaces the old one')
+
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: 'Do you like to pack light and re-wear, or have something different most days?', time_of_day: '', remember_packing_approach: '' }
+  }
+  try {
+    const routed = await routeFreeformExecutionProfile({ question: 'I am going to Seattle for a week. What should I pack?', contextSummary: 'no current outfit set; no saved packing approach' })
+    assert.match(routed.value.clarifying_question, /pack light/)
+    assert.match(captured.system, /For trip_plan, clarifying_question asks how the traveller likes to pack/)
+    assert.match(captured.system, /remember_packing_approach is usually empty/)
+    assert.match(captured.system, /how someone packs changes from trip to trip/)
+    assert.match(captured.system, /do not assume it applies: use it to ask whether this trip is the same as usual or different/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+
+  const planTool = STYLIST_TOOLS.find(tool => tool.name === 'plan_outfit_set')
+  assert.match(planTool.input_schema.properties.packing_approach.description, /how the traveller packs, in their own words/)
+
+  const slots = [{ label: 'Sightseeing', occasion: 'city', bestFor: 'sightseeing', targetOutfits: 2 }]
+  const withApproach = tripRosterSelectionUserText({ bench: [{ id: 1, name: 'stripe tee', category: 'top' }], slots, dateRange: { start: '2026-10-12', end: '2026-10-18' }, packingApproach: 'something different most days' })
+  assert.match(withApproach, /HOW THE TRAVELLER PACKS \(their words\): something different most days/)
+  assert.match(withApproach, /7 days/)
+  assert.doesNotMatch(tripRosterSelectionUserText({ bench: [], slots, dateRange: {} }), /HOW THE TRAVELLER PACKS/)
+  assert.match(tripRosterSelectionSystemPrompt(), /HOW THE TRAVELLER PACKS\. When the request states this, it decides how much re-wear the suitcase assumes/)
+
+  // Owner: "packing preference might change depending on a trip" — an earlier trip's answer is
+  // never applied; the plan carries only what was said for this trip.
+  const payload = await buildStylistConversationPayload({ question: 'Seattle for a week, what should I pack?', history: [], sessionId: 'packing-approach-contract', tripPlanTurn: true })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /How the traveller is packing for this trip \(from the request or their answer to your question\) goes in plan_outfit_set/)
+  savePackingApproach('carry-on only')
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'Seattle for a week', savedPackingApproach: 'carry-on only', weatherFetchImpl: async () => ({ ok: false, json: async () => ({}) }) }
+  await executeTool('plan_outfit_set', { plan_kind: 'trip', weather_estimate: { high_f: 60, low_f: 48 }, slots: [{ label: 'City', occasion: 'city', activity: 'walking', count: 1 }] }, toolContext)
+  assert.equal(toolContext.tripPackingApproach, '', 'a usual approach on record is not applied to this trip')
+  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
+})
+
+// thread_1791362754936 (2026-10-07).
+test('the proactive-alternative rule answers first and revises the existing look; an answer to a clarifying question keeps its fresh route', async () => {
+  const { buildPrompts } = await import('../styling-engine/prompts.js')
+  const system = buildPrompts({}).STYLIST_SYSTEM
+  assert.doesNotMatch(system, /you MUST immediately call the 'search_wardrobe' tool/)
+  assert.match(system, /first answer what was raised, in a sentence or two/)
+  assert.match(system, /when the garment is in an existing card or plan, use 'suggest_slot_swaps' for that slot/)
+  assert.match(system, /instead of asking if \S+ would like recommendations/, 'the rule keeps its purpose: offer replacements, do not ask whether she wants them')
+  const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /Boolean\(pendingClarification\) && executionContextEvidence\.every\(kind => kind === 'history'\)/)
+  assert.match(routeSrc, /normalizedWeatherLocationIdentity \} from '\.\.\/styling-engine\/weather\.js'/)
+})
+
+test('a follow-up reuses the thread\'s forecast: one shared context as is, the widest window of a trip, nothing across places', async () => {
+  const { threadWeatherContextFromOutfitSet } = await import('../routes/ai.js')
+  const ctx = (location, high_f, low_f, start = '2026-10-12', end = '2026-10-16') => ({ resolved_weather_context: { status: 'resolved', location, date_range: { start, end }, temperature: { high_f, low_f, source: 'live' } } })
+  assert.equal(threadWeatherContextFromOutfitSet([]), null)
+  assert.equal(threadWeatherContextFromOutfitSet([{ label: 'no weather' }]), null)
+  assert.equal(threadWeatherContextFromOutfitSet([ctx('Walnut Creek', 78, 62)]).temperature.highF, 78)
+  const trip = threadWeatherContextFromOutfitSet([ctx('Vienna, Virginia', 79, 46), ctx('Vienna, Virginia', 79, 41), { label: 'card without weather' }])
+  assert.equal(trip.temperature.lowF, 41, 'the widest window of the same place')
+  assert.equal(trip.location, 'Vienna, Virginia')
+  assert.equal(threadWeatherContextFromOutfitSet([ctx('Vienna, Virginia', 79, 41), ctx('Seattle', 60, 50)]), null)
+})
+
+// Owner, 2026-10-07: starting a new chat from /stylist/<old id> left the old id in the address,
+// and the first save (which only rewrites a bare /stylist) never replaced it.
+test('starting a new chat clears the previous thread id from the address', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+  assert.match(src, /localStorage\.setItem\('stylist_current_thread_id', 'new_chat'\)\s*\} catch \{\}[\s\S]{0,400}if \(location\.pathname !== '\/stylist'\) navigate\('\/stylist'\)/)
+})
+
+// Owner, 2026-10-07: "I'd expect 'I am going to a museum in Paris' to mean that I am walking around
+// the city, then walking into the museum", and "it might be different from 'I am going to SFMOMA' —
+// I am home, so it can be a destination I am driving to." thread_1791411318500 planned Museum Days
+// as an indoor slot because the tool description listed galleries as indoor. Facts for the model's
+// judgment only: the walking footwear gate still needs walking the user stated (stylingIntent.js).
+test('a museum visit away from home is a day on foot; near home it may be one venue', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  const prompts = readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
+  // Owner ruling 2026-07-30 stands (a museum slot is dressed for the room, with the outside forecast
+  // governing the layer for getting there); 2026-10-07 adds that it is a walking day for shoes.
+  assert.match(tools, /Use 'indoor' for climate-controlled slots \(offices, restaurants, galleries, museums\)/)
+  assert.match(tools, /A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking'/)
+  assert.match(prompts, /Near home, a museum, gallery, show or restaurant can be the whole outing/)
+  assert.match(prompts, /In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city/)
+  assert.match(prompts, /when they do not, do not assume the walking/)
+})
+
+// Live thread_1791415285620: after plan_outfit_set accepted six trip cards, Gemini returned a turn
+// with no text and no tool call, and the user saw "Something went wrong." beside a finished plan.
+test('an empty model turn is retried once and never ends the turn with a blank answer', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(src, /if \(turn\.noMessage\) \{\s*if \(!retriedChecks\.has\('providerEmptyTurn'\)\)/)
+  assert.match(src, /Your last turn came back empty: no reply and no tool call/)
+  assert.doesNotMatch(src, /if \(turn\.noMessage\) return \{ answer: '', savedCorrections \}/)
+})
+
+// Live thread_1791416150174: the trip stylist turned "carry-on" into constraints.piece_budget: 10,
+// a hard limit nobody stated, and the second dinner look was rejected ("would exceed the 10-piece
+// budget").
+test('a piece budget is set only from a number the user states, never from how they pack', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it/)
+  assert.match(tools, /'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out/)
+})
+
+// Live thread_1791416150174 (a 49–83°F week): a trip thread stores no single forecast profile, so
+// the follow-up label fell back to a word match and read "hot weather". The cards' own stored
+// ranges now supply it. Same turn: new information about the plans must change the answer.
+test('a trip follow-up states the range the cards record, and is told what new plans mean', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-weather-label'
+  const context = (high_f, low_f) => ({ status: 'resolved', location: 'Vienna, Virginia', temperature: { high_f, low_f } })
+  saveStylistConversationState({
+    established: { occasion: 'travel', weather: 'hot weather', season: 'current season' },
+    current_outfit_set: [
+      { index: 1, label: 'Sightseeing', reason: 'conditions range from mild to warm', piece_ids: [seeded.top], pieces: ['seeded top'], resolved_weather_context: context(82.9, 48.6) },
+      { index: 2, label: 'Dinners', reason: 'a warm evening', piece_ids: [seeded.top], pieces: ['seeded top'], resolved_weather_context: context(78.4, 55.7) },
+    ],
+  }, sessionId)
+  const payload = await buildStylistConversationPayload({ question: 'I think I will do some sightseeing first, then the parks.', sessionId, conversationMode: 'followup', history: [] })
+  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
+  assert.match(system, /Established weather context for this turn: a forecast across the planned days from a low of 49°F to a high of 83°F\./)
+  assert.doesNotMatch(system, /Established weather context for this turn: hot weather/)
+  assert.match(system, /that is new information about what they will need to wear, not a request to hear the plan again/)
+  assert.match(system, /activities that now share one day need one outfit that works for all of them/)
+  assert.match(system, /never rescue it with an impractical workaround/)
+  const { readFileSync } = await import('node:fs')
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /is not a card explanation: the answer may need a different outfit, so choose full_stylist/)
+})
+
+// Owner, 2026-10-07: a follow-up on a trip plan answers from a prompt without the wardrobe list.
+test('a text follow-up on a trip plan gets the lean prompt; other turns and the off switch keep the full one', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-lean'
+  saveStylistConversationState({
+    established: { occasion: 'travel', season: 'current season' },
+    current_outfit_set: [{ index: 1, label: 'Sightseeing', reason: 'r', piece_ids: [seeded.top], pieces: ['seeded top'] }],
+    packing_roster: { roster_ids: [seeded.top], roster_pieces: [{ id: seeded.top, name: 'seeded top', category: 'top' }] },
+  }, sessionId)
+  const build = extra => buildStylistConversationPayload({ question: 'Sightseeing first, then the parks.', sessionId, conversationMode: 'followup', history: [], ...extra })
+  const lean = await build({ tripFollowupEligible: true })
+  const leanSystem = typeof lean.system === 'string' ? lean.system : JSON.stringify(lean.system)
+  assert.equal(lean.tripFollowupTurn, true)
+  assert.equal(lean.wardrobeManifestIncluded, false)
+  assert.match(leanSystem, /This thread holds a trip plan\. THREAD STATE lists its looks/)
+  assert.match(leanSystem, /packing_roster/)
+  const full = await build({})
+  assert.equal(full.tripFollowupTurn, false, 'a turn the route did not mark eligible keeps the full prompt')
+  assert.ok(JSON.stringify(full.system).length > leanSystem.length)
+  process.env.TRIP_FOLLOWUP_LEAN_PROMPT = 'false'
+  try {
+    assert.equal((await build({ tripFollowupEligible: true })).tripFollowupTurn, false, 'the switch restores the full prompt')
+  } finally {
+    delete process.env.TRIP_FOLLOWUP_LEAN_PROMPT
+  }
+  const noPlan = await buildStylistConversationPayload({ question: 'And shoes?', sessionId: 'no-trip-plan-here', conversationMode: 'followup', history: [], tripFollowupEligible: true })
+  assert.equal(noPlan.tripFollowupTurn, false, 'a thread with no packed suitcase is not a trip follow-up')
+})
+
+// Live thread_1791423893034: "for all 7 days?" about one at-home look re-planned the whole trip with
+// a different suitcase; and a look for time in at a friend's house got an outdoor weather note.
+test('a trip follow-up cannot re-plan unless the router read a request to plan, and time in where the user is staying is indoor', async () => {
+  const { readFileSync } = await import('node:fs')
+  const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
+  assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.
+  assert.match(provider, /inside the home the user is living or staying in, or another single heated or cooled room/)
+  assert.doesNotMatch(provider, /friend's or relative's house/)
+  const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.match(core, /The plan on screen stays as it is\. A new need/)
+})
+
+// Live thread_1791434178633: three swaps in a row titled the card "Brushstroke Evening Dress Look —
+// charcoal ribbed knit sheath dress — charcoal wrap midi dress with draped ruching"; and the router
+// was told "For full_stylist use includes_outdoors", so an at-home look on a follow-up could never
+// be judged indoor.
+test('a swapped card takes the stylist\'s title or one suffix only, and the router judges setting on any profile', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /label: \{ type: "string", description: "With replacement_ids: a short title for the look as it now is/)
+  assert.match(tools, /const baseLabel = String\(outfit\.label \|\| outfit\.title \|\| 'Current outfit'\)\.split\(' — '\)\[0\]/)
+  assert.match(tools, /const label = statedLabel \|\| `\$\{baseLabel\} — \$\{replacement\.name\}`/)
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(provider, /For full_stylist use includes_outdoors/)
+  assert.match(provider, /Judge setting from what the current message says the clothes are for, whatever the profile/)
+})

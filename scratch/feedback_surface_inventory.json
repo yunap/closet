@@ -84,7 +84,7 @@
     "app_meta": {
       "disposition": "category",
       "category": 10,
-      "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in \u00a78"
+      "note": "home_location + packing_approach + profile keys are category 10; API keys and markers are excluded per-key in \u00a78"
     },
     "import_sessions": {
       "disposition": "category",

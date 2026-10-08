@@ -979,6 +979,77 @@ test('the trip roster system prompt asks the model to judge layering/outerwear s
   assert.doesNotMatch(brief, /cardigans? (is|are) not (enough|sufficient|adequate)/i, 'must not single out cardigans as inherently inadequate — the judgment is contextual, not garment-kind-based')
 })
 
+// thread_1791362754936 (owner, 2026-10-07): the packer chose an oversized, tunic-length linen-blend
+// shirt with extra-long sleeves for a carry-on week, reasoning from its name ("polished white
+// button-down"). It had the facts; the brief said nothing about what makes a piece good to travel
+// with. The section states what a traveller weighs, as considerations read from recorded facts --
+// never a ban on a fabric or a garment kind (dont-overgeneralize ruling).
+test('the trip roster system prompt states what travels well as things to weigh, not as bans', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /^You are a personal stylist packing a suitcase for a client you know well/)
+  assert.match(brief, /WHAT TRAVELS WELL\. A suitcase is not a wardrobe/)
+  assert.match(brief, /How it comes out of the bag/)
+  assert.match(brief, /The room it takes/)
+  // thread_1791411318500: a carry-on packed three outer layers and four pairs of shoes with two tees
+  // carrying four of the six day looks.
+  assert.match(brief, /Shoes and outer layers are the bulkiest things in a bag; tops are the smallest/)
+  assert.match(brief, /How it behaves through a long day/)
+  // thread_1791411318500: four tops, one long-sleeved, no knit, for five days with highs in the 60s.
+  assert.match(brief, /Where the warmth comes from: a coat comes off indoors/)
+  assert.match(brief, /Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures/)
+  // thread_1791415285620: after the cool-end fact alone, the bag held four long-sleeved tops and
+  // nothing for the one forecast day in the 80s. Both ends are stated.
+  assert.match(brief, /Read them against the warm end too/)
+  assert.match(brief, /worn alone on the warm day and under a layer on the cool ones/)
+  // Owner, 2026-10-07: "not everything goes into a suitcase, the person also has to wear something on
+  // the plane. Unless it can't be reused after a 7 hour flight."
+  assert.match(brief, /What is worn on the journey is not in the bag/)
+  assert.match(brief, /after many hours on a plane it may need washing first/)
+  assert.match(brief, /How much of the suitcase it works with/)
+  assert.match(brief, /Wearing it again/)
+  assert.match(brief, /None of them rules a garment out on its own/)
+  assert.doesNotMatch(brief, /(never|do not|don't|avoid) pack(ing)? (linen|silk|white)/i)
+})
+
+// Owner, 2026-10-07: "I like to keep my trips flexible... if you are actually doing some traveling,
+// not just a trip like a wedding or a work trip, you need to keep your options open." The packer is
+// told the use cases are not a day-by-day schedule; no per-day activity plan is invented for it.
+test('the trip roster system prompt says the use cases are not a schedule and open-ended travel keeps options open', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /THE USE CASES ARE NOT A SCHEDULE/)
+  assert.match(brief, /A trip built around fixed events \(a wedding, work days, a booked dinner\) is dressed for those events/)
+  assert.match(brief, /pack so the traveller can decide on the day/)
+})
+
+test('the trip roster user text states where the traveller lives and how far the trip is, when known', () => {
+  const bench = [{ id: 1, name: 'city top', category: 'top' }]
+  const slots = [{ label: 'City Walking', occasion: 'city', activity: 'walking', bestFor: 'sightseeing', location: 'Vienna, Virginia' }]
+  const journey = 'The traveller lives in Walnut Creek, CA, about 2,400 miles from Vienna, Virginia'
+  assert.match(tripRosterSelectionUserText({ bench, slots, journey }), /^TRIP CONTEXT: Destination: Vienna, Virginia\. The traveller lives in Walnut Creek, CA, about 2,400 miles from Vienna, Virginia\n/)
+  assert.doesNotMatch(tripRosterSelectionUserText({ bench, slots }), /traveller lives/)
+  assert.match(tripRosterSelectionSystemPrompt(), /When TRIP CONTEXT says where the traveller lives and how far away the destination is, judge the journey from that/)
+})
+
+// Owner, 2026-10-07: "the stylist should also have a good idea of the destination and suggest
+// styling appropriate for it." The model's own knowledge of the place is invited, never supplied
+// by code, and never guessed.
+test('the trip packer and composer are asked to use what they know of the destination, without guessing', () => {
+  const brief = tripRosterSelectionSystemPrompt()
+  assert.match(brief, /Picture the place as well\. Use what you know of this destination/)
+  assert.match(brief, /Use only what you actually know of this specific place; when you do not know it, pack from the use cases and the weather and do not guess/)
+  assert.match(tripPlanCompositionSystemPrompt(), /The destination is a real place: where you know it/)
+})
+
+// Live thread_1791416150174: the packer mistyped the hiking boots' ID (6865 for 996865); the repair
+// "fixed" it by trading the dinner boots away for the hiking boots, because the repair text spoke of
+// what to "drop to make room". There is no fixed count, so nothing has to be dropped.
+test('the trip roster repair text does not ask for a piece to be dropped, and treats an unknown ID as a typo', () => {
+  const repair = tripRosterRepairText({ failures: [{ message: 'pieces 6865 are not in the supplied candidate list; choose only from it' }], previousRosterIds: [1, 2] })
+  assert.match(repair, /Nothing has to be dropped to fix a problem: there is no fixed count/)
+  assert.match(repair, /usually a mistyped one — correct it to the piece you meant; do not trade a different piece away for it/)
+  assert.doesNotMatch(repair, /Whatever you drop to make room/)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],
@@ -1614,4 +1685,23 @@ test('the packer brief sizes the suitcase by the looks it must make, keeps disti
   assert.match(brief, /trail footing and an evening out are different jobs from city walking/)
   assert.match(brief, /shoes made for walking for walking-heavy days \(not heels or wedges\)/)
   assert.match(brief, /Name only pieces you actually selected/)
+})
+
+// Owner, 2026-10-07: "she is missing basic understanding on what traveling is and how people behave
+// when out and about." One statement of how a day away is lived, given to every trip call.
+test('every trip call is told how a day away works: one outfit from morning until the return', async () => {
+  const { HOW_A_DAY_AWAY_WORKS } = await import('../styling-engine/tripKnowledge.js')
+  assert.match(HOW_A_DAY_AWAY_WORKS, /dresses once, in the morning/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /a morning in a town and an afternoon walk in a park are one outfit, not two/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /Nobody goes back to change between daytime stops, changes in a car, or carries a second outfit around/)
+  // Owner correction, same day: "If you have a fancy dinner at night you do try to go back to the
+  // hotel and change and not spend entire sightseeing day in that outfit."
+  assert.match(HOW_A_DAY_AWAY_WORKS, /For a dressier evening \(a nice dinner, a show, an event\) the traveller plans to go back to the room and change first/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /A casual dinner at the end of a day out is different/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /chosen for the most demanding thing in that day/)
+  assert.ok(tripRosterSelectionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the packer')
+  assert.ok(tripPlanCompositionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the look composer')
+  const { readFileSync } = await import('node:fs')
+  const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.equal(core.split('      HOW_A_DAY_AWAY_WORKS,').length - 1, 2, 'the trip planning turn and the trip follow-up turn')
 })

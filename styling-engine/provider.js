@@ -1478,7 +1478,7 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
@@ -1493,6 +1493,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     subject: { type: 'string' },
     clarifying_question: { type: 'string' },
     time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
+    remember_packing_approach: { type: 'string' },
   }
 }
 
@@ -1502,7 +1503,7 @@ Choose bounded_multi ONLY when the user explicitly asks for several fresh comple
 
 Choose single_outfit for a FRESH request for an outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. An ordinary "what should I wear?" with no request for several options is single_outfit: the stylist recommends one outfit and the user can ask for more. Explicit "one", "one best", "pick one", and "give me an outfit" requests also use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
 
-Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces.
+Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces. A message that tells you more about the user's plans (where they will go, in what order, on which day), or that questions whether the advice works for how their day will actually go (when they would change, how they would carry or wear something), is not a card explanation: the answer may need a different outfit, so choose full_stylist.
 
 Choose garment_fact only when compact context says an active/verified garment subject exists and the user asks about that garment's construction, wear mechanics, warmth, suitability, or a comparison among supplied subjects. When compact context also says saved garment photographs are available, use garment_fact for judging the visibly shown result of a wear-mechanics configuration such as a tuck; the saved photos will be supplied to the answer model. Do not use it to build an outfit or discover other pieces.
 
@@ -1516,13 +1517,17 @@ Choose full_stylist for: broad outfit critique; user-attached photos; existing-o
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the user's own home or another single heated or cooled room, with no travel and no time outdoors: hosting or staying at home, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. For full_stylist use includes_outdoors.
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors: hosting or staying in, working from home. Anything that involves going somewhere — a restaurant, gallery, office, party at someone else's home, errands, a trip — is includes_outdoors, and so is anything unclear. Judge setting from what the current message says the clothes are for, whatever the profile.
 
 time_of_day is when the outing happens, when the request says so or plainly implies it: tonight, this evening, dinner, drinks, a concert or show at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Use an empty value when no time is stated or implied, when it spans the day, and for full_stylist. The forecast is then read for those hours rather than the whole day.
 
 Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for the other fields.
 
-clarifying_question is for single_outfit and bounded_multi requests only, and is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
+For trip_plan, clarifying_question asks how the traveller likes to pack, because there are real, different ways to pack and none is the default: packing light and re-wearing a few pieces, or having something different most days; carry-on or checked; laundry on the trip or not. Ask it, as one short natural question in a stylist's voice, whenever the request itself does not say how they are packing for THIS trip — how someone packs changes from trip to trip. When the compact context holds a "usual packing approach", do not assume it applies: use it to ask whether this trip is the same as usual or different. If the request also names no activities, ask about those in the same question. Leave it empty when the request says how they are packing, and when the request contains the user's answer to a question of yours.
+
+remember_packing_approach is usually empty. Fill it only when the user states how they ALWAYS or usually pack — a standing preference, not a choice for this one trip — with that preference in their own words (for example "carry-on only, I re-wear and do laundry"). It is kept only so a later trip can be asked "same as usual?"; it is never applied without asking.
+
+For single_outfit and bounded_multi requests, clarifying_question is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 
@@ -1792,7 +1797,37 @@ export function canonicalContentToGeminiParts(content) {
 // has never seen it), on every later call it's just this iteration's tool results or a retry-
 // correction message. Gemini's own turns are dropped here (`role === 'assistant'` continue) — the
 // server already has them via previous_interaction_id.
-export function canonicalHistoryToGeminiInput(unsyncedEntries) {
+//
+// 2026-10-07 — that drop was also applied to the FIRST call of a turn, where there is no
+// previous_interaction_id and the assistant entries are the stylist's own replies from earlier
+// turns of the thread. Since the adapter was written, every follow-up on Gemini was sent the
+// user's messages back to back with none of her answers between them. Live thread_1791423893034:
+// "for all 7 days?" arrived after "I'm staying at my friend's house…" with the at-home look she had
+// just proposed missing, and she re-planned the whole trip; replayed with her replies restored, the
+// same model answered the question about that look. On the first call (`firstCall`), a thread that
+// has earlier replies is therefore sent as alternating user_input / model_output steps. A thread
+// with no earlier reply keeps the flat content form, and later calls of a turn are unchanged.
+export function canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall = false } = {}) {
+  const assistantText = entry => String(entry?.text || (typeof entry?.content === 'string'
+    ? entry.content
+    : (Array.isArray(entry?.content) ? entry.content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '')) || '').trim()
+  if (firstCall && unsyncedEntries.some(entry => entry.role === 'assistant' && assistantText(entry))) {
+    const steps = []
+    for (const entry of unsyncedEntries) {
+      if (entry.role === 'assistant') {
+        const text = assistantText(entry)
+        if (text) steps.push({ type: 'model_output', content: [{ type: 'text', text }] })
+        continue
+      }
+      if (entry.role === 'tool_result') continue // a result with no call on record cannot be replayed
+      const parts = canonicalContentToGeminiParts(entry.content)
+      const previous = steps[steps.length - 1]
+      // Consecutive user entries (a joined clarification, an attached note) stay one user turn.
+      if (previous?.type === 'user_input') previous.content.push(...parts)
+      else steps.push({ type: 'user_input', content: parts })
+    }
+    return steps
+  }
   const input = []
   for (const entry of unsyncedEntries) {
     if (entry.role === 'assistant') continue
@@ -1897,7 +1932,7 @@ function describeGeminiInputShape(input, continuation, toolCount) {
 // handling entirely.
 export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model, captureCallId = null, iterationIndex = null }) {
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
-  const input = canonicalHistoryToGeminiInput(unsyncedEntries)
+  const input = canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall: !continuation })
   const callKind = tools.length ? 'tool_loop' : 'text'
   if (GEMINI_DEBUG) {
     console.log('[gemini request shape]', describeGeminiInputShape(input, continuation, tools.length))
@@ -2158,7 +2193,25 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
     }
 
-    if (turn.noMessage) return { answer: '', savedCorrections }
+    // A turn with no text and no tool call (live thread_1791415285620: Gemini spent 574 output
+    // tokens thinking and returned nothing after plan_outfit_set had accepted six cards, so the
+    // user saw "Something went wrong." beside a finished trip plan). Ask once more, as for a
+    // truncated turn; if it is empty again, say what was delivered instead of a blank answer.
+    if (turn.noMessage) {
+      if (!retriedChecks.has('providerEmptyTurn')) {
+        retriedChecks.add('providerEmptyTurn')
+        bumpFreeformDiagnostic(toolContext, 'providerEmptyIterations')
+        toolContext._pendingFreeformRetryReason = 'providerEmptyTurn'
+        currentMessages.push({
+          role: 'user',
+          content: 'Your last turn came back empty: no reply and no tool call. Continue from where you were and give your reply now.'
+        })
+        continue
+      }
+      bumpFreeformDiagnostic(toolContext, 'providerEmptyIterationsUnrecovered')
+      const delivered = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
+      return { answer: delivered ? freeformToolLoopFallbackAnswer(toolContext) : 'I did not manage to write a reply that time. Please ask again.', savedCorrections }
+    }
 
     if (turn.hasToolCalls) {
       recordFreeformToolIteration(toolContext, turn.toolCalls.map(tc => tc.name))

@@ -256,3 +256,8 @@ Stated as requirements, not designs. How to meet them is the next step, decided 
    can reasonably be taken in different directions, she asks before proposing an outfit. This
    replaces the targets' earlier habit of stating an assumption and proceeding; target 1's opening
    ("You're hosting, so…") stands only where the situation is actually known.
+5. **A trip asks how you are packing** (2026-10-07). There are different, legitimate ways to pack and
+   the app must not pick one silently: when a trip request does not say, she asks (pack light and
+   re-wear, or something different most days; carry-on or checked). The answer is for that trip only
+   — "packing preference might change depending on a trip" — so a usual approach, when known, is
+   used only to ask "same as usual?".

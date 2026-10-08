@@ -10061,3 +10061,63 @@ test('a layer repair that leaves the pieces unchanged keeps the card\'s own reas
   assert.equal(card.stylingInstructions, 'Tuck the top into the skirt.')
   assert.deepEqual(card.assignedLayerIds, [Number(coat)])
 })
+
+// Live thread_1791421976583: the composer submitted a blouse, utility pants and a second top for
+// Museum Visits. The sneakers were allowed for the slot, the look was rejected for "missing shoes",
+// and the reply told the user to pack more. One narrow second chance (owner, 2026-10-07): the
+// composer completes its own look from the slot's allowed pieces; code never picks the piece.
+test('a trip look rejected only for missing shoes is sent back once and recovered; a completion outside the candidates is not accepted', async () => {
+  for (const mode of ['good', 'outside']) {
+    db.prepare('DELETE FROM pieces').run()
+    const topA = insertPiece({ category: 'top', name: 'city top' })
+    const topB = insertPiece({ category: 'top', name: 'second top' })
+    const bottomA = insertPiece({ category: 'bottom', name: 'city bottom' })
+    const topC = insertPiece({ category: 'top', name: 'walk top' })
+    const bottomC = insertPiece({ category: 'bottom', name: 'walk bottom' })
+    const shoeId = insertPiece({ category: 'shoes', name: 'trip shoes', heel_height: 'flat', walk_support: 'high' })
+    const unpackedShoe = insertPiece({ category: 'shoes', name: 'shoes left at home', heel_height: 'flat', walk_support: 'high' })
+    const completionCalls = []
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      question: 'a mild week in the city',
+      chooseTripRoster: async () => ({ roster_piece_ids: [topA, topB, bottomA, topC, bottomC, shoeId] }),
+      composeTripPlanOnce: async workbench => [
+        // The slip: two tops and a bottom, no shoes.
+        { slot_id: workbench.slots[0].id, piece_ids: [topA, bottomA, topB], title: 'Museum look', reason: 'the look as first written', cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+        { slot_id: workbench.slots[1].id, piece_ids: [topC, bottomC, shoeId], title: 'Walk look', reason: 'r', cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } },
+      ],
+      repairTripIncompleteLooks: async ({ cards }) => {
+        completionCalls.push(cards)
+        return cards.map(card => ({
+          slot_id: card.slot_id,
+          original_piece_ids: card.piece_ids,
+          piece_ids: mode === 'good' ? [topA, bottomA, shoeId] : [topA, bottomA, topB, unpackedShoe],
+          title: 'Museum look, completed',
+          reason: 'city top and bottom with the trip shoes',
+        }))
+      },
+    }
+    const result = await executeTool('plan_outfit_set', {
+      plan_kind: 'trip',
+      weather_estimate: { high_f: 80, low_f: 72 },
+      slots: [
+        { label: 'Museum Visits', occasion: 'city', activity: 'walking', count: 1 },
+        { label: 'Park Walk', occasion: 'casual', activity: 'walking', count: 1 },
+      ],
+    }, toolContext)
+    assert.equal(completionCalls.length, 1, 'the incomplete look is sent back exactly once')
+    assert.equal(completionCalls[0].length, 1, 'only the incomplete look, not the valid one')
+    assert.equal(completionCalls[0][0].missing, 'shoes')
+    assert.ok(completionCalls[0][0].candidates.some(candidate => candidate.id === Number(shoeId)), 'the packed shoes are offered')
+    assert.ok(!completionCalls[0][0].candidates.some(candidate => candidate.id === Number(unpackedShoe)), 'only packed pieces are offered')
+    if (mode === 'good') {
+      assert.equal(toolContext.generatedOutfits.length, 2, `both looks are delivered: ${JSON.stringify(result).slice(0, 400)}`)
+      const museum = toolContext.generatedOutfits.find(outfit => (outfit.pieceIds || []).includes(Number(topA)))
+      assert.deepEqual([...museum.pieceIds].map(Number).sort(), [topA, bottomA, shoeId].map(Number).sort())
+      assert.equal(museum.reason, 'city top and bottom with the trip shoes', 'a look that dropped a piece takes the completion\'s words')
+    } else {
+      assert.equal(toolContext.generatedOutfits.length, 1, 'a completion that reaches outside the candidates is not accepted; the look stays lost')
+    }
+  }
+})

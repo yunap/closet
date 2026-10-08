@@ -209,6 +209,29 @@ async function resolveLocationToCoords(location, fetchImpl) {
   return coords
 }
 
+// How far a destination is from the wearer's saved home location, as a plain fact for trip
+// packing (owner, 2026-10-07: "app has my home location, how else am I going to get to Virginia").
+// The reader decides what the distance means for the journey; nothing here names a mode of travel.
+// '' when either place is unknown or cannot be resolved, or when they are the same place.
+export async function describeJourneyFromHome(destination = '', { fetchImpl = defaultFetch } = {}) {
+  let home = ''
+  try { home = String(homeLocationReader?.() || '').trim() } catch { home = '' }
+  const place = String(destination || '').trim()
+  if (!home || !place || sameWeatherLocation(home, place)) return ''
+  try {
+    const [from, to] = await Promise.all([resolveLocationToCoords(home, fetchImpl), resolveLocationToCoords(place, fetchImpl)])
+    if (!from || !to) return ''
+    const rad = deg => deg * Math.PI / 180
+    const h = Math.sin(rad(to.lat - from.lat) / 2) ** 2 + Math.cos(rad(from.lat)) * Math.cos(rad(to.lat)) * Math.sin(rad(to.lon - from.lon) / 2) ** 2
+    const miles = 3959 * 2 * Math.asin(Math.sqrt(h))
+    if (!Number.isFinite(miles) || miles < 1) return ''
+    const rounded = miles >= 1000 ? Math.round(miles / 100) * 100 : miles >= 100 ? Math.round(miles / 10) * 10 : Math.round(miles)
+    return `The traveller lives in ${home}, about ${rounded.toLocaleString('en-US')} miles from ${place}`
+  } catch {
+    return ''
+  }
+}
+
 async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const start = dateKey(startDate)
   const end = dateKey(endDate || startDate)
