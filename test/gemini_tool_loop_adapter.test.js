@@ -108,9 +108,21 @@ test('canonicalHistoryToGeminiInput drops the model\'s own turn (Gemini already 
   assert.equal(functionResults[0].call_id, 'call_1')
   assert.equal(functionResults[0].result[0].type, 'text')
 
-  const secondResultParts = functionResults[1].result
-  assert.ok(secondResultParts.some(p => p.type === 'image' && p.data === 'BBBB' && p.mime_type === 'image/jpeg'),
-    'the tool-returned image must become a real Gemini image part, not JSON-embedded base64 text (Stage-0 spike: the naive version cost ~32.6k tokens for one follow-up)')
+  // thread_1791447317199: a function_result carrying photographs took one to three minutes to come
+  // back; the same photographs sent beside the result took about three seconds. They are still real
+  // image parts (Stage-0 spike: JSON-embedded base64 cost ~32.6k tokens for one follow-up), now in
+  // their own step after the results, each with its label.
+  assert.ok(functionResults.every(item => item.result.every(part => part.type === 'text')), 'no photograph inside a function_result')
+  const photographStep = input[input.length - 1]
+  assert.equal(photographStep.type, 'user_input')
+  assert.ok(input.indexOf(photographStep) > input.indexOf(functionResults[1]), 'after every result of the batch')
+  assert.match(photographStep.content[0].text, /^Photographs returned by \w+ \(part of that tool result, not a message from the user\)/)
+  assert.deepEqual(photographStep.content.slice(1), [
+    { type: 'text', text: 'ID 1: Whale stripe tee' },
+    { type: 'image', data: 'BBBB', mime_type: 'image/jpeg' },
+  ])
+  const noPhotographs = canonicalHistoryToGeminiInput(unsynced.map(entry => ({ ...entry, images: [] })))
+  assert.ok(noPhotographs.every(item => item.type === 'function_result'), 'a batch with no photograph is unchanged')
 })
 
 test('canonicalHistoryToGeminiInput sends the full initial thread as plain content on the first (unsynced-from-zero) call', () => {

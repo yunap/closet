@@ -1829,17 +1829,41 @@ export function canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall = fal
     return steps
   }
   const input = []
+  // Photographs a tool returns are sent BESIDE its function_result, as their own step after the
+  // results, not inside it. Live thread_1791447317199 (owner: "replies to follow up questions took a
+  // very long time"): every slow turn had one call whose function_result carried photographs — 40
+  // photographs, 69 s and 169 s; 31 photographs, 116 s — while calls with the same amount of text and
+  // no photograph took 2–3 s, and the plan's composition call, which sends 15 photographs as ordinary
+  // content, took 8 s. Measured on the same model with 12 photographs and an identical request:
+  // inside the function_result 4.9, 6.4, 6.8, 34.7 and 245 s; beside it 3.0, 3.2, 3.2 and 3.2 s, same
+  // input tokens, same answer. Each photograph keeps its label, which the old form did not send.
+  const photographSteps = []
   for (const entry of unsyncedEntries) {
     if (entry.role === 'assistant') continue
     if (entry.role === 'tool_result') {
-      const result = [{ type: 'text', text: entry.text }]
-      for (const img of entry.images || []) result.push({ type: 'image', data: img.base64, mime_type: img.mime })
-      input.push({ type: 'function_result', name: entry.name, call_id: entry.toolCallId, result })
+      input.push({ type: 'function_result', name: entry.name, call_id: entry.toolCallId, result: [{ type: 'text', text: entry.text }] })
+      const images = (entry.images || []).filter(img => img?.base64)
+      if (images.length) {
+        photographSteps.push({
+          type: 'user_input',
+          content: [
+            { type: 'text', text: `Photographs returned by ${entry.name} (part of that tool result, not a message from the user), in the order its result lists them:` },
+            ...images.flatMap(img => [
+              ...(img.label ? [{ type: 'text', text: String(img.label) }] : []),
+              { type: 'image', data: img.base64, mime_type: img.mime },
+            ]),
+          ],
+        })
+      }
       continue
     }
     input.push(...canonicalContentToGeminiParts(entry.content))
   }
-  return input
+  if (!photographSteps.length) return input
+  // Results stay together and first; anything else in the batch (a correction note) follows the photographs.
+  const results = input.filter(item => item.type === 'function_result')
+  const others = input.filter(item => item.type !== 'function_result')
+  return [...results, ...photographSteps, ...others]
 }
 
 async function callAnthropicTurn({ system, canonicalMessages, tools, maxTokens, captureCallId = null, iterationIndex = null }) {
