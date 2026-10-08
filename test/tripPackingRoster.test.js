@@ -1693,7 +1693,11 @@ test('every trip call is told how a day away works: one outfit from morning unti
   const { HOW_A_DAY_AWAY_WORKS } = await import('../styling-engine/tripKnowledge.js')
   assert.match(HOW_A_DAY_AWAY_WORKS, /dresses once, in the morning/)
   assert.match(HOW_A_DAY_AWAY_WORKS, /a morning in a town and an afternoon walk in a park are one outfit, not two/)
-  assert.match(HOW_A_DAY_AWAY_WORKS, /Nobody goes back to change between stops, changes in a car, or carries a second outfit around/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /Nobody goes back to change between daytime stops, changes in a car, or carries a second outfit around/)
+  // Owner correction, same day: "If you have a fancy dinner at night you do try to go back to the
+  // hotel and change and not spend entire sightseeing day in that outfit."
+  assert.match(HOW_A_DAY_AWAY_WORKS, /For a dressier evening \(a nice dinner, a show, an event\) the traveller plans to go back to the room and change first/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /A casual dinner at the end of a day out is different/)
   assert.match(HOW_A_DAY_AWAY_WORKS, /chosen for the most demanding thing in that day/)
   assert.ok(tripRosterSelectionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the packer')
   assert.ok(tripPlanCompositionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the look composer')
