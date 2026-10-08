@@ -9357,3 +9357,16 @@ test('a text follow-up on a trip plan gets the lean prompt; other turns and the 
   const noPlan = await buildStylistConversationPayload({ question: 'And shoes?', sessionId: 'no-trip-plan-here', conversationMode: 'followup', history: [], tripFollowupEligible: true })
   assert.equal(noPlan.tripFollowupTurn, false, 'a thread with no packed suitcase is not a trip follow-up')
 })
+
+// Live thread_1791423893034: "for all 7 days?" about one at-home look re-planned the whole trip with
+// a different suitcase; and a look for time in at a friend's house got an outdoor weather note.
+test('a trip follow-up cannot re-plan unless the router read a request to plan, and time in where the user is staying is indoor', async () => {
+  const { readFileSync } = await import('node:fs')
+  const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
+  assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
+  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /or time spent in at the place the user is staying on a trip \(a friend's or relative's house, the hotel room\)/)
+  const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.match(core, /The plan on screen stays as it is\. A new need/)
+})

@@ -7369,7 +7369,12 @@ router.post('/ask', async (req, res) => {
     // The lean trip follow-up (core.js `tripFollowupTurn`): no wardrobe list, and only the tools a
     // question about an existing plan can use. A turn limited to informational tools keeps its own list.
     if (payload.tripFollowupTurn && !payload.restrictToInformationalTools && !Array.isArray(toolContext.allowedToolNames)) {
-      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', 'plan_outfit_set', 'store_user_correction']
+      // plan_outfit_set packs a new suitcase from scratch and replaces the plan on screen. Live
+      // thread_1791423893034: "for all 7 days?" (about one at-home look) was answered by re-planning
+      // the whole trip with a different suitcase. It is offered on a follow-up only when the router
+      // read the message as a request to plan or pack a trip.
+      const replanRequested = toolContext.freeformDiagnostics?.executionRouterProfile === 'trip_plan'
+      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', ...(replanRequested ? ['plan_outfit_set'] : []), 'store_user_correction']
       toolContext.freeformDiagnostics ||= {}
       toolContext.freeformDiagnostics.executionProfile = 'trip_followup'
     }

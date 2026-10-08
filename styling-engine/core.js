@@ -4852,6 +4852,7 @@ export async function buildStylistConversationPayload(body) {
       HOW_A_DAY_AWAY_WORKS,
       '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` with packed pieces first (call `view_pieces` on the ids you mean to use).',
       '- Use `search_wardrobe` only to look outside the suitcase, and say plainly when a piece you suggest is not packed.',
+      '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : tripPlanTurn ? [
