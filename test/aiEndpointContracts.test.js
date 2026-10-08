@@ -9058,6 +9058,51 @@ test('a one-slot swap lists every eligible candidate without choosing, then buil
   assert.deepEqual(card.pieceIds.filter(id => id !== blazer).sort(), [seeded.top, seeded.bottom, seeded.shoe].sort(), 'the rest of the outfit stays')
 })
 
+// thread_1791444946137 ("Let's aim for carry-on"): both swaps on a trip look brought in a piece from
+// outside the suitcase, and neither reply said so. The candidate list never stated which pieces were
+// packed, and a swap, unlike propose_outfit, did not record the addition.
+test('on a trip thread a one-slot swap says which candidates are in the suitcase and records a piece added from outside it', async () => {
+  const packedCoat = insertPiece({ name: 'packed trench coat', category: 'outerwear', colors: ['cream'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const homeCoat = insertPiece({ name: 'left-at-home wool coat', category: 'outerwear', colors: ['black'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const rosterIds = [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket, packedCoat]
+  const contextFor = (extra = {}) => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup',
+    question: 'What else could go there?',
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'City Sightseeing', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+    packingRosterIds: new Set(rosterIds),
+    packingRosterPieces: rosterIds.map(id => ({ id })),
+    ...extra,
+  })
+
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, contextFor())
+  assert.equal(listed.status, 'choose_replacement')
+  const rowFor = id => listed.candidates.find(row => row.startsWith(`#${id} `))
+  assert.match(rowFor(packedCoat), /\n  in the suitcase$/)
+  assert.doesNotMatch(rowFor(homeCoat), /in the suitcase/)
+  assert.match(listed.message, /packed suitcase: \d+ of these (is|are) already in it/)
+  assert.match(listed.message, /one more thing to pack/)
+
+  const noTrip = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, contextFor({ packingRosterIds: undefined, packingRosterPieces: undefined }))
+  assert.doesNotMatch(noTrip.message, /suitcase/, 'no trip in the thread: nothing about a suitcase')
+  assert.doesNotMatch(noTrip.candidates.join('\n'), /in the suitcase/)
+
+  const fromHome = contextFor()
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [homeCoat], reason: 'r', stylist_note: 'n' }, fromHome)
+  assert.deepEqual(fromHome.pendingRosterChange.addedIds, [homeCoat])
+  assert.deepEqual(fromHome.pendingRosterChange.removedIds, [], 'the piece swapped out of one look is still packed for the others')
+  assert.deepEqual(fromHome.generatedOutfits[0].packingRosterChange.addedIds, [homeCoat])
+  const { boundedConversationStateFromToolContext } = await import('../routes/ai.js')
+  const persisted = boundedConversationStateFromToolContext(fromHome)
+  assert.ok(persisted.packing_roster.roster_ids.includes(homeCoat), 'the next turn reads a suitcase that holds it')
+  assert.ok(persisted.packing_roster.roster_ids.includes(seeded.jacket))
+
+  const fromSuitcase = contextFor()
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [packedCoat], reason: 'r', stylist_note: 'n' }, fromSuitcase)
+  assert.equal(fromSuitcase.pendingRosterChange, undefined, 'a packed replacement changes nothing in the suitcase')
+})
+
 // thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
 // cards read "78°F high / 62°F low — you said so".
 test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {

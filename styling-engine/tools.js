@@ -3084,6 +3084,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
           .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
 
+        const swapRosterIds = toolContext.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
         // The stylist chooses the replacement (owner, 2026-10-06). Live thread_1791353402050: with
         // no replacement named, the ranking above picked one piece — an everyday striped wool
         // cardigan for an all-black satin dinner look — and slotSwapWhy wrote its reason ("…changes
@@ -3100,15 +3101,25 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
           recordRetrievedPieces(toolContext, [...basePieces.map(piece => piece.id), ...eligible.map(piece => piece.id)])
           bumpFreeformDiagnostic(toolContext, 'slotSwapCandidateLists')
+          // On a trip thread the candidates come from the whole wardrobe, and nothing said which of
+          // them were already packed (live thread_1791444946137, "carry-on": cargo pants and then
+          // trainers from outside the suitcase, swapped in without a word). search_wardrobe has
+          // marked this since the roster was built (`in_packing_roster`); the swap list now states
+          // the same fact on each packed row. Which to choose stays hers.
+          const packedCount = eligible.filter(piece => swapRosterIds.has(Number(piece.id))).length
+          const suitcaseFact = swapRosterIds.size
+            ? ` This trip has a packed suitcase: ${packedCount} of these ${packedCount === 1 ? 'is' : 'are'} already in it (the line "in the suitcase" under a row); any other piece would be one more thing to pack.`
+            : ''
           return {
             status: "choose_replacement",
-            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.`,
+            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.${suitcaseFact}`,
             replacing: { id: Number(removed.id), name: removed.name },
             kept_pieces: basePieces.filter(piece => Number(piece.id) !== Number(removed.id)).map(piece => ({ id: Number(piece.id), facts: sparseGarmentCatalogRow(piece) })),
             conventions: SPARSE_CATALOG_CONVENTIONS,
             candidates: eligible.map(piece => {
               const impression = taggerNotesText(piece)
-              return impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+              const row = impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+              return swapRosterIds.has(Number(piece.id)) ? `${row}\n  in the suitcase` : row
             }),
           }
         }
@@ -3180,6 +3191,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
               thermal: thermalFactsForPieceLine(replacement) || undefined
             },
             engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
+            // A replacement from outside the suitcase is a packing-set change, recorded the way
+            // propose_outfit records one, so the roster the next turn reads includes it. Nothing is
+            // removed: the piece swapped out of this look is still packed for the others.
+            ...(swapRosterIds.size && !swapRosterIds.has(Number(replacement.id))
+              ? { packingRosterChange: {
+                  addedIds: [Number(replacement.id)],
+                  addedPieces: [{ id: Number(replacement.id), name: replacement.name, category: replacement.category, photo: replacement.photo || null, worn_photo: replacement.worn_photo || null, colors: Array.isArray(replacement.colors) ? replacement.colors : [] }],
+                  removedIds: [],
+                  removedPieces: [],
+                } }
+              : {}),
             previewOnly: true
           })
         }
@@ -3196,6 +3218,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []),
           ...variants
         ]
+        const swapAdditions = variants.map(variant => variant.packingRosterChange).filter(Boolean)
+        if (swapAdditions.length) {
+          const prior = toolContext.pendingRosterChange || { addedIds: [], addedPieces: [], removedIds: [], removedPieces: [] }
+          const knownIds = new Set(prior.addedIds.map(Number))
+          const addedPieces = swapAdditions.flatMap(change => change.addedPieces).filter(piece => !knownIds.has(piece.id) && knownIds.add(piece.id))
+          toolContext.pendingRosterChange = {
+            ...prior,
+            addedIds: [...prior.addedIds, ...addedPieces.map(piece => piece.id)],
+            addedPieces: [...prior.addedPieces, ...addedPieces],
+          }
+        }
         if (!toolContext.sourceLocked) toolContext.source = 'slot_swap'
         toolContext.sourceLocked = true
         toolContext.slotSwapCompleted = true
