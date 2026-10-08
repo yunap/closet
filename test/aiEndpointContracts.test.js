@@ -9491,6 +9491,55 @@ test('a text follow-up on a trip plan gets the lean prompt; other turns and the 
   assert.equal(noPlan.tripFollowupTurn, false, 'a thread with no packed suitcase is not a trip follow-up')
 })
 
+// thread_1791444946137, two things in what a trip follow-up was sent. (1) After one swap the body
+// echoed that single card and it replaced the plan in THREAD STATE. (2) "an evening in at her place"
+// was dressed from a suitcase packed for sightseeing, museums, trails and dinners (owner: "definitely
+// not home clothes"): the note said "packed pieces first" and nothing said what the suitcase was for.
+test('a trip follow-up is sent the whole plan, not the one card the last reply showed, and what the suitcase was packed for', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-whole-plan'
+  const planSet = [
+    { index: 1, label: 'City Sightseeing', in_plan: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+    { index: 2, label: 'Fall Foliage Walks', in_plan: true, shown_last_turn: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+    { index: 3, label: 'Dinners Out', in_plan: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+  ]
+  saveStylistConversationState({
+    established: { occasion: 'travel', season: 'current season' },
+    current_outfit_set: planSet,
+    packing_roster: { roster_ids: [seeded.top], roster_pieces: [{ id: seeded.top, name: 'seeded top', category: 'top' }], slots: [{ id: 'a', label: 'City Sightseeing' }, { id: 'b', label: 'Fall Foliage Walks' }, { id: 'c', label: 'Dinners Out' }] },
+  }, sessionId)
+  const echoedCard = [{ label: 'Fall Foliage Walks', pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [{ id: seeded.top, name: 'seeded top' }] }]
+  const followup = await buildStylistConversationPayload({ question: 'What should I wear for an evening in at her place?', sessionId, conversationMode: 'followup', history: [], generatedOutfits: echoedCard, tripFollowupEligible: true })
+  assert.deepEqual(followup.threadState.current_outfit_set.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out'])
+  assert.equal(getStylistConversationState(sessionId).current_outfit_set.length, 3, 'building the turn does not overwrite the stored plan with the echoed card')
+  const system = typeof followup.system === 'string' ? followup.system : JSON.stringify(followup.system)
+  assert.match(system, /The suitcase was packed for the activities the plan was asked for \(City Sightseeing; Fall Foliage Walks; Dinners Out\) and for nothing else\./)
+  assert.match(system, /may have nothing suited to it packed/)
+  assert.match(system, /The rest of the wardrobe is reached with `search_wardrobe`\. A piece from it is one more thing to pack/)
+  assert.doesNotMatch(system, /with packed pieces first/)
+  assert.doesNotMatch(system, /only to look outside the suitcase/)
+  assert.match(system, /`shown_last_turn` marks what your last reply showed/)
+  // Each packed piece is described by its recorded facts, not only a name and colours.
+  const { sparseGarmentCatalogRow } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { db: testDb, parsePiece } = await import('../db.js')
+  const seededTopRow = sparseGarmentCatalogRow(parsePiece(testDb.prepare('SELECT * FROM pieces WHERE id = ?').get(seeded.top)))
+  assert.ok(system.includes(JSON.stringify(seededTopRow).slice(1, -1)) || system.includes(seededTopRow), 'the suitcase list carries the shared fact row')
+  assert.match(system, /Rows are sparse; each row is/)
+  assert.equal(typeof followup.threadState.packing_roster.roster_pieces[0], 'object', 'the stored roster shape the route reads back is unchanged')
+  const fullPrompt = await buildStylistConversationPayload({ question: 'And for the evening in?', sessionId, conversationMode: 'followup', history: [], generatedOutfits: echoedCard })
+  assert.equal(fullPrompt.tripFollowupTurn, false)
+  assert.doesNotMatch(typeof fullPrompt.system === 'string' ? fullPrompt.system : JSON.stringify(fullPrompt.system), /"conventions": "Rows are sparse/, 'a turn with the wardrobe list keeps the stored roster')
+
+  // A new request in the same thread, and a thread whose set is not a plan, take the body's cards as before.
+  const fresh = await buildStylistConversationPayload({ question: 'What should I wear to the office tomorrow?', sessionId, conversationMode: 'new_request', history: [], generatedOutfits: echoedCard })
+  assert.equal(fresh.threadState.current_outfit_set.length, 1)
+  const plainSession = 'plain-followup-body-set'
+  saveStylistConversationState({ current_outfit_set: [{ index: 1, label: 'Old one', piece_ids: [seeded.top], pieces: ['a'] }, { index: 2, label: 'Old two', piece_ids: [seeded.top], pieces: ['a'] }] }, plainSession)
+  const plain = await buildStylistConversationPayload({ question: 'And shoes?', sessionId: plainSession, conversationMode: 'followup', history: [], generatedOutfits: echoedCard })
+  assert.deepEqual(plain.threadState.current_outfit_set.map(entry => entry.label), ['Fall Foliage Walks'])
+})
+
 // Live thread_1791423893034: "for all 7 days?" about one at-home look re-planned the whole trip with
 // a different suitcase; and a look for time in at a friend's house got an outdoor weather note.
 test('a trip follow-up cannot re-plan unless the router read a request to plan, and time in where the user is staying is indoor', async () => {
