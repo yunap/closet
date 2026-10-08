@@ -1797,7 +1797,37 @@ export function canonicalContentToGeminiParts(content) {
 // has never seen it), on every later call it's just this iteration's tool results or a retry-
 // correction message. Gemini's own turns are dropped here (`role === 'assistant'` continue) — the
 // server already has them via previous_interaction_id.
-export function canonicalHistoryToGeminiInput(unsyncedEntries) {
+//
+// 2026-10-07 — that drop was also applied to the FIRST call of a turn, where there is no
+// previous_interaction_id and the assistant entries are the stylist's own replies from earlier
+// turns of the thread. Since the adapter was written, every follow-up on Gemini was sent the
+// user's messages back to back with none of her answers between them. Live thread_1791423893034:
+// "for all 7 days?" arrived after "I'm staying at my friend's house…" with the at-home look she had
+// just proposed missing, and she re-planned the whole trip; replayed with her replies restored, the
+// same model answered the question about that look. On the first call (`firstCall`), a thread that
+// has earlier replies is therefore sent as alternating user_input / model_output steps. A thread
+// with no earlier reply keeps the flat content form, and later calls of a turn are unchanged.
+export function canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall = false } = {}) {
+  const assistantText = entry => String(entry?.text || (typeof entry?.content === 'string'
+    ? entry.content
+    : (Array.isArray(entry?.content) ? entry.content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '')) || '').trim()
+  if (firstCall && unsyncedEntries.some(entry => entry.role === 'assistant' && assistantText(entry))) {
+    const steps = []
+    for (const entry of unsyncedEntries) {
+      if (entry.role === 'assistant') {
+        const text = assistantText(entry)
+        if (text) steps.push({ type: 'model_output', content: [{ type: 'text', text }] })
+        continue
+      }
+      if (entry.role === 'tool_result') continue // a result with no call on record cannot be replayed
+      const parts = canonicalContentToGeminiParts(entry.content)
+      const previous = steps[steps.length - 1]
+      // Consecutive user entries (a joined clarification, an attached note) stay one user turn.
+      if (previous?.type === 'user_input') previous.content.push(...parts)
+      else steps.push({ type: 'user_input', content: parts })
+    }
+    return steps
+  }
   const input = []
   for (const entry of unsyncedEntries) {
     if (entry.role === 'assistant') continue
@@ -1902,7 +1932,7 @@ function describeGeminiInputShape(input, continuation, toolCount) {
 // handling entirely.
 export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model, captureCallId = null, iterationIndex = null }) {
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
-  const input = canonicalHistoryToGeminiInput(unsyncedEntries)
+  const input = canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall: !continuation })
   const callKind = tools.length ? 'tool_loop' : 'text'
   if (GEMINI_DEBUG) {
     console.log('[gemini request shape]', describeGeminiInputShape(input, continuation, tools.length))
