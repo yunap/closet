@@ -2,6 +2,7 @@
 // DOCUMENTED IN: docs/engine-behaviour-map.md, docs/flows/ (per-flow model-call diagrams), and
 // docs/feedback-and-memory-map.md for buildStylistConversationPayload's memory blocks.
 // Amend the matching doc in the same commit. See AGENTS.md.
+import { HOW_A_DAY_AWAY_WORKS } from './tripKnowledge.js'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
@@ -4848,6 +4849,7 @@ export async function buildStylistConversationPayload(body) {
     ].join('\n')
     : tripFollowupTurn ? [
       'This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those. The rest of the wardrobe is not listed here.',
+      HOW_A_DAY_AWAY_WORKS,
       '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` with packed pieces first (call `view_pieces` on the ids you mean to use).',
       '- Use `search_wardrobe` only to look outside the suitcase, and say plainly when a piece you suggest is not packed.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
@@ -4855,6 +4857,7 @@ export async function buildStylistConversationPayload(body) {
     : tripPlanTurn ? [
       'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
       'How the traveller is packing for this trip (from the request or their answer to your question) goes in plan_outfit_set\'s packing_approach, in their words.',
+      HOW_A_DAY_AWAY_WORKS,
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [

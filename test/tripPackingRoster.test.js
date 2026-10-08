@@ -1686,3 +1686,18 @@ test('the packer brief sizes the suitcase by the looks it must make, keeps disti
   assert.match(brief, /shoes made for walking for walking-heavy days \(not heels or wedges\)/)
   assert.match(brief, /Name only pieces you actually selected/)
 })
+
+// Owner, 2026-10-07: "she is missing basic understanding on what traveling is and how people behave
+// when out and about." One statement of how a day away is lived, given to every trip call.
+test('every trip call is told how a day away works: one outfit from morning until the return', async () => {
+  const { HOW_A_DAY_AWAY_WORKS } = await import('../styling-engine/tripKnowledge.js')
+  assert.match(HOW_A_DAY_AWAY_WORKS, /dresses once, in the morning/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /a morning in a town and an afternoon walk in a park are one outfit, not two/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /Nobody goes back to change between stops, changes in a car, or carries a second outfit around/)
+  assert.match(HOW_A_DAY_AWAY_WORKS, /chosen for the most demanding thing in that day/)
+  assert.ok(tripRosterSelectionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the packer')
+  assert.ok(tripPlanCompositionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the look composer')
+  const { readFileSync } = await import('node:fs')
+  const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.equal(core.split('      HOW_A_DAY_AWAY_WORKS,').length - 1, 2, 'the trip planning turn and the trip follow-up turn')
+})
