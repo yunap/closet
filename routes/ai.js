@@ -7347,7 +7347,9 @@ router.post('/ask', async (req, res) => {
           occasion: req.body.occasion,
           season: req.body.season,
           activity: req.body.activity,
-          ...(tripPlanRoute ? { tripPlanTurn: true } : {})
+          ...(tripPlanRoute ? { tripPlanTurn: true } : {}),
+          // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
+          tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64
         })
     // The lean trip turn (owner, 2026-10-07; measurements in docs/freeform-prompt-cache-levers.md).
     // A fresh trip request used the full stylist request — the 273-piece wardrobe list and all 14
@@ -7358,6 +7360,13 @@ router.post('/ask', async (req, res) => {
       toolContext.allowedToolNames = ['declare_intent', 'plan_outfit_set', 'store_user_correction']
       toolContext.freeformDiagnostics ||= {}
       toolContext.freeformDiagnostics.executionProfile = 'trip_plan'
+    }
+    // The lean trip follow-up (core.js `tripFollowupTurn`): no wardrobe list, and only the tools a
+    // question about an existing plan can use. A turn limited to informational tools keeps its own list.
+    if (payload.tripFollowupTurn && !payload.restrictToInformationalTools && !Array.isArray(toolContext.allowedToolNames)) {
+      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', 'plan_outfit_set', 'store_user_correction']
+      toolContext.freeformDiagnostics ||= {}
+      toolContext.freeformDiagnostics.executionProfile = 'trip_followup'
     }
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.

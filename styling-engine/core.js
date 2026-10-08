@@ -4783,7 +4783,18 @@ export async function buildStylistConversationPayload(body) {
   // writes the reply from the planner's result; the packer and the outfit step get the wardrobe
   // themselves. Its prompt carries no wardrobe list (2026-10-07).
   const tripPlanTurn = body?.tripPlanTurn === true
-  const wardrobeManifestText = !tripPlanTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+  // A follow-up on a trip plan (owner, 2026-10-07). It answered from the full stylist request, about
+  // 56k tokens against the planning turn's 21k, most of it the wardrobe list — which a question
+  // about an existing plan does not need: THREAD STATE already carries the looks and the suitcase,
+  // and search_wardrobe returns full facts when the list is absent. Live thread_1791421976583's
+  // follow-ups, on the long prompt, kept describing the plan back. TRIP_FOLLOWUP_LEAN_PROMPT=false
+  // restores the long prompt.
+  const tripFollowupTurn = !tripPlanTurn
+    && process.env.TRIP_FOLLOWUP_LEAN_PROMPT !== 'false'
+    && conversationMode !== 'new_request'
+    && Array.isArray(packingRoster?.roster_ids) && packingRoster.roster_ids.length > 0
+    && body?.tripFollowupEligible === true
+  const wardrobeManifestText = !tripPlanTurn && !tripFollowupTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
@@ -4834,6 +4845,12 @@ export async function buildStylistConversationPayload(body) {
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
+    ].join('\n')
+    : tripFollowupTurn ? [
+      'This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those. The rest of the wardrobe is not listed here.',
+      '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` with packed pieces first (call `view_pieces` on the ids you mean to use).',
+      '- Use `search_wardrobe` only to look outside the suitcase, and say plainly when a piece you suggest is not packed.',
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : tripPlanTurn ? [
       'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
@@ -5037,6 +5054,7 @@ export async function buildStylistConversationPayload(body) {
     // when the model can actually see the full-truth manifest. The tiered discovery index does not
     // qualify: it owns identity only, so search must return the missing stable truth.
     wardrobeManifestIncluded: Boolean(wardrobeManifestText),
+    tripFollowupTurn,
     restrictToInformationalTools
   }
 }

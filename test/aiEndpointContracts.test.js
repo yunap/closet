@@ -9327,3 +9327,33 @@ test('a trip follow-up states the range the cards record, and is told what new p
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   assert.match(provider, /is not a card explanation: the answer may need a different outfit, so choose full_stylist/)
 })
+
+// Owner, 2026-10-07: a follow-up on a trip plan answers from a prompt without the wardrobe list.
+test('a text follow-up on a trip plan gets the lean prompt; other turns and the off switch keep the full one', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-lean'
+  saveStylistConversationState({
+    established: { occasion: 'travel', season: 'current season' },
+    current_outfit_set: [{ index: 1, label: 'Sightseeing', reason: 'r', piece_ids: [seeded.top], pieces: ['seeded top'] }],
+    packing_roster: { roster_ids: [seeded.top], roster_pieces: [{ id: seeded.top, name: 'seeded top', category: 'top' }] },
+  }, sessionId)
+  const build = extra => buildStylistConversationPayload({ question: 'Sightseeing first, then the parks.', sessionId, conversationMode: 'followup', history: [], ...extra })
+  const lean = await build({ tripFollowupEligible: true })
+  const leanSystem = typeof lean.system === 'string' ? lean.system : JSON.stringify(lean.system)
+  assert.equal(lean.tripFollowupTurn, true)
+  assert.equal(lean.wardrobeManifestIncluded, false)
+  assert.match(leanSystem, /This thread holds a trip plan\. THREAD STATE lists its looks/)
+  assert.match(leanSystem, /packing_roster/)
+  const full = await build({})
+  assert.equal(full.tripFollowupTurn, false, 'a turn the route did not mark eligible keeps the full prompt')
+  assert.ok(JSON.stringify(full.system).length > leanSystem.length)
+  process.env.TRIP_FOLLOWUP_LEAN_PROMPT = 'false'
+  try {
+    assert.equal((await build({ tripFollowupEligible: true })).tripFollowupTurn, false, 'the switch restores the full prompt')
+  } finally {
+    delete process.env.TRIP_FOLLOWUP_LEAN_PROMPT
+  }
+  const noPlan = await buildStylistConversationPayload({ question: 'And shoes?', sessionId: 'no-trip-plan-here', conversationMode: 'followup', history: [], tripFollowupEligible: true })
+  assert.equal(noPlan.tripFollowupTurn, false, 'a thread with no packed suitcase is not a trip follow-up')
+})
