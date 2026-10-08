@@ -434,6 +434,18 @@ async function resolveWeather({
     validateWeatherEstimate(explicitRequest.weatherEstimate),
   )
 
+  // The router classified the whole occasion as spent in one room, with no travel
+  // (resolveToolStylingContext). Unlike the model's own `indoor` marking, which means an indoor
+  // DESTINATION and keeps the outside conditions for the way there, this has no way there: a
+  // destination forecast cached earlier in the turn or restored from the thread's cards is not
+  // projected onto it as transit. Weather the user stated this turn still goes through below.
+  if (indoorEnvironment && explicitRequest.indoorOnly === true && !validateUserWeather(explicitRequest.userWeather)) {
+    return {
+      profile: statedWeatherProfile({ statedWeather: explicitStatedWeather, mood, requestText, date }),
+      provenance: { source: 'explicit_request.indoor_only' },
+    }
+  }
+
   // Explicit structured user/model weather owns the request even when an
   // older profile or prose snapshot is also present.
   if (hasExplicitStructuredWeather) {

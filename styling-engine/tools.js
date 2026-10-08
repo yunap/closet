@@ -747,7 +747,9 @@ export async function resolveToolStylingContext({
       // weather_estimate the model may still volunteer, and that estimate is dropped: with one, the
       // indoor sentinel means "indoor destination" and the estimate becomes the walk there and
       // back, which an occasion with no travel does not have. Weather the USER stated is kept.
-      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null } : {}),
+      // indoorOnly says the same thing about a forecast restored from the thread's own cards (a trip
+      // follow-up, thread_1791444946137): it is not the walk to this room either.
+      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null, indoorOnly: true } : {}),
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
