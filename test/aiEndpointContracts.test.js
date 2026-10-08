@@ -9366,7 +9366,9 @@ test('a trip follow-up cannot re-plan unless the router read a request to plan, 
   assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
   assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.match(provider, /or time spent in at the place the user is staying on a trip \(a friend's or relative's house, the hotel room\)/)
+  // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.
+  assert.match(provider, /inside the home the user is living or staying in, or another single heated or cooled room/)
+  assert.doesNotMatch(provider, /friend's or relative's house/)
   const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.match(core, /The plan on screen stays as it is\. A new need/)
 })
