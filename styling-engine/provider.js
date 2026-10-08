@@ -593,6 +593,17 @@ const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5
 export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
   ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
   : null
+// The execution router can run on its own model (EXECUTION_ROUTER_MODEL_OVERRIDE; unset = the
+// stylist's). It is the one call that reads every message cold, from a single preceding exchange,
+// at thinking 'low'. Replays of "this works, but I will be staying with them for 6 days. I need
+// more options" (live thread_1791447317199, sent after an at-home look): gemini-3.5-flash-lite
+// returned includes_outdoors and outfits_wanted 0 in 4 of 4 runs, and trip_plan once;
+// gemini-3.7-flash returned indoor_only and outfits_wanted 2, 2 and 3 in 3 of 3. The call is about
+// 2.3k input and 150 output tokens, so the dearer model adds little per turn.
+const EXECUTION_ROUTER_MODEL_OVERRIDE = process.env.EXECUTION_ROUTER_MODEL_OVERRIDE || ''
+export const executionRouterProviderOverride = STYLIST_PROVIDER_OVERRIDE && EXECUTION_ROUTER_MODEL_OVERRIDE
+  ? { provider: STYLIST_PROVIDER_OVERRIDE, model: EXECUTION_ROUTER_MODEL_OVERRIDE }
+  : null
 
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
@@ -1478,7 +1489,7 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
+  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach', 'outfits_wanted'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
@@ -1494,6 +1505,12 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     clarifying_question: { type: 'string' },
     time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
     remember_packing_approach: { type: 'string' },
+    // How many outfits the message asks for, on any profile; routes/ai.js turns 2 or more on a
+    // follow-up into the turn's owed count, so the turn does not end at its first card. Its own
+    // field, described where it is filled in: `limit` has a fixed meaning per profile ("For
+    // full_stylist, use limit 0"). gemini-3.5-flash-lite does not fill it for an unnumbered "more
+    // options" (see executionRouterProviderOverride).
+    outfits_wanted: { type: 'integer', minimum: 0, maximum: 5, description: 'How many outfits the user wants to be shown in reply to the current message, on any profile. 0 when the message does not ask to be shown an outfit (a question, a swap of one piece, a comment). 1 for one outfit. When the message asks for more than one — a number, or words such as more options, a few ideas, something for several days — the number asked for, or with no number, how many what they describe calls for (2 to 5).' },
   }
 }
 
@@ -1552,7 +1569,7 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     // forced tool_choice path, which never spends budget on prose; Gemini's plain-JSON path needs
     // real headroom on top of the ~150-token ceiling this schema's own output can reach.
     maxTokens: 900,
-    providerOverride
+    providerOverride: providerOverride || executionRouterProviderOverride
   })
   // thread_1788985997110: the router labeled a five-hour Santa Fe "outing" as walking even
   // though its own contract says place/outdoor duration do not establish activity. Activity

@@ -1681,7 +1681,14 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           return { status: "validation_error", message: "declare_intent needs want: 'text', 'cards', or 'image'." }
         }
         const rawCount = Number(args?.outfit_count)
-        const outfitCount = Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 5 ? rawCount : null
+        // No count from her, and the router read the message as asking for several: that count is
+        // owed. Fresh requests for several go through bounded_multi and are not affected.
+        const routerWanted = toolContext.turnMode && toolContext.turnMode !== 'new_request' && want === 'cards'
+          ? Number(toolContext.executionRouterOutfitsWanted) || 0
+          : 0
+        const outfitCount = Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 5
+          ? Math.max(rawCount, routerWanted >= 2 ? routerWanted : 0)
+          : (routerWanted >= 2 ? routerWanted : null)
         const turnMode = ['new_request', 'followup', 'correction', 'explanation', 'preference_reaction'].includes(args?.turn_mode)
           ? args.turn_mode
           : null

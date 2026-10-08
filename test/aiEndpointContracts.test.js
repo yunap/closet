@@ -9230,6 +9230,45 @@ test('an estimate repeated as user_weather is not the user\'s; a trip thread res
   assert.match(refused.message, /Refused: .*not an active outerwear in the wardrobe/)
 })
 
+// thread_1791447317199: "this works, but I will be staying with them for 6 days. I need more options"
+// got one more look. A follow-up ends at its first card unless a count is owed, and she declared none.
+test('a follow-up the router read as asking for several outfits owes that many and is not ended by its first card', async () => {
+  const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
+  assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('outfits_wanted'))
+  assert.match(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.outfits_wanted.description, /with no number, how many what they describe calls for/)
+  const proposal = { label: 'Another', occasion: 'city', why_it_works: 'w', stylist_note: 'Here is another.',
+    pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }] }
+  const contextFor = wanted => ({ occasion: 'city', season: 'current season', turnMode: 'followup', executionRouterOutfitsWanted: wanted,
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]), generatedOutfits: [], freeformDiagnostics: {} })
+
+  const several = contextFor(3)
+  const declared = await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified' }, several)
+  assert.equal(several.declaredIntent.outfitCount, 3)
+  assert.match(declared.message, /3 outfits owed/)
+  await executeTool('propose_outfit', proposal, several)
+  assert.notEqual(several.followupProposalCompleted, true, 'the first card does not end a turn that owes three')
+
+  const one = contextFor(0)
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified' }, one)
+  assert.equal(one.declaredIntent.outfitCount, null)
+  await executeTool('propose_outfit', proposal, one)
+  assert.equal(one.followupProposalCompleted, true, 'an ordinary one-card follow-up still ends with her note')
+
+  const sheSaidMore = contextFor(2)
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified', outfit_count: 4 }, sheSaidMore)
+  assert.equal(sheSaidMore.declaredIntent.outfitCount, 4, 'her own larger count stands')
+
+  const fresh = { ...contextFor(3), turnMode: 'new_request' }
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified' }, fresh)
+  assert.equal(fresh.declaredIntent.outfitCount, null, 'a fresh request is counted by its own path')
+
+  const route = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(route, /toolContext\.executionRouterOutfitsWanted = Math\.max\(0, Math\.min\(5, Number\(routed\.value\?\.outfits_wanted\) \|\| 0\)\)/)
+  const provider = (await import('node:fs')).readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /providerOverride: providerOverride \|\| executionRouterProviderOverride/)
+  assert.match(provider, /process\.env\.EXECUTION_ROUTER_MODEL_OVERRIDE \|\| ''/)
+})
+
 // thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
 // cards read "78°F high / 62°F low — you said so".
 test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
