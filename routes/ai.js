@@ -7107,11 +7107,6 @@ router.post('/ask', async (req, res) => {
         // — so locking season to the router's calendar classification loses no descriptive
         // information, it only stops a later temperature-vibe word from overwriting the calendar
         // fact used for season-based eligibility.
-        // How many outfits the message asks for, as the router read it. On a follow-up a count of
-        // two or more becomes the turn's owed count when the stylist declares none (declare_intent),
-        // so the turn is not ended by its first card. Live thread_1791447317199: "I will be staying
-        // with them for 6 days. I need more options" was answered with one more look.
-        toolContext.executionRouterOutfitsWanted = Math.max(0, Math.min(5, Number(routed.value?.outfits_wanted) || 0))
         if (freshExecutionRequest) {
           toolContext.occasion = normalizeOccasion(routed.value?.occasion)
           toolContext.activity = normalizeActivity(routed.value?.activity)
