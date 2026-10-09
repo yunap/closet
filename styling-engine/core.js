@@ -3,6 +3,7 @@
 // docs/feedback-and-memory-map.md for buildStylistConversationPayload's memory blocks.
 // Amend the matching doc in the same commit. See AGENTS.md.
 import { HOW_A_DAY_AWAY_WORKS } from './tripKnowledge.js'
+import { sparseGarmentCatalogRow, taggerNotesText, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
@@ -4672,7 +4673,15 @@ export async function buildStylistConversationPayload(body) {
     ).map(Number).filter(Boolean),
     pieces: (Array.isArray(o?.pieces) ? o.pieces : []).map(piece => piece?.name).filter(Boolean),
   }))
-  const currentOutfitSet = outfitSetFromBody.length
+  // The body echoes only the cards of the latest reply. On a thread whose stored set holds a trip
+  // plan's looks (routes/ai.js mergeTripThreadOutfitSet) that echo is one card of a larger set, and
+  // taking it here both hid the plan from the stylist and overwrote the stored set a few lines below.
+  const storedSetHoldsTripPlan = requestedConversationMode !== 'new_request'
+    && Array.isArray(restoredState.current_outfit_set)
+    && restoredState.current_outfit_set.some(entry => entry?.in_plan === true)
+  const currentOutfitSet = storedSetHoldsTripPlan
+    ? restoredState.current_outfit_set
+    : outfitSetFromBody.length
     ? outfitSetFromBody
     : (requestedConversationMode !== 'new_request' && Array.isArray(restoredState.current_outfit_set)
       ? restoredState.current_outfit_set
@@ -4795,6 +4804,36 @@ export async function buildStylistConversationPayload(body) {
     && conversationMode !== 'new_request'
     && Array.isArray(packingRoster?.roster_ids) && packingRoster.roster_ids.length > 0
     && body?.tripFollowupEligible === true
+  // What the suitcase was packed for, as a fact. Live thread_1791444946137: asked what to wear for
+  // an evening in at a friend's house, she was told to use "packed pieces first" and dressed it from
+  // a suitcase packed for sightseeing, museums, trails and dinners out — a cashmere sweater, tailored
+  // wide-leg trousers and canvas sneakers (owner: "definitely not home clothes"). The wardrobe has
+  // clothes tagged for home; she never looked. Whether a new need is one the suitcase covers is hers
+  // to judge, and she could not judge it without knowing what the suitcase was for.
+  const tripPlanSlotLabels = [...new Set((Array.isArray(packingRoster?.slots) ? packingRoster.slots : [])
+    .map(slot => String(slot?.label || '').trim()).filter(Boolean))]
+  const tripPackedForText = tripPlanSlotLabels.length
+    ? `The suitcase was packed for the activities the plan was asked for (${tripPlanSlotLabels.join('; ')}) and for nothing else. What suits one of them is in the suitcase. Something the traveller now needs clothes for that is none of them may have nothing suited to it packed, even where an outfit could be put together from what is there.`
+    : 'The suitcase was packed for the activities the plan was asked for and for nothing else; something the traveller now needs clothes for that is none of them may have nothing suited to it packed.'
+  // The suitcase as the stylist reads it on a follow-up. The stored roster carries a name, colours
+  // and photo filenames per piece — enough for the screen, nothing to judge by. Same thread: "black
+  // solid wide leg pants" went into the at-home look on its name; its record says heavy cotton,
+  // elevated, "structured classic". With the wardrobe list omitted on this turn the roster is the only
+  // place a packed piece is described, so each one is given as the shared sparse fact row (and the
+  // tagger's labelled impression) that search and swap results already use. Display copy only:
+  // threadState keeps the stored shape, which the route reads back as toolContext.packingRosterPieces.
+  const rosterFactRows = tripFollowupTurn
+    ? (() => {
+        const byId = new Map(activeManifestPieces.map(piece => [Number(piece.id), piece]))
+        return (packingRoster.roster_ids || []).map(Number).filter(id => byId.has(id)).map(id => {
+          const impression = taggerNotesText(byId.get(id))
+          return impression ? `${sparseGarmentCatalogRow(byId.get(id))}\n  ${impression}` : sparseGarmentCatalogRow(byId.get(id))
+        })
+      })()
+    : []
+  const threadStateForStylist = rosterFactRows.length
+    ? { ...threadState, packing_roster: { ...threadState.packing_roster, conventions: SPARSE_CATALOG_CONVENTIONS, roster_pieces: rosterFactRows } }
+    : threadState
   const wardrobeManifestText = !tripPlanTurn && !tripFollowupTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
@@ -4849,9 +4888,11 @@ export async function buildStylistConversationPayload(body) {
     ].join('\n')
     : tripFollowupTurn ? [
       'This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those. The rest of the wardrobe is not listed here.',
+      'current_outfit_set is the plan as it stands now: the plan\'s looks (`in_plan`), each with any swap already made to it, followed by any look added since (`added_after_plan`). `shown_last_turn` marks what your last reply showed.',
+      tripPackedForText,
       HOW_A_DAY_AWAY_WORKS,
-      '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` with packed pieces first (call `view_pieces` on the ids you mean to use).',
-      '- Use `search_wardrobe` only to look outside the suitcase, and say plainly when a piece you suggest is not packed.',
+      '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` (call `view_pieces` on the ids you mean to use).',
+      '- The rest of the wardrobe is reached with `search_wardrobe`. A piece from it is one more thing to pack; say plainly when a piece you suggest is not in the suitcase.',
       '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
@@ -4974,7 +5015,7 @@ export async function buildStylistConversationPayload(body) {
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
     '',
     'THREAD STATE (STRUCTURED):',
-    JSON.stringify(threadState, null, 1),
+    JSON.stringify(threadStateForStylist, null, 1),
     'THREAD STATE is the single source of truth for established styling context and the current outfit set. Reuse its values for follow-ups unless the user changes them; when it conflicts with older prose context, THREAD STATE wins. When the user references outfits by position ("the first one", "#2"), resolve against current_outfit_set. For a one-slot variant request against a current outfit, prefer suggest_slot_swaps so the alternatives stay tied to the existing card instead of restarting full outfit composition.',
     'CURRENT-SET AUTHORITY: current_outfit_set is the default referent for unqualified discussion ("these outfits", "the second one", "add a layer", "which works best?") — always reason from it, not from an earlier turn\'s conversational framing. Earlier outfit sets and critiques of them are historical context, discussable only when the user explicitly refers back (see HISTORICAL OUTFIT SETS below if supplied this turn). A critique or rejection recorded against an earlier set — "these don\'t work," "too elevated," any objection — must NOT be applied to current_outfit_set unless the user states or repeats that same critique about the current set now. Regenerating the set resolves the earlier objection; do not re-litigate it from memory of the prior turn.',
     threadState.recently_discussed_pieces

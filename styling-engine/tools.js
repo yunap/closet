@@ -84,13 +84,25 @@ export function userExplicitlyRequestedNoRepeat(value = '') {
     /\b(no|don't|do not|without|avoid)\s+(?:any\s+)?(?:repeating|repeated|reusing|reuse|same)\b/i.test(text) // ratchet-allow: user constraint text, not garment matching
 }
 
-export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question = '') {
+export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question = '', planKind = '') {
   const constraints = { ...(rawConstraints || {}) }
   const pieceBudget = Number(constraints.piece_budget) || 0
   const reuseMode = String(constraints.reuse || '').trim().toLowerCase()
-  if (pieceBudget > 0 && reuseMode === 'maximize' &&
-      Array.isArray(constraints.no_repeat) && constraints.no_repeat.length &&
-      !userExplicitlyRequestedNoRepeat(question)) {
+  const inventedNoRepeat = Array.isArray(constraints.no_repeat) && constraints.no_repeat.length &&
+    !userExplicitlyRequestedNoRepeat(question)
+  if (pieceBudget > 0 && reuseMode === 'maximize' && inventedNoRepeat) {
+    delete constraints.no_repeat
+  }
+  // A trip's looks are examples made from one suitcase, and wearing a top on two of the days is how
+  // a suitcase works. no_repeat is a hard check: a look that reuses a piece is rejected. Twice in
+  // two days the trip stylist set it herself to express "something different most days", which
+  // the user had said about packing, not about any garment: thread_1791504649347 lost a museum
+  // look, and thread_1791529526962 (`no_repeat: ["tops"]`, eight looks asked of a bag of five tops,
+  // so it could not be satisfied) lost both looks for the foliage walks and a dinner look, and the
+  // reply advised leaving the hiking boots at home. Same treatment as the capsule above: kept only
+  // when the user asked for no repeats in their own words. How different the days are is carried
+  // by packing_approach, which the packer reads.
+  if (planKind === 'trip' && inventedNoRepeat) {
     delete constraints.no_repeat
   }
   return constraints
@@ -747,7 +759,9 @@ export async function resolveToolStylingContext({
       // weather_estimate the model may still volunteer, and that estimate is dropped: with one, the
       // indoor sentinel means "indoor destination" and the estimate becomes the walk there and
       // back, which an occasion with no travel does not have. Weather the USER stated is kept.
-      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null } : {}),
+      // indoorOnly says the same thing about a forecast restored from the thread's own cards (a trip
+      // follow-up, thread_1791444946137): it is not the walk to this room either.
+      ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null, indoorOnly: true } : {}),
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
@@ -1342,7 +1356,13 @@ export const STYLIST_TOOLS = [
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
         limit: { type: "integer", minimum: 2, maximum: 5, description: "Number of outfits to generate (2 to 5). Default to 2 for an ordinary new 'what should I wear?' request. For one/best/pick-one, use the serial search_wardrobe + propose_outfit path." },
-        piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
+        piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." },
+        // The composer is a separate call that is sent the user's latest message and none of the
+        // conversation. Live thread_1791509009539: it was asked for "more outfits with this
+        // structure" and for "other outfits" with nothing to say what structure, or other than
+        // what; both times a three-layer look the owner had just approved came back as two layers
+        // or none, and the stylist described the cards as the structure she had meant.
+        brief: { type: "string", description: "What you are asking for, in your own words, for the composer that builds these cards. It sees the wardrobe and the user's latest message only: none of this conversation and none of the outfits already shown. Put here whatever that message depends on — what was established earlier, what a look the user liked consists of and how it is worn, what they rejected and why. Leave it out only when the latest message says everything by itself." }
       },
       required: ["occasion", "season"]
     }
@@ -1429,7 +1449,7 @@ export const STYLIST_TOOLS = [
           description: "Shared rules across the whole set. Set these from the objective: packing wants reuse maximized; an at-home work week wants looks diversified (repeats are the failure there, not the win).",
           properties: {
             reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
-            no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule: recombination is the point of a capsule, so it is discarded there unless the person explicitly asked for no repeats." },
+            no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule or a trip: recombination is the point of a capsule, and a trip's looks are examples made from one suitcase, where a top is worn on more than one day. How different the days should be belongs in packing_approach. It is discarded for both unless the person explicitly asked for no repeats." },
             allow_repeat: { type: "array", items: { type: "string" }, description: "Category groups explicitly allowed to repeat even when diversifying — e.g. ['shoes'] since the same shoes across a week is normal. Overrides no_repeat for that group." },
             shared_anchor_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to pin across the set — e.g. styling several outfits around one new piece. Anchors recur in every slot they fit and are exempt from no_repeat." },
             piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it. Never derive a number from how they pack: 'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out. The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
@@ -1639,7 +1659,35 @@ export async function executeTool(name, args, toolContext = {}) {
   }
 }
 
-async function executeToolInternal(name, args, toolContext = {}) {
+// `user_weather` is for weather the USER stated; it outranks the live forecast. Live
+// thread_1791447317199: the trip stylist sent weather_estimate {65, 45} and the same numbers again as
+// user_weather. Nobody had said a temperature. The forecast for those days was about 50–82°F; the
+// whole plan was packed for 45–65°F and every card read "65°F high / 45°F low — you said so". A
+// user_weather that only repeats the call's own estimate, on a turn whose request states no weather,
+// is the model's guess in the wrong field: it is dropped, and the estimate keeps its own rank (below
+// the forecast). The same test as the thread-copy check in resolveToolStylingContext; a user_weather
+// that differs from the estimate, or any on a request that does state weather, is taken as before.
+export function withoutEchoedUserWeather(args, toolContext = {}) {
+  if (!args || typeof args !== 'object') return args
+  const requestText = [toolContext.request, toolContext.question].filter(Boolean).join(' ')
+  if (requestStatesWeather(requestText)) return args
+  const degrees = (weather, key) => Number(weather?.[`${key}_f`] ?? weather?.[`${key}F`])
+  const echoes = (userWeather, estimate) => Boolean(userWeather && estimate)
+    && ['high', 'low'].every(key => Number.isFinite(degrees(userWeather, key)) && Math.round(degrees(userWeather, key)) === Math.round(degrees(estimate, key)))
+  const slots = Array.isArray(args.slots) ? args.slots : null
+  const slotEchoes = slot => echoes(slot?.user_weather, slot?.weather_estimate || args.weather_estimate)
+  const topEchoes = echoes(args.user_weather, args.weather_estimate)
+  if (!topEchoes && !(slots && slots.some(slotEchoes))) return args
+  bumpFreeformDiagnostic(toolContext, 'userWeatherEchoedEstimateDropped')
+  const { user_weather: echoed, ...rest } = args
+  return {
+    ...(topEchoes ? rest : args),
+    ...(slots ? { slots: slots.map(slot => { if (!slotEchoes(slot)) return slot; const { user_weather: dropped, ...kept } = slot; return kept }) } : {}),
+  }
+}
+
+async function executeToolInternal(name, rawArgs, toolContext = {}) {
+  let args = withoutEchoedUserWeather(rawArgs, toolContext)
   switch (name) {
       case 'declare_intent': {
         // Step 4 (model-declared intent): the model states what this turn should
@@ -3057,7 +3105,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             question: toolContext.question || '',
           })
         })
-        const scoredCandidates = candidates
+        const evaluatedCandidates = candidates
           .map(piece => {
             const trust = swapEligibility.decisionsById.get(Number(piece.id))
             const ruleFit = (occasionProfile || activityProfile)
@@ -3079,9 +3127,31 @@ async function executeToolInternal(name, args, toolContext = {}) {
               score: newnessScore + occasionScore + queryScore + colorScore - ((tierRank[ruleFit.tier] ?? 1) * 8)
             }
           })
-          .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
+        const passesSwapGates = candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited'
+        const scoredCandidates = evaluatedCandidates
+          .filter(passesSwapGates)
           .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
+        // A replacement the stylist named and the gates refused is reported with its reason. Live
+        // thread_1791447317199: she chose the packed knit skirt, and later the trousers the user
+        // asked for by ID; both came back "No valid bottom swaps were found" with `rejected: []`,
+        // because pieces dropped here never reached the failure list. She could not tell the user
+        // why, and reached outside the suitcase instead.
+        const namedButRefused = replacementIds.length
+          ? [
+              ...evaluatedCandidates.filter(candidate => !passesSwapGates(candidate)).map(candidate => ({
+                id: Number(candidate.piece.id),
+                name: candidate.piece.name,
+                issues: candidate.trust.allowed
+                  ? [`${candidate.ruleFit.label || 'not permitted'} for ${resolvedOccasion}${resolvedActivity && resolvedActivity !== 'none' ? ` / ${resolvedActivity}` : ''}`]
+                  : (candidate.trust.reasons?.length ? candidate.trust.reasons : ['excluded by the current occasion and weather']),
+              })),
+              ...replacementIds.filter(id => !candidates.some(piece => Number(piece.id) === id)).map(id => ({
+                id, name: '', issues: [`not an active ${category} in the wardrobe`],
+              })),
+            ]
+          : []
 
+        const swapRosterIds = toolContext.packingRosterIds instanceof Set ? toolContext.packingRosterIds : new Set()
         // The stylist chooses the replacement (owner, 2026-10-06). Live thread_1791353402050: with
         // no replacement named, the ranking above picked one piece — an everyday striped wool
         // cardigan for an all-black satin dinner look — and slotSwapWhy wrote its reason ("…changes
@@ -3098,22 +3168,32 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
           recordRetrievedPieces(toolContext, [...basePieces.map(piece => piece.id), ...eligible.map(piece => piece.id)])
           bumpFreeformDiagnostic(toolContext, 'slotSwapCandidateLists')
+          // On a trip thread the candidates come from the whole wardrobe, and nothing said which of
+          // them were already packed (live thread_1791444946137, "carry-on": cargo pants and then
+          // trainers from outside the suitcase, swapped in without a word). search_wardrobe has
+          // marked this since the roster was built (`in_packing_roster`); the swap list now states
+          // the same fact on each packed row. Which to choose stays hers.
+          const packedCount = eligible.filter(piece => swapRosterIds.has(Number(piece.id))).length
+          const suitcaseFact = swapRosterIds.size
+            ? ` This trip has a packed suitcase: ${packedCount} of these ${packedCount === 1 ? 'is' : 'are'} already in it (the line "in the suitcase" under a row); any other piece would be one more thing to pack.`
+            : ''
           return {
             status: "choose_replacement",
-            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.`,
+            message: `Nothing has been swapped yet. These ${eligible.length} pieces can replace ${removed.name} in "${outfit.label || outfit.title || 'the selected outfit'}"; the rest of the outfit stays. Choose as the stylist: look at the ones you would consider with view_pieces (how they sit with the kept pieces matters), then call suggest_slot_swaps again with replacement_ids, reason and stylist_note. The list is in id order and implies no preference.${suitcaseFact}`,
             replacing: { id: Number(removed.id), name: removed.name },
             kept_pieces: basePieces.filter(piece => Number(piece.id) !== Number(removed.id)).map(piece => ({ id: Number(piece.id), facts: sparseGarmentCatalogRow(piece) })),
             conventions: SPARSE_CATALOG_CONVENTIONS,
             candidates: eligible.map(piece => {
               const impression = taggerNotesText(piece)
-              return impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+              const row = impression ? `${sparseGarmentCatalogRow(piece)}\n  ${impression}` : sparseGarmentCatalogRow(piece)
+              return swapRosterIds.has(Number(piece.id)) ? `${row}\n  in the suitcase` : row
             }),
           }
         }
 
         const statedReason = String(args?.reason || '').trim()
         const variants = []
-        const failures = []
+        const failures = [...namedButRefused]
         for (const candidate of scoredCandidates.sort((a, b) => replacementIds.indexOf(Number(a.piece.id)) - replacementIds.indexOf(Number(b.piece.id)))) {
           if (variants.length >= limit) break
           const replacement = candidate.piece
@@ -3178,6 +3258,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
               thermal: thermalFactsForPieceLine(replacement) || undefined
             },
             engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
+            // Which look of the thread's set this revises, so a trip plan can take the revision in
+            // place (routes/ai.js mergeTripThreadOutfitSet). Absent for a card made this same turn.
+            ...(Number.isInteger(Number(outfit.index)) && Number(outfit.index) > 0 && !(toolContext.generatedOutfits || []).includes(outfit)
+              ? { swapSourceIndex: Number(outfit.index) }
+              : {}),
+            // A replacement from outside the suitcase is a packing-set change, recorded the way
+            // propose_outfit records one, so the roster the next turn reads includes it. Nothing is
+            // removed: the piece swapped out of this look is still packed for the others.
+            ...(swapRosterIds.size && !swapRosterIds.has(Number(replacement.id))
+              ? { packingRosterChange: {
+                  addedIds: [Number(replacement.id)],
+                  addedPieces: [{ id: Number(replacement.id), name: replacement.name, category: replacement.category, photo: replacement.photo || null, worn_photo: replacement.worn_photo || null, colors: Array.isArray(replacement.colors) ? replacement.colors : [] }],
+                  removedIds: [],
+                  removedPieces: [],
+                } }
+              : {}),
             previewOnly: true
           })
         }
@@ -3185,7 +3281,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (!variants.length) {
           return {
             status: "error",
-            message: `No valid ${category} swaps were found for "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion/weather gates.`,
+            message: `No valid ${category} swaps were found for "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion/weather gates.${failures.length ? ` Refused: ${failures.slice(0, 8).map(failure => `${failure.name || `#${failure.id}`} (${failure.issues.join('; ')})`).join('; ')}.` : ''}`,
             rejected: failures.slice(0, 8)
           }
         }
@@ -3194,6 +3290,17 @@ async function executeToolInternal(name, args, toolContext = {}) {
           ...(Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []),
           ...variants
         ]
+        const swapAdditions = variants.map(variant => variant.packingRosterChange).filter(Boolean)
+        if (swapAdditions.length) {
+          const prior = toolContext.pendingRosterChange || { addedIds: [], addedPieces: [], removedIds: [], removedPieces: [] }
+          const knownIds = new Set(prior.addedIds.map(Number))
+          const addedPieces = swapAdditions.flatMap(change => change.addedPieces).filter(piece => !knownIds.has(piece.id) && knownIds.add(piece.id))
+          toolContext.pendingRosterChange = {
+            ...prior,
+            addedIds: [...prior.addedIds, ...addedPieces.map(piece => piece.id)],
+            addedPieces: [...prior.addedPieces, ...addedPieces],
+          }
+        }
         if (!toolContext.sourceLocked) toolContext.source = 'slot_swap'
         toolContext.sourceLocked = true
         toolContext.slotSwapCompleted = true
@@ -3590,7 +3697,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : DEFAULT_SEASONAL_CAPSULE_BUDGET
         }
         if (planKind === 'seasonal_capsule' && !String(planConstraints.reuse || '').trim()) planConstraints.reuse = 'maximize'
-        planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '')
+        planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '', planKind)
         // A capsule's cap is combinatorial (min(budget, 12)); every other plan
         // keeps the day-shaped curve, where a larger packing budget genuinely
         // means more distinct days to dress. Passing 0 here would have pinned
@@ -4509,6 +4616,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
+        // Shown to the composer as the stylist's words, beside the user's message. Deliberately not
+        // part of requestText: nothing reads it for weather, activity or register.
+        const stylistBrief = String(args?.brief || '').trim().slice(0, 1500)
         const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
         // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
@@ -4579,7 +4689,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const resolvedActivity = stylingContext.activity
         let resolvedSeason = stylingContext.season
-        if (boundedMultiLook) {
+        // The weather this tool resolved goes to the composer whenever there is a temperature in it,
+        // not only on a fresh request. Until 2026-10-09 a follow-up hand-off passed none, and the
+        // composer worked the weather out again by itself from the season word: live
+        // thread_1791509009539, where the user had stated 80s and 48, the composer was told 78/59°F
+        // on one follow-up and "summer" with no temperature on the next.
+        const carryResolvedWeather = boundedMultiLook || Number.isFinite(Number(stylingContext.weatherProfile?.highF))
+        if (carryResolvedWeather) {
           const resolvedWeather = stylingContext.weatherProfile
           const hasHigh = Number.isFinite(Number(resolvedWeather.highF))
           const hasLow = Number.isFinite(Number(resolvedWeather.lowF))
@@ -4667,10 +4783,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             explorationMode: 'moderate',
             question: toolContext.question || '',
             activity: resolvedActivity,
-            resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
+            resolvedWeatherProfile: carryResolvedWeather ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
             stylistNote: boundedMultiLook,
+            stylistBrief,
             // Same reasoning as the selected-piece branch above — this is the exact call site
             // implicated in the live $0.122-inside-a-"Gemini"-turn finding.
             providerOverride: toolContext.providerOverride || null,

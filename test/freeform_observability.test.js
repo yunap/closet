@@ -3101,7 +3101,9 @@ test('adaptive visual evidence rides the bounded multi-look path only', () => {
     toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'),
     toolsSrc.indexOf('\n          })', toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'))
   )
-  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
+  // 2026-10-09: the whole-wardrobe hand-off passes the tool's resolved weather on a follow-up too
+  // (thread_1791509009539); the selected-piece path still gets neither, as before.
+  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/)
   assert.match(wholeWardrobeCall, /adaptiveVisualDetail: boundedMultiLook/)
   assert.doesNotMatch(selectedPieceCall, /adaptiveVisualDetail|resolvedWeatherProfile/)
 })
@@ -3454,6 +3456,33 @@ test('a router-resolved season is locked for the turn: a later tool call\'s "war
     policy: { allowLiveWeather: false },
   })
   assert.equal(unlockedContext.season, 'warm', 'without a lock, an explicit season argument is used as before')
+})
+
+// thread_1791509009539 (9 October, 48–80°F stated): on a follow-up the stylist passed season "warm"
+// to generate_outfits; the composer was told "Season: summer", 109 pieces were removed and no jacket
+// was left. The 2026-09-16 lock above covered fresh requests only.
+test('a follow-up holds the thread\'s season: a tool call\'s "warm" does not make October summer', async () => {
+  const { followUpSeasonLock } = await import('../routes/ai.js')
+  const threadState = { turn_mode: 'followup', established: { season: 'current season' } }
+  const lock = followUpSeasonLock({ turnMode: 'followup' }, threadState)
+  assert.deepEqual(lock, { executionRouterSeason: 'current season', executionRouterSeasonLocked: true })
+  const context = await resolveToolStylingContext({
+    explicitRequest: { season: 'summer', occasion: 'city', date: new Date('2026-10-09T12:00:00') },
+    toolContext: { turnMode: 'followup', ...lock },
+    policy: { allowLiveWeather: false },
+  })
+  assert.equal(context.season, 'current season')
+  assert.equal(context.calendarSeason, 'fall', 'the calendar season comes from the date, not from a temperature word')
+
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup', followUpRouterSeason: 'winter' }, threadState), { executionRouterSeason: 'winter', executionRouterSeasonLocked: true }, 'a season the user names this turn, as the router read it, replaces the thread\'s')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'new_request' }, { ...threadState, turn_mode: 'new_request' }), {}, 'a new request is the router\'s own lock')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup', executionRouterSeasonLocked: true, executionRouterSeason: 'early fall' }, threadState), {}, 'an existing lock stands')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup' }, { turn_mode: 'followup', established: {} }), {}, 'a thread with no established season locks nothing')
+
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /const carryResolvedWeather = boundedMultiLook \|\| Number\.isFinite\(Number\(stylingContext\.weatherProfile\?\.highF\)\)/)
+  assert.match(toolsSrc, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/, 'a follow-up hand-off passes the weather the tool resolved')
+  assert.doesNotMatch(toolsSrc, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
 })
 
 // ============================================================================
@@ -4706,6 +4735,60 @@ test('a router-classified indoor-only occasion resolves as indoor for the propos
   await executeTool('propose_outfit', args, outdoorContext)
   assert.ok((outdoorContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
     'without the indoor classification the same proposal is still judged against the estimate')
+})
+
+// thread_1791444946137: on a trip thread, "an evening in at her place" was routed indoor_only and
+// carried no estimate, and the card still said "nothing to put on for the cool walk there and back".
+// The follow-up had restored the trip's forecast from the thread's cards, and the indoor sentinel
+// projected it as the journey to an indoor destination. An occasion with no travel has no journey.
+test('a router-classified indoor-only look on a trip thread is not judged against the trip forecast as a walk there and back', async () => {
+  for (const p of [
+    { id: 63, name: 'Cashmere Sweater', category: 'top', fabric_weight: 'medium', sleeve_length: 'long' },
+    { id: 64, name: 'Wide Leg Pants', category: 'bottom', fabric_weight: 'medium' },
+    { id: 65, name: 'Canvas Sneakers', category: 'shoes', walk_support: 'high' },
+  ]) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.walk_support || null, p.sleeve_length || null)
+  }
+  const { threadWeatherContextFromOutfitSet } = await import('../routes/ai.js')
+  const tripCard = { resolved_weather_context: {
+    status: 'resolved', location: 'Vienna, VA', date_range: { start: '2026-10-12', end: '2026-10-18' },
+    temperature: { high_f: 82.2, low_f: 49.7, needs_removable_cool_layer: true, source: 'live', provider: 'Open-Meteo' },
+    precipitation: { value: 'unknown', source: 'live' }, wind: { value: 'unknown', source: 'unavailable' }, overall_source: 'live',
+  } }
+  const context = indoorOnly => {
+    const toolContext = {
+      executionProfile: 'single_outfit',
+      singleOutfitCatalogEligibleIds: new Set([63, 64, 65]),
+      retrievedPieceIds: new Set([63, 64, 65]),
+      visuallySeenPieceIds: new Set([63, 64, 65]),
+      freeformDiagnostics: {},
+      activity: 'none',
+      executionRouterIndoorOnly: indoorOnly,
+      resolvedWeatherContext: threadWeatherContextFromOutfitSet([tripCard]),
+    }
+    declareSingleOutfitIntent(toolContext)
+    return toolContext
+  }
+  const args = {
+    pieces: [{ id: 63, role: 'primary_top' }, { id: 64, role: 'primary_bottom' }, { id: 65, role: 'shoes' }],
+    label: 'Cozy Evening In',
+    why_it_works: 'Soft and easy for the sofa.',
+    stylist_note: 'Intro.\n\nPick.',
+  }
+  const indoorContext = context(true)
+  assert.ok(indoorContext.resolvedWeatherContext, 'the trip forecast was restored from the thread')
+  await executeTool('propose_outfit', args, indoorContext)
+  const indoorCard = indoorContext.generatedOutfits[0]
+  assert.ok(!(indoorCard.result?.annotations || []).some(a => a.type === 'Weather note'),
+    `an evening spent in one home has no walk there and back: ${JSON.stringify(indoorCard.result?.annotations)}`)
+  assert.equal(indoorContext.weatherProfile?.transitNeedsRemovableCoolLayer || false, false)
+  assert.equal(indoorContext.resolvedWeatherContext?.location, 'Vienna, VA', 'the trip forecast stays available to the next trip follow-up')
+
+  const outContext = context(false)
+  await executeTool('propose_outfit', { ...args, season: 'indoor' }, outContext)
+  assert.ok((outContext.generatedOutfits[0].result?.annotations || []).some(a => a.type === 'Weather note'),
+    'an indoor DESTINATION on the trip (the model marks the look indoor, the router does not say no travel) still answers to the walk there')
 })
 
 test('the router must classify the setting, and a single-outfit proposal must carry the stylist note', async () => {

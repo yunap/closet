@@ -1134,6 +1134,35 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   assert.equal(json.debug.brokenCardCount, 0)
 })
 
+// thread_1791509009539: three turns handed off to the composer, which is sent the user's latest
+// message and none of the conversation. "very nice! give me more outfits with this structure" came
+// back as two layers; the structure was a look the owner had just approved, two messages up.
+test('the stylist can brief the composer she hands off to, and the brief is shown beside the latest message, never read as the request', async () => {
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+  const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits').input_schema
+  assert.equal(schema.properties.brief.type, 'string')
+  assert.match(schema.properties.brief.description, /It sees the wardrobe and the user's latest message only: none of this conversation/)
+  assert.ok(!schema.required.includes('brief'))
+
+  const { generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
+  const brief = 'Three-layer looks like the one she approved: a sleeveless base, a shirt worn open over it, a light jacket on top.'
+  const composerText = async extra => {
+    aiCalls = []
+    await generateWholeWardrobeOutfitsVisualInternal({ occasion: 'city', season: 'spring', limit: 2, question: 'very nice! give me more outfits with this structure', ...extra })
+    const call = aiCalls.find(c => c.system.includes('personal stylist. You are looking at photos'))
+    return call.messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+  }
+  const briefed = await composerText({ stylistBrief: brief })
+  assert.ok(briefed.includes('Styling request: very nice! give me more outfits with this structure'), 'the user\'s own message is still shown as the request')
+  assert.ok(briefed.includes(`What the stylist is asking you for (she has the conversation this message belongs to; you do not): ${brief}`))
+  assert.ok(briefed.indexOf('What the stylist is asking you for') > briefed.indexOf('Styling request:'))
+  assert.doesNotMatch(await composerText({}), /What the stylist is asking you for/, 'no brief, no line')
+
+  const toolsSrc = (await import('node:fs')).readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /const stylistBrief = String\(args\?\.brief \|\| ''\)\.trim\(\)\.slice\(0, 1500\)/)
+  assert.match(toolsSrc, /stylistNote: boundedMultiLook,\n\s+stylistBrief,/, 'the hand-off passes it on')
+})
+
 test('visual wardrobe composer derives hot weather from styling request text before building roster', async () => {
   aiCalls = []
 
@@ -9058,6 +9087,178 @@ test('a one-slot swap lists every eligible candidate without choosing, then buil
   assert.deepEqual(card.pieceIds.filter(id => id !== blazer).sort(), [seeded.top, seeded.bottom, seeded.shoe].sort(), 'the rest of the outfit stays')
 })
 
+// thread_1791444946137 ("Let's aim for carry-on"): both swaps on a trip look brought in a piece from
+// outside the suitcase, and neither reply said so. The candidate list never stated which pieces were
+// packed, and a swap, unlike propose_outfit, did not record the addition.
+test('on a trip thread a one-slot swap says which candidates are in the suitcase and records a piece added from outside it', async () => {
+  const packedCoat = insertPiece({ name: 'packed trench coat', category: 'outerwear', colors: ['cream'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const homeCoat = insertPiece({ name: 'left-at-home wool coat', category: 'outerwear', colors: ['black'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const rosterIds = [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket, packedCoat]
+  const contextFor = (extra = {}) => ({
+    occasion: 'city', season: 'current season', turnMode: 'followup',
+    question: 'What else could go there?',
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'City Sightseeing', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+    packingRosterIds: new Set(rosterIds),
+    packingRosterPieces: rosterIds.map(id => ({ id })),
+    ...extra,
+  })
+
+  const listed = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, contextFor())
+  assert.equal(listed.status, 'choose_replacement')
+  const rowFor = id => listed.candidates.find(row => row.startsWith(`#${id} `))
+  assert.match(rowFor(packedCoat), /\n  in the suitcase$/)
+  assert.doesNotMatch(rowFor(homeCoat), /in the suitcase/)
+  assert.match(listed.message, /packed suitcase: \d+ of these (is|are) already in it/)
+  assert.match(listed.message, /one more thing to pack/)
+
+  const noTrip = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear' }, contextFor({ packingRosterIds: undefined, packingRosterPieces: undefined }))
+  assert.doesNotMatch(noTrip.message, /suitcase/, 'no trip in the thread: nothing about a suitcase')
+  assert.doesNotMatch(noTrip.candidates.join('\n'), /in the suitcase/)
+
+  const fromHome = contextFor()
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [homeCoat], reason: 'r', stylist_note: 'n' }, fromHome)
+  assert.deepEqual(fromHome.pendingRosterChange.addedIds, [homeCoat])
+  assert.deepEqual(fromHome.pendingRosterChange.removedIds, [], 'the piece swapped out of one look is still packed for the others')
+  assert.deepEqual(fromHome.generatedOutfits[0].packingRosterChange.addedIds, [homeCoat])
+  const { boundedConversationStateFromToolContext } = await import('../routes/ai.js')
+  const persisted = boundedConversationStateFromToolContext(fromHome)
+  assert.ok(persisted.packing_roster.roster_ids.includes(homeCoat), 'the next turn reads a suitcase that holds it')
+  assert.ok(persisted.packing_roster.roster_ids.includes(seeded.jacket))
+
+  const fromSuitcase = contextFor()
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [packedCoat], reason: 'r', stylist_note: 'n' }, fromSuitcase)
+  assert.equal(fromSuitcase.pendingRosterChange, undefined, 'a packed replacement changes nothing in the suitcase')
+})
+
+// thread_1791444946137: one turn after a swap, THREAD STATE held that one card and none of the trip
+// plan's eight looks. Owner, 2026-10-08: a swapped look replaces the look it revises.
+test('a trip plan stays in the thread state: a swap replaces its look in place and another look is added after the plan', async () => {
+  const { mergeTripThreadOutfitSet, tripThreadHoldsPlanLooks, boundedConversationStateFromToolContext, persistFullStylistTurnState } = await import('../routes/ai.js')
+  const { getStylistConversationState, saveStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const look = (index, label, piece_ids, extra = {}) => ({ index, label, piece_ids, pieces: piece_ids.map(String), in_plan: true, ...extra })
+  const plan = [
+    look(1, 'City Sightseeing', [260, 105, 214], { assigned_layer_piece_ids: [996767] }),
+    look(2, 'Fall Foliage Walks', [1, 996784, 996865], { assigned_layer_piece_ids: [996759] }),
+    look(3, 'Dinners Out', [260, 183, 191]),
+  ]
+  assert.equal(tripThreadHoldsPlanLooks(plan), true)
+  assert.equal(tripThreadHoldsPlanLooks([{ index: 1, label: 'Dinner look', piece_ids: [1, 2] }]), false)
+
+  const afterSwap = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'Fall Foliage Walks', piece_ids: [1, 230, 996865], pieces: ['a'], swap_source_index: 2 }])
+  assert.deepEqual(afterSwap.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out'], 'still three looks, in the plan\'s order')
+  assert.deepEqual(afterSwap[1].piece_ids, [1, 230, 996865])
+  assert.equal(afterSwap[1].in_plan, true)
+  assert.equal(afterSwap[1].index, 2)
+  assert.deepEqual(afterSwap[1].assigned_layer_piece_ids, [996759], 'the look keeps its packed layer')
+  assert.equal(afterSwap[1].shown_last_turn, true)
+  assert.equal('swap_source_index' in afterSwap[1], false)
+  assert.deepEqual(afterSwap[0], plan[0], 'the other looks are untouched')
+
+  const afterSecondSwap = mergeTripThreadOutfitSet(afterSwap, [{ index: 1, label: 'Fall Foliage Walks', piece_ids: [1, 230, 990397], pieces: ['a'], swap_source_index: 2 }])
+  assert.deepEqual(afterSecondSwap[1].piece_ids, [1, 230, 990397], 'a second swap on the same look revises it again')
+  assert.equal(afterSecondSwap.length, 3)
+
+  const afterExtra = mergeTripThreadOutfitSet(afterSecondSwap, [{ index: 1, label: 'Cozy Evening In', piece_ids: [5, 6], pieces: ['a'] }])
+  assert.equal(afterExtra.length, 4)
+  assert.deepEqual({ index: afterExtra[3].index, added: afterExtra[3].added_after_plan, plan: afterExtra[3].in_plan, last: afterExtra[3].shown_last_turn }, { index: 4, added: true, plan: undefined, last: true })
+  assert.equal(afterExtra[1].shown_last_turn, undefined, 'only the latest reply\'s cards are marked')
+
+  const layerSwapped = mergeTripThreadOutfitSet([look(1, 'Dinner', [1, 2, 3, 9], { assigned_layer_piece_ids: [9] })], [{ index: 1, label: 'Dinner', piece_ids: [1, 2, 3, 8], pieces: [], swap_source_index: 1 }])
+  assert.equal(layerSwapped[0].assigned_layer_piece_ids, undefined, 'a layer that was swapped out is not kept as the look\'s layer')
+
+  const options = mergeTripThreadOutfitSet(plan, [
+    { index: 1, label: 'A', piece_ids: [1, 2], pieces: [], swap_source_index: 3 },
+    { index: 2, label: 'B', piece_ids: [1, 3], pieces: [], swap_source_index: 3 },
+  ])
+  assert.deepEqual(options.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out', 'A', 'B'], 'several alternatives for one look are not a revision of it')
+
+  let many = plan
+  for (let n = 0; n < 6; n += 1) many = mergeTripThreadOutfitSet(many, [{ index: 1, label: `Extra ${n}`, piece_ids: [n + 1], pieces: [] }])
+  assert.deepEqual(many.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out', 'Extra 2', 'Extra 3', 'Extra 4', 'Extra 5'], 'the plan is never dropped; only the oldest added looks are')
+
+  // The plan turn marks its looks, and the swap tool says which look it revised.
+  const planState = boundedConversationStateFromToolContext({ generatedOutfits: Array.from({ length: 10 }, (_, n) => ({ label: `Look ${n + 1}`, pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [], tripPlanContext: { roster_ids: [seeded.top], roster_pieces: [], slots: [] } })) })
+  assert.equal(planState.current_outfit_set.length, 10, 'a plan of more than eight looks is kept whole')
+  assert.ok(planState.current_outfit_set.every(entry => entry.in_plan === true))
+
+  const sessionId = 'trip-plan-merge-test'
+  saveStylistConversationState({ current_outfit_set: [
+    look(1, 'City Sightseeing', [seeded.top, seeded.bottom, seeded.shoe]),
+    look(2, 'Dinner look', [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket]),
+  ] }, sessionId)
+  const coat = insertPiece({ name: 'plan merge coat', category: 'outerwear', colors: ['navy'], occasions: ['city', 'casual'], photo: seeded.photos.top, style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } } })
+  const toolContext = {
+    occasion: 'city', season: 'current season', turnMode: 'followup', question: 'swap the jacket in the dinner look',
+    declaredIntent: { want: 'cards', turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: getStylistConversationState(sessionId).current_outfit_set,
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket],
+  }
+  const made = await executeTool('suggest_slot_swaps', { outfit_index: 2, slot_role: 'outerwear', replacement_ids: [coat], reason: 'r', stylist_note: 'n' }, toolContext)
+  assert.equal(made.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].swapSourceIndex, 2)
+  persistFullStylistTurnState({ toolContext, answer: 'n', freeformTurnToken: 't', sessionId })
+  const stored = getStylistConversationState(sessionId).current_outfit_set
+  assert.deepEqual(stored.map(entry => entry.label), ['City Sightseeing', 'Dinner look — plan merge coat'])
+  assert.ok(stored[1].piece_ids.includes(coat) && !stored[1].piece_ids.includes(seeded.jacket))
+  assert.equal(stored[0].in_plan, true)
+
+  // An ordinary thread is unchanged: the latest cards replace the set.
+  const plainSession = 'plain-thread-merge-test'
+  saveStylistConversationState({ current_outfit_set: [{ index: 1, label: 'Old', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket], pieces: [] }] }, plainSession)
+  const plainContext = { ...toolContext, generatedOutfits: [], currentOutfitSet: getStylistConversationState(plainSession).current_outfit_set }
+  await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [coat], reason: 'r', stylist_note: 'n' }, plainContext)
+  persistFullStylistTurnState({ toolContext: plainContext, answer: 'n', freeformTurnToken: 't', sessionId: plainSession })
+  const plainStored = getStylistConversationState(plainSession).current_outfit_set
+  assert.equal(plainStored.length, 1)
+  assert.equal(plainStored[0].in_plan, undefined)
+})
+
+// thread_1791447317199, three faults that fed each other. The plan was packed for 45–65°F because the
+// stylist repeated her own estimate as user_weather (forecast: about 50–82°F). Then, with an
+// "Alexandria" look added beside the Vienna plan, the thread's forecast could not be restored, swaps
+// were judged against a heuristic "hot" day, and refusals came back with no reason.
+test('an estimate repeated as user_weather is not the user\'s; a trip thread restores the plan\'s forecast; a refused swap says why', async () => {
+  const { withoutEchoedUserWeather } = await import('../styling-engine/tools.js')
+  const { threadWeatherContextFromOutfitSet, mergeTripThreadOutfitSet } = await import('../routes/ai.js')
+  const estimate = { high_f: 65, low_f: 45, wind: 'breezy', precipitation: 'none' }
+  const echoed = { location: 'Vienna, Virginia', weather_estimate: estimate, user_weather: { scope: 'daily_forecast', high_f: 65, low_f: 45 }, slots: [{ label: 'City' }] }
+  const quiet = { question: 'I am planning a trip to Vienna, Virginia, on October 12th. What should I pack?', freeformDiagnostics: {} }
+  const cleaned = withoutEchoedUserWeather(echoed, quiet)
+  assert.equal('user_weather' in cleaned, false, 'her own estimate, sent twice, is not something the user said')
+  assert.deepEqual(cleaned.weather_estimate, estimate)
+  assert.equal(quiet.freeformDiagnostics.userWeatherEchoedEstimateDropped, 1)
+  assert.equal(echoed.user_weather.high_f, 65, 'the caller\'s arguments are not mutated')
+  const stated = withoutEchoedUserWeather(echoed, { question: 'It will be 65 degrees and 45 at night in Vienna. What should I pack?' })
+  assert.ok(stated.user_weather, 'a request that states the weather keeps user_weather even when the estimate agrees')
+  const differs = withoutEchoedUserWeather({ ...echoed, user_weather: { high_f: 70, low_f: 50 } }, quiet)
+  assert.ok(differs.user_weather, 'a user_weather that is not the estimate is taken as before')
+  assert.ok(withoutEchoedUserWeather({ user_weather: { high_f: 70, low_f: 50 } }, quiet).user_weather, 'and so is one with no estimate beside it')
+  const slotEcho = withoutEchoedUserWeather({ weather_estimate: estimate, slots: [{ label: 'A', user_weather: { high_f: 65, low_f: 45 } }, { label: 'B', user_weather: { high_f: 80, low_f: 60 } }] }, quiet)
+  assert.equal('user_weather' in slotEcho.slots[0], false)
+  assert.ok(slotEcho.slots[1].user_weather)
+
+  const forecast = (location, high_f, low_f) => ({ status: 'resolved', location, date_range: { start: '2026-10-12', end: '2026-10-18' }, temperature: { high_f, low_f, needs_removable_cool_layer: true, source: 'live' } })
+  const plan = [
+    { index: 1, label: 'City Sightseeing', in_plan: true, piece_ids: [1, 2, 3], pieces: [], resolved_weather_context: forecast('Vienna, VA', 82, 50), weather_used: '50–82°F' },
+    { index: 2, label: 'Dinner Out', in_plan: true, piece_ids: [4, 5], pieces: [], resolved_weather_context: forecast('Vienna, VA', 78, 55) },
+  ]
+  const withOtherPlace = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'Alexandria & Park Stroll', piece_ids: [1, 2, 6], pieces: [], resolved_weather_context: forecast('Alexandria, Virginia', 71, 65) }])
+  assert.equal(threadWeatherContextFromOutfitSet(withOtherPlace)?.location, 'Vienna, VA', 'the trip\'s forecast is the plan\'s, whatever was added after it')
+  assert.equal(threadWeatherContextFromOutfitSet([plan[0], { index: 2, label: 'Elsewhere', piece_ids: [1], pieces: [], resolved_weather_context: forecast('Paris', 60, 50) }].map(({ in_plan, ...entry }) => entry)), null, 'a set with no plan and two places still shares nothing')
+  const swapped = mergeTripThreadOutfitSet(plan, [{ index: 1, label: 'City Sightseeing', piece_ids: [1, 9, 3], pieces: [], swap_source_index: 1 }])
+  assert.equal(swapped[0].resolved_weather_context.location, 'Vienna, VA', 'a swapped look that resolved no forecast keeps the look\'s')
+  assert.equal(swapped[0].weather_used, '50–82°F')
+
+  const context = { occasion: 'city', season: 'current season', turnMode: 'followup', question: 'how about this one?', declaredIntent: { want: 'cards' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'Dinner look', piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }], knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe, seeded.jacket] }
+  const refused = await executeTool('suggest_slot_swaps', { outfit_index: 1, slot_role: 'outerwear', replacement_ids: [seeded.shoe], reason: 'r', stylist_note: 'n' }, context)
+  assert.equal(refused.status, 'error')
+  assert.equal(refused.rejected.length, 1, 'the piece she named is in the refusal, with its reason')
+  assert.match(refused.message, /Refused: .*not an active outerwear in the wardrobe/)
+})
+
 // thread_1791357375231: the follow-up copied the thread's own forecast into user_weather, and the
 // cards read "78°F high / 62°F low — you said so".
 test('a user_weather that only repeats the thread\'s stored forecast is not recorded as stated by the user', async () => {
@@ -9139,7 +9340,12 @@ test('a fresh trip request is routed to trip_plan and gets the stylist prompt wi
   try {
     const routed = await routeFreeformExecutionProfile({ question: body.question })
     assert.equal(routed.value.profile, 'trip_plan')
-    assert.match(captured.system, /Choose trip_plan ONLY for a FRESH request to pack for/)
+    assert.match(captured.system, /Choose trip_plan ONLY for a request to pack for/)
+    // thread_1791444946137: "redo the plan" was full_stylist under "any change to a plan … that
+    // already exist", so the follow-up was never offered plan_outfit_set and answered with one look.
+    assert.match(captured.system, /when the user asks for a trip plan this thread already holds to be made again as a whole/)
+    assert.match(captured.system, /a change to, part of a plan or cards that already exist \(one look, one piece, one day\); those are full_stylist/)
+    assert.doesNotMatch(captured.system, /any change to a plan or cards that already exist/)
     assert.match(captured.system, /Not for a capsule wardrobe/)
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
@@ -9358,12 +9564,62 @@ test('a text follow-up on a trip plan gets the lean prompt; other turns and the 
   assert.equal(noPlan.tripFollowupTurn, false, 'a thread with no packed suitcase is not a trip follow-up')
 })
 
+// thread_1791444946137, two things in what a trip follow-up was sent. (1) After one swap the body
+// echoed that single card and it replaced the plan in THREAD STATE. (2) "an evening in at her place"
+// was dressed from a suitcase packed for sightseeing, museums, trails and dinners (owner: "definitely
+// not home clothes"): the note said "packed pieces first" and nothing said what the suitcase was for.
+test('a trip follow-up is sent the whole plan, not the one card the last reply showed, and what the suitcase was packed for', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const sessionId = 'trip-followup-whole-plan'
+  const planSet = [
+    { index: 1, label: 'City Sightseeing', in_plan: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+    { index: 2, label: 'Fall Foliage Walks', in_plan: true, shown_last_turn: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+    { index: 3, label: 'Dinners Out', in_plan: true, piece_ids: [seeded.top, seeded.bottom, seeded.shoe], pieces: ['a'] },
+  ]
+  saveStylistConversationState({
+    established: { occasion: 'travel', season: 'current season' },
+    current_outfit_set: planSet,
+    packing_roster: { roster_ids: [seeded.top], roster_pieces: [{ id: seeded.top, name: 'seeded top', category: 'top' }], slots: [{ id: 'a', label: 'City Sightseeing' }, { id: 'b', label: 'Fall Foliage Walks' }, { id: 'c', label: 'Dinners Out' }] },
+  }, sessionId)
+  const echoedCard = [{ label: 'Fall Foliage Walks', pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [{ id: seeded.top, name: 'seeded top' }] }]
+  const followup = await buildStylistConversationPayload({ question: 'What should I wear for an evening in at her place?', sessionId, conversationMode: 'followup', history: [], generatedOutfits: echoedCard, tripFollowupEligible: true })
+  assert.deepEqual(followup.threadState.current_outfit_set.map(entry => entry.label), ['City Sightseeing', 'Fall Foliage Walks', 'Dinners Out'])
+  assert.equal(getStylistConversationState(sessionId).current_outfit_set.length, 3, 'building the turn does not overwrite the stored plan with the echoed card')
+  const system = typeof followup.system === 'string' ? followup.system : JSON.stringify(followup.system)
+  assert.match(system, /The suitcase was packed for the activities the plan was asked for \(City Sightseeing; Fall Foliage Walks; Dinners Out\) and for nothing else\./)
+  assert.match(system, /may have nothing suited to it packed/)
+  assert.match(system, /The rest of the wardrobe is reached with `search_wardrobe`\. A piece from it is one more thing to pack/)
+  assert.doesNotMatch(system, /with packed pieces first/)
+  assert.doesNotMatch(system, /only to look outside the suitcase/)
+  assert.match(system, /`shown_last_turn` marks what your last reply showed/)
+  // Each packed piece is described by its recorded facts, not only a name and colours.
+  const { sparseGarmentCatalogRow } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { db: testDb, parsePiece } = await import('../db.js')
+  const seededTopRow = sparseGarmentCatalogRow(parsePiece(testDb.prepare('SELECT * FROM pieces WHERE id = ?').get(seeded.top)))
+  assert.ok(system.includes(JSON.stringify(seededTopRow).slice(1, -1)) || system.includes(seededTopRow), 'the suitcase list carries the shared fact row')
+  assert.match(system, /Rows are sparse; each row is/)
+  assert.equal(typeof followup.threadState.packing_roster.roster_pieces[0], 'object', 'the stored roster shape the route reads back is unchanged')
+  const fullPrompt = await buildStylistConversationPayload({ question: 'And for the evening in?', sessionId, conversationMode: 'followup', history: [], generatedOutfits: echoedCard })
+  assert.equal(fullPrompt.tripFollowupTurn, false)
+  assert.doesNotMatch(typeof fullPrompt.system === 'string' ? fullPrompt.system : JSON.stringify(fullPrompt.system), /"conventions": "Rows are sparse/, 'a turn with the wardrobe list keeps the stored roster')
+
+  // A new request in the same thread, and a thread whose set is not a plan, take the body's cards as before.
+  const fresh = await buildStylistConversationPayload({ question: 'What should I wear to the office tomorrow?', sessionId, conversationMode: 'new_request', history: [], generatedOutfits: echoedCard })
+  assert.equal(fresh.threadState.current_outfit_set.length, 1)
+  const plainSession = 'plain-followup-body-set'
+  saveStylistConversationState({ current_outfit_set: [{ index: 1, label: 'Old one', piece_ids: [seeded.top], pieces: ['a'] }, { index: 2, label: 'Old two', piece_ids: [seeded.top], pieces: ['a'] }] }, plainSession)
+  const plain = await buildStylistConversationPayload({ question: 'And shoes?', sessionId: plainSession, conversationMode: 'followup', history: [], generatedOutfits: echoedCard })
+  assert.deepEqual(plain.threadState.current_outfit_set.map(entry => entry.label), ['Fall Foliage Walks'])
+})
+
 // Live thread_1791423893034: "for all 7 days?" about one at-home look re-planned the whole trip with
 // a different suitcase; and a look for time in at a friend's house got an outdoor weather note.
 test('a trip follow-up cannot re-plan unless the router read a request to plan, and time in where the user is staying is indoor', async () => {
   const { readFileSync } = await import('node:fs')
   const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
+  assert.match(route, /`this thread holds a trip plan \(\$\{compactState\.packing_roster\.roster_ids\.length\} pieces packed\)`/, 'the router is told the thread holds a plan')
   assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.

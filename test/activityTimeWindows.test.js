@@ -587,6 +587,29 @@ test('plan_outfit_set proceeds without pausing for a material_hedgeable slot and
   assert.equal(toolContext.generatedOutfits.length, 1)
 })
 
+// thread_1791529526962: an activity with no day of its own inherits the trip's first day as a
+// stand-in, and the first day's daypart range (60→65°F) was sent to the composer beside the week's
+// weather (47–81°F, one day 58→81°F). Three looks came back with no layer.
+test('an activity that spans the trip does not send the first day\'s daypart range to the composer', async () => {
+  const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
+  const { parsePiece } = await import('../db.js')
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'trail top' })
+  insertPiece({ category: 'bottom', name: 'trail pants' })
+  insertPiece({ category: 'shoes', name: 'trail shoes', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots(
+    [{ label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1, weather_estimate: { high_f: 81, low_f: 47 } }],
+    { dateRange: { start: '2026-10-12', end: '2026-10-18' } })
+  assert.equal(slots[0].dateInherited, true, 'no day of its own: the trip start is a stand-in')
+  const built = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a week away', planKind: 'trip' })
+  assert.equal((built.workbench || built).slots[0].diurnal_range, null)
+  // The rule itself; the test above ("exposes diurnal_range on the workbench") pins that an activity
+  // dated to a day still carries its range.
+  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
+  assert.match(src, /diurnal_range: slot\.dateInherited === true \? null : \(weatherProfile\?\.diurnalRange \|\| null\)/)
+})
+
 test('normalizePlanSlots conversational fallback resolves "early", "early start", or "cooler" to morning when replying to a timing clarification', () => {
   const [slotEarly] = normalizePlanSlots([{
     label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', count: 1,

@@ -1225,6 +1225,16 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   const warmest = days.reduce((best, day) => (day.highF > best.highF ? day : best))
   const parts = [`${when}, ${dateSpanText(days.map(day => day.date))}: ${Math.round(acrossDays.lowF)}–${Math.round(acrossDays.highF)}°F`]
   if (days.length > 1) parts.push(`coolest ${shortDate(coolest.date)} (${Math.round(coolest.lowF)}°F), warmest ${shortDate(warmest.date)} (${Math.round(warmest.highF)}°F)`)
+  // The range across the trip does not say whether cool and warm fall on different days or in the
+  // same one, and only the second needs something that comes off by noon. Owner, 2026-10-08: a week
+  // with a 46–80°F day "did not produce a single outfit with a middle layer and no middle layers
+  // are packed either" — packer and composer had been told "50–82°F; coolest Oct 14, warmest Oct
+  // 13". The widest single day is stated when it spans the 15°F the composition brief already
+  // treats as a real range across the day.
+  const widest = days.reduce((best, day) => ((day.highF - day.lowF) > (best.highF - best.lowF) ? day : best))
+  if (days.length > 1 && Number.isFinite(widest.highF - widest.lowF) && (widest.highF - widest.lowF) >= 15) {
+    parts.push(`the widest swing on a single day is ${shortDate(widest.date)}, ${Math.round(widest.lowF)}°F to ${Math.round(widest.highF)}°F`)
+  }
   // A warm day inside a mild range is easy to dress for and easy to forget; say which days they are.
   const hotDays = days.filter(day => day.highF >= HOT_F)
   if (days.length > 1 && hotDays.length && hotDays.length < days.length) {
@@ -4567,7 +4577,7 @@ export async function selectTripRosterViaModel({
     const outsideBench = unique.filter(id => !benchById.has(id))
     const roster = unique.map(id => benchById.get(id)).filter(Boolean)
     const contractFailures = outsideBench.length
-      ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
+      ? [{ code: 'piece_outside_bench', message: unknownRosterIdMessage(outsideBench, { benchById, pieceJobs: answer?.piece_jobs }) }]
       : []
     // The packer's own explanation: why each piece earned its place and the shape of the suitcase.
     // It was requested and paid for on every trip and then dropped here (thread_1790924321526), so
@@ -4860,7 +4870,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
-      diurnal_range: weatherProfile?.diurnalRange || null,
+      // The daypart range is measured on ONE day. For an activity with no day of its own that day
+      // is the trip's first, a stand-in (engine map, 2026-10-02 amendment: "still first-day-only…
+      // resolveSlotTimeSensitivity"), and showing it beside a week's weather_used told the
+      // composer two different things. Live thread_1791529526962: a week of 47–81°F with a 58→81°F
+      // day arrived with `diurnal_range` cold end 60°F, warm end 65°F — the first day's — and three
+      // of five looks came back with no layer, marked not required. Sent only when the activity
+      // is dated to a day; the workbench profile keeps it for validation either way.
+      diurnal_range: slot.dateInherited === true ? null : (weatherProfile?.diurnalRange || null),
       // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
       // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
       // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
@@ -4967,7 +4984,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 4 (spec 24): third confirmed occurrence of cardigan+shawl stacking
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
-    'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // 2026-10-08: on a trip this sentence, with "at most 1 optional outerwear layer" below, meant a
+    // week of 46–80°F days was dressed and packed with no middle layer at all (every cardigan is
+    // filed as outerwear, so it competed with the coat for the one place). The trip composer now
+    // gets the shared layering contract, which keeps what this sentence was written for: one
+    // middle layer at most, so a cardigan and a shawl are still not stacked. Other plan kinds keep it.
+    ...(planKind === 'trip' ? [] : ['At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.']),
     // A 15°F swing spans across adjacent PET comfort bands (e.g. 55°F cool to 70°F mild, or 70°F mild to 85°F warm),
     // where clothing flexibility and layering become physically necessary even when only coarse daily high/low is known.
     slots.some(s => s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15)))
@@ -5053,7 +5075,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const target = Math.max(0, Number(workbenchSlot.target_outfits) || 0)
     const requirements = [
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
-      categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1 })
+      categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowMiddleLayer: planKind === 'trip' })
     ]
     // Only project the sleeve-layering guidance (the neutral statement; the geometry verdict is log-only)
     // when the slot's own roster can actually form a
@@ -6178,6 +6200,44 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
 // both dinner looks and two thin-hoodie day looks need the packed jacket, and the reply called the
 // UPF hoodie the layer. The cards stay quiet; the writer gets the fact. Null when the activity has no
 // cool end; otherwise the look's own real layer, or the packed real layers it can borrow.
+// A packer ID that is not in the candidate list has, both times it was seen live, been a mistyped
+// ID for a piece the packer had chosen on purpose: 6865 for the hiking boots 996865
+// (thread_1791416150174), and 996770 for the cashmere sweater 996870 (thread_1791504649347), which
+// it had packed "providing cozy warmth under coats" — the trip's one middle layer. The repair was
+// told only the number, and both times answered by changing some other piece; the sentence added
+// after the first ("usually a mistyped one — correct it to the piece you meant") did not hold.
+// What it lacked was the means: its own words for the piece are in its previous answer and were not
+// shown back, and the nearest real IDs are a fact of the list. Both are now stated. Nothing is
+// chosen for it: several near IDs are listed when several exist.
+function idsOneEditApart(a, b) {
+  if (a === b) return false
+  if (Math.abs(a.length - b.length) > 1) return false
+  if (a.length === b.length) {
+    const diffs = [...a].map((ch, i) => (ch === b[i] ? -1 : i)).filter(i => i >= 0)
+    return diffs.length === 1 || (diffs.length === 2 && diffs[1] === diffs[0] + 1 && a[diffs[0]] === b[diffs[1]] && a[diffs[1]] === b[diffs[0]])
+  }
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a]
+  for (let i = 0; i < longer.length; i += 1) if (longer.slice(0, i) + longer.slice(i + 1) === shorter) return true
+  return false
+}
+export function unknownRosterIdMessage(unknownIds = [], { benchById = new Map(), pieceJobs = [] } = {}) {
+  const base = `pieces ${unknownIds.join(', ')} are not in the supplied candidate list; choose only from it`
+  const candidates = [...benchById.entries()].map(([id, piece]) => ({ text: String(id), id, name: piece?.name || '' }))
+  const details = unknownIds.map(unknown => {
+    const text = String(unknown)
+    const job = String((Array.isArray(pieceJobs) ? pieceJobs : []).find(entry => Number(entry?.piece_id) === Number(unknown))?.job || '').trim()
+    const near = candidates
+      .filter(candidate => idsOneEditApart(text, candidate.text) || (Math.min(text.length, candidate.text.length) >= 3 && candidate.text !== text && (candidate.text.endsWith(text) || text.endsWith(candidate.text))))
+    // Recent garments have consecutive IDs, so a typo among them is close to many; a long list of
+    // neighbours says nothing, and the first four of it once left out the right one (replay of
+    // thread_1791504649347, where the packer's own words were what corrected it). Listed only when few.
+    if (near.length > 4) near.length = 0
+    if (!job && !near.length) return ''
+    return `#${text}${job ? ` — you wrote of it: "${job}"` : ''}${near.length ? `${job ? ';' : ' —'} IDs in the list close to it: ${near.map(candidate => `#${candidate.id} ${candidate.name}`.trim()).join(', ')}` : ''}`
+  }).filter(Boolean)
+  return details.length ? `${base}. ${details.join('. ')}.` : base
+}
+
 export function tripOutfitCoolEndLayer(pendingPlan = {}, outfit = {}) {
   const slot = (Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).find(entry => entry?.label === outfit?.label)
   if (!slot || !weatherHasCoolEnd(slot.weatherProfile || {})) return null
