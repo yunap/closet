@@ -1228,7 +1228,38 @@ test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion r
 // companion prompt clarification, per the owner's own Fix 2b).
 test('tripRosterSelectionSystemPrompt clarifies that a button-up/popover blouse is a base top, not a layering substitute', () => {
   const prompt = tripRosterSelectionSystemPrompt()
-  assert.match(prompt, /button-up, popover, or collared woven blouse is a base top, not a layering garment/)
+  assert.match(prompt, /button-up, popover, or collared woven blouse is not a substitute for outerwear: do not count one as the trip's warm layer/)
+  // Owner, 2026-10-09: "I actually want to see some layered outfits". The sentence above was written
+  // for a blouse counted as the trip's warm layer; as first worded it also ruled out a shirt worn
+  // open over a top, which is a layer for the look and not for the cold.
+  assert.match(prompt, /Worn open over another top it is a layer for the look, which is a different job/)
+  assert.doesNotMatch(prompt, /do not double the same top as both a base look and its own layer/)
+})
+
+// Owner, 2026-10-09, on a 12-piece carry-on for a week (three tees, two coats, nothing to layer):
+// "the carry-on packing list is sad in general. there is no items to layer, but there is not that
+// much to work with either"; "packing light means try to fit it into a carry-on. i.e maybe prefer
+// few smaller items to one bulky one. I guarantee there are tons of suggestions out there on how to
+// go about it, let's not re-invent the wheel."
+test('the packer sizes a suitcase to the trip\'s days from the usual carry-on proportion, and packing light limits bulk, not variety', () => {
+  const prompt = tripRosterSelectionSystemPrompt()
+  assert.match(prompt, /The suitcase is for every day of the trip, not only for the looks the use cases list/)
+  // The first wording ("three layers… the 5-4-3-2-1 method") was replayed once and packed 5 tops, 4
+  // bottoms, 3 shoes and 2 coats: the name recalled the method's other form, where layers are jackets.
+  assert.match(prompt, /about five tops, four bottoms, three layers — typically one coat or jacket and two lighter things worn over a top — and two or three pairs of shoes \(a common form of the "5-4-3-2-1" method\)/)
+  assert.match(prompt, /not a quota/)
+  assert.match(prompt, /packing light means fitting the trip into a carry-on, which limits bulk and not variety — several small, thin pieces take the room of one bulky one/)
+  assert.match(prompt, /What layers are for:/)
+  assert.match(prompt, /it changes the outfit: the same top and trousers are a different look under it/)
+  assert.match(prompt, /A DISTINCT JOB FOR EVERY BULKY PIECE/)
+  assert.match(prompt, /Tops and light layers are the opposite case/)
+  for (const gone of [/nothing packed that no look would wear/, /packing light means fewer pieces, each worn more than once/, /Choose a compact layering strategy/, /A DISTINCT JOB PER PIECE\. If two pieces would do the same job/]) assert.doesNotMatch(prompt, gone)
+  // Kept: what the bulk sentence was written for (a 17-piece carry-on with three coats and four pairs of shoes).
+  assert.match(prompt, /Shoes and outer layers are the bulkiest things in a bag/)
+  const composer = tripPlanCompositionSystemPrompt()
+  assert.match(composer, /^You are a personal stylist dressing a client for a trip, from the suitcase already packed for it\./)
+  assert.match(composer, /LAYERED LOOKS\. An outfit is not only a top, a bottom and a coat for the cold\./)
+  assert.match(composer, /This is separate from cold_layer_decision, which is only about warmth outdoors/)
 })
 
 // thread_1789633862650: Run 1442 packed 10 of 13 suitcase slots on shoes and bottoms -- 0 hike
