@@ -1088,6 +1088,30 @@ test('the trip roster user text lists use cases and candidates with no budget/pa
   assert.doesNotMatch(text, /CAPSULE SIZE/)
 })
 
+// Owner-approved trial, 2026-10-09: the packer sees photographs of the outerwear candidates only,
+// behind TRIP_ROSTER_OUTERWEAR_PHOTOS. Unset, nothing about the packer call changes.
+test('outerwear photographs for the packer are off unless switched on, and cover the outerwear candidates only', async () => {
+  const { tripRosterOuterwearPhotosEnabled, tripRosterOuterwearBench, TRIP_ROSTER_OUTERWEAR_PHOTOS_NOTE } = await import('../routes/ai.js')
+  const { TRIP_ROSTER_PHOTOS_ENABLED } = await import('../styling-engine/outfitSetPlanner.js')
+  const before = process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS
+  try {
+    delete process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS
+    assert.equal(tripRosterOuterwearPhotosEnabled(), false)
+    process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS = 'true'
+    assert.equal(tripRosterOuterwearPhotosEnabled(), true)
+    process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS = '1'
+    assert.equal(tripRosterOuterwearPhotosEnabled(), false, 'only the literal true')
+  } finally {
+    if (before === undefined) delete process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS; else process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS = before
+  }
+  assert.equal(TRIP_ROSTER_PHOTOS_ENABLED, false, 'the whole-bench photo path stays off')
+  const bench = [{ id: 1, category: 'top' }, { id: 2, category: 'outerwear' }, { id: 3, category: 'shoes' }, { id: 4, category: 'outerwear' }]
+  assert.deepEqual(tripRosterOuterwearBench(bench).map(piece => piece.id), [2, 4])
+  assert.match(TRIP_ROSTER_OUTERWEAR_PHOTOS_NOTE, /coats and jackets and also the pieces worn over a top indoors/)
+  const src = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(src, /if \(!imageParts\.length && tripRosterOuterwearPhotosEnabled\(\)\) \{/, 'only when the packer has no photographs already')
+})
+
 // thread_1788508369689 / thread_1788510320546: the same 3/2/2 trip request produced roster sizes of
 // 19, 12, and 7 across three live runs, with the small rosters failing downstream on "duplicate
 // outfit already accepted" -- the roster model was never told how many DISTINCT outfits each use
