@@ -6008,21 +6008,6 @@ async function tripRosterImageParts(bench = []) {
   return imageParts
 }
 
-// Photographs of the outerwear candidates only, behind a switch (owner-approved trial, 2026-10-09).
-// The packer chooses from text (item 25: all 183 photographs cost ~$0.07 a run and changed
-// nothing). But its `outerwear` rows hold the coats and also every cardigan and vest, and across
-// six text-only runs it packed a layer that is not a coat or jacket once. One replay with these
-// photographs packed a knit cardigan beside the trench and the fleece. TRIP_ROSTER_OUTERWEAR_PHOTOS
-// =true sends them; unset, the packer call is unchanged. About 33 photographs on this wardrobe,
-// measured at roughly 37k more input tokens on the packer call.
-export const TRIP_ROSTER_OUTERWEAR_PHOTOS_NOTE = 'Photographs of the outerwear candidates follow, each labelled with its ID. That category holds the coats and jackets and also the pieces worn over a top indoors; the photographs show which is which.'
-export function tripRosterOuterwearPhotosEnabled() {
-  return process.env.TRIP_ROSTER_OUTERWEAR_PHOTOS === 'true'
-}
-export function tripRosterOuterwearBench(bench = []) {
-  return (Array.isArray(bench) ? bench : []).filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
-}
-
 export function tripRosterShortlistSystemPrompt(limit = TRIP_ROSTER_PHOTO_LIMIT) {
   return `You are about to pack for a trip, and first you choose which garments to look at closely. Below is every eligible candidate as a line of recorded facts. Pick up to ${limit} of them by ID; next you will see a photograph of each one you pick and choose the suitcase from those alone.
 
@@ -6076,15 +6061,7 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
       requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
-  let imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
-  if (!imageParts.length && tripRosterOuterwearPhotosEnabled()) {
-    const outerwearPhotos = await tripRosterImageParts(tripRosterOuterwearBench(bench))
-    if (outerwearPhotos.length) {
-      imageParts = [{ type: 'text', text: TRIP_ROSTER_OUTERWEAR_PHOTOS_NOTE }, ...outerwearPhotos]
-      toolContext.freeformDiagnostics ||= {}
-      toolContext.freeformDiagnostics.tripRosterOuterwearPhotos = outerwearPhotos.length / 2
-    }
-  }
+  const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
     attempt, failures, previousRosterIds, slotLabelsById, imageParts,
