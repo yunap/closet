@@ -3101,7 +3101,9 @@ test('adaptive visual evidence rides the bounded multi-look path only', () => {
     toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'),
     toolsSrc.indexOf('\n          })', toolsSrc.indexOf('result = await generateOutfitsForPieceInternal({'))
   )
-  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
+  // 2026-10-09: the whole-wardrobe hand-off passes the tool's resolved weather on a follow-up too
+  // (thread_1791509009539); the selected-piece path still gets neither, as before.
+  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/)
   assert.match(wholeWardrobeCall, /adaptiveVisualDetail: boundedMultiLook/)
   assert.doesNotMatch(selectedPieceCall, /adaptiveVisualDetail|resolvedWeatherProfile/)
 })
@@ -3454,6 +3456,33 @@ test('a router-resolved season is locked for the turn: a later tool call\'s "war
     policy: { allowLiveWeather: false },
   })
   assert.equal(unlockedContext.season, 'warm', 'without a lock, an explicit season argument is used as before')
+})
+
+// thread_1791509009539 (9 October, 48–80°F stated): on a follow-up the stylist passed season "warm"
+// to generate_outfits; the composer was told "Season: summer", 109 pieces were removed and no jacket
+// was left. The 2026-09-16 lock above covered fresh requests only.
+test('a follow-up holds the thread\'s season: a tool call\'s "warm" does not make October summer', async () => {
+  const { followUpSeasonLock } = await import('../routes/ai.js')
+  const threadState = { turn_mode: 'followup', established: { season: 'current season' } }
+  const lock = followUpSeasonLock({ turnMode: 'followup' }, threadState)
+  assert.deepEqual(lock, { executionRouterSeason: 'current season', executionRouterSeasonLocked: true })
+  const context = await resolveToolStylingContext({
+    explicitRequest: { season: 'summer', occasion: 'city', date: new Date('2026-10-09T12:00:00') },
+    toolContext: { turnMode: 'followup', ...lock },
+    policy: { allowLiveWeather: false },
+  })
+  assert.equal(context.season, 'current season')
+  assert.equal(context.calendarSeason, 'fall', 'the calendar season comes from the date, not from a temperature word')
+
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup', followUpRouterSeason: 'winter' }, threadState), { executionRouterSeason: 'winter', executionRouterSeasonLocked: true }, 'a season the user names this turn, as the router read it, replaces the thread\'s')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'new_request' }, { ...threadState, turn_mode: 'new_request' }), {}, 'a new request is the router\'s own lock')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup', executionRouterSeasonLocked: true, executionRouterSeason: 'early fall' }, threadState), {}, 'an existing lock stands')
+  assert.deepEqual(followUpSeasonLock({ turnMode: 'followup' }, { turn_mode: 'followup', established: {} }), {}, 'a thread with no established season locks nothing')
+
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /const carryResolvedWeather = boundedMultiLook \|\| Number\.isFinite\(Number\(stylingContext\.weatherProfile\?\.highF\)\)/)
+  assert.match(toolsSrc, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/, 'a follow-up hand-off passes the weather the tool resolved')
+  assert.doesNotMatch(toolsSrc, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
 })
 
 // ============================================================================

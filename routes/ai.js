@@ -5137,6 +5137,20 @@ router.post('/compare-outfits', async (req, res) => {
 // Mateo as "fall; mild weather". A router season equal to the calendar season of the requested date
 // is recorded as 'current season', which resolves to the same calendar season everywhere else
 // (resolveCalendarSeason) and lets the forecast through. Any other season stays a hypothetical.
+// The season lock of 2026-09-16 (thread_1789546295700) covered fresh requests only: there the router
+// classifies the season and a later tool call's own `season` argument cannot replace it. A follow-up
+// had no such lock. Live thread_1791509009539, on 9 October with 48–80°F stated: the stylist passed
+// `season: "warm"` to generate_outfits on a follow-up, `warm` resolved to summer, the composer was
+// told "Season: summer", and 109 pieces were removed, every jacket among them. A follow-up now holds
+// the season the thread established, or the one the router read in the user's message this turn;
+// a tool call's argument does not change it. A new request is untouched (the router's own lock).
+export function followUpSeasonLock(toolContext = {}, threadState = {}) {
+  if (toolContext.executionRouterSeasonLocked === true) return {}
+  if ((toolContext.turnMode || threadState?.turn_mode || 'new_request') === 'new_request') return {}
+  const season = String(toolContext.followUpRouterSeason || threadState?.established?.season || '').trim()
+  return season ? { executionRouterSeason: season, executionRouterSeasonLocked: true } : {}
+}
+
 export function routerSeasonForTurn(season, date, now = new Date()) {
   const named = extractSeasonRequest(season)
   if (!named || named === 'current season') return season || ''
@@ -7114,6 +7128,9 @@ router.post('/ask', async (req, res) => {
         // — so locking season to the router's calendar classification loses no descriptive
         // information, it only stops a later temperature-vibe word from overwriting the calendar
         // fact used for season-based eligibility.
+        // A season the user names on a follow-up ("what about in winter?") is the router's to read;
+        // followUpSeasonLock below uses it in place of the thread's established season.
+        if (!freshExecutionRequest) toolContext.followUpRouterSeason = routerSeasonForTurn(routed.value?.season, routed.value?.date) || ''
         if (freshExecutionRequest) {
           toolContext.occasion = normalizeOccasion(routed.value?.occasion)
           toolContext.activity = normalizeActivity(routed.value?.activity)
@@ -7473,6 +7490,7 @@ router.post('/ask', async (req, res) => {
     toolContext.freeformDiagnostics.executionProfile ||= 'full_stylist'
     Object.assign(toolContext.freeformDiagnostics, payload.historyDiagnostics || {})
     toolContext.turnMode = payload.threadState?.turn_mode || 'new_request'
+    Object.assign(toolContext, followUpSeasonLock(toolContext, payload.threadState))
     toolContext.weatherProfile = restoreWeatherProfile(payload.threadState?.weather_profile)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     // A follow-up is about the same occasion until the user says otherwise. The thread's current

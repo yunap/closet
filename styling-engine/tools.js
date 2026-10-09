@@ -4677,7 +4677,13 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         }
         const resolvedActivity = stylingContext.activity
         let resolvedSeason = stylingContext.season
-        if (boundedMultiLook) {
+        // The weather this tool resolved goes to the composer whenever there is a temperature in it,
+        // not only on a fresh request. Until 2026-10-09 a follow-up hand-off passed none, and the
+        // composer worked the weather out again by itself from the season word: live
+        // thread_1791509009539, where the user had stated 80s and 48, the composer was told 78/59°F
+        // on one follow-up and "summer" with no temperature on the next.
+        const carryResolvedWeather = boundedMultiLook || Number.isFinite(Number(stylingContext.weatherProfile?.highF))
+        if (carryResolvedWeather) {
           const resolvedWeather = stylingContext.weatherProfile
           const hasHigh = Number.isFinite(Number(resolvedWeather.highF))
           const hasLow = Number.isFinite(Number(resolvedWeather.lowF))
@@ -4765,7 +4771,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             explorationMode: 'moderate',
             question: toolContext.question || '',
             activity: resolvedActivity,
-            resolvedWeatherProfile: boundedMultiLook ? toolContext.weatherProfile : null,
+            resolvedWeatherProfile: carryResolvedWeather ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
             stylistNote: boundedMultiLook,
