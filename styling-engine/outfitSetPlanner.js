@@ -4870,7 +4870,14 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
       exposure_conditions: slotExposureConditions(slotExposure),
-      diurnal_range: weatherProfile?.diurnalRange || null,
+      // The daypart range is measured on ONE day. For an activity with no day of its own that day
+      // is the trip's first, a stand-in (engine map, 2026-10-02 amendment: "still first-day-only…
+      // resolveSlotTimeSensitivity"), and showing it beside a week's weather_used told the
+      // composer two different things. Live thread_1791529526962: a week of 47–81°F with a 58→81°F
+      // day arrived with `diurnal_range` cold end 60°F, warm end 65°F — the first day's — and three
+      // of five looks came back with no layer, marked not required. Sent only when the activity
+      // is dated to a day; the workbench profile keeps it for validation either way.
+      diurnal_range: slot.dateInherited === true ? null : (weatherProfile?.diurnalRange || null),
       // thread_1788508369689 arc: NOT a styling target — a disclosed structural-gate FACT, the same
       // kind register_ceiling/register_floor already are. Reads slotColdLayerRequired directly
       // (cold-layer-exposure-trigger-spec.md's shared relaxed fact) rather than re-deriving isCold
