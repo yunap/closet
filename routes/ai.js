@@ -2680,6 +2680,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   mood = '',
   limit = 5,
   explorationMode = 'moderate',
+  stylistBrief = '',
   question = '',
   request = '',
   activity = '',
@@ -3169,6 +3170,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       tempText ? `Temperature: ${tempText}${demandLabel ? ' — judge the outfit against the range, not against a number' : ''}` : '',
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
+      // The stylist's own statement of what the request is asking for. She has the conversation and
+      // this call does not; on a follow-up the line above is one message out of it.
+      String(stylistBrief || '').trim() ? `What the stylist is asking you for (she has the conversation this message belongs to; you do not): ${String(stylistBrief).trim()}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',
       activityFactLine,
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',

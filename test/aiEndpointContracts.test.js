@@ -1134,6 +1134,35 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   assert.equal(json.debug.brokenCardCount, 0)
 })
 
+// thread_1791509009539: three turns handed off to the composer, which is sent the user's latest
+// message and none of the conversation. "very nice! give me more outfits with this structure" came
+// back as two layers; the structure was a look the owner had just approved, two messages up.
+test('the stylist can brief the composer she hands off to, and the brief is shown beside the latest message, never read as the request', async () => {
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+  const schema = STYLIST_TOOLS.find(tool => tool.name === 'generate_outfits').input_schema
+  assert.equal(schema.properties.brief.type, 'string')
+  assert.match(schema.properties.brief.description, /It sees the wardrobe and the user's latest message only: none of this conversation/)
+  assert.ok(!schema.required.includes('brief'))
+
+  const { generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
+  const brief = 'Three-layer looks like the one she approved: a sleeveless base, a shirt worn open over it, a light jacket on top.'
+  const composerText = async extra => {
+    aiCalls = []
+    await generateWholeWardrobeOutfitsVisualInternal({ occasion: 'city', season: 'spring', limit: 2, question: 'very nice! give me more outfits with this structure', ...extra })
+    const call = aiCalls.find(c => c.system.includes('personal stylist. You are looking at photos'))
+    return call.messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+  }
+  const briefed = await composerText({ stylistBrief: brief })
+  assert.ok(briefed.includes('Styling request: very nice! give me more outfits with this structure'), 'the user\'s own message is still shown as the request')
+  assert.ok(briefed.includes(`What the stylist is asking you for (she has the conversation this message belongs to; you do not): ${brief}`))
+  assert.ok(briefed.indexOf('What the stylist is asking you for') > briefed.indexOf('Styling request:'))
+  assert.doesNotMatch(await composerText({}), /What the stylist is asking you for/, 'no brief, no line')
+
+  const toolsSrc = (await import('node:fs')).readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /const stylistBrief = String\(args\?\.brief \|\| ''\)\.trim\(\)\.slice\(0, 1500\)/)
+  assert.match(toolsSrc, /stylistNote: boundedMultiLook,\n\s+stylistBrief,/, 'the hand-off passes it on')
+})
+
 test('visual wardrobe composer derives hot weather from styling request text before building roster', async () => {
   aiCalls = []
 

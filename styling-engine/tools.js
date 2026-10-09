@@ -1344,7 +1344,13 @@ export const STYLIST_TOOLS = [
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
         limit: { type: "integer", minimum: 2, maximum: 5, description: "Number of outfits to generate (2 to 5). Default to 2 for an ordinary new 'what should I wear?' request. For one/best/pick-one, use the serial search_wardrobe + propose_outfit path." },
-        piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
+        piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." },
+        // The composer is a separate call that is sent the user's latest message and none of the
+        // conversation. Live thread_1791509009539: it was asked for "more outfits with this
+        // structure" and for "other outfits" with nothing to say what structure, or other than
+        // what; both times a three-layer look the owner had just approved came back as two layers
+        // or none, and the stylist described the cards as the structure she had meant.
+        brief: { type: "string", description: "What you are asking for, in your own words, for the composer that builds these cards. It sees the wardrobe and the user's latest message only: none of this conversation and none of the outfits already shown. Put here whatever that message depends on — what was established earlier, what a look the user liked consists of and how it is worn, what they rejected and why. Leave it out only when the latest message says everything by itself." }
       },
       required: ["occasion", "season"]
     }
@@ -4598,6 +4604,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           }
         }
         const { occasion, season, mood, mission, limit, piece_id, activity, location, date } = args
+        // Shown to the composer as the stylist's words, beside the user's message. Deliberately not
+        // part of requestText: nothing reads it for weather, activity or register.
+        const stylistBrief = String(args?.brief || '').trim().slice(0, 1500)
         const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
         // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
@@ -4760,6 +4769,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
             stylistNote: boundedMultiLook,
+            stylistBrief,
             // Same reasoning as the selected-piece branch above — this is the exact call site
             // implicated in the live $0.122-inside-a-"Gemini"-turn finding.
             providerOverride: toolContext.providerOverride || null,
