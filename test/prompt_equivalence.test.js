@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES, STYLIST_COMPETENCE_CONTRACT } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
-import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule } from '../styling-engine/outfitValidation.js'
+import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule, LAYERED_LOOK_STAGES_FACT } from '../styling-engine/outfitValidation.js'
 
 const SLOT_JSON_SHAPE = `JSON shape:
 {
@@ -145,6 +145,11 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace('List the pieces in wear order, base first and outermost last, and name the relationship', 'Put each garment in the slot for the job it does in the outfit, and name the relationship')
       expected = expected.replace(/\n\nBefore finalizing each outfit, check its 'pieces' array:[^\n]*/, '')
       expected = expected.replace(/JSON shape:\n\{\n  "outfits": \[[\s\S]*?\n  \],\n/, SLOT_JSON_SHAPE)
+    }
+    // 2026-10-09: the layering sentence gains one fact — a layered look is a complete outfit at each
+    // stage of wearing it (owner, thread_1791509009539). Registered as a byte delta; fixture frozen.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(' — never to fill out a card. Put each garment in the slot', ` — never to fill out a card. ${LAYERED_LOOK_STAGES_FACT} Put each garment in the slot`)
     }
     // 2026-09-06: single-card composition gains one structured intent fact for an explicit
     // removable-layer request. The accepted delta keeps the original fixture frozen while making

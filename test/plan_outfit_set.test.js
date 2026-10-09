@@ -1000,6 +1000,9 @@ test('a trip look may wear a middle layer over its base and under its coat, whet
   const workbenchText = JSON.stringify(workbench.workbench || workbench)
   assert.match(workbenchText, /at most one MIDDLE layer and at most one OUTER layer/)
   assert.match(workbenchText, /not on where the wardrobe files it/)
+  // Owner, 2026-10-09: a layered look is one where each stage is still an outfit.
+  assert.match(workbenchText, /A layered look is a complete outfit at every stage of wearing it/)
+  assert.match(workbenchText, /one that closes over the base hides it/)
   assert.doesNotMatch(workbenchText, /at most 1 optional outerwear layer/)
 })
 

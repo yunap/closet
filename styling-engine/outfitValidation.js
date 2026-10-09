@@ -39,6 +39,14 @@ export function requiredBaseLayerPromptRule() {
 // Model-visible projection of the canonical category structure. Options describe deliberate flow
 // strategy (for example a visual composer that declines multi-top looks); they do not re-define
 // what the validator considers a structurally wearable outfit.
+// What makes layers an outfit and not only warmth, stated as a fact about wearing them (owner,
+// 2026-10-09, thread_1791509009539: a closed mock-neck over a tank "is ok as a warm layer, but it
+// does not make an outfit. The sleeveless top is completely covered"; the look she accepted was a
+// shirt worn open over the tank under a jacket, each stage complete). Replay of that thread's first
+// composer call, one run each: unchanged, three looks of a base and one layer; with this sentence,
+// one look of a sleeveless base, a cardigan and a jacket.
+export const LAYERED_LOOK_STAGES_FACT = 'A layered look is a complete outfit at every stage of wearing it: with everything on, with the outer layer off, and with the middle layer off as well. A layer worn open leaves what is under it in view and is part of the look at that stage; one that closes over the base hides it. When a day runs from a cool morning to a warm afternoon, those stages are what the wearer goes through: all three pieces for the cool end, base and middle layer as it warms, the base alone at the warm end.'
+
 export function categoryOutfitStructurePromptRule({
   strictSingleTop = false,
   maxOuterwear = null,
@@ -56,7 +64,7 @@ export function categoryOutfitStructurePromptRule({
     // What made the ban load-bearing was that nothing else enforced it; evaluateOutfitStructure now
     // does (too_many_upper_layers / multiple_outerwear / multiple_tops), so this text describes a
     // bound the gate actually holds instead of asking the model to hold it.
-    return 'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and outerwear never replaces the required top. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer worn over the base (a cardigan, vest, or overshirt) and at most one OUTER layer over that (a coat or jacket). Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. Put each garment in the slot for the job it does in the outfit, and name the relationship in styling_instructions. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
+    return 'Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and outerwear never replaces the required top. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer worn over the base (a cardigan, vest, or overshirt) and at most one OUTER layer over that (a coat or jacket). Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. ' + LAYERED_LOOK_STAGES_FACT + ' Put each garment in the slot for the job it does in the outfit, and name the relationship in styling_instructions. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.'
   }
   if (strictSingleTop && maxOuterwear === 1 && allowMiddleLayer) {
     // The trip composer's layering contract (outfitSetPlanner.js, plan kind `trip`). Until
@@ -68,7 +76,7 @@ export function categoryOutfitStructurePromptRule({
     // kind or by the category it is filed under (a pullover over a tee is two tops, which
     // evaluateOutfitStructure accepts). The whole-wardrobe text above is pinned to its own answer
     // slots and still names the middle layer by garment; it is not changed here.
-    return 'Each outfit: EXACTLY one base — one top with one bottom, or one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and a layer never replaces the base. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer and at most one OUTER layer. A middle layer is worn over the base and stays on indoors; an outer layer goes over everything and comes off indoors. Which of the two a garment is depends on how it is worn in this outfit, not on where the wardrobe files it: a middle layer may be recorded as a top or as outerwear. Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. Name the relationship (what is worn over what) in styling_instructions.'
+    return 'Each outfit: EXACTLY one base — one top with one bottom, or one dress; EXACTLY one pair of shoes; never two bottoms, never two dresses, never two pairs of shoes, and a layer never replaces the base. Layering over that base is allowed and should be deliberate: at most one MIDDLE layer and at most one OUTER layer. A middle layer is worn over the base and stays on indoors; an outer layer goes over everything and comes off indoors. Which of the two a garment is depends on how it is worn in this outfit, not on where the wardrobe files it: a middle layer may be recorded as a top or as outerwear. Reach for a middle layer when it does a real job — warmth the base cannot carry on its own, or a deliberate visual relationship such as an open layer framing a fitted base — never to fill out a card. ' + LAYERED_LOOK_STAGES_FACT + ' Name the relationship (what is worn over what) in styling_instructions.'
   }
   if (strictSingleTop && maxOuterwear === 1 && !allowAccessories) {
     // Preserve the ratcheted visual-composer contract byte-for-byte while moving its ownership
