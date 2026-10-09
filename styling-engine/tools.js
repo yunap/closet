@@ -84,13 +84,25 @@ export function userExplicitlyRequestedNoRepeat(value = '') {
     /\b(no|don't|do not|without|avoid)\s+(?:any\s+)?(?:repeating|repeated|reusing|reuse|same)\b/i.test(text) // ratchet-allow: user constraint text, not garment matching
 }
 
-export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question = '') {
+export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question = '', planKind = '') {
   const constraints = { ...(rawConstraints || {}) }
   const pieceBudget = Number(constraints.piece_budget) || 0
   const reuseMode = String(constraints.reuse || '').trim().toLowerCase()
-  if (pieceBudget > 0 && reuseMode === 'maximize' &&
-      Array.isArray(constraints.no_repeat) && constraints.no_repeat.length &&
-      !userExplicitlyRequestedNoRepeat(question)) {
+  const inventedNoRepeat = Array.isArray(constraints.no_repeat) && constraints.no_repeat.length &&
+    !userExplicitlyRequestedNoRepeat(question)
+  if (pieceBudget > 0 && reuseMode === 'maximize' && inventedNoRepeat) {
+    delete constraints.no_repeat
+  }
+  // A trip's looks are examples made from one suitcase, and wearing a top on two of the days is how
+  // a suitcase works. no_repeat is a hard check: a look that reuses a piece is rejected. Twice in
+  // two days the trip stylist set it herself to express "something different most days", which
+  // the user had said about packing, not about any garment: thread_1791504649347 lost a museum
+  // look, and thread_1791529526962 (`no_repeat: ["tops"]`, eight looks asked of a bag of five tops,
+  // so it could not be satisfied) lost both looks for the foliage walks and a dinner look, and the
+  // reply advised leaving the hiking boots at home. Same treatment as the capsule above: kept only
+  // when the user asked for no repeats in their own words. How different the days are is carried
+  // by packing_approach, which the packer reads.
+  if (planKind === 'trip' && inventedNoRepeat) {
     delete constraints.no_repeat
   }
   return constraints
@@ -1437,7 +1449,7 @@ export const STYLIST_TOOLS = [
           description: "Shared rules across the whole set. Set these from the objective: packing wants reuse maximized; an at-home work week wants looks diversified (repeats are the failure there, not the win).",
           properties: {
             reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
-            no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule: recombination is the point of a capsule, so it is discarded there unless the person explicitly asked for no repeats." },
+            no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule or a trip: recombination is the point of a capsule, and a trip's looks are examples made from one suitcase, where a top is worn on more than one day. How different the days should be belongs in packing_approach. It is discarded for both unless the person explicitly asked for no repeats." },
             allow_repeat: { type: "array", items: { type: "string" }, description: "Category groups explicitly allowed to repeat even when diversifying — e.g. ['shoes'] since the same shoes across a week is normal. Overrides no_repeat for that group." },
             shared_anchor_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to pin across the set — e.g. styling several outfits around one new piece. Anchors recur in every slot they fit and are exempt from no_repeat." },
             piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it. Never derive a number from how they pack: 'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out. The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
@@ -3685,7 +3697,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             : DEFAULT_SEASONAL_CAPSULE_BUDGET
         }
         if (planKind === 'seasonal_capsule' && !String(planConstraints.reuse || '').trim()) planConstraints.reuse = 'maximize'
-        planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '')
+        planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '', planKind)
         // A capsule's cap is combinatorial (min(budget, 12)); every other plan
         // keeps the day-shaped curve, where a larger packing budget genuinely
         // means more distinct days to dress. Passing 0 here would have pinned

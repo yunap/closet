@@ -5890,6 +5890,22 @@ test('sanitizePlanConstraintsForQuestion strips model-invented no_repeat from re
   assert.deepEqual(explicit, { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] })
 })
 
+// thread_1791529526962: "I'm going to check a bag in" became `no_repeat: ["tops"]` on a trip of eight
+// looks packed with five tops; three looks were rejected ("top piece … repeats despite no_repeat"),
+// the foliage walks had no outfit, and the reply said to leave the hiking boots at home.
+test('a no_repeat the trip stylist set by herself is discarded; one the user asked for is kept', () => {
+  const asked = "I'm going to check a bag in"
+  assert.deepEqual(sanitizePlanConstraintsForQuestion({ reuse: 'diversify', no_repeat: ['tops'] }, asked, 'trip'), { reuse: 'diversify' })
+  assert.deepEqual(sanitizePlanConstraintsForQuestion({ reuse: 'diversify', no_repeat: ['tops', 'bottoms'] }, 'Can you redo the plan with something different for most days?', 'trip'), { reuse: 'diversify' })
+  assert.deepEqual(
+    sanitizePlanConstraintsForQuestion({ reuse: 'diversify', no_repeat: ['tops'] }, 'Pack for a week in Vienna, and do not repeat tops.', 'trip'),
+    { reuse: 'diversify', no_repeat: ['tops'] }, 'the user\'s own words keep it')
+  assert.deepEqual(
+    sanitizePlanConstraintsForQuestion({ reuse: 'diversify', no_repeat: ['tops'] }, 'Plan my work week', 'coordinated_plan'),
+    { reuse: 'diversify', no_repeat: ['tops'] }, 'a work week, which the constraint was written for, is unchanged')
+  assert.deepEqual(sanitizePlanConstraintsForQuestion({ reuse: 'diversify', no_repeat: ['tops'] }, asked), { reuse: 'diversify', no_repeat: ['tops'] }, 'no plan kind given: unchanged')
+})
+
 // Live thread_1788484052964: a real Vienna destination-packing request went through
 // plan_outfit_set with no plan_kind:'trip' at all (missing or 'coordinated_plan'), so the
 // packing-roster architecture never engaged -- the run produced ordinary coordinated-plan
