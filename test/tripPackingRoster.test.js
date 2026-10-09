@@ -1050,6 +1050,24 @@ test('the trip roster repair text does not ask for a piece to be dropped, and tr
   assert.doesNotMatch(repair, /Whatever you drop to make room/)
 })
 
+// Live thread_1791504649347: the packer chose the cashmere sweater "providing cozy warmth under
+// coats" and wrote 996770 for 996870. The repair, told only the number, replaced it with a tee the
+// bag already held, and the trip had no middle layer. The sentence above did not prevent it.
+test('an unknown packer ID is reported with the packer\'s own words for it and the real IDs close to it', async () => {
+  const { unknownRosterIdMessage } = await import('../styling-engine/outfitSetPlanner.js')
+  const benchById = new Map([[1, { name: 'Whale stripe tee' }], [996870, { name: 'gradient cashmere sweater' }], [996865, { name: 'navy lace-up hiking boots' }], [214, { name: 'black canvas sneakers' }]])
+  const typo = unknownRosterIdMessage([996770], { benchById, pieceJobs: [{ piece_id: 996770, job: 'Gradient floral cashmere sweater providing cozy warmth under coats.' }] })
+  assert.match(typo, /^pieces 996770 are not in the supplied candidate list; choose only from it\. #996770 — you wrote of it: "Gradient floral cashmere sweater providing cozy warmth under coats\."; IDs in the list close to it: #996870 gradient cashmere sweater\.$/)
+  assert.match(unknownRosterIdMessage([6865], { benchById }), /#6865 — IDs in the list close to it: #996865 navy lace-up hiking boots/, 'dropped leading digits, as in thread_1791416150174')
+  assert.match(unknownRosterIdMessage([241], { benchById }), /close to it: #214 black canvas sneakers/, 'two digits swapped')
+  assert.equal(unknownRosterIdMessage([555555], { benchById }), 'pieces 555555 are not in the supplied candidate list; choose only from it', 'nothing close and no words: the plain message')
+  const crowded = new Map([996760, 996771, 996772, 996773, 996775, 996870].map(id => [id, { name: `piece ${id}` }]))
+  assert.equal(unknownRosterIdMessage([996770], { benchById: crowded, pieceJobs: [{ piece_id: 996770, job: 'the cashmere sweater' }] }),
+    'pieces 996770 are not in the supplied candidate list; choose only from it. #996770 — you wrote of it: "the cashmere sweater".', 'many neighbours are not listed; the packer\'s words are')
+  const repair = tripRosterRepairText({ failures: [{ message: typo }], previousRosterIds: [1, 214] })
+  assert.match(repair, /you wrote of it: "Gradient floral cashmere sweater/)
+})
+
 test('the trip roster repair text states the previous IDs and the exact structural reasons', () => {
   const repair = tripRosterRepairText({
     failures: [{ code: 'use_case_uncoverable', message: 'Nature Walks has 0 eligible shoe(s)' }],

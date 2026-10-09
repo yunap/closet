@@ -4577,7 +4577,7 @@ export async function selectTripRosterViaModel({
     const outsideBench = unique.filter(id => !benchById.has(id))
     const roster = unique.map(id => benchById.get(id)).filter(Boolean)
     const contractFailures = outsideBench.length
-      ? [{ code: 'piece_outside_bench', message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it` }]
+      ? [{ code: 'piece_outside_bench', message: unknownRosterIdMessage(outsideBench, { benchById, pieceJobs: answer?.piece_jobs }) }]
       : []
     // The packer's own explanation: why each piece earned its place and the shape of the suitcase.
     // It was requested and paid for on every trip and then dropped here (thread_1790924321526), so
@@ -6193,6 +6193,44 @@ export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { sou
 // both dinner looks and two thin-hoodie day looks need the packed jacket, and the reply called the
 // UPF hoodie the layer. The cards stay quiet; the writer gets the fact. Null when the activity has no
 // cool end; otherwise the look's own real layer, or the packed real layers it can borrow.
+// A packer ID that is not in the candidate list has, both times it was seen live, been a mistyped
+// ID for a piece the packer had chosen on purpose: 6865 for the hiking boots 996865
+// (thread_1791416150174), and 996770 for the cashmere sweater 996870 (thread_1791504649347), which
+// it had packed "providing cozy warmth under coats" — the trip's one middle layer. The repair was
+// told only the number, and both times answered by changing some other piece; the sentence added
+// after the first ("usually a mistyped one — correct it to the piece you meant") did not hold.
+// What it lacked was the means: its own words for the piece are in its previous answer and were not
+// shown back, and the nearest real IDs are a fact of the list. Both are now stated. Nothing is
+// chosen for it: several near IDs are listed when several exist.
+function idsOneEditApart(a, b) {
+  if (a === b) return false
+  if (Math.abs(a.length - b.length) > 1) return false
+  if (a.length === b.length) {
+    const diffs = [...a].map((ch, i) => (ch === b[i] ? -1 : i)).filter(i => i >= 0)
+    return diffs.length === 1 || (diffs.length === 2 && diffs[1] === diffs[0] + 1 && a[diffs[0]] === b[diffs[1]] && a[diffs[1]] === b[diffs[0]])
+  }
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a]
+  for (let i = 0; i < longer.length; i += 1) if (longer.slice(0, i) + longer.slice(i + 1) === shorter) return true
+  return false
+}
+export function unknownRosterIdMessage(unknownIds = [], { benchById = new Map(), pieceJobs = [] } = {}) {
+  const base = `pieces ${unknownIds.join(', ')} are not in the supplied candidate list; choose only from it`
+  const candidates = [...benchById.entries()].map(([id, piece]) => ({ text: String(id), id, name: piece?.name || '' }))
+  const details = unknownIds.map(unknown => {
+    const text = String(unknown)
+    const job = String((Array.isArray(pieceJobs) ? pieceJobs : []).find(entry => Number(entry?.piece_id) === Number(unknown))?.job || '').trim()
+    const near = candidates
+      .filter(candidate => idsOneEditApart(text, candidate.text) || (Math.min(text.length, candidate.text.length) >= 3 && candidate.text !== text && (candidate.text.endsWith(text) || text.endsWith(candidate.text))))
+    // Recent garments have consecutive IDs, so a typo among them is close to many; a long list of
+    // neighbours says nothing, and the first four of it once left out the right one (replay of
+    // thread_1791504649347, where the packer's own words were what corrected it). Listed only when few.
+    if (near.length > 4) near.length = 0
+    if (!job && !near.length) return ''
+    return `#${text}${job ? ` — you wrote of it: "${job}"` : ''}${near.length ? `${job ? ';' : ' —'} IDs in the list close to it: ${near.map(candidate => `#${candidate.id} ${candidate.name}`.trim()).join(', ')}` : ''}`
+  }).filter(Boolean)
+  return details.length ? `${base}. ${details.join('. ')}.` : base
+}
+
 export function tripOutfitCoolEndLayer(pendingPlan = {}, outfit = {}) {
   const slot = (Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []).find(entry => entry?.label === outfit?.label)
   if (!slot || !weatherHasCoolEnd(slot.weatherProfile || {})) return null
