@@ -219,6 +219,7 @@ function initDb(dbPath) {
       archived        INTEGER DEFAULT 0,
       hidden_from_lookbook INTEGER DEFAULT 0,
       links_indexed   INTEGER DEFAULT 0,
+      thread_lookup_done INTEGER DEFAULT 0,
       created_at      TEXT DEFAULT (datetime('now'))
     );
 
@@ -816,7 +817,8 @@ function initDb(dbPath) {
 
   ;[
     'hidden_from_lookbook INTEGER DEFAULT 0',
-    'links_indexed INTEGER DEFAULT 0'
+    'links_indexed INTEGER DEFAULT 0',
+    'thread_lookup_done INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE saved_boards ADD COLUMN ${col}`) } catch {}
   })

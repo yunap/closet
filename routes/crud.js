@@ -1372,6 +1372,38 @@ function backfillSavedBoardPieceLinks() {
   pending.forEach(indexSavedBoardPieceLinks)
 }
 
+// Finds the chat thread that generated a board saved without one ("View generating chat"). The
+// search is a substring match over every thread payload, so each board is resolved once and the
+// outcome recorded either way: rescanning the misses on every list call cost seconds per request
+// on a real wardrobe. All pending boards share one pass over the threads.
+function backfillSavedBoardThreadLinks() {
+  const pending = db.prepare('SELECT id, image_url, payload FROM saved_boards WHERE COALESCE(thread_lookup_done, 0) = 0').all()
+  if (!pending.length) return
+  const unlinked = new Map()
+  for (const row of pending) {
+    const payload = safeJsonParse(row.payload, {}) || {}
+    if (!payload.threadId && row.image_url) unlinked.set(row.id, { imageUrl: row.image_url, payload })
+  }
+  const found = []
+  if (unlinked.size) {
+    for (const thread of db.prepare('SELECT id, payload FROM chat_threads').iterate()) {
+      const text = String(thread.payload || '')
+      for (const [boardId, board] of unlinked) {
+        if (!text.includes(board.imageUrl)) continue // ratchet-allow: image URL in a thread payload, not garment text
+        found.push({ boardId, payload: { ...board.payload, threadId: thread.id } })
+        unlinked.delete(boardId)
+      }
+      if (!unlinked.size) break
+    }
+  }
+  db.transaction(() => {
+    const link = db.prepare('UPDATE saved_boards SET payload = ? WHERE id = ?')
+    found.forEach(({ boardId, payload }) => link.run(JSON.stringify(payload), boardId))
+    const done = db.prepare('UPDATE saved_boards SET thread_lookup_done = 1 WHERE id = ?')
+    pending.forEach(row => done.run(row.id))
+  })()
+}
+
 router.post('/saved-boards', async (req, res) => {
   try {
     const {
@@ -1488,6 +1520,11 @@ router.get('/saved-boards', (req, res) => {
     if (excludeHidden === 'true') clauses.push('COALESCE(hidden_from_lookbook,0) = 0')
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     const rowLimit = Number(limit)
+    try {
+      backfillSavedBoardThreadLinks()
+    } catch (e) {
+      console.error('Failed to look up or backfill threadId for saved boards:', e)
+    }
     const rows = db.prepare(`
       SELECT * FROM saved_boards
       ${where}
@@ -1497,19 +1534,6 @@ router.get('/saved-boards', (req, res) => {
     const normalized = rows.map(row => {
       const linked_piece_ids = collectPieceIdsFromSavedBoardRow(row)
       const payload = safeJsonParse(row.payload, {})
-      if (!payload.threadId && row.image_url) {
-        try {
-          const match = db.prepare('SELECT id FROM chat_threads WHERE payload LIKE ? LIMIT 1')
-            .get(`%${row.image_url}%`)
-          if (match) {
-            payload.threadId = match.id
-            db.prepare('UPDATE saved_boards SET payload = ? WHERE id = ?')
-              .run(JSON.stringify(payload), row.id)
-          }
-        } catch (e) {
-          console.error('Failed to look up or backfill threadId for saved board:', e)
-        }
-      }
       return {
         ...row,
         favorite: Boolean(row.favorite),

@@ -901,3 +901,50 @@ test('editing a legacy piece preserves its retired outerwear_role rather than wi
   assert.equal(updated.name, 'legacy coat renamed')
   assert.equal(updated.outerwear_role, 'cold_weather_outerwear', 'the legacy value must survive an ordinary edit')
 })
+
+test('GET /api/saved-boards looks up a board\'s generating thread once, and never rescans a miss', async () => {
+  // The lookup is a text search across every thread payload. Repeating it per unlinked board on
+  // every list call made the endpoint take seconds on a real wardrobe and stalled the Stylist chat,
+  // which lists saved boards on every thread open. A board is now resolved once, hit or miss.
+  const saveThread = (id, imageUrl) => fetch(`${baseUrl}/api/chat-threads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, title: id, payload: { messages: [{ role: 'assistant', renderedBoards: [{ imageUrl }] }] } })
+  })
+  const saveBoard = async imageUrl => (await (await fetch(`${baseUrl}/api/saved-boards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: imageUrl, imageUrl, payload: {} })
+  })).json()).id
+  const listBoards = async () => {
+    const res = await fetch(`${baseUrl}/api/saved-boards?limit=1000`)
+    assert.equal(res.status, 200)
+    return res.json()
+  }
+
+  const linkedUrl = '/uploads/generated-boards/thread-lookup-linked.png'
+  const orphanUrl = '/uploads/generated-boards/thread-lookup-orphan.png'
+  await saveThread('thread_lookup_source', linkedUrl)
+  const linkedId = await saveBoard(linkedUrl)
+  const orphanId = await saveBoard(orphanUrl)
+
+  const first = await listBoards()
+  assert.equal(first.find(b => b.id === linkedId).payload.threadId, 'thread_lookup_source')
+  assert.equal(first.find(b => b.id === orphanId).payload.threadId, undefined)
+  assert.equal(
+    safeJson(db.prepare('SELECT payload FROM saved_boards WHERE id = ?').get(linkedId).payload).threadId,
+    'thread_lookup_source',
+    'a found thread is stored on the board'
+  )
+  const pending = db.prepare('SELECT COUNT(*) AS n FROM saved_boards WHERE COALESCE(thread_lookup_done, 0) = 0').get().n
+  assert.equal(pending, 0, 'every listed board is marked resolved, including the miss')
+
+  await saveThread('thread_lookup_late', orphanUrl)
+  const second = await listBoards()
+  assert.equal(second.find(b => b.id === orphanId).payload.threadId, undefined, 'a recorded miss is not searched again')
+  assert.equal(second.find(b => b.id === linkedId).payload.threadId, 'thread_lookup_source')
+})
+
+function safeJson(value) {
+  try { return JSON.parse(value) } catch { return {} }
+}

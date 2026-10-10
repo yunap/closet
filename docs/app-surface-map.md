@@ -1095,6 +1095,14 @@ build stylist memory, so it is the only control here that removes a board from t
 exists. **Delete board** is separate, styled as destructive, and confirms with *"Delete … from
 everywhere?"*.
 
+- **[amended 2026-10-09]** A board saved without a thread is matched to its generating chat by
+  searching thread payloads for its image, **once per board**; the outcome is recorded in
+  `saved_boards.thread_lookup_done` whether or not a thread was found. Before this, every
+  `GET /saved-boards` re-searched every unmatched board (136 boards × 62 MB of thread payload,
+  about 6 s per call on the owner's wardrobe), and the Stylist chat lists saved boards on mount and
+  on every thread open, so opening or switching threads stalled. A board that found no thread is
+  not searched again, so a thread saved later does not link to it.
+
 **[by design]** Saving shows `Saving…` / `Feedback saved` / error through a polite live region, and
 controls disable while a write is in flight.
 
