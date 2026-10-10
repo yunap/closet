@@ -339,6 +339,7 @@ function initDb(dbPath) {
       payload      TEXT DEFAULT '{}',
       pinned       INTEGER DEFAULT 0,
       archived     INTEGER DEFAULT 0,
+      piece_ids    TEXT,
       created_at   TEXT DEFAULT (datetime('now')),
       updated_at   TEXT DEFAULT (datetime('now'))
     );
@@ -347,10 +348,22 @@ function initDb(dbPath) {
   // Migrate chat_threads to add pinned and archived columns
   ;[
     'pinned INTEGER DEFAULT 0',
-    'archived INTEGER DEFAULT 0'
+    'archived INTEGER DEFAULT 0',
+    'piece_ids TEXT'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE chat_threads ADD COLUMN ${col}`) } catch {}
   })
+
+  // chat_threads.piece_ids is a derived index of the piece ids in a thread's looks, read by
+  // getPieceUsageStats so it need not parse every payload. NULL means "not indexed yet". Any
+  // payload rewrite clears it here, so no writer has to know the index exists.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS chat_threads_piece_ids_stale
+    AFTER UPDATE OF payload ON chat_threads
+    BEGIN
+      UPDATE chat_threads SET piece_ids = NULL WHERE id = NEW.id;
+    END
+  `)
 
   // Migrate todos to add field column
   ;[

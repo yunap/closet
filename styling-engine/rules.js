@@ -1099,6 +1099,18 @@ export function collectPieceIdsFromChatThreadRow(row) {
 // "used" means referenced by the Visual Composer (saved_boards) or a Stylist
 // chat recommendation (chat_threads), not literal real-world wear. Computed at
 // query time from existing timestamped rows rather than a persisted counter.
+// A thread's piece ids are read from chat_threads.piece_ids, a derived index filled here for any
+// thread whose payload changed since it was last read (db.js clears it on a payload write).
+// Parsing every payload on every call held up the Wardrobe grid behind this request.
+function indexChatThreadPieceIds() {
+  const pending = db.prepare('SELECT id, payload FROM chat_threads WHERE piece_ids IS NULL').all()
+  if (!pending.length) return
+  const store = db.prepare('UPDATE chat_threads SET piece_ids = ? WHERE id = ?')
+  db.transaction(() => {
+    for (const row of pending) store.run(JSON.stringify(collectPieceIdsFromChatThreadRow(row)), row.id)
+  })()
+}
+
 export function getPieceUsageStats() {
   const stats = new Map()
   const bump = (pieceId, createdAt) => {
@@ -1114,10 +1126,11 @@ export function getPieceUsageStats() {
     }
   } catch {}
   try {
-    const threadRows = db.prepare("SELECT payload, updated_at, created_at FROM chat_threads WHERE COALESCE(archived,0) = 0").all()
+    indexChatThreadPieceIds()
+    const threadRows = db.prepare("SELECT piece_ids, updated_at, created_at FROM chat_threads WHERE COALESCE(archived,0) = 0").all()
     for (const row of threadRows) {
       const timestamp = row.updated_at || row.created_at
-      for (const pieceId of collectPieceIdsFromChatThreadRow(row)) bump(pieceId, timestamp)
+      for (const pieceId of safeJsonParse(row.piece_ids, [])) bump(pieceId, timestamp)
     }
   } catch {}
   return Object.fromEntries(stats)
