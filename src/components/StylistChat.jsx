@@ -972,7 +972,6 @@ export default function StylistChat({
     }
 
     const applyLoadedThread = (thread) => {
-      refreshSavedBoards()
       const loadedMessages = thread.payload.messages || []
       suppressThreadLoadAutosaveRef.current = true
       suppressNextMessageScrollRef.current = true
@@ -1012,6 +1011,8 @@ export default function StylistChat({
     }
 
     setLoadingThread(true)
+    // Once per open: a cached thread is applied twice (cached copy, then the refreshed one).
+    refreshSavedBoards()
     const cachedThread = getCachedChatThread(threadId)
     if (cachedThread) applyLoadedThread(cachedThread)
     try {
