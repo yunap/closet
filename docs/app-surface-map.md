@@ -1181,6 +1181,10 @@ Worth protecting — a future "Most worn" label would be a lie the codebase curr
 spread. It was flagged for reconsideration only if usability testing showed the meaning unclear.
 
 > **Stores.** `usageStats` derived from outfit and board links, not from any wear log.
+> **[amended 2026-10-09]** A thread's piece ids are read from `chat_threads.piece_ids`, a derived
+> index rebuilt only for threads whose payload changed (a trigger in `db.js` clears it on any
+> payload write). Counts are unchanged. Parsing every thread payload per call took about 350 ms on
+> the owner's wardrobe and the Wardrobe grid waited behind it.
 > `PieceInventory.jsx`, `:205-228`.
 
 ---
