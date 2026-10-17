@@ -77,7 +77,7 @@ test('the composition prompt states slot quality outranks showcasing the packed 
 test('tripPlanCompositionSchema offers a slot-level DECLINE path (slot_gaps), and never requires a per-card confidence rating', () => {
   const schema = tripPlanCompositionSchema(2)
   const cardProps = schema.properties.outfits.items.properties
-  assert.deepEqual(Object.keys(cardProps).sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title'])
+  assert.deepEqual(Object.keys(cardProps).sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title', 'worn_on_date'])
   assert.ok(!schema.properties.outfits.items.required.includes('fit_confidence'), 'no card-level confidence rating is required')
   assert.ok(schema.properties.outfits.minItems < schema.properties.outfits.maxItems || schema.properties.outfits.minItems === 1, 'a specific outfit can be omitted from outfits, not forced to an exact per-slot count')
 

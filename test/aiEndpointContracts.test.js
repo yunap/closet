@@ -4349,6 +4349,7 @@ test('executeTool propose_outfit: pieces from the active roster produce no roste
   assert.equal(proposed.status, 'success')
   assert.equal(toolContext.pendingRosterChange, undefined, 'no field the persistence layer would read as a roster change')
   assert.equal(toolContext.generatedOutfits[0].packingRosterChange, undefined)
+  assert.equal(proposed.addedToSuitcase, undefined, 'a look from the packed pieces tells the stylist nothing was added')
 })
 
 test('executeTool propose_outfit: a piece outside the active roster is an explicit, disclosed packing-set change', async () => {
@@ -4370,6 +4371,10 @@ test('executeTool propose_outfit: a piece outside the active roster is an explic
   const card = toolContext.generatedOutfits[0]
   assert.deepEqual(card.packingRosterChange.addedIds, [seeded.shoe])
   assert.equal(card.packingRosterChange.addedPieces[0].id, seeded.shoe)
+  // thread_1791697835891: the look took trousers from outside the bag and the reply called it
+  // "packed specifically for those days" -- the tool result had not said a piece was added.
+  assert.deepEqual(proposed.addedToSuitcase, ['cream slip-on shoes'])
+  assert.match(proposed.addedToSuitcaseMeaning, /not in the suitcase packed for this trip/)
 })
 
 test('executeTool propose_outfit: explicit removal, never inferred from a card simply not showing a piece', async () => {
@@ -9505,6 +9510,60 @@ test('a piece budget is set only from a number the user states, never from how t
   const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
   assert.match(tools, /Set it ONLY when the user states a number of pieces; it is a hard limit that rejects outfits beyond it/)
   assert.match(tools, /'carry-on', 'packing light' or 'one bag' is not a count — put those words in packing_approach and leave this out/)
+})
+
+// Live thread_1791697835891: on a trip thread, "the days with temps in 85F and 80F high" was stored
+// as the thread's own weather (85°F/80°F, hot) for a 38–85°F week, where it would have led every
+// later follow-up. Weather stated in a trip follow-up belongs to that turn.
+test('weather stated in a trip follow-up is used for the turn and does not become the thread\'s weather', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
+  const { persistFullStylistTurnState } = await import('../routes/ai.js')
+  const sessionId = 'trip-followup-stated-weather-scope'
+  const forecast = { status: 'resolved', location: 'Vienna, Virginia', temperature: { high_f: 85.4, low_f: 37.8 } }
+  const planLook = { index: 1, label: 'Sightseeing', in_plan: true, piece_ids: [seeded.top], pieces: ['seeded top'], resolved_weather_context: forecast }
+  saveStylistConversationState({ established: { occasion: 'travel', season: 'current season' }, current_outfit_set: [planLook] }, sessionId)
+
+  const payload = await buildStylistConversationPayload({ question: 'and what am I going to wear on the days with temps in 85F and 80F high?', sessionId, conversationMode: 'followup', history: [] })
+  assert.equal(payload.threadState.weather_profile?.high_f ?? payload.threadState.weather_profile?.highF, 85, 'this turn is dressed for what was stated')
+  const saved = getStylistConversationState(sessionId)
+  assert.equal(saved.weather_profile, undefined, 'the trip keeps the forecast its plan looks carry')
+  assert.equal(saved.established.weather, undefined)
+  assert.equal(saved.established.occasion, 'travel')
+
+  // The look added for that day keeps its own weather; the thread's is still not replaced.
+  persistFullStylistTurnState({
+    toolContext: {
+      turnMode: 'followup',
+      weatherProfile: { weatherSource: 'stated_user', highF: 85, lowF: null, isHot: true, isCold: false },
+      generatedOutfits: [{ label: 'Warm-Day Sightseeing', pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [] }],
+    },
+    answer: 'Here is the look for the warm day.', freeformTurnToken: 'token-warm-day', sessionId,
+  })
+  const afterLook = getStylistConversationState(sessionId)
+  assert.equal(afterLook.weather_profile, undefined)
+  assert.equal(afterLook.current_outfit_set.length, 2, 'the plan look stays and the new look joins it')
+
+  // Outside a trip plan a stated range still becomes the thread's weather, as before.
+  const plainSession = 'plain-followup-stated-weather-scope'
+  saveStylistConversationState({ established: { occasion: 'city' }, current_outfit_set: [{ index: 1, label: 'Dinner', piece_ids: [seeded.top], pieces: ['seeded top'] }] }, plainSession)
+  await buildStylistConversationPayload({ question: 'it will be 60F when I leave and 48F after sunset', sessionId: plainSession, conversationMode: 'followup', history: [] })
+  assert.match(String(getStylistConversationState(plainSession).established.weather || ''), /60/)
+})
+
+// Live thread_1791764470904: the router named the place, the word list missed "museums", and the
+// trip turn was told to ask the user what weather to expect.
+test('a trip turn the router routed with a named place is not told to ask the user for the weather', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const question = "I am planning a trip to Vienna, Virginia, on October 12th. I'll stay there for a week. Do some sightseeing and visit museums. help me pack. I'll check the bag in"
+  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
+  const routed = await buildStylistConversationPayload({ question, sessionId: 'trip-weather-blocker-routed', conversationMode: 'new_request', history: [], tripPlanTurn: true, routedLocation: 'Vienna, Virginia' })
+  assert.doesNotMatch(text(routed), /TRAVEL WEATHER BLOCKER/)
+  assert.equal(routed.threadState.travel.missing_weather, false)
+  assert.equal(routed.threadState.travel.live_weather_resolvable, true)
+  // Without the router's place, the same words still fail the list: that is the fault this pins.
+  const unrouted = await buildStylistConversationPayload({ question, sessionId: 'trip-weather-blocker-unrouted', conversationMode: 'new_request', history: [], tripPlanTurn: true })
+  assert.match(text(unrouted), /TRAVEL WEATHER BLOCKER/)
 })
 
 // Live thread_1791416150174 (a 49–83°F week): a trip thread stores no single forecast profile, so

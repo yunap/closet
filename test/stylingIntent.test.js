@@ -141,6 +141,14 @@ test('extractWeatherContext captures lightweight forecast phrases', () => {
   assert.equal(extractWeatherContext('Portland in a few days'), '')
 })
 
+// thread_1791697835891: two days' highs were read as one day's high and low.
+test('extractStructuredUserWeather reads two listed highs as highs, not as a high and a low', () => {
+  assert.deepEqual(extractStructuredUserWeather('and what am I going to wear on the days with temps in 85F and 80F high?'), { high_f: 85 })
+  assert.deepEqual(extractStructuredUserWeather('lows of 40F and 45F this week'), { low_f: 40 })
+  assert.deepEqual(extractStructuredUserWeather('highs of 80F and lows of 60F'), { high_f: 80, low_f: 60 })
+  assert.deepEqual(extractStructuredUserWeather('85F and 60F'), { high_f: 85, low_f: 60 })
+})
+
 test('extractStructuredUserWeather preserves a literal falling Fahrenheit range and stated wind', () => {
   assert.deepEqual(extractStructuredUserWeather('It will fall from 60→48°F with a breeze'), {
     high_f: 60,

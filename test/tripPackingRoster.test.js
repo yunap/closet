@@ -1001,6 +1001,9 @@ test('the trip roster system prompt states what travels well as things to weigh,
   // nothing for the one forecast day in the 80s. Both ends are stated.
   assert.match(brief, /Read them against the warm end too/)
   assert.match(brief, /worn alone on the warm day and under a layer on the cool ones/)
+  // thread_1791697835891: two short-sleeved tops were packed for the 85°F day, over two pairs of jeans
+  // and two medium-weight trousers. The warm day is read against the bottoms too.
+  assert.match(brief, /read the weight and fabric of the bottoms you are packing against it the same way/)
   // Owner, 2026-10-07: "not everything goes into a suitcase, the person also has to wear something on
   // the plane. Unless it can't be reused after a 7 hour flight."
   assert.match(brief, /What is worn on the journey is not in the bag/)
@@ -1753,4 +1756,109 @@ test('every trip call is told how a day away works: one outfit from morning unti
   const { readFileSync } = await import('node:fs')
   const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.equal(core.split('      HOW_A_DAY_AWAY_WORKS,').length - 1, 2, 'the trip planning turn and the trip follow-up turn')
+})
+
+// Live thread_1791778749455 (36–87°F, two days at 80°F or more): the suitcase held two pairs of
+// heavy jeans, medium-weight trousers and a wool skirt. Every use case was coverable on the week's
+// typical day, and on the warm day the hot-weather gate refuses every bottom in it.
+const warmDaySlot = (weatherProfile = {}) => ({
+  id: 's1', label: 'Sightseeing Days', occasion: 'city', activity: 'walking', environment: 'outdoor',
+  stylingContext: { occasion: 'city', activity: 'walking', weatherProfile: { isHot: false, isCold: false, highF: 87, lowF: 52, ...weatherProfile } },
+})
+const HEAVY_JEANS = piece(21, 'bottom', { fabric_weight: 'heavy', coverage: 'full' })
+const LIGHT_PANTS = piece(22, 'bottom', { fabric_weight: 'light' })
+const LIGHT_TOP = piece(23, 'top', { fabric_weight: 'light', sleeve_length: 'short' })
+const COAT = piece(24, 'outerwear', { fabric_weight: 'medium' })
+
+test('a suitcase with nothing wearable on a trip\'s warm day fails warm_day_uncoverable; one light bottom clears it', () => {
+  const cool = validateTripRoster([LIGHT_TOP, HEAVY_JEANS, CITY_SHOES, COAT], { slots: [warmDaySlot()] })
+  const gap = cool.failures.find(f => f.code === 'warm_day_uncoverable')
+  assert.ok(gap, 'heavy full-length bottoms only: nothing completes an outfit at 87°F')
+  assert.match(gap.message, /Sightseeing Days includes a day reaching 87°F/)
+  assert.match(gap.message, /1 top\(s\), 0 bottom\(s\)/)
+  const fixed = validateTripRoster([LIGHT_TOP, HEAVY_JEANS, LIGHT_PANTS, CITY_SHOES, COAT], { slots: [warmDaySlot()] })
+  assert.ok(!fixed.failures.some(f => f.code === 'warm_day_uncoverable'))
+})
+
+test('the warm-day check is silent for a mild week, an indoor use case, an already-hot trip, and a wardrobe that cannot dress the day', () => {
+  const roster = [LIGHT_TOP, HEAVY_JEANS, CITY_SHOES, COAT]
+  const fires = slots => validateTripRoster(roster, { slots }).failures.some(f => f.code === 'warm_day_uncoverable')
+  assert.equal(fires([warmDaySlot({ highF: 74 })]), false, 'no day reaches the hot threshold')
+  assert.equal(fires([{ ...warmDaySlot(), environment: 'indoor' }]), false, 'an indoor use case is dressed for the room')
+  assert.equal(validateTripRoster(roster, { slots: [warmDaySlot()], pool: roster }).failures.some(f => f.code === 'warm_day_uncoverable'), false, 'a wardrobe gap, not a roster defect')
+})
+
+test('a repaired suitcase that still lacks only the warm-day outfit is kept, not replaced by the whole bench', async () => {
+  const pool = [LIGHT_TOP, HEAVY_JEANS, LIGHT_PANTS, CITY_SHOES, COAT]
+  const seen = []
+  const chooseRoster = async ({ attempt, failures }) => { seen.push(...failures.map(f => f.code)); return { roster_piece_ids: [23, 21, 3, 24] } }
+  const stubborn = await selectTripRosterViaModel({ pool, slots: [warmDaySlot()], chooseRoster })
+  assert.deepEqual(seen, ['warm_day_uncoverable'], 'the packer is told once, with the reason')
+  assert.equal(stubborn.source, 'model_repaired')
+  assert.deepEqual(stubborn.roster.map(p => Number(p.id)).sort((x, y) => x - y), [3, 21, 23, 24])
+  const repaired = await selectTripRosterViaModel({ pool, slots: [warmDaySlot()], chooseRoster: async ({ attempt }) => ({ roster_piece_ids: attempt === 1 ? [23, 21, 3, 24] : [23, 21, 22, 3, 24] }) })
+  assert.equal(repaired.source, 'model_repaired')
+  assert.ok(repaired.roster.some(p => Number(p.id) === 22))
+  assert.deepEqual(repaired.failures, [])
+})
+
+// ─── A look that names its day (worn_on_date, owner-approved 2026-10-12) ─────────────────────────
+// Live thread_1791778749455: the two looks built for the warm days carried cool-week notes, because
+// every look of an activity with no day of its own was noted against the whole trip.
+import { resolveLookDayWeather, resolveSubmittedLookDays } from '../styling-engine/outfitSetPlanner.js'
+
+test('a look that names its day takes its notes and weather line from that day; acceptance is still judged on the trip', async () => {
+  const chooseRoster = async () => ({ roster_piece_ids: [1, 2, 3] }) // no layer packed
+  const slots = SLOTS.map(s => ({ ...s, stylingContext: { occasion: s.occasion, activity: s.activity, calendarSeason: 'fall' } }))
+  const workbench = await buildPlanSlotWorkbench([slots[0]], { allPieces: POOL, question: 'trip', planKind: 'trip', chooseTripRoster: chooseRoster })
+  const plan = workbench.pendingPlan
+  const slot = plan.slots[0]
+  // The trip as a whole asks for a removable layer; the look's own day does not.
+  slot.weatherProfile = { ...slot.weatherProfile, needsRemovableCoolLayer: true, isCold: false, highF: 87, lowF: 39 }
+  const card = { slot_id: slot.id, piece_ids: [1, 2, 3], worn_on_date: '2026-10-14' }
+  const coolNote = flags => (flags || []).some(f => f.message.includes('no layer to put on for the cooler part of the day'))
+
+  const undated = validateSubmittedPlanOutfits({ ...plan, packingRoster: [], heldOutfits: [] }, [{ ...card, worn_on_date: '' }])
+  assert.ok(coolNote(undated.accepted[0].systemFlags), 'with no day named, the look is noted against the trip')
+  assert.equal(undated.accepted[0].wornOnDate, undefined)
+
+  const warmDay = { date: '2026-10-14', weatherLabel: 'Oct 14: 87°F high / 65°F low — live forecast', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: false, highF: 87, lowF: 65 } }
+  const dated = validateSubmittedPlanOutfits({ ...plan, packingRoster: [], heldOutfits: [], lookDayWeather: new Map([[`${slot.id}|2026-10-14`, warmDay]]) }, [card])
+  assert.equal(dated.failures.length, 0)
+  assert.equal(coolNote(dated.accepted[0].systemFlags), false, 'a 65°F evening does not ask for the layer the week did')
+  assert.equal(dated.accepted[0].wornOnDate, '2026-10-14')
+  assert.equal(dated.accepted[0].weatherUsed, 'Oct 14: 87°F high / 65°F low — live forecast')
+
+  // Owner, 2026-10-12: "remember that day also has a chilly evening". A warm day with a cool end
+  // keeps its layer note: the day's own low decides, not the fact that the look is for a warm day.
+  const chillyEvening = { date: '2026-10-16', weatherLabel: 'Oct 16: 84°F high / 53°F low — live forecast', weatherProfile: { isHot: true, isCold: false, needsRemovableCoolLayer: true, highF: 84, lowF: 53 } }
+  const evening = validateSubmittedPlanOutfits({ ...plan, packingRoster: [], heldOutfits: [], lookDayWeather: new Map([[`${slot.id}|2026-10-16`, chillyEvening]]) }, [{ ...card, worn_on_date: '2026-10-16' }])
+  assert.ok(coolNote(evening.accepted[0].systemFlags), 'the warm day with a 53°F evening still says to bring a layer')
+
+  // The card says which day it is for, and its weather line is that day's.
+  const [assembled] = assembleSubmittedPlanOutfits({ ...plan, packingRoster: [], heldOutfits: [] }, dated.accepted)
+  assert.match(assembled.coveragePosition, / · Oct 14$/)
+  assert.equal(assembled.slotWeather, 'Oct 14: 87°F high / 65°F low — live forecast')
+})
+
+test('a look\'s day is resolved only for a trip-spanning activity and a day inside the trip', async () => {
+  const context = { status: 'resolved', location: 'Vienna, VA', dateRange: { start: '2026-10-12', end: '2026-10-18' } }
+  const spanning = { id: 's1', label: 'Sightseeing Days', occasion: 'city', activity: 'walking', dateInherited: true, weatherProfile: { resolvedWeatherContext: context } }
+  const never = async () => { throw new Error('no forecast should be fetched') }
+  assert.equal(await resolveLookDayWeather({ ...spanning, dateInherited: false }, '2026-10-14', { fetchImpl: never }), null, 'an activity dated to a day already has its weather')
+  assert.equal(await resolveLookDayWeather(spanning, '2026-11-02', { fetchImpl: never }), null, 'outside the trip')
+  assert.equal(await resolveLookDayWeather(spanning, 'the warm day', { fetchImpl: never }), null, 'not a date')
+  assert.equal(await resolveLookDayWeather({ ...spanning, weatherProfile: {} }, '2026-10-14', { fetchImpl: never }), null, 'no forecast behind the trip')
+  const none = await resolveSubmittedLookDays([spanning], [{ slot_id: 's1', worn_on_date: '' }, { slot_id: 'unknown', worn_on_date: '2026-10-14' }], { fetchImpl: never })
+  assert.equal(none.size, 0)
+})
+
+test('the trip composer is asked for the day a look is built for, and told that day has its own evening', async () => {
+  const { tripPlanCompositionSchema } = await import('../routes/ai.js')
+  const item = tripPlanCompositionSchema(3).properties.outfits.items
+  assert.ok(item.required.includes('worn_on_date'), 'required, since an optional field on this schema went unfilled')
+  assert.match(item.properties.worn_on_date.description, /Empty string when the look suits the trip's days generally/)
+  const src = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
+  assert.match(src, /with worn_on_date set to that day and its reason saying which day it is for/)
+  assert.match(src, /a warm afternoon is usually followed by a much cooler evening/)
 })

@@ -120,7 +120,21 @@ export function extractStructuredUserWeather(text = '') {
   if (rangeMatch) {
     endpoints = [Number(rangeMatch[1]), Number(rangeMatch[2])]
   } else if (explicitFahrenheitValues.length === 2) {
-    endpoints = explicitFahrenheitValues
+    // Two values listed together under one side's word are two days' highs (or lows), not a high
+    // and a low. Live thread_1791697835891: "the days with temps in 85F and 80F high" became a day
+    // of 85°F high / 80°F low. Read as that one side, the other end unknown; the warmer high or the
+    // cooler low is kept because it is the one the outfit has to answer. Two timed observations
+    // ("60°F when I leave and 48°F after sunset") have words between the values and are unchanged.
+    const listed = /(-?\d{1,3})\s*(?:°\s*)?f(?:ahrenheit)?\s*(?:,|and|or|&)\s*(-?\d{1,3})\s*(?:°\s*)?f(?:ahrenheit)?\b/.test(normalized)
+    const namesHigh = /\bhighs?\b/.test(normalized)
+    const namesLow = /\b(?:lows?|overnight)\b/.test(normalized)
+    if (listed && namesHigh !== namesLow) {
+      sided = namesHigh ? 'high' : 'low'
+      const kept = namesHigh ? Math.max(...explicitFahrenheitValues) : Math.min(...explicitFahrenheitValues)
+      endpoints = [kept, kept]
+    } else {
+      endpoints = explicitFahrenheitValues
+    }
   } else if (explicitFahrenheitValues.length === 1) {
     const isPastReference = /\b(yesterday|last\s+(?:week|month|year|night|weekend))\b/.test(normalized)
     if (!isPastReference) {

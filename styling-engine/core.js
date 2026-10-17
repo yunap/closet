@@ -4502,7 +4502,15 @@ export async function buildStylistConversationPayload(body) {
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
   const travelOrPackingRequest = isTravelOrPackingRequest(question, effectiveOccasion)
-  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, effectiveOccasion)
+  // The router's structured reading of the place outranks the word match (live thread_1791764470904,
+  // 2026-10-11): "a trip to Vienna, Virginia… Do some sightseeing and visit museums" failed the
+  // activity list below on a plural ("museums"), the turn was marked as missing weather, and she was
+  // told to ask the user for the forecast of a named place a day away. The thread before it
+  // (thread_1791697835891) passed only because her own clarifying question, joined to the request,
+  // contained "museum". A trip turn the router routed with a named place can look its weather up;
+  // plan_outfit_set resolves it and carries a seasonal estimate for dates the forecast does not reach.
+  const routedLocation = String(body?.routedLocation || '').trim()
+  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, effectiveOccasion) || Boolean(routedLocation)
   const missingTravelWeather = travelOrPackingRequest && !extractedWeather && !canResolveTravelWeatherLive
   const establishedStylingContext = {
     ...(effectiveOccasion ? { occasion: effectiveOccasion } : {}),
@@ -4741,6 +4749,23 @@ export async function buildStylistConversationPayload(body) {
       : {}),
   }
 
+  // On a thread that holds a trip plan, weather the user states in a follow-up belongs to that
+  // turn. Live thread_1791697835891: "what am I going to wear on the days with temps in 85F and 80F
+  // high?" was weather for two days of a 38–85°F week; it was stored as the thread's own weather,
+  // where a stored statement with a number in it leads every later turn (storedStatedWeather above),
+  // so each further follow-up about the trip would have been told the forecast was 85°F and judged
+  // as hot. The trip's weather is the forecast its plan looks carry (threadWeatherContextFromOutfitSet,
+  // routes/ai.js); this turn still uses what was stated, and the thread keeps what it had.
+  const turnWeatherStaysWithTurn = Boolean(explicitTurnWeather)
+    && requestedConversationMode !== 'new_request'
+    && Array.isArray(restoredState.current_outfit_set)
+    && restoredState.current_outfit_set.some(entry => entry?.in_plan === true)
+  const { weather: turnEstablishedWeather, ...establishedWithoutWeather } = establishedStylingContext
+  const savedEstablished = turnWeatherStaysWithTurn
+    ? { ...establishedWithoutWeather, ...(restoredEstablished.weather ? { weather: restoredEstablished.weather } : {}) }
+    : establishedStylingContext
+  const savedWeatherProfile = turnWeatherStaysWithTurn ? restoredWeatherProfile : effectiveWeatherProfile
+
   // Persist the full turn state (overwrites the previous turn: body values won,
   // restored values already merged into `established` above).
   saveStylistConversationState({
@@ -4749,8 +4774,8 @@ export async function buildStylistConversationPayload(body) {
       active_piece_ids: activePieceIds,
       visible_image_inventory: attachedImageInventory,
     } : {}),
-    established: establishedStylingContext,
-    ...(effectiveWeatherProfile ? { weather_profile: serializeWeatherProfile(effectiveWeatherProfile) } : {}),
+    established: savedEstablished,
+    ...(savedWeatherProfile ? { weather_profile: serializeWeatherProfile(savedWeatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
     ...(packingRoster ? { packing_roster: packingRoster } : {}),
   }, sessionId)

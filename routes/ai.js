@@ -993,6 +993,10 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
     && tripThreadHoldsPlanLooks(priorConversationState.current_outfit_set)
     && toolContext.turnMode !== 'new_request') {
     freshState.current_outfit_set = mergeTripThreadOutfitSet(priorConversationState.current_outfit_set, freshState.current_outfit_set)
+    // The added look's weather is its own (it stays on the look's resolved_weather_context). It does
+    // not become the thread's: live thread_1791697835891, a look for the 85°F day left the thread's
+    // weather_profile reading 85°F/80°F "stated", hot, for a 38–85°F week.
+    delete freshState.weather_profile
   }
   saveStylistConversationState({
     ...priorConversationState,
@@ -5387,9 +5391,14 @@ export function tripPlanCompositionSchema(targetOutfits = 1) {
             title: { type: 'string' },
             reason: { type: 'string' },
             styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." },
-            cold_layer_decision: coldLayerDecisionSchemaProperty()
+            cold_layer_decision: coldLayerDecisionSchemaProperty(),
+            // Owner-approved 2026-10-12 (thread_1791778749455). Required and possibly empty, not
+            // optional: an optional field on this schema went unfilled (the reason
+            // cold_layer_decision is mandatory). Read by resolveLookDayWeather; it changes the
+            // look's notes and weather line, never whether the look is accepted.
+            worn_on_date: { type: 'string', description: "The one day of the trip this look is built for, as YYYY-MM-DD, when it is built for a particular day of the forecast in weather_used (the warm day, the coldest day). Empty string when the look suits the trip's days generally. The look is then described and noted against that day's own high and low, not the whole trip's range." }
           },
-          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions', 'cold_layer_decision']
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions', 'cold_layer_decision', 'worn_on_date']
         }
       },
       // thread_1789585467294 (owner ruling 2026-09-16): a genuine slot-level DECLINE, distinct from
@@ -5808,7 +5817,7 @@ WHAT TRAVELS WELL. A suitcase is not a wardrobe: every piece is carried, lives f
 - How it comes out of the bag: its fabric, fibre and weight say whether it will be creased after folding and whether that shows, when there may be nothing to press it with.
 - The room it takes: volume, length and bulk are paid for in space, and matter most when the traveller is packing light. Shoes and outer layers are the bulkiest things in a bag; tops are the smallest, and they are what makes one day look different from the last. A light suitcase is usually short on coats and shoes and generous with tops, not the other way round.
 - What is worn on the journey is not in the bag: the traveller wears one outfit there and one home, chosen from these same pieces, and it takes no suitcase room. The bulkiest shoes and the heaviest layer are usually the ones worn rather than packed, so count them against the trip, not against the bag. Whether the journey outfit can be worn again on the trip depends on the journey: after a short one it can; after many hours on a plane it may need washing first, so do not rely on it for the first days unless the request says otherwise. When TRIP CONTEXT says where the traveller lives and how far away the destination is, judge the journey from that.
-- Where the warmth comes from: a coat comes off indoors, at a table and in a museum, so on a cool trip the tops and knits worn all day are what keep the traveller warm. Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures, not only the coats against the coldest hour; a suitcase of short sleeves under a good coat is cold for most of the day. Read them against the warm end too: when the forecast holds a day well above the rest, something in the bag has to be comfortable on that day, and a suitcase of long sleeves and knits has nothing for it. A light top that is worn alone on the warm day and under a layer on the cool ones answers both ends with one piece.
+- Where the warmth comes from: a coat comes off indoors, at a table and in a museum, so on a cool trip the tops and knits worn all day are what keep the traveller warm. Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures, not only the coats against the coldest hour; a suitcase of short sleeves under a good coat is cold for most of the day. Read them against the warm end too: when the forecast holds a day well above the rest, something in the bag has to be comfortable on that day, and a suitcase of long sleeves and knits has nothing for it. A light top that is worn alone on the warm day and under a layer on the cool ones answers both ends with one piece. That day is dressed from the waist down as well: read the weight and fabric of the bottoms you are packing against it the same way, because a light top over the heaviest trousers in the bag is still a hot day.
 - What layers are for: a layer worn over a top and kept on indoors — a cardigan, a vest, a shirt worn open, a light knit — does two things at once. It covers a day that starts cool and ends warm, where a coat is too much by noon and a top alone too little at nine. And it changes the outfit: the same top and trousers are a different look under it, which is how a small bag makes many looks and why seasoned travellers pack layers before they pack more outfits. Such pieces are small. The candidates record them under two categories, some as tops and the open ones mostly as outerwear beside the coats, so an outerwear line is not necessarily a coat. A bag with no such piece can only make one-layer looks: a top, a bottom, and a coat for the cold.
 - How it behaves through a long day: sleeves, length, hems and closures that need managing, or a piece worn only one way, are harder to live in while walking, sitting, eating and carrying a bag than they are at home.
 - How much of the suitcase it works with: a piece earns its place by going with several of the other bottoms, tops, layers and shoes you are packing, not with one partner. A group of colours that sit together lets a small suitcase make many looks.
@@ -7449,7 +7458,7 @@ router.post('/ask', async (req, res) => {
           occasion: req.body.occasion,
           season: req.body.season,
           activity: req.body.activity,
-          ...(tripPlanRoute ? { tripPlanTurn: true } : {}),
+          ...(tripPlanRoute ? { tripPlanTurn: true, routedLocation: String(tripPlanRoute.location || '') } : {}),
           // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
           tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64
         })

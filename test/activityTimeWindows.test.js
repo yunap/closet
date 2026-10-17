@@ -610,6 +610,38 @@ test('an activity that spans the trip does not send the first day\'s daypart ran
   assert.match(src, /diurnal_range: slot\.dateInherited === true \? null : \(weatherProfile\?\.diurnalRange \|\| null\)/)
 })
 
+// thread_1791697835891: a week of 38–85°F with one 85°F day came back as seven cool-day looks under a
+// coat. The composer was told to treat a slot's range as one day's and build for its cool end; for an
+// activity with no day of its own the range is every day of the trip.
+test('a trip activity that spans the trip tells the composer its range is across days, and a dated one keeps the one-day sentence', async () => {
+  const { buildPlanSlotWorkbench } = await import('../styling-engine/outfitSetPlanner.js')
+  const { parsePiece } = await import('../db.js')
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'city top' })
+  insertPiece({ category: 'bottom', name: 'city pants' })
+  insertPiece({ category: 'shoes', name: 'city shoes', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const dateRange = { start: '2026-10-12', end: '2026-10-18' }
+  const slot = { label: 'Sightseeing Days', occasion: 'city', activity: 'walking', count: 1, weather_estimate: { high_f: 85, low_f: 38 } }
+  const oneDaySentence = /span a real range across the day rather than one fixed temperature/
+  const acrossDaysFact = /states the weather of every day of the trip in weather_used, and its looks are worn on different days/
+
+  const undated = normalizePlanSlots([slot], { dateRange })
+  assert.equal(undated[0].dateInherited, true)
+  const spanning = await buildPlanSlotWorkbench(undated, { allPieces, question: 'a week away', planKind: 'trip' })
+  const spanningInstructions = (spanning.workbench || spanning).instructions
+  assert.match(spanningInstructions, acrossDaysFact)
+  assert.match(spanningInstructions, /at least one daytime look is the outfit for it/)
+  assert.doesNotMatch(spanningInstructions, oneDaySentence, 'a week\'s range is not one day\'s')
+
+  const dated = normalizePlanSlots([{ ...slot, date: '2026-10-14' }], { dateRange })
+  assert.equal(dated[0].dateInherited, false)
+  const single = await buildPlanSlotWorkbench(dated, { allPieces, question: 'a week away', planKind: 'trip' })
+  const singleInstructions = (single.workbench || single).instructions
+  assert.match(singleInstructions, oneDaySentence)
+  assert.doesNotMatch(singleInstructions, acrossDaysFact)
+})
+
 test('normalizePlanSlots conversational fallback resolves "early", "early start", or "cooler" to morning when replying to a timing clarification', () => {
   const [slotEarly] = normalizePlanSlots([{
     label: 'Mountain Hike', occasion: 'casual', activity: 'hiking', count: 1,

@@ -1082,7 +1082,7 @@ const USER_WEATHER_SCHEMA = {
   type: "object",
   description: "Structured translation of weather the CURRENT user message explicitly stated — include it ONLY when the user actually said it this turn, never your own seasonal knowledge (use weather_estimate for that instead). Carries a numeric range OR a qualitative band, never both. Convert a user-stated Celsius value to Fahrenheit yourself before setting high_f/low_f — never pass Celsius through. Always set `scope` alongside a numeric high_f/low_f (see below) — it is what tells the executor how much certainty the two numbers carry.",
   properties: {
-    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature ('it's 46 out'), set high_f and low_f to the same value. When the user stated ONLY a high ('highs near 85'), set high_f alone and leave low_f unset — never invent the endpoint they did not give." },
+    high_f: { type: "number", description: "The user's stated high, Fahrenheit. For a single stated temperature ('it's 46 out'), set high_f and low_f to the same value. When the user stated ONLY a high ('highs near 85'), set high_f alone and leave low_f unset — never invent the endpoint they did not give. high_f and low_f are the warm and cool end of the SAME day or outing: temperatures the user names for different days ('the days with highs of 85 and 80') are several highs, not a high and a low — send the one this outfit is for as high_f and leave low_f unset." },
     low_f: { type: "number", description: "The user's stated low, Fahrenheit. When the user stated ONLY a low ('down to 40 overnight'), set low_f alone and leave high_f unset." },
     scope: {
       type: "string",
@@ -2791,6 +2791,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         ]
         const cardAnnotations = finalAnnotations.map(({ cardMessage, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
         const modelNotes = finalAnnotations.map(({ cardMessage, ...note }) => note)
+        const shownCardNotes = cardAnnotations.map(note => note.message).filter(Boolean)
         const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
@@ -2881,7 +2882,19 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           status: "success",
           message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.${finalAnnotations.length ? ` System notes: ${finalAnnotations.map(a => a.message).join('; ')}` : ''}`,
           pieceNames: resolved.map(p => p.name),
-          ...(modelNotes.length ? { systemNotes: modelNotes } : {})
+          ...(modelNotes.length ? { systemNotes: modelNotes } : {}),
+          // Live thread_1791697835891, two things the stylist was never told and then wrote against.
+          // (a) The card showed "this outfit runs warm for a high of 85°F" while her reply said the
+          // wearer would "stay completely comfortable": she received the finding in the engine's
+          // wording and nothing said the wearer reads it on the card. (b) The look took trousers
+          // from outside the packed suitcase and the reply called it "packed specifically for those
+          // days" (second occurrence; engine map item 74e). Both are stated as facts about what the
+          // wearer sees and what the bag now holds; what to do about them is hers.
+          ...(shownCardNotes.length ? { notesShownOnCard: shownCardNotes, notesShownOnCardMeaning: 'The wearer reads these notes on the card, beside your reply.' } : {}),
+          ...(packingRosterChange?.addedPieces?.length ? {
+            addedToSuitcase: packingRosterChange.addedPieces.map(piece => piece.name),
+            addedToSuitcaseMeaning: 'These were not in the suitcase packed for this trip. This look adds them to it; the traveller has not been told.',
+          } : {}),
         }
       }
       case 'view_pieces': {
@@ -4218,6 +4231,16 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           // same gate-eligibility/duplicate-core/assigned-layer/environmental-hard-gate checks, no
           // parallel validation semantics.
           const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          // A look that names its day (worn_on_date) is noted against that day's own forecast. Resolved
+          // here because validation is synchronous; a day that cannot be resolved changes nothing.
+          {
+            const { resolveSubmittedLookDays } = await import('./outfitSetPlanner.js')
+            pendingPlan.lookDayWeather = await resolveSubmittedLookDays(pendingPlan.slots, sanitizedOutfits)
+            if (pendingPlan.lookDayWeather.size) {
+              toolContext.freeformDiagnostics ||= {}
+              toolContext.freeformDiagnostics.tripLooksDatedToADay = pendingPlan.lookDayWeather.size
+            }
+          }
           let { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, sanitizedOutfits, {
             visuallySeenPieceIds: seenForValidation
           })
@@ -4415,7 +4438,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
             // same list two or three times and no explanation. The final answer is now asked for what
             // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
-            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected, and, where you know the destination, what the place itself is like for these activities and how that shaped the bag (only what you actually know of this specific place; never a guess); (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected, and, where you know the destination, what the place itself is like for these activities and how that shaped the bag (only what you actually know of this specific place; never a guess); (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; when a look has worn_on it was built for that one day, so say which day and what that day is like, its evening included; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
             ...buildTripExplanationEvidence(pendingPlan, planOutfits, {
               declined: (Array.isArray(toolContext.tripCompositionSlotGaps) ? toolContext.tripCompositionSlotGaps : []).map(gap => ({
                 activity: pendingPlan.slots.find(slot => String(slot.id) === String(gap?.slot_id || ''))?.label || '',
@@ -4430,6 +4453,8 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
                 weather: outfit.slotWeather || '',
                 pieceNames: (outfit.pieces || []).map(piece => piece.name),
                 reason: outfit.reason || '',
+                // The day this look is for, when it names one; `weather` above is then that day's.
+                ...(outfit.wornOnDate ? { worn_on: outfit.wornOnDate } : {}),
                 ...(coolEndLayer ? { cool_end_layer: coolEndLayer } : {}),
               }
             })
