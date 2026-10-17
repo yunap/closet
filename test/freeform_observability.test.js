@@ -4539,6 +4539,10 @@ test('propose_outfit merges advisory findings into non-blocking notes in single_
   assert.ok(result.systemNotes?.some(n => n.message.includes('address this trade-off candidly in your final note')))
   assert.ok(!proposed.result?.annotations?.some(a => /final note|Swap to an insulating/.test(a.message)))
   assert.ok(!result.systemNotes?.some(n => 'cardMessage' in n))
+  // thread_1791697835891: the stylist is told which notes the wearer reads on the card, in the card's words.
+  assert.ok(result.notesShownOnCard?.some(note => note.includes('Outdoor conditions call for warmer upper coverage')))
+  assert.ok(!result.notesShownOnCard?.some(note => note.includes('in your final note')), 'the remedy is an instruction to the model, not card text')
+  assert.match(result.notesShownOnCardMeaning, /wearer reads these notes on the card/)
 })
 
 test('propose_outfit merges advisory findings into non-blocking notes in full_stylist', async () => {

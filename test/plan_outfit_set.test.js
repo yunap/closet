@@ -1703,7 +1703,7 @@ test('capsule-only palette/budget/rotation semantics do not leak into trip compo
   // Structural: the trip composition schema carries no palette/category-shape/budget fields.
   const schema = tripPlanCompositionSchema(3)
   const outfitProps = Object.keys(schema.properties.outfits.items.properties)
-  assert.deepEqual(outfitProps.sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title'])
+  assert.deepEqual(outfitProps.sort(), ['cold_layer_decision', 'piece_ids', 'reason', 'slot_id', 'styling_instructions', 'title', 'worn_on_date'])
   // thread_1789585467294: a declined outfit is a top-level slot_gaps entry, not a per-card field —
   // owner ruling 2026-09-16 explicitly rejected a required per-card self-rating (risk of confident
   // post-hoc justification, same failure family as the day-wear explanation experiment).

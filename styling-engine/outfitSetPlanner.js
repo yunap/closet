@@ -122,8 +122,8 @@ function annotateTripOutfit(outfit, slot, index = 0, { slotIndex = 0, slotTotal 
     coverage: slot.coverage || slot.bestFor,
     targetOutfits: slot.targetOutfits || 1,
     tripSummary: slot.tripSummary || null,
-    coveragePosition: `${slot.label} · ${slotIndex + 1} of ${slotTotal}`,
-    slotWeather: weatherLabel,
+    coveragePosition: `${slot.label} · ${slotIndex + 1} of ${slotTotal}${outfit.wornOnDate ? ` · ${shortDate(outfit.wornOnDate)}` : ''}`,
+    slotWeather: outfit.wornOnDate && outfit.weatherUsed ? outfit.weatherUsed : weatherLabel,
     source,
     strength: '',
     mission: '',
@@ -4312,6 +4312,74 @@ function slotNeedsRemovableCoolLayer(slot = {}) {
   return Boolean(weatherProfile.needsRemovableCoolLayer)
 }
 
+// The weather of the one day a trip look says it is for (`worn_on_date`, 2026-10-12, owner-approved:
+// "yes, add the field for the day"). A trip activity with no day of its own is weathered across the
+// whole trip, so a look built for the warm day was noted against the week: live thread_1791778749455
+// showed "a warm or midweight layer is recommended for cool weather" and "no way of wearing this
+// outfit carries enough warmth for the cold end of these conditions" on the two warm-day looks. The
+// day is resolved through the same two steps every slot is (resolveSlotWeather, then
+// resolveStylingContext), dated to that day, so it is that day's whole range — its high and its low.
+// Owner, same day: "remember that day also has a chilly evening" — a warm afternoon does not remove
+// the layer the evening needs, and the day's own low is what says so. Null when the activity has a
+// day of its own, the date is outside the trip, or the forecast does not reach it; the look then
+// keeps the trip-wide reading.
+export async function resolveLookDayWeather(slot = {}, date = '', { fetchImpl } = {}) {
+  const day = String(date || '').slice(0, 10)
+  const context = slot?.weatherProfile?.resolvedWeatherContext
+  const range = context?.dateRange || context?.date_range
+  const start = String(range?.start || '').slice(0, 10)
+  const end = String(range?.end || '').slice(0, 10)
+  if (slot?.dateInherited !== true || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !context?.location || !start || !end || day < start || day > end) return null
+  const datedSlot = { ...slot, date: day, dateInherited: false }
+  const { profile, label } = await resolveSlotWeather(datedSlot, {
+    dateRange: { start: day, end: day },
+    location: context.location,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  })
+  const resolvedDay = profile?.resolvedWeatherContext
+  if (resolvedDay?.status !== 'resolved' || !String(profile?.weatherSource || '').startsWith('live')) return null
+  const stylingContext = await resolveStylingContext({
+    explicitRequest: {
+      occasion: slot.occasion,
+      activity: slot.activity,
+      season: slot.requestedSeason || requestedSeasonForApplicability(slot.transitSeason, slot.season),
+      requestText: [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. '),
+      location: context.location,
+      date: day,
+      weatherProfile: profile,
+    },
+    policy: { allowLiveWeather: false },
+  })
+  return { date: day, weatherProfile: stylingContext.weatherProfile || profile, weatherLabel: `${shortDate(day)}: ${label}` }
+}
+
+// Resolves the day of every submitted look that names one, before validation (which is synchronous).
+// Keyed by slot and date; a look whose day cannot be resolved is simply absent.
+export async function resolveSubmittedLookDays(slots = [], submissions = [], { fetchImpl } = {}) {
+  const slotById = new Map((Array.isArray(slots) ? slots : []).map(slot => [String(slot.id), slot]))
+  const resolved = new Map()
+  for (const submission of Array.isArray(submissions) ? submissions : []) {
+    const day = String(submission?.worn_on_date || '').slice(0, 10)
+    const slotId = String(submission?.slot_id || '')
+    const key = `${slotId}|${day}`
+    if (!day || resolved.has(key) || !slotById.has(slotId)) continue
+    try {
+      const dayWeather = await resolveLookDayWeather(slotById.get(slotId), day, { fetchImpl })
+      if (dayWeather) resolved.set(key, dayWeather)
+    } catch (err) {
+      console.warn('look day weather could not be resolved:', err?.message)
+    }
+  }
+  return resolved
+}
+
+// Some day of this range reaches HOT_F, whether or not the range is hot overall (`isHot`, at least
+// half its days). Read by the candidate pool (warm-weather bottoms are offered) and by the roster
+// check (something packed can be worn that day).
+function weatherProfileReachesHot(profile = {}) {
+  return [profile?.highF, profile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F)
+}
+
 function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
   const normalizedRoster = Array.isArray(roster) ? roster : []
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
@@ -4398,6 +4466,39 @@ function tripRosterFailures(roster = [], { slots = [], pool = [] } = {}) {
       const labels = layerRequiredSlots.map(({ label }) => label).join(', ')
       failures.push({ code: 'missing_removable_cool_layer', message: `missing required removable coverage for slots ${labels}` })
     }
+  }
+
+  // Roster-level warm-day feasibility, the counterpart of the removable-cool-layer check above
+  // (live thread_1791778749455, 2026-10-12; owner: "still missing a bottom that would work for
+  // 85F/80F degree days"). A trip whose forecast holds a day at HOT_F or above in an otherwise mild
+  // week is gated on its typical day, so a suitcase of denim, wool-blend trousers and a wool skirt
+  // passed every check — and on the warm day itself this app's own hot-weather gate refuses every
+  // bottom in it (measured on that suitcase: 2 eligible tops, 0 bottoms, 0 dresses at 87°F), which is
+  // why the follow-up "what do I wear on the 85°F day" had to reach outside the bag
+  // (thread_1791697835891). The packer was told this in words three times (engine map items 13, 51,
+  // 84b) and packed the same way each time. Not a new warmth judgment: the slot is re-asked with that
+  // one day's conditions through the same gate and the same complete-outfit count as every other
+  // use case here. A wardrobe that cannot dress the day at all is a wardrobe gap, not a roster defect.
+  for (const { slot, label } of gateSlots) {
+    const weatherProfile = slot.stylingContext?.weatherProfile || slot.weatherProfile || {}
+    const isIndoor = slot.statedWeather === 'indoor' || slot.environment === 'indoor' || weatherProfile.isIndoor === true
+    if (isIndoor || weatherProfile.isHot || !weatherProfileReachesHot(weatherProfile)) continue
+    const warmDayHighF = Math.max(...[weatherProfile.highF, weatherProfile.transitHighF].filter(Number.isFinite))
+    const warmDayProfile = { weatherSource: weatherProfile.weatherSource || 'live', isHot: true, isCold: false, isColdSevere: false, isExtremeHeat: false, needsRemovableCoolLayer: false, highF: warmDayHighF, lowF: null }
+    const warmDaySlot = { ...slot, weatherProfile: warmDayProfile, stylingContext: { ...(slot.stylingContext || {}), weatherProfile: warmDayProfile } }
+    const coresFrom = pieces => {
+      const eligible = slotGateEligiblePieces(pieces, warmDaySlot, {})
+      return { eligible, cores: capsuleOutfitCoreCapacity(pieces, [{ ...warmDaySlot, gateAllowedIds: idSetForPieces(eligible) }]) }
+    }
+    const packed = coresFrom(normalizedRoster)
+    if (packed.cores > 0) continue
+    if (Array.isArray(pool) && pool.length && coresFrom(pool).cores === 0) continue
+    const count = group => packed.eligible.filter(piece => wardrobeCategoryGroup(piece) === group).length
+    failures.push({
+      code: 'warm_day_uncoverable',
+      message: `${label} includes a day reaching ${Math.round(warmDayHighF)}°F, and nothing packed makes a complete outfit that can be worn at that temperature: of the roster, ${count('top')} top(s), ${count('bottom')} bottom(s), ${count('dress')} dress(es) and ${count('shoes')} shoe(s) are light enough for it. Pack what that day is missing — a piece whose recorded weight and fabric suit that heat — without giving up what the cooler days need.`,
+    })
+    break
   }
 
   // Roster-level cold-floor feasibility (thread_1788516198449): the SET-level check above only asks
@@ -4552,8 +4653,7 @@ export async function selectTripRosterViaModel({
   // do on the day when it's 80F?"). So warm-weather bottoms join the candidates when any day of the
   // trip reaches HOT_F, alongside the fall ones the typical-day reading keeps; which to pack is the
   // packer's call, told by the weather sentence which days are warm.
-  const reachesHot = profile => [profile?.highF, profile?.transitHighF].some(value => Number.isFinite(value) && value >= HOT_F)
-  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || reachesHot(slot?.weatherProfile))
+  const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || weatherProfileReachesHot(slot?.weatherProfile))
   const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
   const benchById = pieceMapForPieces(bench)
 
@@ -4652,6 +4752,15 @@ export async function selectTripRosterViaModel({
   const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: choiceBench }).failures
   if (!secondFailures.length) {
     return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
+  }
+
+  // The repaired suitcase is kept when the warm day is all it still lacks. The fallback below hands
+  // the composer the whole candidate bench, which is right when a use case cannot be dressed at all
+  // and far worse than a good suitcase missing one day's piece; the composer is told to say in a
+  // look's reason when the bag holds nothing for that day.
+  if (second.roster.length && secondFailures.every(failure => failure.code === 'warm_day_uncoverable')) {
+    bump('tripRosterWarmDayUnmet')
+    return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: secondFailures, bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelFallbacks')
@@ -4992,8 +5101,18 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     ...(planKind === 'trip' ? [] : ['At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.']),
     // A 15°F swing spans across adjacent PET comfort bands (e.g. 55°F cool to 70°F mild, or 70°F mild to 85°F warm),
     // where clothing flexibility and layering become physically necessary even when only coarse daily high/low is known.
-    slots.some(s => s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15)))
+    // 2026-10-10 (live thread_1791697835891): a trip activity with no day of its own states the
+    // weather of EVERY day of the trip (38–85°F, "1 of 7 days reaches 80°F or more (Oct 14)"), and
+    // this sentence told the composer to treat that as one day's range and build for its cool end.
+    // All seven looks came back as cool-day outfits under a coat and the owner asked what to wear
+    // on the 85°F day — the third time (engine map items 13 and 51 fixed what was offered and what
+    // was packed; nothing told the composer the range was across days). The sentence is now sent
+    // only for a range that is one day's, and a slot that spans the trip gets the fact below.
+    slots.some(s => s.dateInherited !== true && (s.weatherProfile?.diurnalRange || (Number.isFinite(s.weatherProfile?.highF) && Number.isFinite(s.weatherProfile?.lowF) && (s.weatherProfile.highF - s.weatherProfile.lowF >= 15))))
       ? "When a slot's conditions span a real range across the day rather than one fixed temperature, compose the core outfit for the cooler/more demanding end and account for the warmer end with a removable or packable layer choice — noted explicitly in the outfit's reason text — rather than assuming a single fixed temperature."
+      : '',
+    planKind === 'trip' && slots.some(s => s.dateInherited === true)
+      ? "A slot with no day of its own states the weather of every day of the trip in weather_used, and its looks are worn on different days. That range is not one day's: the sentence says which day is coolest, which is warmest, how many days reach the warm end, and how far a single day swings. A layer that goes on and comes off answers a day's own swing. It does not make an outfit built for the cool days wearable on a day well above them, or the reverse. So between them the looks dress the days the sentence describes: when it names a day well apart from the rest, the traveller still has to get dressed that day, and at least one daytime look is the outfit for it — comfortable at that day's own temperatures from the packed pieces — with worn_on_date set to that day and its reason saying which day it is for. That day has its own cool end as well: a warm afternoon is usually followed by a much cooler evening, so the look is built for the day's high and still says what goes on when it cools. A look that suits the trip's days generally leaves worn_on_date empty. When the suitcase holds nothing that would be comfortable on that day, say so plainly in the reason of the look that comes closest rather than leaving the day unmentioned."
       : '',
     // thread_1788508369689 arc: exposure_conditions deliberately gives only a temperature range
     // (§2684's thermal_demand removal — a styling target must not be dictated), but the cold floor
@@ -5889,10 +6008,30 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         // literal enumeration" means), so it must not be fed into checks that assume it is.
         ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
       })
-      if (Array.isArray(wearableValidation.advisoryFindings) && wearableValidation.advisoryFindings.length) {
-        outfit.systemFlags = advisoryFindingsToSystemFlags(wearableValidation.advisoryFindings)
+      // A look that names its day takes its NOTES and its weather line from that day
+      // (resolveLookDayWeather). Whether it is accepted is still judged against the trip, above and
+      // below: the one-shot trip composer has no second round, and a look must not be lost because
+      // of the day it was offered for.
+      const lookDay = pendingPlan?.lookDayWeather instanceof Map
+        ? pendingPlan.lookDayWeather.get(`${String(slot.id)}|${String(raw?.worn_on_date || '').slice(0, 10)}`)
+        : null
+      const noteValidation = lookDay
+        ? evaluateWearableOutfit(pieces, {
+            requireShoes: true,
+            includeLayerDirections: true,
+            seenPieceIds,
+            weatherContext: { weatherProfile: lookDay.weatherProfile, environment: slot.environment, activity: slot.activity, packingRosterHasLayer },
+            ...(assignedLayers.length ? { environmentPieces: [...pieces, ...assignedLayers] } : {}),
+          })
+        : wearableValidation
+      if (lookDay) {
+        outfit.wornOnDate = lookDay.date
+        outfit.weatherUsed = lookDay.weatherLabel
       }
-      if (tooWarmLayerNotes.length) outfit.systemFlags = [...(outfit.systemFlags || []), ...tooWarmLayerNotes]
+      if (Array.isArray(noteValidation.advisoryFindings) && noteValidation.advisoryFindings.length) {
+        outfit.systemFlags = advisoryFindingsToSystemFlags(noteValidation.advisoryFindings)
+      }
+      if (tooWarmLayerNotes.length && !lookDay) outfit.systemFlags = [...(outfit.systemFlags || []), ...tooWarmLayerNotes]
       // The model receives every typed finding. The rejected card shown to the owner gets one primary
       // thermal explanation: the messages the collapse drops are remembered against this reasons list.
       reasons.push(...wearableValidation.hardFindings.map(finding => finding.message))
