@@ -2676,6 +2676,42 @@ img { display: block; max-width: 100%; }
   border-radius: var(--radius-sm);
 }
 
+.photo-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 8px;
+}
+
+.piece-form-photo-removal .photo-slot-actions { margin-top: 0; }
+
+.photo-replace {
+  padding: 8px 14px;
+  font-size: 13px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.photo-replace input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.photo-slot-hint {
+  color: var(--text-light);
+  font-size: var(--type-caption);
+}
+
+.photo-slot-dragover .photo-preview,
+.photo-slot-dragover .photo-upload,
+.photo-slot-dragover .piece-form-photo-removal {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .photo-slot-hint { display: none; }
+}
+
 .piece-form-ai-help,
 .piece-form-status {
   margin-top: 7px;
