@@ -421,7 +421,9 @@ console. The current implementation preserves every existing metadata field and 
 image pipeline while changing the hierarchy:
 
 - the title identifies the garment being edited;
-- hanger and worn photos remain together, with explicit remove/restore behavior;
+- hanger and worn photos remain together, with explicit remove/restore behavior; a saved photo
+  is replaced in one step (**Replace photo**, or dropping an image on the slot) and still only
+  takes effect on save;
 - owner-recognizable basics remain open;
 - fit and lived-wear notes remain easy to reach;
 - construction/material metadata is grouped under `Garment character`;

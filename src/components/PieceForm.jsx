@@ -315,30 +315,66 @@ function Section({ label }) {
 }
 
 // ── Photo slot ─────────────────────────────────────────────────────────────────
-function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pendingRemoval = false, onRestore }) {
+function PhotoSlot({ label, hint, preview, onPick, onClear, onPreview, pendingRemoval = false, onRestore }) {
+  const [dragOver, setDragOver] = useState(false)
+  // One picker for every state of the slot. Replacing a saved photo used to mean removing it,
+  // saving, and reopening the form, because neither the preview nor the pending-removal state
+  // offered a file input.
+  const pickFrom = e => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (f) onPick(f)
+  }
+  const dropProps = {
+    onDragOver: e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragOver(true) } },
+    onDragLeave: () => setDragOver(false),
+    onDrop: e => {
+      setDragOver(false)
+      if (!e.dataTransfer?.types?.includes('Files')) return
+      // Always claim a file drop, or a non-image dropped here navigates the browser away from the form.
+      e.preventDefault()
+      const f = [...e.dataTransfer.files].find(file => file.type.startsWith('image/'))
+      if (f) onPick(f)
+    },
+  }
+  const replaceButton = text => (
+    <label className="btn-secondary photo-replace">
+      <input type="file" accept="image/*" onChange={pickFrom} />
+      {text}
+    </label>
+  )
   return (
-    <div className="form-group">
+    <div className={`form-group photo-slot${dragOver ? ' photo-slot-dragover' : ''}`} {...dropProps}>
       <div className="form-label piece-form-photo-label">{label}</div>
       {pendingRemoval ? (
         <div className="piece-form-photo-removal">
           <span>{label} will be removed when you save.</span>
-          <button type="button" className="btn-secondary" onClick={onRestore}>Restore</button>
+          <div className="photo-slot-actions">
+            <button type="button" className="btn-secondary" onClick={onRestore}>Restore</button>
+            {replaceButton('Choose a new photo')}
+          </div>
         </div>
       ) : preview ? (
-        <div className="photo-preview">
-          <button
-            type="button"
-            className="photo-preview-open"
-            onClick={onPreview}
-            aria-label={`Open larger ${label.toLowerCase()}`}
-          >
-            <img src={uploadThumbnailSrc(preview, 'garment-display')} alt={label} decoding="async" />
-          </button>
-          <button type="button" className="photo-preview-remove" onClick={onClear} aria-label={`Remove ${label.toLowerCase()}`}>✕</button>
-        </div>
+        <>
+          <div className="photo-preview">
+            <button
+              type="button"
+              className="photo-preview-open"
+              onClick={onPreview}
+              aria-label={`Open larger ${label.toLowerCase()}`}
+            >
+              <img src={uploadThumbnailSrc(preview, 'garment-display')} alt={label} decoding="async" />
+            </button>
+            <button type="button" className="photo-preview-remove" onClick={onClear} aria-label={`Remove ${label.toLowerCase()}`}>✕</button>
+          </div>
+          <div className="photo-slot-actions">
+            {replaceButton('Replace photo')}
+            <span className="photo-slot-hint">or drop a new one here</span>
+          </div>
+        </>
       ) : (
         <label className="photo-upload">
-          <input type="file" accept="image/*" onChange={onChange} />
+          <input type="file" accept="image/*" onChange={pickFrom} />
           <div className="photo-upload-icon" style={{ fontSize: 22, marginBottom: 4 }}>📷</div>
           <div className="photo-upload-text" style={{ fontSize: 12 }}>{label}</div>
           <div className="photo-upload-hint" style={{ fontSize: 12 }}>{hint}</div>
@@ -987,7 +1023,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 label="Hanger photo"
                 hint={isEdit ? 'Ready to update with AI' : 'AI can fill the first draft'}
                 preview={hangerPrev}
-                onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
+                onPick={f => { setDirty(true); setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) }}
                 onClear={() => {
                   setDirty(true)
                   // Clearing a freshly-picked, not-yet-saved file is not the same as removing an
@@ -1019,7 +1055,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               label="Worn photo"
               hint="Adds fit and drape context for the stylist"
               preview={wornPrev}
-              onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setWornFile(f); setWornPrev(URL.createObjectURL(f)); setClearWorn(false) } }}
+              onPick={f => { setDirty(true); setWornFile(f); setWornPrev(URL.createObjectURL(f)); setClearWorn(false) }}
               onClear={() => {
                 setDirty(true)
                 // Same reasoning as the hanger slot above: clearing a freshly-picked file that
