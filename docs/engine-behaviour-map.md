@@ -3254,6 +3254,16 @@ The gpt-4o handoff cost is unchanged (~6–9k input tokens); the image model's o
 returned to the app before or after, and `IMAGE_CALL_FLAT_USD` (`lib/aiCallTelemetry.js`) is a
 constant, not a measurement.
 
+**Amended 2026-10-18 — the collar now reaches the image model.** A Gemini renderer
+(`IMAGE_PROVIDER=gemini`, commit 6ba30c2) was added and reverted the same day (9ad8156) to test
+whether it affected OpenAI renders; with the code byte-identical to before it, the charcoal cropped
+jacket (thread_1791357375231) still rendered as a notch-lapel blazer. Cause: `pieceConstructionChecklist`
+stated silhouette, length, hem, sleeves, fit, tuck, waistband and opacity but never `neckline`, so
+the owner-set `neckline: shawl` was absent while `structured` and the `tweed` fabric were present,
+and gpt-4o's handoff read "structured, waist-length, charcoal tweed". The checklist now adds "keep
+its <neckline> neckline/collar exactly as in the reference photo" for any neckline other than
+none/other/unknown. Gemini, given the same inputs, drew the jacket correctly from the photos.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

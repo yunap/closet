@@ -64,3 +64,11 @@ test('the outfit render says the woman is the calibrated person whenever a real 
   assert.match(plain, /single adult woman/)
   assert.doesNotMatch(plain, /calibration photos/)
 })
+
+test('the construction list states a tagged neckline, so a shawl collar survives the rewrite', () => {
+  const jacket = { id: 250, name: 'charcoal textured cropped jacket', category: 'outerwear', neckline: 'shawl', silhouette: 'structured' }
+  const tee = { id: 2, name: 'plain tee', category: 'top', neckline: 'none' }
+  const prompt = wholeWardrobeImagePrompt({ outfit: { label: 'x' }, pieces: [jacket, tee] })
+  assert.match(prompt, /charcoal textured cropped jacket: [^\n]*keep its shawl neckline\/collar exactly as in the reference photo/)
+  assert.doesNotMatch(prompt, /plain tee: [^\n]*neckline\/collar/)
+})

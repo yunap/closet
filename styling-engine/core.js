@@ -2164,6 +2164,12 @@ function pieceConstructionChecklist(pieces) {
       piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
       piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
       piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
+      // The collar was the one construction fact never stated. Live 2026-10-18 (thread_1791357375231):
+      // the charcoal cropped jacket, neckline set to shawl by the owner, went out as only "structured
+      // … tweed", the gpt-4o handoff kept just that, and every flare render drew a notch-lapel blazer.
+      piece.neckline && !['none', 'other', 'unknown'].includes(String(piece.neckline))
+        ? `keep its ${String(piece.neckline).replaceAll('_', ' ')} neckline/collar exactly as in the reference photo`
+        : '',
       (() => {
         const length = piece.sleeve_length && piece.sleeve_length !== 'sleeveless' ? String(piece.sleeve_length).replaceAll('_', ' ') : ''
         const shape = piece.sleeve_shape && piece.sleeve_shape !== 'other' && piece.sleeve_shape !== 'unknown' ? String(piece.sleeve_shape).replaceAll('_', ' ') : ''
