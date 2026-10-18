@@ -1559,7 +1559,9 @@ export function openAIImageResponseEvidence(response, imageItem) {
 }
 
 export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
-  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium' }
+  // input_fidelity high: the tool ran this render as an edit (imageEvidence action "edit"), where
+  // OpenAI keeps a person's likeness from the input photos only at high fidelity; low is the default.
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium', input_fidelity: 'high' }
 }
 
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {
@@ -2180,7 +2182,7 @@ function pieceConstructionChecklist(pieces) {
   }).join('\n')
 }
 
-export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', hasIdentityReference = false }) {
   const pieceLines = pieces.map((piece, index) => {
     const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
     return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
@@ -2207,8 +2209,16 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     outfit.stylingInstructions ? `Authoritative styling instructions (how these garments relate to each other — follow exactly):\n${outfit.stylingInstructions}` : '',
     '',
     'Person / scene:',
-    '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
-    '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
+    // The identity link used to live only in the calibration images' captions. gpt-4o rewrites
+    // this prompt before the image model sees it, and on 2026-10-17 (thread_1791604684826) the
+    // rewrite kept "a woman" and dropped the captions: figure, build and setting came out generic.
+    // Stated here, in the body the rewrite carries, it reaches the image model.
+    hasIdentityReference
+      ? '- The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model. Full figure visible from head to shoes, no beauty retouching.'
+      : '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
+    hasIdentityReference
+      ? '- Setting like her own calibration photos: a real, lived-in home interior or ordinary natural place in soft daylight, not a studio backdrop. No text, no watermark, no collage labels.'
+      : '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
     '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
     '',
     `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
@@ -2488,7 +2498,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       }
     }
 
-    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }), pieces) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season, hasIdentityReference: calibrationRefs.some(img => img.kind === 'real_photo') }), pieces) })
 
     const gptStartedAt = Date.now()
     const response = await client.responses.create({

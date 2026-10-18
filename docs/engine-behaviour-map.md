@@ -3210,6 +3210,18 @@ also stores `timings.imageEvidence` (`openAIImageResponseEvidence`): the resolve
 OpenAI reports (`response.model`) and the image call's own metadata such as `revised_prompt`,
 never the image bytes — so the next provider-side change is read, not inferred from pictures.
 
+**Amended 2026-10-17, third render — identity now travels in the prompt body.** The `gpt-image-1`
+render restored the garments but drew a stranger: different figure, build and setting. Its
+`imageEvidence` showed why the photos were not enough on their own: gpt-4o's `revised_prompt`
+said only "a woman… neutral or natural background", because the identity link lived solely in the
+calibration images' captions and the rewrite does not carry captions; and the call ran as
+`action: "edit"`, where OpenAI keeps likeness from input photos only at high input fidelity.
+`wholeWardrobeImagePrompt` now takes `hasIdentityReference` (true when a `real_photo` calibration
+image is attached) and, when set, states in its Person / scene lines that the woman is the person
+in those photos and the setting is like theirs. `openAIImageGenerationTool` sends
+`input_fidelity: 'high'` for every producer, which raises image input cost. The other four
+producers' prompts are unchanged; extend them only once a render confirms this works.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

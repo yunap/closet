@@ -13,14 +13,14 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
-const { getOpenAIImageToolModel, openAIImageGenerationTool, openAIImageResponseEvidence } = await import('../styling-engine/core.js')
+const { getOpenAIImageToolModel, openAIImageGenerationTool, openAIImageResponseEvidence, wholeWardrobeImagePrompt } = await import('../styling-engine/core.js')
 const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
 
 test('the image tool names a model by default and honours the override', () => {
   delete process.env.OPENAI_IMAGE_TOOL_MODEL
   assert.equal(getOpenAIImageToolModel(), 'gpt-image-1')
   assert.deepEqual(openAIImageGenerationTool('1024x1536'), {
-    type: 'image_generation', model: 'gpt-image-1', size: '1024x1536', quality: 'medium',
+    type: 'image_generation', model: 'gpt-image-1', size: '1024x1536', quality: 'medium', input_fidelity: 'high',
   })
   process.env.OPENAI_IMAGE_TOOL_MODEL = 'gpt-image-2'
   assert.equal(openAIImageGenerationTool('1024x1024').model, 'gpt-image-2')
@@ -53,4 +53,14 @@ test('each render keeps what OpenAI reports it ran, without the image bytes', ()
   const recorded = (coreSource.match(/timings\.imageEvidence = /g) || []).length
   const sizeRecords = (coreSource.match(/timings\.imageSize = /g) || []).length
   assert.equal(recorded, sizeRecords)
+})
+
+test('the outfit render says the woman is the calibrated person whenever a real photo is attached', () => {
+  const pieces = [{ id: 1, name: 'grey linen wide-leg trousers', category: 'bottom' }]
+  const anchored = wholeWardrobeImagePrompt({ outfit: { label: 'x' }, pieces, hasIdentityReference: true })
+  assert.match(anchored, /The woman is the person in the identity\/proportion calibration photos/)
+  assert.doesNotMatch(anchored, /single adult woman/)
+  const plain = wholeWardrobeImagePrompt({ outfit: { label: 'x' }, pieces })
+  assert.match(plain, /single adult woman/)
+  assert.doesNotMatch(plain, /calibration photos/)
 })
