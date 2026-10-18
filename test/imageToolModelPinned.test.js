@@ -50,7 +50,7 @@ test('each render keeps what OpenAI reports it ran, without the image bytes', ()
     responseModel: 'gpt-4o-2024-08-06',
     imageCall: { type: 'image_generation_call', id: 'ig_1', revised_prompt: 'a woman in grey' },
   })
-  const recorded = (coreSource.match(/timings\.imageEvidence = /g) || []).length
+  const recorded = (coreSource.match(/timings\.imageEvidence = (openAIImageResponseEvidence\(|imageEvidence\b)/g) || []).length
   const sizeRecords = (coreSource.match(/timings\.imageSize = /g) || []).length
   assert.equal(recorded, sizeRecords)
 })
