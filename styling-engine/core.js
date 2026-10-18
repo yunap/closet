@@ -1559,9 +1559,12 @@ export function openAIImageResponseEvidence(response, imageItem) {
 }
 
 export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
-  // input_fidelity high: the tool ran this render as an edit (imageEvidence action "edit"), where
-  // OpenAI keeps a person's likeness from the input photos only at high fidelity; low is the default.
-  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium', input_fidelity: 'high' }
+  // action generate: unset, the tool chose "edit" for every 2026-10-17 render (imageEvidence) and
+  // repainted one input photo — the third render kept the grey trousers' worn-photo room, door and
+  // stairs, and a generic figure grown from that deliberately low-resolution photo. These renders
+  // compose a new picture from all the references; none of them is a base to edit.
+  // input_fidelity high: how closely the references' likeness is held; low is the default.
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), action: 'generate', size, quality: 'medium', input_fidelity: 'high' }
 }
 
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {

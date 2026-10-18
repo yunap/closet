@@ -20,7 +20,7 @@ test('the image tool names a model by default and honours the override', () => {
   delete process.env.OPENAI_IMAGE_TOOL_MODEL
   assert.equal(getOpenAIImageToolModel(), 'gpt-image-1')
   assert.deepEqual(openAIImageGenerationTool('1024x1536'), {
-    type: 'image_generation', model: 'gpt-image-1', size: '1024x1536', quality: 'medium', input_fidelity: 'high',
+    type: 'image_generation', model: 'gpt-image-1', action: 'generate', size: '1024x1536', quality: 'medium', input_fidelity: 'high',
   })
   process.env.OPENAI_IMAGE_TOOL_MODEL = 'gpt-image-2'
   assert.equal(openAIImageGenerationTool('1024x1024').model, 'gpt-image-2')

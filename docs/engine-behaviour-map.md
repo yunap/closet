@@ -3222,6 +3222,15 @@ in those photos and the setting is like theirs. `openAIImageGenerationTool` send
 `input_fidelity: 'high'` for every producer, which raises image input cost. The other four
 producers' prompts are unchanged; extend them only once a render confirms this works.
 
+**Amended 2026-10-17, fourth render — the tool was editing a photo, not composing.** With the
+identity line now carried by the rewrite (its `revised_prompt` said the woman "matches the
+identity/proportion calibration photos"), the render still drew a generic figure — standing in the
+grey linen trousers' worn-photo room: same white door, stairs and wood floor. Every render that
+night reported `action: "edit"`: left unset, the tool chose to repaint one input photo, here a worn
+photo sent at deliberately low resolution, rather than compose from all references. The Oct 9
+render's setting matches none of the input photos, consistent with a fresh generation.
+`openAIImageGenerationTool` now sends `action: 'generate'` for every producer.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only
