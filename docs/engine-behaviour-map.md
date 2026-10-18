@@ -3264,16 +3264,6 @@ and gpt-4o's handoff read "structured, waist-length, charcoal tweed". The checkl
 its <neckline> neckline/collar exactly as in the reference photo" for any neckline other than
 none/other/unknown. Gemini, given the same inputs, drew the jacket correctly from the photos.
 
-**Amended 2026-10-18 — the outfit's own prose is no longer sent to the image model.**
-`wholeWardrobeImagePrompt` used to include the card's label, direction, silhouette and reason (the
-reason labelled "Non-authoritative styling intent" since #188). gpt-4o's handoff carried them as
-instruction anyway: in thread_1788501349296, "Museum Tailored Wool … tailored straight trousers"
-turned casual cotton-twill trousers into creased wool ones, and in thread_1791357375231 the label
-was printed on the image. Those four lines are removed; the styling instructions (how garments
-relate) and the watch-for note stay. A same-code comparison that night showed the other lever: a
-garment whose own `reads_as` names its distinctive detail (the cardigan's "contrast draped
-pointelle lapel") renders correctly, while a generic one ("casual textured outerwear") does not.
-
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only
