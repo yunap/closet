@@ -391,6 +391,13 @@ test('CRUD operations for /api/chat-threads', async () => {
   assert.equal(detail.id, threadId)
   assert.deepEqual(detail.payload, payload)
 
+  // Rows keyed by this thread's id, plus another thread's, to prove only this thread's go
+  const otherId = threadId + '_other'
+  for (const id of [threadId, otherId]) {
+    db.prepare("INSERT INTO stylist_conversation_state (session_id, state_json) VALUES (?, '{}')").run(id)
+    db.prepare('INSERT INTO freeform_generation_runs (session_id) VALUES (?)').run(id)
+  }
+
   // Delete Thread
   const deleteRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`, {
     method: 'DELETE'
@@ -400,6 +407,11 @@ test('CRUD operations for /api/chat-threads', async () => {
   // Verify Deleted
   const getRes2 = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)
   assert.equal(getRes2.status, 404)
+  const count = (table, id) => db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE session_id = ?`).get(id).n
+  assert.equal(count('stylist_conversation_state', threadId), 0)
+  assert.equal(count('freeform_generation_runs', threadId), 0)
+  assert.equal(count('stylist_conversation_state', otherId), 1)
+  assert.equal(count('freeform_generation_runs', otherId), 1)
 })
 
 test('Pinning, archiving, unpinning, unarchiving, and metadata checks for /api/chat-threads', async () => {

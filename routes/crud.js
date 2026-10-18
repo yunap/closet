@@ -1878,7 +1878,16 @@ function threadOwnedUploadFilenames(payloadText) {
 router.delete('/chat-threads/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT payload FROM chat_threads WHERE id = ?').get(req.params.id)
-    const result = db.prepare('DELETE FROM chat_threads WHERE id = ?').run(req.params.id)
+    // The thread's conversation state and per-turn telemetry are keyed by its id and have no reader
+    // once it is gone. ai_call_log rows are kept on purpose: they are the cost history.
+    const result = db.transaction(() => {
+      const deleted = db.prepare('DELETE FROM chat_threads WHERE id = ?').run(req.params.id)
+      if (deleted.changes > 0) {
+        db.prepare('DELETE FROM stylist_conversation_state WHERE session_id = ?').run(req.params.id)
+        db.prepare('DELETE FROM freeform_generation_runs WHERE session_id = ?').run(req.params.id)
+      }
+      return deleted
+    })()
     if (result.changes === 0) return res.status(404).json({ error: 'Not found' })
     for (const filename of threadOwnedUploadFilenames(row?.payload)) {
       try {
