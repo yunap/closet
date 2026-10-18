@@ -3254,21 +3254,6 @@ The gpt-4o handoff cost is unchanged (~6–9k input tokens); the image model's o
 returned to the app before or after, and `IMAGE_CALL_FLAT_USD` (`lib/aiCallTelemetry.js`) is a
 constant, not a measurement.
 
-**Amended 2026-10-18 — Gemini as an alternative single-outfit renderer.** `IMAGE_PROVIDER=gemini`
-(with a Gemini key; otherwise OpenAI as before) sends `createWholeWardrobeOutfitImage` to Google's
-image model through `renderWithGeminiImageModel` (`styling-engine/geminiImage.js`): one
-`interactions.create` call with the same content parts the OpenAI path builds, converted by
-`openAIContentPartsToGeminiInput`, so the prompt reaches the image model verbatim. Defaults:
-`gemini-nano-banana-2.1` (`GEMINI_IMAGE_MODEL`), 2:3 at 2K (`GEMINI_IMAGE_SIZE`). Google documents
-up to 14 references, 10 object images and 4 "images of characters"; a four-garment render sends 10
-images, six showing the owner, and nothing is trimmed because "character" is undefined and an
-excess is not documented as an error — the first paid render decides. Unlike the OpenAI path, the
-cost is computed: `estimateGeminiImageCostUsd` prices Google's reported tokens at its published
-rates (thinking tokens as output), stored as `timings.estimatedCostUsd`, logged with `logAiCall`,
-and shown by the chat's cost line in place of the OpenAI rate card. `timings.imageEvidence` holds
-Google's model, status, usage and any text it returned. The mock-AI and photo-preserving checks
-still run first, so the sandbox never reaches it; the other four producers are unchanged.
-
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

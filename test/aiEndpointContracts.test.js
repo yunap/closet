@@ -1734,9 +1734,7 @@ test('whole-wardrobe outfit image button requests AI render instead of preview c
   assert.match(routeSrc, /renderMode = ''/)
   assert.match(routeSrc, /forceAi: renderMode === 'ai'/)
   assert.match(coreSrc, /forceAi = false/)
-  // The missing-key collage applies to the provider actually rendering: with IMAGE_PROVIDER=gemini
-  // the single render needs a Gemini key, not an OpenAI one (styling-engine/geminiImage.js).
-  assert.match(coreSrc, /mockAiEnabled\(\) \|\| \(!forceAi && photoPreservingVisualsEnabled\(\)\) \|\| \(imageProvider === 'openai' && !hasOpenAiKey\(\)\)/)
+  assert.match(coreSrc, /mockAiEnabled\(\) \|\| \(!forceAi && photoPreservingVisualsEnabled\(\)\) \|\| !hasOpenAiKey\(\)/)
 })
 
 test('whole-wardrobe comparison sheet endpoint returns a preview board artifact', async () => {

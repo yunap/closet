@@ -19,16 +19,14 @@ flowchart TD
     D --> E
     E -->|"yes"| F["Local photo collage<br/>garment photos — no model"]
     E -->|"no (default)"| G{{"Image · GPT-4o<br/>render the look / sheet"}}
-    E -->|"single look, IMAGE_PROVIDER=gemini"| H{{"Image · Gemini<br/>render the look"}}
     F --> OUT["Show image in chat"]
     G --> OUT
-    H --> OUT
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
     class A,B,C,D,F,OUT app;
-    class G,H model;
+    class G model;
     class E check;
 ```
 
@@ -65,12 +63,6 @@ Engineer notes:
 - **Single render** (`createWholeWardrobeOutfitImage`, `core.js:2199`): up to 6
   pieces; GPT-4o `image_generation` fed the garment reference photos, or a
   `createPhotoPreservingCollageImage` collage when the flag/key dictates.
-  **Amended 2026-10-18:** with `IMAGE_PROVIDER=gemini` and a Gemini key, the
-  single render instead makes one call to Google's image model
-  (`renderWithGeminiImageModel`, `styling-engine/geminiImage.js`; default
-  `gemini-nano-banana-2.1`, 2:3 at 2K). It receives the same photos, captions
-  and prompt in the same order, with no gpt-4o rewrite step in between. Off by
-  default; the sheet and the other image flows stay on GPT-4o.
 - **Sheet render** (`createWholeWardrobeComparisonSheetImage`, `core.js:2289`):
   takes 2–5 normalized outfits (each ≥ 2 saved pieces, deduped, capped at 6
   pieces; ≤ 30 distinct pieces total), and lays them out as one preview sheet —
