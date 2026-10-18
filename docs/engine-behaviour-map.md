@@ -3231,6 +3231,15 @@ photo sent at deliberately low resolution, rather than compose from all referenc
 render's setting matches none of the input photos, consistent with a fresh generation.
 `openAIImageGenerationTool` now sends `action: 'generate'` for every producer.
 
+**Amended 2026-10-17, fifth render — two of the night's changes reverted.** The generate-mode render
+(thread_1791359199659) drew a fresh picture but set it in the owner's own living room, copied from a
+calibration photo because the Person / scene line asked for "a setting like her calibration
+photos"; that line is back to the original neutral/natural background. `input_fidelity: 'high'` is
+removed too: it holds detail from every input photo, worn references included, which undoes the
+deliberate worn-photo downscale (`WORN_REFERENCE_MAX_PX`) against face bleed, and it was never set
+when renders looked right. Kept: the `gpt-image-1` pin, `action: 'generate'`, the identity line
+for the person, and `imageEvidence`. Calibration selection stays random by owner ruling.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

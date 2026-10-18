@@ -1563,8 +1563,10 @@ export function openAIImageGenerationTool(size = getOpenAIImageSize('generate'))
   // repainted one input photo — the third render kept the grey trousers' worn-photo room, door and
   // stairs, and a generic figure grown from that deliberately low-resolution photo. These renders
   // compose a new picture from all the references; none of them is a base to edit.
-  // input_fidelity high: how closely the references' likeness is held; low is the default.
-  return { type: 'image_generation', model: getOpenAIImageToolModel(), action: 'generate', size, quality: 'medium', input_fidelity: 'high' }
+  // input_fidelity is left at its default (low). High was tried the same night and removed: it holds
+  // detail from every input photo, worn references included, undoing the deliberate worn-photo
+  // downscale (WORN_REFERENCE_MAX_PX) that stops a worn photo's face bleeding into the render.
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), action: 'generate', size, quality: 'medium' }
 }
 
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {
@@ -2219,9 +2221,9 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     hasIdentityReference
       ? '- The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model. Full figure visible from head to shoes, no beauty retouching.'
       : '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
-    hasIdentityReference
-      ? '- Setting like her own calibration photos: a real, lived-in home interior or ordinary natural place in soft daylight, not a studio backdrop. No text, no watermark, no collage labels.'
-      : '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
+    // A "setting like her calibration photos" variant was tried and removed the same night: the
+    // render copied her living room from one of them.
+    '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
     '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
     '',
     `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
