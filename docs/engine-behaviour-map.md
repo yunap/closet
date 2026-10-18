@@ -3200,9 +3200,15 @@ was never fixed here. Every producer now builds the tool with `openAIImageGenera
 model comes from `getOpenAIImageToolModel` (default `gpt-image-1.5`, override
 `OPENAI_IMAGE_TOOL_MODEL`), and records it as `timings.imageModel`. This is **not**
 `OPENAI_IMAGE_MODEL`, which still drives only the `runOpenAIImageGeneration` fallback chain below.
-Which model produced the earlier look is not recorded anywhere; the default is the best guess and
-awaits one owner-approved render. A third-party report (unverified against OpenAI's changelog)
-puts `gpt-image-1.5` retirement at 2026-12-01, so the default will need revisiting.
+Which model produced the earlier look is not recorded anywhere.
+
+**Amended 2026-10-17, later — first pin was wrong.** The first default, `gpt-image-1.5`, was a
+guess; its one render (same thread, 23:06) drew a different, younger woman with the head cropped
+out of frame. The default is now **`gpt-image-1`**: the only model the tool's type lists in the
+openai SDK this app was tuned against (4.104), and the tool's documented default then. Each render
+also stores `timings.imageEvidence` (`openAIImageResponseEvidence`): the resolved mainline snapshot
+OpenAI reports (`response.model`) and the image call's own metadata such as `revised_prompt`,
+never the image bytes — so the next provider-side change is read, not inferred from pictures.
 
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to

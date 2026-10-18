@@ -13,14 +13,14 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
-const { getOpenAIImageToolModel, openAIImageGenerationTool } = await import('../styling-engine/core.js')
+const { getOpenAIImageToolModel, openAIImageGenerationTool, openAIImageResponseEvidence } = await import('../styling-engine/core.js')
 const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
 
 test('the image tool names a model by default and honours the override', () => {
   delete process.env.OPENAI_IMAGE_TOOL_MODEL
-  assert.equal(getOpenAIImageToolModel(), 'gpt-image-1.5')
+  assert.equal(getOpenAIImageToolModel(), 'gpt-image-1')
   assert.deepEqual(openAIImageGenerationTool('1024x1536'), {
-    type: 'image_generation', model: 'gpt-image-1.5', size: '1024x1536', quality: 'medium',
+    type: 'image_generation', model: 'gpt-image-1', size: '1024x1536', quality: 'medium',
   })
   process.env.OPENAI_IMAGE_TOOL_MODEL = 'gpt-image-2'
   assert.equal(openAIImageGenerationTool('1024x1024').model, 'gpt-image-2')
@@ -39,4 +39,18 @@ test('every render that records its image size also records the model it asked f
   const modelRecords = (coreSource.match(/timings\.imageModel = getOpenAIImageToolModel\(\)/g) || []).length
   assert.ok(sizeRecords > 0)
   assert.equal(modelRecords, sizeRecords)
+})
+
+test('each render keeps what OpenAI reports it ran, without the image bytes', () => {
+  const evidence = openAIImageResponseEvidence(
+    { model: 'gpt-4o-2024-08-06' },
+    { type: 'image_generation_call', id: 'ig_1', result: 'BASE64', revised_prompt: 'a woman in grey' },
+  )
+  assert.deepEqual(evidence, {
+    responseModel: 'gpt-4o-2024-08-06',
+    imageCall: { type: 'image_generation_call', id: 'ig_1', revised_prompt: 'a woman in grey' },
+  })
+  const recorded = (coreSource.match(/timings\.imageEvidence = /g) || []).length
+  const sizeRecords = (coreSource.match(/timings\.imageSize = /g) || []).length
+  assert.equal(recorded, sizeRecords)
 })

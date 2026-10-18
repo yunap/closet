@@ -1543,8 +1543,19 @@ export function getOpenAIImageSize(kind = 'generate') {
 // size all unchanged. Naming the model keeps a provider-side default change from silently
 // replacing the tuned look; OPENAI_IMAGE_TOOL_MODEL overrides it. Separate from
 // OPENAI_IMAGE_MODEL, which only drives runOpenAIImageGeneration's fallback chain.
+// gpt-image-1 because it is the only model the tool's type lists in the openai SDK this app was
+// tuned against (4.104), and the tool's documented default then. A first pin to gpt-image-1.5
+// rendered a different, younger woman with the head cropped out of frame (same thread, 23:06).
 export function getOpenAIImageToolModel() {
-  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-1.5'
+  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-1'
+}
+
+// What OpenAI reports it actually ran, as opposed to what was asked: the resolved mainline
+// snapshot and the image call's own metadata (revised_prompt and the like), never the image bytes.
+// Without this, a provider-side change can only be inferred from how the pictures look.
+export function openAIImageResponseEvidence(response, imageItem) {
+  const { result, ...call } = imageItem || {}
+  return { responseModel: response?.model || null, imageCall: call }
 }
 
 export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
@@ -2391,6 +2402,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
@@ -2490,6 +2502,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
@@ -2603,6 +2616,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
 
     const rawBuffer = Buffer.from(imageItem.result, 'base64')
@@ -2790,6 +2804,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
@@ -3890,7 +3905,7 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
   if (!imageItem?.result) {
     throw new Error('GPT-4o Responses API did not return an image_generation_call result')
   }
-  return { result: imageItem.result, usage: response.usage }
+  return { result: imageItem.result, usage: response.usage, imageEvidence: openAIImageResponseEvidence(response, imageItem) }
 }
 
 export async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
@@ -4004,7 +4019,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
-    const { result: base64Result, usage } = await runGPT4oImageGeneration({
+    const { result: base64Result, usage, imageEvidence } = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
@@ -4016,6 +4031,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     timings.usage = usage
     timings.imageSize = getOpenAIImageSize('generate')
     timings.imageModel = getOpenAIImageToolModel()
+    timings.imageEvidence = imageEvidence
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
