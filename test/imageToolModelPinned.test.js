@@ -18,9 +18,9 @@ const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.m
 
 test('the image tool names a model by default and honours the override', () => {
   delete process.env.OPENAI_IMAGE_TOOL_MODEL
-  assert.equal(getOpenAIImageToolModel(), 'gpt-image-1')
+  assert.equal(getOpenAIImageToolModel(), 'gpt-image-2.5-flare')
   assert.deepEqual(openAIImageGenerationTool('1024x1536'), {
-    type: 'image_generation', model: 'gpt-image-1', action: 'generate', size: '1024x1536', quality: 'medium',
+    type: 'image_generation', model: 'gpt-image-2.5-flare', size: '1024x1536', quality: 'medium',
   })
   process.env.OPENAI_IMAGE_TOOL_MODEL = 'gpt-image-2'
   assert.equal(openAIImageGenerationTool('1024x1024').model, 'gpt-image-2')

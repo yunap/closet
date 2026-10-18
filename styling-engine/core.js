@@ -1546,8 +1546,13 @@ export function getOpenAIImageSize(kind = 'generate') {
 // gpt-image-1 because it is the only model the tool's type lists in the openai SDK this app was
 // tuned against (4.104), and the tool's documented default then. A first pin to gpt-image-1.5
 // rendered a different, younger woman with the head cropped out of frame (same thread, 23:06).
+// gpt-image-1 restored the garments but not the person, and forcing action "generate" on it drew a
+// blonde stranger whose revised_prompt asked to match the calibration photos. OpenAI's image guide
+// now names only gpt-image-2.5-sunburst ("editing precision") and gpt-image-2.5-flare ("fast,
+// high-quality everyday image generation") and calls the rest "Earlier GPT Image models"; these
+// renders compose a new picture, so flare.
 export function getOpenAIImageToolModel() {
-  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-1'
+  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-2.5-flare'
 }
 
 // What OpenAI reports it actually ran, as opposed to what was asked: the resolved mainline
@@ -1559,14 +1564,14 @@ export function openAIImageResponseEvidence(response, imageItem) {
 }
 
 export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
-  // action generate: unset, the tool chose "edit" for every 2026-10-17 render (imageEvidence) and
-  // repainted one input photo — the third render kept the grey trousers' worn-photo room, door and
-  // stairs, and a generic figure grown from that deliberately low-resolution photo. These renders
-  // compose a new picture from all the references; none of them is a base to edit.
+  // action is left to the tool (auto). Under gpt-image-1 auto chose "edit" and repainted one input
+  // photo (the grey trousers' worn-photo room, 2026-10-17), and forcing "generate" ignored the
+  // photos entirely (a blonde stranger). Whether the current model needs either is read from
+  // imageEvidence.imageCall.action, not guessed.
   // input_fidelity is left at its default (low). High was tried the same night and removed: it holds
   // detail from every input photo, worn references included, undoing the deliberate worn-photo
   // downscale (WORN_REFERENCE_MAX_PX) that stops a worn photo's face bleeding into the render.
-  return { type: 'image_generation', model: getOpenAIImageToolModel(), action: 'generate', size, quality: 'medium' }
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium' }
 }
 
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {

@@ -3240,6 +3240,15 @@ deliberate worn-photo downscale (`WORN_REFERENCE_MAX_PX`) against face bleed, an
 when renders looked right. Kept: the `gpt-image-1` pin, `action: 'generate'`, the identity line
 for the person, and `imageEvidence`. Calibration selection stays random by owner ruling.
 
+**Amended 2026-10-17, sixth render — current model, auto action.** Forcing `action: 'generate'` on
+`gpt-image-1` drew a blonde stranger with the outfit label printed in the image, although its
+`revised_prompt` asked to match the calibration photos' face, hair and build: under gpt-4o's tool,
+`gpt-image-1` either repainted one photo (`edit`) or ignored them (`generate`). OpenAI's image
+guide now names only `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` ("Earlier GPT Image models"
+for the rest) and documents `action: "auto"` as the model's own choice. The default is now
+`gpt-image-2.5-flare` and `action` is no longer sent. The gpt-4o path chosen on 2026-05-16
+(commit 80fdb204, for its reference photos) is kept; the guide gives no price for either model.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only
