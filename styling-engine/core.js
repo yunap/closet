@@ -2227,10 +2227,11 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
     '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
     '',
-    `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
-    outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
-    outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-    outfit.reason ? `Non-authoritative styling intent: ${outfit.reason}` : '',
+    // The outfit's label, direction, silhouette and reason are the stylist's own words about the
+    // look, and are not sent. gpt-4o's handoff carried them to the image model as instructions despite
+    // the "intent notes only" rule above: live 2026-10-18 (thread_1788501349296) "Museum Tailored
+    // Wool … tailored straight trousers" turned casual cotton twill trousers into creased wool ones,
+    // and in thread_1791357375231 the label was printed on the image.
     outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
     `Occasion: ${occasion}. Season: ${season}.`,
     '',

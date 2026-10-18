@@ -233,7 +233,10 @@ test('generated outfit image prompt treats garment truth as authoritative over c
   assert.match(prompt, /Structured garment fields and reference images are authoritative/)
   assert.match(prompt, /preserve its oversized silhouette; keep its hip length; show its complete design hem; render its fit as hangs straight/)
   assert.match(prompt, /wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in/)
-  assert.match(prompt, /Non-authoritative styling intent: Tuck the shirt/)
+  // Card prose used to be sent labelled non-authoritative (#188); gpt-4o's handoff still carried it
+  // to the image model as instruction (2026-10-18), so it is no longer sent at all.
+  assert.doesNotMatch(prompt, /Tuck the shirt/)
+  assert.doesNotMatch(prompt, /Outfit label:|Gallery/)
   assert.match(prompt, /Final render check: the visible outfit must satisfy every authoritative garment-construction direction/)
   assert.doesNotMatch(prompt, /Stylist mechanics:/)
 })
@@ -259,7 +262,7 @@ test('generated outfit image prompt treats styling_instructions as authoritative
 
   assert.match(prompt, /Authoritative styling instructions \(how these garments relate to each other — follow exactly\):\nOpen cardigan over the dress, then belt over the cardigan at the natural waist\./)
   assert.match(prompt, /Final render check: the visible outfit must satisfy every authoritative garment-construction direction and the authoritative styling instructions \(if present\) above/)
-  assert.match(prompt, /Non-authoritative styling intent: A soft, elevated layered look\./)
+  assert.doesNotMatch(prompt, /A soft, elevated layered look/)
 })
 
 test('generated outfit image prompt omits the styling_instructions section when the field is absent', () => {
