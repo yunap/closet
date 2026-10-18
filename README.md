@@ -77,6 +77,7 @@ Optional image settings are read by the server when present, including:
 
 ```env
 OPENAI_IMAGE_MODEL=
+OPENAI_IMAGE_TOOL_MODEL=
 OPENAI_IMAGE_SIZE=
 OPENAI_EDITORIAL_IMAGE_SIZE=
 OPENAI_IDENTITY_IMAGE_SIZE=

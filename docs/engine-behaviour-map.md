@@ -3191,6 +3191,19 @@ All five call `client.responses.create` with **`model: 'gpt-4o'`** and
 `tools: [{ type: 'image_generation', size, quality: 'medium' }]`. Quality is hard-coded. Size
 resolves to **1024x1536** by default (`OPENAI_EDITORIAL_IMAGE_SIZE` / `OPENAI_IMAGE_SIZE` override).
 
+**Amended 2026-10-17 — the image tool now names its model.** Until this date the tool was sent no
+`model`, so OpenAI chose which GPT Image model drew every render. Renders from August to
+2026-10-09 share one photoreal look; both renders of thread_1791604684826 on 2026-10-17 came back
+warm-cast, airbrushed and with a generic face while the code, the calibration library, renderer
+memory and input token count were all unchanged — a provider-side choice is the one input that
+was never fixed here. Every producer now builds the tool with `openAIImageGenerationTool`, whose
+model comes from `getOpenAIImageToolModel` (default `gpt-image-1.5`, override
+`OPENAI_IMAGE_TOOL_MODEL`), and records it as `timings.imageModel`. This is **not**
+`OPENAI_IMAGE_MODEL`, which still drives only the `runOpenAIImageGeneration` fallback chain below.
+Which model produced the earlier look is not recorded anywhere; the default is the best guess and
+awaits one owner-approved render. A third-party report (unverified against OpenAI's changelog)
+puts `gpt-image-1.5` retirement at 2026-12-01, so the default will need revisiting.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

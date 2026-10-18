@@ -1536,6 +1536,21 @@ export function getOpenAIImageSize(kind = 'generate') {
     : (process.env.OPENAI_EDITORIAL_IMAGE_SIZE || process.env.OPENAI_IMAGE_SIZE || '1024x1536')
 }
 
+// The gpt-4o renderers hand the drawing to OpenAI's image_generation tool. Until 2026-10-17 that
+// tool was sent no model, so OpenAI chose it: renders from August to 2026-10-09 share one
+// photoreal look, and both renders of thread_1791604684826 on 2026-10-17 came back warm-cast,
+// airbrushed and with a generic face, with code, calibration library, renderer memory and input
+// size all unchanged. Naming the model keeps a provider-side default change from silently
+// replacing the tuned look; OPENAI_IMAGE_TOOL_MODEL overrides it. Separate from
+// OPENAI_IMAGE_MODEL, which only drives runOpenAIImageGeneration's fallback chain.
+export function getOpenAIImageToolModel() {
+  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-1.5'
+}
+
+export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium' }
+}
+
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {
   let lastError = null
   for (const model of getOpenAIImageFallbackModels()) {
@@ -2368,11 +2383,12 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2466,11 +2482,12 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2578,11 +2595,12 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2764,11 +2782,12 @@ export async function createIdealAdditionsComparisonSheetImage({
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
@@ -3864,7 +3883,7 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
   const response = await client.responses.create({
     model: 'gpt-4o',
     input: [{ role: 'user', content: contentParts }],
-    tools: [{ type: 'image_generation', size, quality: 'medium' }]
+    tools: [openAIImageGenerationTool(size)]
   })
  
   const imageItem = response.output?.find(item => item.type === 'image_generation_call')
@@ -3996,6 +4015,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
     timings.usage = usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
