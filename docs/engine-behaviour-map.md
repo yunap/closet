@@ -3247,7 +3247,12 @@ for the person, and `imageEvidence`. Calibration selection stays random by owner
 guide now names only `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` ("Earlier GPT Image models"
 for the rest) and documents `action: "auto"` as the model's own choice. The default is now
 `gpt-image-2.5-flare` and `action` is no longer sent. The gpt-4o path chosen on 2026-05-16
-(commit 80fdb204, for its reference photos) is kept; the guide gives no price for either model.
+(commit 80fdb204, for its reference photos) is kept; the guide gives no price for either model. **Confirmed by the owner the same night:** three flare
+renders looked right again, still with `action: "edit"` chosen by the tool, so the model was the
+fix and the action needs no override. Flare also halved render time (16–18 s against 32–41 s).
+The gpt-4o handoff cost is unchanged (~6–9k input tokens); the image model's own charge is not
+returned to the app before or after, and `IMAGE_CALL_FLAT_USD` (`lib/aiCallTelemetry.js`) is a
+constant, not a measurement.
 
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to

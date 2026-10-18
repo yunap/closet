@@ -1536,21 +1536,11 @@ export function getOpenAIImageSize(kind = 'generate') {
     : (process.env.OPENAI_EDITORIAL_IMAGE_SIZE || process.env.OPENAI_IMAGE_SIZE || '1024x1536')
 }
 
-// The gpt-4o renderers hand the drawing to OpenAI's image_generation tool. Until 2026-10-17 that
-// tool was sent no model, so OpenAI chose it: renders from August to 2026-10-09 share one
-// photoreal look, and both renders of thread_1791604684826 on 2026-10-17 came back warm-cast,
-// airbrushed and with a generic face, with code, calibration library, renderer memory and input
-// size all unchanged. Naming the model keeps a provider-side default change from silently
-// replacing the tuned look; OPENAI_IMAGE_TOOL_MODEL overrides it. Separate from
-// OPENAI_IMAGE_MODEL, which only drives runOpenAIImageGeneration's fallback chain.
-// gpt-image-1 because it is the only model the tool's type lists in the openai SDK this app was
-// tuned against (4.104), and the tool's documented default then. A first pin to gpt-image-1.5
-// rendered a different, younger woman with the head cropped out of frame (same thread, 23:06).
-// gpt-image-1 restored the garments but not the person, and forcing action "generate" on it drew a
-// blonde stranger whose revised_prompt asked to match the calibration photos. OpenAI's image guide
-// now names only gpt-image-2.5-sunburst ("editing precision") and gpt-image-2.5-flare ("fast,
-// high-quality everyday image generation") and calls the rest "Earlier GPT Image models"; these
-// renders compose a new picture, so flare.
+// The gpt-4o renderers hand the drawing to OpenAI's image_generation tool. Until 2026-10-17 it was
+// sent no model, so OpenAI chose one, and a provider-side change silently replaced the tuned look
+// (thread_1791604684826). gpt-image-2.5-flare restored it; gpt-image-1 and gpt-image-1.5 did not.
+// The night's attempts are in docs/engine-behaviour-map.md, "The producers". OPENAI_IMAGE_TOOL_MODEL
+// overrides; OPENAI_IMAGE_MODEL only drives runOpenAIImageGeneration's fallback chain.
 export function getOpenAIImageToolModel() {
   return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-2.5-flare'
 }
