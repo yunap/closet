@@ -3115,9 +3115,13 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     // a medium/heavy-fabric short or skirt has full leg coverage. Pants are inherently full-leg
     // coverage regardless of length_hits_at tagging (that field is for hemlines like skirts/dresses,
     // not pant length) — bottomKind already distinguishes pants from shorts/skirts from a concrete
-    // authored field, so only ambiguous/skirt bottoms need the pieceCoverage() derivation.
+    // authored field, so only ambiguous/skirt bottoms need their hem length tagged. This asks
+    // whether length_hits_at is TAGGED, not pieceCoverage(): that returns null for any hem short of
+    // full-length, so a tagged midi or knee skirt used to read as "missing" — dropped from the
+    // roster and filed as a bogus retag task.
     const needsCoverage = isCold && group === 'bottom' && bottomKind(piece) !== 'pants' && (pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy')
-    if (needsCoverage && pieceCoverage(piece) === null) return 'length_hits_at'
+    const lengthTag = String(piece?.length_hits_at || '').toLowerCase().trim()
+    if (needsCoverage && (!lengthTag || lengthTag === 'unknown')) return 'length_hits_at'
     const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
     const fabricCategory = String(piece?.fabric_category || '').toLowerCase().trim()
     const insulatingCategories = new Set(['wool', 'cashmere', 'fleece', 'down', 'mohair', 'alpaca'])

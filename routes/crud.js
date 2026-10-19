@@ -349,6 +349,22 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
   res.json(withRetagSuggestions(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
 })
 
+// A metadata task says "missing <field>"; once a save fills that field the task is done. Without
+// this it stayed open until ticked by hand. Fields that are not a pieces column (footwear-comfort is
+// derived) are left alone, and an empty, 'unknown' or [] value still counts as missing.
+function completeFilledMetadataTodos(pieceId) {
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
+  if (!piece) return
+  const open = db.prepare("SELECT id, field FROM todos WHERE type = 'metadata' AND completed = 0 AND linked_piece_id = ?").all(pieceId)
+  for (const todo of open) {
+    if (!todo.field || !Object.hasOwn(piece, todo.field)) continue
+    const value = String(piece[todo.field] ?? '').toLowerCase().trim()
+    if (value && value !== 'unknown' && value !== '[]') {
+      db.prepare('UPDATE todos SET completed = 1 WHERE id = ?').run(todo.id)
+    }
+  }
+}
+
 router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), preparePieceThumbnails, (req, res) => {
   const existing = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
@@ -420,6 +436,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     db.prepare(`UPDATE todos SET completed = 1 WHERE type = 'retag-suggestion' AND linked_piece_id = ? AND id IN (${placeholders})`)
       .run(Number(req.params.id), ...resolvedSuggestionIds)
   }
+  completeFilledMetadataTodos(Number(req.params.id))
   queueColorTaxonomyReviews(db, {
     pieceId: req.params.id,
     pieceName: name,

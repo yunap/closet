@@ -339,6 +339,36 @@ test('active weather gate creates deduped metadata todos for missing fabric weig
   }
 })
 
+// Regression: the cold weather gate asked pieceCoverage() — "is this hem FULL coverage?" — to answer
+// "is length_hits_at tagged at all?". A tagged midi or knee skirt is not full coverage, so it read as
+// null, was dropped from the roster as "metadata missing", and got a "missing length_hits_at" task.
+test('cold weather gate files missing length_hits_at only for a skirt that is actually untagged', () => {
+  db.prepare("DELETE FROM todos WHERE type = 'metadata'").run()
+  const insertSkirt = (name, length) => db.prepare(`
+    INSERT INTO pieces (name, category, bottom_subtype, colors, occasions, status, photo, style_profile_json, fabric_weight, length_hits_at)
+    VALUES (?, 'bottom', 'skirt', '[]', '["casual"]', 'active', 'img.jpg', '{}', 'medium', ?)
+  `).run(name, length).lastInsertRowid
+  const ids = [insertSkirt('tagged midi skirt', 'midi'), insertSkirt('tagged knee skirt', 'knee'), insertSkirt('untagged mini skirt', null)]
+  try {
+    const [midi, knee, untagged] = ids.map(id => parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)))
+    const res = buildVisualComposerRoster([midi, knee, untagged], {
+      occasion: 'travel',
+      weatherProfile: { isHot: false, isCold: true },
+      includeAccessories: true
+    })
+    const missingLength = 'metadata missing: length_hits_at (weather gate active)'
+    for (const tagged of [midi, knee]) {
+      assert.ok(!res.excluded.some(item => item.pieceId === tagged.id && item.reason === missingLength), `${tagged.name} is tagged`)
+    }
+    assert.ok(res.excluded.some(item => item.pieceId === untagged.id && item.reason === missingLength))
+    const todoPieceIds = db.prepare("SELECT linked_piece_id FROM todos WHERE type = 'metadata' AND field = 'length_hits_at'").all().map(r => r.linked_piece_id)
+    assert.deepEqual(todoPieceIds, [untagged.id])
+  } finally {
+    db.prepare(`DELETE FROM todos WHERE linked_piece_id IN (${ids.join(',')})`).run()
+    db.prepare(`DELETE FROM pieces WHERE id IN (${ids.join(',')})`).run()
+  }
+})
+
 test('activity footwear phrase lists no longer drive profileRuleFit hard gating', () => {
   const activityProfile = resolveActivityProfile({ activity: 'hiking' })
   const mergedRules = getMergedProfileRules(null, activityProfile)

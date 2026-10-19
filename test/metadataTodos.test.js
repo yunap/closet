@@ -158,3 +158,31 @@ test('Metadata Todos End-to-End API contracts', async () => {
   assert.ok(!idsPostClear.includes(t3.id))
   assert.ok(!idsPostClear.includes(t4.id))
 })
+
+test('saving a piece completes its metadata tasks whose field is now filled, and only those', async () => {
+  const fd = new FormData()
+  fd.append('name', 'Untagged Knit Mini Skirt')
+  fd.append('category', 'bottom')
+  fd.append('status', 'active')
+  const piece = await (await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })).json()
+
+  const addTodo = async field => (await fetch(`${baseUrl}/api/todos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'metadata', description: `${piece.name}: missing ${field}`, linked_piece_id: piece.id, field })
+  })).json()
+  const lengthTodo = await addTodo('length_hits_at')
+  const formalityTodo = await addTodo('formality')
+
+  const update = new FormData()
+  update.append('name', piece.name)
+  update.append('category', 'bottom')
+  update.append('status', 'active')
+  update.append('length_hits_at', 'mini')
+  const res = await fetch(`${baseUrl}/api/pieces/${piece.id}`, { method: 'PUT', body: update })
+  assert.equal(res.status, 200)
+
+  const list = await (await fetch(`${baseUrl}/api/todos`)).json()
+  assert.equal(list.find(t => t.id === lengthTodo.id).completed, true)
+  assert.equal(list.find(t => t.id === formalityTodo.id).completed, false, 'formality was not filled')
+})

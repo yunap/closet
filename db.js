@@ -955,6 +955,23 @@ function initDb(dbPath) {
     console.warn('Failed to backfill metadata todo fields:', err.message)
   }
 
+  // The cold weather gate used to file "missing length_hits_at" for any skirt whose hem was not
+  // full-length, tagged or not (it asked pieceCoverage() instead of checking the tag). Remove the open
+  // ones whose piece does have a length; a genuinely untagged piece keeps its task. Idempotent.
+  try {
+    db.prepare(`
+      DELETE FROM todos
+      WHERE type = 'metadata' AND completed = 0
+        AND (field = 'length_hits_at' OR description LIKE '%missing length_hits_at%')
+        AND linked_piece_id IN (
+          SELECT id FROM pieces
+          WHERE TRIM(COALESCE(length_hits_at, '')) NOT IN ('', 'unknown')
+        )
+    `).run()
+  } catch (err) {
+    console.warn('Failed to remove wrong length_hits_at metadata todos:', err.message)
+  }
+
   // Backfill lifecycle state only. Do not clear historical structure/fit fields:
   // existing rows may contain hand-corrected truth from before manual_overrides existed.
   try {
