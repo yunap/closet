@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
 import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS, FIBER_FAMILIES, INTERIOR_CONSTRUCTION_OPTIONS } from '../../styling-engine/fiberTaxonomy.js'
 import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
 import { OUTERWEAR_SUBTYPE_FORM_OPTIONS } from '../../styling-engine/outerwearSubtype.js'
 import { TOP_SUBTYPE_FORM_OPTIONS } from '../../styling-engine/topSubtype.js'
+import { GARMENT_NOTE_LISTS, GARMENT_NOTE_TEXTS, REAL_WEAR_PATH, REAL_WEAR_KEYS, getProfilePath, setProfilePath, noteList } from '../../styling-engine/garmentNotes.js'
+import { buildColorVariantDraft, memoryItemsFor, applyMemoryChoices } from '../utils/colorVariant.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 
@@ -233,7 +235,7 @@ export function liveExclusionOccasion(rule, exclusions = []) {
   return exclusions.some(entry => normalizeOccasion(entry) === normalized) ? occasion : null
 }
 
-function RuleList({ rules, onChange, placeholder, color = 'accent', exclusions = [], onRestore = null, restoring = '' }) {
+function RuleList({ rules, onChange, placeholder, color = 'accent', exclusions = [], onRestore = null, restoring = '', tagFor = null }) {
   const [input, setInput] = useState('')
 
   const add = () => {
@@ -263,6 +265,7 @@ function RuleList({ rules, onChange, placeholder, color = 'accent', exclusions =
                 fontSize: 12, color: colorVar, maxWidth: '100%',
               }}>
                 <span style={{ flex: 1, lineHeight: 1.4 }}>{rule}</span>
+                {tagFor?.(rule) && <span className="garment-notes-copied">{tagFor(rule)}</span>}
                 {liveOccasion && (
                   <span
                     title="This is a live occasion exclusion, not just a note"
@@ -303,6 +306,71 @@ function RuleList({ rules, onChange, placeholder, color = 'accent', exclusions =
       </div>
     </div>
   )
+}
+
+// ── Garment notes (tagger-written, owner-editable) ─────────────────────────────
+// The paths and why edits are sent separately live in styling-engine/garmentNotes.js. In the
+// "Add in another color" flow, `copiedFrom` is the original's profile: lines still identical to it
+// are tagged "copied" so the owner can see what has not been checked against the new color.
+function GarmentNotesEditor({ profile, onChange, copiedFrom = null }) {
+  const copiedLines = (path) => new Set(copiedFrom ? noteList(getProfilePath(copiedFrom, path)) : [])
+  const realWear = getProfilePath(profile, REAL_WEAR_PATH) || {}
+  const realWearKeys = [...new Set([...REAL_WEAR_KEYS.filter(key => key in realWear), ...Object.keys(realWear)])]
+  const copiedRealWear = copiedFrom ? getProfilePath(copiedFrom, REAL_WEAR_PATH) || {} : {}
+  return (
+    <div className="garment-notes-editor">
+      {GARMENT_NOTE_TEXTS.map(({ path, label }) => {
+        const value = getProfilePath(profile, path) || ''
+        const copied = copiedFrom && value && value === (getProfilePath(copiedFrom, path) || '')
+        return (
+          <div className="form-group" key={path}>
+            <label className="form-label" htmlFor={`garment-note-${path}`}>
+              {label}{copied && <span className="garment-notes-copied">copied</span>}
+            </label>
+            <textarea id={`garment-note-${path}`} className="form-textarea" style={{ minHeight: 56 }} value={value} onChange={e => onChange(path, e.target.value)} />
+          </div>
+        )
+      })}
+      {GARMENT_NOTE_LISTS.map(({ path, label, placeholder }) => {
+        const copied = copiedLines(path)
+        return (
+          <div className="form-group" key={path}>
+            <div className="form-label">{label}</div>
+            <RuleList
+              rules={noteList(getProfilePath(profile, path))}
+              onChange={next => onChange(path, next)}
+              placeholder={placeholder}
+              tagFor={copiedFrom ? (rule => (copied.has(rule) ? 'copied' : null)) : null}
+            />
+          </div>
+        )
+      })}
+      {realWearKeys.length > 0 && (
+        <div className="form-group">
+          <div className="form-label">Real wear</div>
+          {realWearKeys.map(key => {
+            const value = realWear[key] || ''
+            const copied = copiedFrom && value && value === (copiedRealWear[key] || '')
+            return (
+              <div key={key} className="garment-notes-real-wear-row">
+                <label htmlFor={`garment-note-real-wear-${key}`}>
+                  {key.replace(/_/g, ' ')}{copied && <span className="garment-notes-copied">copied</span>}
+                </label>
+                <input id={`garment-note-real-wear-${key}`} className="form-input" value={value} onChange={e => onChange(REAL_WEAR_PATH, { ...realWear, [key]: e.target.value })} />
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const NOTE_LABELS = Object.fromEntries([
+  ...GARMENT_NOTE_LISTS, ...GARMENT_NOTE_TEXTS, { path: REAL_WEAR_PATH, label: 'Real wear' },
+].map(({ path, label }) => [`style_profile_json.${path}`, `${label} notes`]))
+function protectedEditLabel(path) {
+  return NOTE_LABELS[path] || path.replace(/_/g, ' ')
 }
 
 // ── Section divider ────────────────────────────────────────────────────────────
@@ -476,8 +544,15 @@ function ChipRow({ options, value, onChange, multi = false, label, labelledBy, c
   )
 }
 
-export default function PieceForm({ piece, onSave, onCancel }) {
+export default function PieceForm({ piece: pieceProp, variantOf = null, onSave, onCancel }) {
+  // "Add in another color" (variantOf): the form opens in Add mode, prefilled from the original.
+  // See src/utils/colorVariant.js for what is copied, cleared and offered.
+  const variantDraft = useMemo(() => (variantOf ? buildColorVariantDraft(variantOf) : null), [variantOf])
+  const variantMemoryItems = useMemo(() => (variantOf ? memoryItemsFor(variantOf) : []), [variantOf])
+  const variantOriginalProfile = variantDraft?.style_profile_json || null
+  const piece = variantDraft || pieceProp
   const isEdit   = Boolean(piece?.id)
+  const isVariant = Boolean(variantDraft)
   const isTop    = (cat) => cat === 'top'
   const isBottom = (cat) => cat === 'bottom'
 
@@ -552,6 +627,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     Object.entries(initialConfidence).filter(([, conf]) => conf === 'medium' || conf === 'low')
   )) // field -> 'medium'|'low'
   const [manualOverrides, setManualOverrides] = useState(piece?.manual_overrides || [])
+  // Owner edits to the tagger's garment notes, by profile path. Sent as owner_garment_notes so the
+  // server applies them after its override-protected profile merge (see garmentNotes.js).
+  const [garmentNoteEdits, setGarmentNoteEdits] = useState({})
+  const [variantMemoryTicks, setVariantMemoryTicks] = useState([])
+  const [variantMemoryEdits, setVariantMemoryEdits] = useState({})
   // The enforceable exclusion list, kept beside the form because PUT /pieces/:id
   // cannot write it — only POST /pieces/:id/occasion-exclusion can.
   const [exclusions, setExclusions] = useState(piece?.occasion_exclusions || [])
@@ -603,7 +683,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [tagging,     setTagging]     = useState(false)
   const [tagError,    setTagError]    = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
-  const [styleReadExpanded, setStyleReadExpanded] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [aiUpdateSummary, setAiUpdateSummary] = useState(null)
@@ -640,8 +719,18 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       }
     })
   }
+  const setGarmentNote = (path, value) => {
+    setDirty(true)
+    setGarmentNoteEdits(edits => ({ ...edits, [path]: value }))
+    setManualOverrides(paths => paths.includes(`style_profile_json.${path}`) ? paths : [...paths, `style_profile_json.${path}`])
+    setForm(f => ({ ...f, style_profile_json: setProfilePath(f.style_profile_json || {}, path, value) }))
+  }
   const clearManualOverride = (path) => {
     setManualOverrides(paths => paths.filter(p => p !== path))
+    // An unprotected note path saves through the ordinary profile merge, so stop sending it as an
+    // owner write too — otherwise the save would re-protect it.
+    const notePath = path.replace(/^style_profile_json\./, '')
+    setGarmentNoteEdits(({ [notePath]: _dropped, ...rest }) => rest)
   }
   const set = (k, v) => {
     setDirty(true)
@@ -836,13 +925,22 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (!form.name.trim()) setSaveError('Add a name before saving.')
       return
     }
+    if (variantBlocker) {
+      setSaveError(variantBlocker)
+      return
+    }
     setSaveError(null)
     setSaving(true)
+    const memory = isVariant ? applyMemoryChoices(variantMemoryItems, variantMemoryTicks, variantMemoryEdits) : null
+    const submitted = memory
+      ? { ...form, ...memory.fields, notes: [form.notes.trim(), memory.fields.notes].filter(Boolean).join('\n\n') }
+      : form
     const fd = new FormData()
-    Object.entries(form).forEach(([k, v]) => {
+    Object.entries(submitted).forEach(([k, v]) => {
       if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
     })
     fd.append('manual_overrides', JSON.stringify(manualOverrides))
+    if (Object.keys(garmentNoteEdits).length) fd.append('owner_garment_notes', JSON.stringify(garmentNoteEdits))
     fd.append('resolved_retag_suggestion_ids', JSON.stringify(retagSuggestions.map(suggestion => suggestion.id)))
     fd.append('color_taxonomy_gaps', JSON.stringify(colorTaxonomyGaps))
     fd.append('fiber_taxonomy_gaps', JSON.stringify(fiberTaxonomyGaps))
@@ -854,8 +952,27 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       const res = await fetch(isEdit ? `/api/pieces/${piece.id}` : '/api/pieces', {
         method: isEdit ? 'PUT' : 'POST', body: fd
       })
-      const payload = await res.json()
+      let payload = await res.json()
       if (!res.ok || payload?.error) throw new Error(payload?.error || 'Save failed')
+      // Exclusions only exist once the piece does, and only this endpoint writes them (it also
+      // writes the receipt line). The piece is already saved, so a failure is reported, not retried.
+      const failedExclusions = []
+      for (const occasion of memory?.exclusions || []) {
+        try {
+          const exRes = await fetch(`/api/pieces/${payload.id}/occasion-exclusion`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ occasion, excluded: true }),
+          })
+          if (!exRes.ok) throw new Error('exclusion failed')
+          payload = await exRes.json()
+        } catch {
+          failedExclusions.push(occasion)
+        }
+      }
+      if (failedExclusions.length) {
+        alert(`${payload.name} was added, but it is still offered for ${failedExclusions.join(', ')}. You can exclude it from the piece's … menu in the Stylist.`)
+      }
       setDirty(false)
       onSave(payload)
     } catch {
@@ -964,35 +1081,21 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const garmentIntel = styleProfile?.garment_intelligence && typeof styleProfile.garment_intelligence === 'object'
     ? styleProfile.garment_intelligence
     : {}
-  const profileList = (value) => normalizeProfileList(value)
-  const styleRisk = styleProfile?.style_notes?.risk
-  const rawFailureRisks = profileList(garmentIntel.failure_risks)
-  const filteredFailureRisks = rawFailureRisks.filter(r => {
-    if (!styleRisk) return true
-    const rLower = r.toLowerCase().trim()
-    const sLower = styleRisk.toLowerCase().trim()
-    return !sLower.includes(rLower) && !rLower.includes(sLower)
-  })
-  const pairingRequirements = profileList(garmentIntel.pairing_requirements)
-  const formulaCompatibility = profileList(garmentIntel.formula_compatibility)
-  const doNotPairRules = profileList(garmentIntel.do_not_pair_rules)
-  const styleReadPreview = (values) => (styleReadExpanded ? values : values.slice(0, 3)).join('; ')
-  const hasMoreStyleRead = [
-    pairingRequirements,
-    filteredFailureRisks,
-    formulaCompatibility,
-    doNotPairRules,
-  ].some(values => values.length > 3)
+  // Needs / Risks / Formulas / Avoid, real wear and best use / risk are edited in GarmentNotesEditor.
   const intelRows = [
     garmentIntel.auto_use_trust && ['Auto-use', prettyProfileLabel(garmentIntel.auto_use_trust)],
     garmentIntel.best_outfit_role && ['Best role', prettyProfileLabel(garmentIntel.best_outfit_role)],
-    pairingRequirements.length > 0 && ['Needs', styleReadPreview(pairingRequirements)],
-    filteredFailureRisks.length > 0 && ['Risks', styleReadPreview(filteredFailureRisks)],
-    formulaCompatibility.length > 0 && ['Formulas', styleReadPreview(formulaCompatibility)],
-    doNotPairRules.length > 0 && ['Avoid', styleReadPreview(doNotPairRules)],
   ].filter(Boolean)
-  const realWearRows = Object.entries(garmentIntel.real_wear_notes || {}).filter(([, value]) => value)
   const occasionRows = Object.entries(garmentIntel.occasion_confidence || {}).filter(([, value]) => value)
+  const hasGarmentNotes = [...GARMENT_NOTE_LISTS, ...GARMENT_NOTE_TEXTS].some(({ path }) => noteList(getProfilePath(styleProfile, path)).length > 0)
+    || Object.values(getProfilePath(styleProfile, REAL_WEAR_PATH) || {}).some(Boolean)
+  // A color copy needs its own photo (the stylist composes from photos) and its own color, and a
+  // name that tells the two apart — the composer's roster lines are name plus photo.
+  const variantBlocker = !isVariant ? null
+    : !hangerFile && !wornFile ? 'Add a photo of the new color.'
+    : !form.colors.length ? 'Pick the new color.'
+    : form.name.trim().toLowerCase() === String(variantOf.name || '').trim().toLowerCase() ? `Give it a name that tells it apart from ${variantOf.name}.`
+    : null
 
   return (
     <div className="modal-overlay" onClick={requestClose}>
@@ -1007,9 +1110,10 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         <div className="modal-handle piece-form-handle" />
         <div className="modal-header">
           <div>
-            <div id={titleId} className="modal-title">{isEdit ? `Edit ${form.name || 'piece'}` : 'Add a piece'}</div>
+            <div id={titleId} className="modal-title">{isEdit ? `Edit ${form.name || 'piece'}` : isVariant ? 'Add in another color' : 'Add a piece'}</div>
             {isEdit && <div className="piece-form-header-meta">Piece #{piece.id} · {form.category}</div>}
-            {!isEdit && <div className="piece-form-header-meta">Start with a photo or the details you already know.</div>}
+            {isVariant && <div className="piece-form-header-meta">Same as {variantOf.name}, in a new color. Add its photo and color; everything else is copied.</div>}
+            {!isEdit && !isVariant && <div className="piece-form-header-meta">Start with a photo or the details you already know.</div>}
           </div>
           <button type="button" className="modal-close" onClick={requestClose} aria-label="Close piece editor">✕</button>
         </div>
@@ -1029,7 +1133,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <div className="piece-form-primary-photo">
               <PhotoSlot
                 label="Hanger photo"
-                hint={isEdit ? 'Ready to update with AI' : 'AI can fill the first draft'}
+                hint={isEdit ? 'Ready to update with AI' : isVariant ? 'Required — a photo of the new color' : 'AI can fill the first draft'}
                 preview={hangerPrev}
                 onPick={f => { setDirty(true); setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) }}
                 onClear={() => {
@@ -1046,7 +1150,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 onRestore={() => { setClearHanger(false); setHangerPrev(piece?.photo ? `/uploads/${piece.photo}` : null) }}
                 onPreview={() => hangerPrev && setPreviewImage({ src: hangerPrev, title: form.name || 'Piece', meta: 'Hanger photo' })}
               />
-              {!isEdit && hangerFile && (
+              {!isEdit && !isVariant && hangerFile && (
                 <div className="piece-form-ai-action">
                   <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                     {tagging
@@ -1190,6 +1294,56 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <input id="piece-form-background-color" className="form-input" placeholder="e.g. black, navy, cream" value={form.background_color} onChange={e => set('background_color', e.target.value)} />
           </div>
 
+          {isVariant && hasGarmentNotes && (
+            <div className="garment-notes-variant">
+              <div className="garment-notes-heading">
+                <span>Notes copied from {variantOf.name}</span>
+                <small>Remove anything that was about its color. Everything marked copied has not been checked yet.</small>
+              </div>
+              <GarmentNotesEditor profile={styleProfile} onChange={setGarmentNote} copiedFrom={variantOriginalProfile} />
+            </div>
+          )}
+
+          {isVariant && variantMemoryItems.length > 0 && (
+            <fieldset className="garment-notes-variant variant-memory">
+              <legend className="garment-notes-heading">
+                <span>What the stylist remembers about {variantOf.name}</span>
+                <small>Tick what is about the cut, so it applies to both. A ticked note can be edited before it is copied.</small>
+              </legend>
+              {variantMemoryItems.map(item => {
+                const ticked = variantMemoryTicks.includes(item.id)
+                // A ticked text item becomes editable: keep the part about the cut, fix the color.
+                const editable = ticked && item.kind !== 'exclusion'
+                return (
+                  <div key={item.id} className="variant-memory-entry">
+                    <label className="variant-memory-item">
+                      <input
+                        type="checkbox"
+                        checked={ticked}
+                        onChange={e => {
+                          setDirty(true)
+                          setVariantMemoryTicks(ids => e.target.checked ? [...ids, item.id] : ids.filter(id => id !== item.id))
+                        }}
+                      />
+                      <span><small>{item.group}</small>{!editable && item.text}</span>
+                    </label>
+                    {editable && (
+                      <textarea
+                        className="form-textarea variant-memory-edit"
+                        aria-label={`${item.group} to copy`}
+                        value={variantMemoryEdits[item.id] ?? item.text}
+                        onChange={e => {
+                          setDirty(true)
+                          setVariantMemoryEdits(edits => ({ ...edits, [item.id]: e.target.value }))
+                        }}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </fieldset>
+          )}
+
           <div className="form-group" data-piece-field="occasions">
             <FieldLabel id="piece-form-occasions-label" field="occasions">Occasions</FieldLabel>
             <ChipRow labelledBy="piece-form-occasions-label" options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
@@ -1257,7 +1411,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <textarea className="form-textarea" placeholder="e.g. too small; do not use as a focal evening garment" value={form.engine_notes} onChange={e => set('engine_notes', e.target.value)} style={{ minHeight: 72 }} />
           </div>
 
-          {(styleLanes.length > 0 || styleRoles.length > 0 || styleProfile?.style_notes?.best_use || styleProfile?.style_notes?.risk || intelRows.length > 0 || realWearRows.length > 0 || occasionRows.length > 0) && (
+          {(
             <div className="form-group" style={{
               padding: 12,
               border: '1px solid var(--border-light)',
@@ -1286,37 +1440,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                   <strong style={{ color: 'var(--text)' }}>Roles:</strong> {styleRoles.map(prettyProfileLabel).join(', ')}
                 </div>
               )}
-              {styleProfile?.style_notes?.best_use && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-                  <strong style={{ color: 'var(--text)' }}>Best use:</strong> {styleProfile.style_notes.best_use}
-                </div>
-              )}
-              {styleProfile?.style_notes?.risk && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-                  <strong style={{ color: 'var(--text)' }}>Risk:</strong> {styleProfile.style_notes.risk}
-                </div>
-              )}
               {intelRows.map(([label, value]) => (
                 <div key={label} style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
                   <strong style={{ color: 'var(--text)' }}>{label}:</strong> {value}
                 </div>
               ))}
-              {hasMoreStyleRead && (
-                <button
-                  type="button"
-                  className="piece-style-read-toggle"
-                  onClick={() => setStyleReadExpanded(expanded => !expanded)}
-                  aria-expanded={styleReadExpanded}
-                >
-                  {styleReadExpanded ? 'Show less' : 'Show all AI insights'}
-                  <span aria-hidden="true">{styleReadExpanded ? '↑' : '↓'}</span>
-                </button>
-              )}
-              {realWearRows.length > 0 && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
-                  <strong style={{ color: 'var(--text)' }}>Real wear:</strong> {realWearRows.map(([key, value]) => `${prettyProfileLabel(key)}: ${value}`).join('; ')}
-                </div>
-              )}
               {occasionRows.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
                   {occasionRows.map(([occasion, value]) => (
@@ -1331,6 +1459,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                   ))}
                 </div>
               )}
+              <div className="garment-notes-heading">
+                <span>AI garment notes</span>
+                <small>Written by the AI tagger. Edit or remove anything that is wrong; your changes are kept when it retags.</small>
+              </div>
+              <GarmentNotesEditor profile={styleProfile} onChange={setGarmentNote} />
             </div>
           )}
             </div>
@@ -1827,7 +1960,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                     title="Click to let AI update this field again"
                     style={{ fontSize: 11, textTransform: 'none' }}
                   >
-                    {path.replace(/_/g, ' ')} ×
+                    {protectedEditLabel(path)} ×
                   </button>
                 ))}
               </div>
@@ -1868,12 +2001,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <div className="piece-form-save-state" role="status">
             {saveError || (!isEdit && !form.name.trim()
               ? 'Add a name to continue'
+              : variantBlocker
+                ? variantBlocker
               : !isEdit
                 ? 'Ready to add'
                 : dirty ? 'Unsaved changes' : 'No unsaved changes')}
           </div>
           <button type="button" className="btn-secondary" onClick={requestClose} disabled={saving}>Cancel</button>
-          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || !form.name.trim()}>
+          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || !form.name.trim() || Boolean(variantBlocker)}>
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add piece'}
           </button>
         </div>

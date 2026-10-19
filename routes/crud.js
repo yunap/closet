@@ -39,6 +39,7 @@ function insulatingLayerForWrite(raw) {
   return normalized === null ? null : JSON.stringify(normalized)
 }
 import { applySoftScoreFloors } from '../styling-engine/softScoreFloors.js'
+import { applyOwnerGarmentNotes } from '../styling-engine/garmentNotes.js'
 import { compactChatThreadMemory } from '../lib/chatThreadMetadata.js'
 import {
   cachedThumbnailUrl,
@@ -303,11 +304,13 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, outerwear_subtype, top_subtype, shoe_type, toe_shape, outerwear_role, weather_protection,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_provider, tag_model,
-    tag_state, manual_overrides, color_taxonomy_gaps, fiber_taxonomy_gaps } = req.body
+    tag_state, manual_overrides, color_taxonomy_gaps, fiber_taxonomy_gaps, owner_garment_notes } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
   const worn_photo = req.files?.worn_photo?.[0]?.filename || null
-  const finalManualOverrides = normalizeManualOverrides(manual_overrides)
-  const parsedStyleProfile = safeJsonParse(style_profile_json, {}) || {}
+  // Owner-edited garment notes land last and become protected paths (see garmentNotes.js).
+  const ownerNotes = applyOwnerGarmentNotes(safeJsonParse(style_profile_json, {}) || {}, safeJsonParse(owner_garment_notes, {}))
+  const finalManualOverrides = normalizeManualOverrides([...normalizeManualOverrides(manual_overrides), ...ownerNotes.overridePaths])
+  const parsedStyleProfile = ownerNotes.profile
   const confidencePinnedProfile = pinManualConfidence(parsedStyleProfile, finalManualOverrides)
   const finalStyleProfile = applySoftScoreFloors({
     ...req.body,
@@ -380,7 +383,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, outerwear_subtype, top_subtype, shoe_type, toe_shape, outerwear_role, weather_protection,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_provider, tag_model,
-    tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps, fiber_taxonomy_gaps } = req.body
+    tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps, fiber_taxonomy_gaps, owner_garment_notes } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   const final_tagger_version = tagger_version === undefined ? existing.tagger_version : tagger_version
@@ -394,16 +397,20 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     ? existing.outerwear_role
     : normalizeOuterwearRole(outerwear_role)
   const existingManualOverrides = normalizeManualOverrides(existing.manual_overrides)
-  const finalManualOverrides = manual_overrides === undefined ? existingManualOverrides : normalizeManualOverrides(manual_overrides)
+  const requestManualOverrides = manual_overrides === undefined ? existingManualOverrides : normalizeManualOverrides(manual_overrides)
   const existingProfile = safeJsonParse(existing.style_profile_json, {}) || {}
   const submittedProfile = style_profile_json === undefined ? existingProfile : (safeJsonParse(style_profile_json, {}) || {})
-  const profileOverrides = finalManualOverrides.map(path => (
+  const profileOverrides = requestManualOverrides.map(path => (
     path.startsWith('style_profile_json.') ? path.replace(/^style_profile_json\./, '') : path
   ))
-  const confidencePinnedProfile = pinManualConfidence(
+  // The merge keeps protected paths at their stored value, so the owner's own note edits are
+  // applied after it — the one write that may change a protected note (see garmentNotes.js).
+  const ownerNotes = applyOwnerGarmentNotes(
     mergeWithManualOverrides(existingProfile, submittedProfile, profileOverrides),
-    finalManualOverrides
+    safeJsonParse(owner_garment_notes, {})
   )
+  const finalManualOverrides = normalizeManualOverrides([...requestManualOverrides, ...ownerNotes.overridePaths])
+  const confidencePinnedProfile = pinManualConfidence(ownerNotes.profile, finalManualOverrides)
   const finalStyleProfile = applySoftScoreFloors({
     ...parsePiece(existing),
     ...req.body,

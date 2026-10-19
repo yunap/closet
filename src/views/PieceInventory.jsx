@@ -151,6 +151,8 @@ export default function PieceInventory({ onSendToStylist }) {
   const [showForm, setShowForm]       = useState(false)
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
+  // The original piece when "Add in another color" opened the form (PieceForm's variantOf).
+  const [variantSource, setVariantSource] = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
   const [openFilterMenu, setOpenFilterMenu] = useState(null)
   const [jewelrySubmenuOpen, setJewelrySubmenuOpen] = useState(false)
@@ -364,9 +366,10 @@ export default function PieceInventory({ onSendToStylist }) {
     await fetch(`/api/pieces/${piece.id}/favorite`, { method: 'PATCH' })
     fetchPieces()
   }
-  const handleSave = () => { setShowForm(false); setEditPiece(null); setDetailPiece(null); fetchPieces(); fetchMeta() }
+  const handleSave = () => { setShowForm(false); setEditPiece(null); setVariantSource(null); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleDelete = async (piece) => { await fetch(`/api/pieces/${piece.id}`, { method: 'DELETE' }); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
+  const handleAddColorVariant = (piece) => { setDetailPiece(null); setEditPiece(null); setVariantSource(piece); setShowForm(true) }
   const occasionLabel = OCCASIONS.find(o => o.value === filterOcc)?.label
   const seasonLabel   = SEASONS.find(s => s.value === filterSeason)?.label
   const warmthLabel   = WARMTHS.find(w => w.value === filterWarmth)?.label
@@ -415,7 +418,7 @@ export default function PieceInventory({ onSendToStylist }) {
       ? `${pieces.length} matching ${pieces.length === 1 ? 'piece' : 'pieces'}`
       : `${pieces.length} ${pieces.length === 1 ? 'piece' : 'pieces'}`
   const visibleFabrics = availableFabrics.filter(fabric => fabric.toLowerCase().includes(fabricSearch.trim().toLowerCase()))
-  const addPiece = () => { setEditPiece(null); setShowForm(true) }
+  const addPiece = () => { setEditPiece(null); setVariantSource(null); setShowForm(true) }
 
   const addMenuItems = [
     {
@@ -1152,8 +1155,8 @@ export default function PieceInventory({ onSendToStylist }) {
       <button className="fab wardrobe-mobile-fab" onClick={addPiece} aria-label="Add one piece">+</button>
 
       {/* Modals */}
-      {showForm && <PieceForm piece={editPiece} onSave={handleSave} onCancel={() => { setShowForm(false); setEditPiece(null) }} />}
-      {detailPiece && !showForm && <PieceDetail piece={detailPiece} onEdit={handleEdit} onDelete={handleDelete} onClose={() => setDetailPiece(null)} onSendToStylist={(piece) => { setDetailPiece(null); onSendToStylist(piece) }} />}
+      {showForm && <PieceForm piece={editPiece} variantOf={variantSource} onSave={handleSave} onCancel={() => { setShowForm(false); setEditPiece(null); setVariantSource(null) }} />}
+      {detailPiece && !showForm && <PieceDetail piece={detailPiece} onEdit={handleEdit} onAddColorVariant={handleAddColorVariant} onDelete={handleDelete} onClose={() => setDetailPiece(null)} onSendToStylist={(piece) => { setDetailPiece(null); onSendToStylist(piece) }} />}
       {showBatch && <BatchAdd onDone={() => { setShowBatch(false); fetchPieces() }} />}
       {showTodo && (
         <div className="modal-overlay" onClick={() => setShowTodo(false)}>
