@@ -74,6 +74,7 @@ function SavedBoardThumb({ board, onPreview, prioritize = false }) {
 export default function PieceDetail({
   piece,
   onEdit,
+  onAddColorVariant = null,
   onDelete,
   onClose,
   onSendToStylist,
@@ -416,6 +417,7 @@ export default function PieceDetail({
             {(showDeleteAction || showEditAction) && (
               <div className="detail-actions piece-detail-actions">
                 {showEditAction && <button className="btn-secondary piece-edit-action" onClick={() => onEdit(piece)}>Edit piece</button>}
+                {showEditAction && onAddColorVariant && <button className="btn-secondary piece-edit-action" onClick={() => onAddColorVariant(piece)}>Add in another color</button>}
                 {showDeleteAction && <button className="piece-delete-action" onClick={handleDelete}>Delete piece</button>}
               </div>
             )}

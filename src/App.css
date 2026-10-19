@@ -2952,24 +2952,107 @@ img { display: block; max-width: 100%; }
   background: var(--surface);
 }
 
-.piece-style-read-toggle {
-  width: 100%;
-  min-height: 34px;
-  margin: 6px 0 2px;
-  padding: 7px 10px;
+.garment-notes-heading {
+  margin: 10px 0 10px;
+  padding-top: 10px;
   border-top: 1px solid var(--border-light);
-  color: var(--accent);
+  color: var(--text-muted);
   font-size: var(--type-caption);
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  text-align: left;
+  line-height: 1.4;
 }
 
-.piece-style-read-toggle:hover {
-  color: var(--accent-hover);
+.garment-notes-heading span {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.garment-notes-variant {
+  padding: 4px 12px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.garment-notes-variant > .garment-notes-heading {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.garment-notes-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.garment-notes-copied {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 400;
+  text-transform: lowercase;
+}
+
+.garment-notes-real-wear-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 160px) 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.garment-notes-real-wear-row label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  text-transform: capitalize;
+}
+
+.variant-memory {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.variant-memory legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.variant-memory-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.variant-memory-edit {
+  margin: 6px 0 0 24px;
+  width: calc(100% - 24px);
+  min-height: 72px;
+}
+
+.variant-memory-item input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.variant-memory-item small {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
 }
 
 .piece-form-sheet :is(button, input, select, textarea):focus-visible {

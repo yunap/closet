@@ -411,6 +411,19 @@ weather or material.
 `failure_risks`, `formula_compatibility`, `real_wear_notes`. Written by the tagger, not the user.
 Included because it travels with the garment through the same readers as channel B.
 
+**[amended 2026-10-19 — the owner can now edit these]** The four lists, `real_wear_notes` and
+`style_notes.best_use` / `style_notes.risk` are editable in the piece Edit form (*AI garment notes*,
+under Stylist controls) and in *Add in another color*. Authority is unchanged: an edited line
+reaches the same readers with the same weight as tagger text; it is **not** promoted to
+`RULES (authoritative)`. What changes is ownership: an edited path is recorded in
+`manual_overrides` (`style_profile_json.<path>`), so a later retag (`applyTaggerResult`, PieceForm's
+`mergeTagProfile`) keeps the owner's text. The form sends edits as their own request field,
+`owner_garment_notes`, applied by `applyOwnerGarmentNotes` (`styling-engine/garmentNotes.js`) after
+`PUT /pieces/:id`'s override-protected profile merge — that merge keeps a protected path at its
+stored value, so inside `style_profile_json` the owner's own second edit would be discarded.
+`applyOwnerGarmentNotes` accepts only the note paths in `GARMENT_NOTE_PATHS`; nothing else in the
+profile can be written that way. Tested in `test/colorVariant.test.js`.
+
 ### E · Standing prose rules
 `stylist_feedback` rows selected by `feedback_type='owner_rule' OR (feedback_type='preference_reaction'
 AND target_type='message')` — see `getOwnerRuleNotes` (`rules.js`) and the shared predicate
@@ -585,7 +598,8 @@ the canonical prose to `pieces.styling_rules_learned` and a `piece_rule_receipt`
 
 | site | function | writes |
 |---|---|---|
-| `crud.js` | `PUT /pieces/:id` | the whole editor save, including all of channel B |
+| `crud.js` | `PUT /pieces/:id` | the whole editor save, including all of channel B, and owner edits to channel D notes (`owner_garment_notes`, 2026-10-19) |
+| `crud.js` | `POST /pieces` | a new piece; in *Add in another color* this includes the original's channel D notes, and channel B entries only where the owner ticked them (2026-10-19) |
 | `crud.js` | `POST /pieces/:id/occasion-exclusion` | `occasion_exclusions` **and** an `Excluded from …` note into `styling_rules_learned` |
 | `tools.js` | `storeUserCorrection(piece_id)` | appends a verified chat correction to `styling_rules_learned` |
 | `crud.js` | `syncPieceRuleReceipt` | keeps edits/retirement from Conversation Memory synchronized with that canonical rule |

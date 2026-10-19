@@ -1210,6 +1210,31 @@ scope:
   administration. AI prepares a reviewable draft and never saves automatically.
 - **Tasks** — repair/donate/retag queue. Never received the dialog audit the other surfaces did.
 
+- **[by design, 2026-10-19] Add in another color** — a secondary button under the detail, beside
+  *Edit piece*, for a garment you own in more than one color. Owner ruling: two colors are two
+  pieces (each with its own photo, color, usage and feedback), never one piece with two colors, and
+  adding the copy makes **no model call**. It opens the Add form prefilled from the original
+  (`buildColorVariantDraft`, `src/utils/colorVariant.js`):
+  - **Required:** a photo of the new one, at least one color, and a name different from the
+    original's (the stylist's roster lines are name plus photo). *Fill details with AI* is hidden.
+  - **Copied:** every structured tag and stylist control, and the tagger's notes, shown under
+    *Notes copied from …* as editable lists with a **copied** marker on each line not yet changed,
+    so a color-specific line ("all-cream styling risks a flat palette") can be removed.
+  - **Cleared:** photos, colors, `reads_as`, `background_color`, the profile's
+    `photo_properties`, and those fields' confidence and override entries.
+  - **Offered, unticked:** the original's rules learned, tried-and-rejected, notes, engine notes and
+    occasion exclusions, each as a checkbox ("tick what is about the cut"). A ticked rule or note
+    opens as editable text, because one note can be mostly about the cut and partly about the
+    color; editing it to nothing drops it. Ticked exclusions are
+    written after the piece exists through `POST /pieces/:id/occasion-exclusion`, the only writer of
+    that column; a failure there is reported, not retried.
+  - Nothing links the two pieces afterwards: no reader would use a link yet.
+
+  The same tagger notes became editable in **Edit** too (*AI garment notes*, inside the *AI style
+  read* box under Stylist controls), replacing the read-only Needs / Risks / Formulas / Avoid /
+  Real wear / Best use / Risk lines and their *Show all AI insights* toggle. Edits are protected
+  from retagging — see `feedback-and-memory-map.md` → channel D.
+
 > **Stores.** `pieces` and its upload/thumbnail pipeline. Rulings in `ui-v1-design-handoff.md` →
 > *Wardrobe garment-detail ruling*, *Wardrobe Edit Piece direction*, *Wardrobe Add Piece direction*.
 
