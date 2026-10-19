@@ -3284,10 +3284,12 @@ OpenAI path kept losing garment detail; the revert (9ad8156) is itself reverted,
 
 **Amended 2026-10-18 — renders record their calibration photos.** Every producer that fetches
 calibration references now stores `timings.calibrationReferenceIds`. Selection stays random (owner
-ruling, 2026-08-12). Why: renders copy more than likeness from these photos — the Gemini render's
-plaza and handbag match calibration #26, a sunglasses render matches #24, the Sep 13 deck and dune
-match #27, a living-room render matches #29 — and the caption says only "do not copy outfit", not
-setting or props. Until now, which two photos a render used was never stored.
+ruling, 2026-08-12). Renders draw more than likeness from these photos — the Gemini render's plaza
+and handbag match calibration #26, a sunglasses render matches #24, the Sep 13 deck and dune match
+#27, a living-room render matches #29 — and until now which two a render used was never stored.
+**Owner ruling, 2026-10-18: this is allowed.** Setting and person from a calibration photo may both
+be used when they help the outfit; do not add a "likeness only, no setting or props" caption. The
+problem that night was the person, not the setting.
 
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
