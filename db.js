@@ -5,6 +5,8 @@ import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from './styling-engine/constitutionSeed.js'
 import { queueSleeveTaxonomyReviews } from './lib/sleeveTaxonomyReview.js'
+import { backfillOuterwearSubtypes } from './lib/outerwearSubtypeBackfill.js'
+import { backfillTopSubtypes } from './lib/topSubtypeBackfill.js'
 import { DEFAULT_USER_ID, getCurrentUserId } from './lib/requestContext.js'
 import {
   assertDefaultDatabaseAccess,
@@ -430,6 +432,15 @@ function initDb(dbPath) {
     // in — bottomKind() combines this with length_hits_at for skirt
     // granularity instead of encoding both into one value.
     'bottom_subtype TEXT',
+    // outerwear_subtype: coat|jacket|blazer|cardigan|vest|shrug|other|unknown. NULL for
+    // non-outerwear. Type only, same shape as bottom_subtype; values owned by
+    // styling-engine/outerwearSubtype.js. Filled once from existing names/tagger
+    // notes by backfillOuterwearSubtypes below, then by the tagger.
+    'outerwear_subtype TEXT',
+    // top_subtype: tee|tank|shell|blouse|shirt|knit_top|sweater|sweatshirt|vest|other|unknown.
+    // NULL for non-tops. Type only; values owned by styling-engine/topSubtype.js. Filled once by
+    // backfillTopSubtypes below, then by the tagger.
+    'top_subtype TEXT',
     // shoe_type/toe_shape supersede the generic silhouette field for shoes,
     // which mixed toe shape and shoe type into one flat list. silhouette is
     // kept (never dropped) but no longer applicable to shoes going forward.
@@ -644,6 +655,22 @@ function initDb(dbPath) {
     }
   } catch (err) {
     console.warn('Failed to remap length_hits_at to per-category vocabulary:', err.message)
+  }
+
+  // One-time (app_meta marker) fill of outerwear_subtype from each piece's name, reads_as and notes,
+  // so the field works without re-tagging. Disagreements and unnamed types get a metadata task for
+  // the owner instead of a guess — see lib/outerwearSubtypeBackfill.js.
+  try {
+    backfillOuterwearSubtypes(db)
+  } catch (err) {
+    console.warn('Failed to backfill outerwear_subtype:', err.message)
+  }
+  // Same for top_subtype, which also falls back to sleeve length + formality/fabric for generically
+  // named tops — see lib/topSubtypeBackfill.js.
+  try {
+    backfillTopSubtypes(db)
+  } catch (err) {
+    console.warn('Failed to backfill top_subtype:', err.message)
   }
 
   // One-time remap: silhouette per category. Top/dress gained new values with

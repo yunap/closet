@@ -10,6 +10,8 @@ import usePendingWardrobeTaskCount from '../utils/usePendingWardrobeTaskCount'
 import { wardrobeMixSort } from '../utils/wardrobeMixSort'
 import { sortColorNames, COLOR_FAMILY_LABELS, colorTaxonomyEntry } from '../utils/colors'
 import { ColorFamilyFilter } from '../components/ColorSelector'
+import { OUTERWEAR_SUBTYPE_FILTER_OPTIONS } from '../../styling-engine/outerwearSubtype.js'
+import { TOP_SUBTYPE_FILTER_OPTIONS } from '../../styling-engine/topSubtype.js'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -21,7 +23,7 @@ const CATEGORIES = [
   { value: 'accessory', label: 'Accessories' },
 ]
 
-// Bottoms and Accessories get a subtype dropdown directly on their category chip (split-button:
+// Tops, Bottoms, Outerwear, Shoes and Accessories get a subtype dropdown directly on their category chip (split-button:
 // clicking the label selects "all of this category", clicking the chevron opens the menu).
 // Keep in sync with the tagger's own enum for each field.
 const BOTTOM_SUBTYPE_OPTIONS = [
@@ -195,7 +197,7 @@ export default function PieceInventory({ onSendToStylist }) {
     piecesRequestRef.current = { controller, id: requestId }
     const params = new URLSearchParams()
     if (filterCat)    params.set('category', filterCat)
-    if (filterSubtype && (filterCat === 'bottom' || filterCat === 'accessory' || filterCat === 'shoes')) {
+    if (filterSubtype && (filterCat === 'top' || filterCat === 'bottom' || filterCat === 'outerwear' || filterCat === 'accessory' || filterCat === 'shoes')) {
       params.set('subtype', filterSubtype)
       if (filterCat === 'accessory' && filterSubtype === 'jewelry' && filterJewelryType) {
         params.set('jewelry_type', filterJewelryType)
@@ -371,8 +373,12 @@ export default function PieceInventory({ onSendToStylist }) {
   // Category chip resting labels collapse the hierarchy: a jewelry_type selection reads
   // "Accessories · Necklaces", never "Accessories · Jewelry · Necklaces" — the intermediate
   // level is only meaningful inside the open menu, not in the closed-state label.
+  const topSubtypeLabel = TOP_SUBTYPE_FILTER_OPTIONS.find(o => o.value === filterSubtype)?.label
+  const topsLabel = (filterCat === 'top' && topSubtypeLabel) ? `Tops · ${topSubtypeLabel}` : 'Tops'
   const bottomSubtypeLabel = BOTTOM_SUBTYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
   const bottomsLabel = (filterCat === 'bottom' && bottomSubtypeLabel) ? `Bottoms · ${bottomSubtypeLabel}` : 'Bottoms'
+  const outerwearSubtypeLabel = OUTERWEAR_SUBTYPE_FILTER_OPTIONS.find(o => o.value === filterSubtype)?.label
+  const outerwearLabel = (filterCat === 'outerwear' && outerwearSubtypeLabel) ? `Outerwear · ${outerwearSubtypeLabel}` : 'Outerwear'
   const shoeTypeLabel = SHOE_TYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
   const shoesLabel = (filterCat === 'shoes' && shoeTypeLabel) ? `Shoes · ${shoeTypeLabel}` : 'Shoes'
   const accessorySubtypeLabel = ACCESSORY_SUBTYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
@@ -544,6 +550,56 @@ export default function PieceInventory({ onSendToStylist }) {
         <div className="wardrobe-filter-group">
           <div className={`filter-row ${openFilterMenu?.startsWith('category:') ? 'filter-row-menu-open' : ''}`} aria-label="Wardrobe categories">
             {CATEGORIES.map(c => {
+              if (c.value === 'top') {
+                return (
+                  <div key="top" className="wardrobe-filter-menu wardrobe-category-menu">
+                    <div className={`chip-split ${filterCat === 'top' ? 'active' : ''}`}>
+                      <button
+                        className="chip-split-label"
+                        onClick={() => { setFilter({ category: 'top', subtype: '' }); setOpenFilterMenu(null) }}
+                        aria-pressed={filterCat === 'top'}
+                      >
+                        {topsLabel}
+                      </button>
+                      <button
+                        className="chip-split-chevron"
+                        onClick={() => setOpenFilterMenu(openFilterMenu === 'category:top' ? null : 'category:top')}
+                        aria-expanded={openFilterMenu === 'category:top'}
+                        aria-haspopup="listbox"
+                        aria-label="Top subtypes"
+                        data-filter-trigger="category:top"
+                      >
+                        <span className="filter-menu-chevron">⌄</span>
+                      </button>
+                    </div>
+                    {openFilterMenu === 'category:top' && (
+                      <div className="filter-menu-popover" role="listbox" aria-label="Tops" data-filter-menu="category:top" onKeyDown={handleFilterMenuKeyDown}>
+                        <button
+                          className={`custom-select-option ${filterCat === 'top' && !filterSubtype ? 'active' : ''}`}
+                          onClick={() => selectFilterOption('category:top', { category: 'top', subtype: '' })}
+                          role="option"
+                          aria-selected={filterCat === 'top' && !filterSubtype}
+                        >
+                          <span>All tops</span>
+                          {filterCat === 'top' && !filterSubtype && <span aria-hidden="true">✓</span>}
+                        </button>
+                        {TOP_SUBTYPE_FILTER_OPTIONS.map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'top' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:top', { category: 'top', subtype: o.value })}
+                            role="option"
+                            aria-selected={filterCat === 'top' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'top' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
               if (c.value === 'bottom') {
                 return (
                   <div key="bottom" className="wardrobe-filter-menu wardrobe-category-menu">
@@ -587,6 +643,56 @@ export default function PieceInventory({ onSendToStylist }) {
                           >
                             <span>{o.label}</span>
                             {filterCat === 'bottom' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              if (c.value === 'outerwear') {
+                return (
+                  <div key="outerwear" className="wardrobe-filter-menu wardrobe-category-menu">
+                    <div className={`chip-split ${filterCat === 'outerwear' ? 'active' : ''}`}>
+                      <button
+                        className="chip-split-label"
+                        onClick={() => { setFilter({ category: 'outerwear', subtype: '' }); setOpenFilterMenu(null) }}
+                        aria-pressed={filterCat === 'outerwear'}
+                      >
+                        {outerwearLabel}
+                      </button>
+                      <button
+                        className="chip-split-chevron"
+                        onClick={() => setOpenFilterMenu(openFilterMenu === 'category:outerwear' ? null : 'category:outerwear')}
+                        aria-expanded={openFilterMenu === 'category:outerwear'}
+                        aria-haspopup="listbox"
+                        aria-label="Outerwear subtypes"
+                        data-filter-trigger="category:outerwear"
+                      >
+                        <span className="filter-menu-chevron">⌄</span>
+                      </button>
+                    </div>
+                    {openFilterMenu === 'category:outerwear' && (
+                      <div className="filter-menu-popover" role="listbox" aria-label="Outerwear" data-filter-menu="category:outerwear" onKeyDown={handleFilterMenuKeyDown}>
+                        <button
+                          className={`custom-select-option ${filterCat === 'outerwear' && !filterSubtype ? 'active' : ''}`}
+                          onClick={() => selectFilterOption('category:outerwear', { category: 'outerwear', subtype: '' })}
+                          role="option"
+                          aria-selected={filterCat === 'outerwear' && !filterSubtype}
+                        >
+                          <span>All outerwear</span>
+                          {filterCat === 'outerwear' && !filterSubtype && <span aria-hidden="true">✓</span>}
+                        </button>
+                        {OUTERWEAR_SUBTYPE_FILTER_OPTIONS.map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'outerwear' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:outerwear', { category: 'outerwear', subtype: o.value })}
+                            role="option"
+                            aria-selected={filterCat === 'outerwear' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'outerwear' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
                           </button>
                         ))}
                       </div>

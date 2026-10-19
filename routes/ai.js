@@ -63,6 +63,8 @@ import {
   SLEEVE_SHAPE_VALUES,
   FIT_ON_BODY_SCHEMA_DESCRIPTION,
 } from '../styling-engine/attributes.js'
+import { OUTERWEAR_SUBTYPE_VALUES } from '../styling-engine/outerwearSubtype.js'
+import { TOP_SUBTYPE_VALUES } from '../styling-engine/topSubtype.js'
 import {
   extractWeatherContext,
   extractStatedTripDateRange,
@@ -1985,6 +1987,8 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "category": "top|bottom|dress|outerwear|shoes|accessory",
       "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|glasses|gloves|other|null (accessory only; null/omit for non-accessories)",
       "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",
+      "outerwear_subtype": "${OUTERWEAR_SUBTYPE_VALUES.join('|')}|null (outerwear only; null/omit for non-outerwear) — the kind of garment, nothing about warmth or length; hoodie covers hoodies, track jackets and zip-up sweatshirts, while a fleece jacket is a jacket",
+      "top_subtype": "${TOP_SUBTYPE_VALUES.join('|')}|null (top only; null/omit for non-tops) — the kind of garment, nothing about length or cut: a tunic or crop top is typed by what it is; tank is a casual sleeveless top and shell a dressier one; shirt means button-front; knit_top is a fine-knit or jersey top that is not a tee; a pullover hoodie is a sweatshirt",
       "jewelry_type": "necklace|earrings|bracelet|ring|pin|null (only when accessory_subtype is jewelry; null/omit otherwise)",
       "necklace_length": "choker|short|long|null (only when jewelry_type is necklace; null/omit otherwise)",
       "background_color": "base color of the garment, e.g. black, navy, cream, white",

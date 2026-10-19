@@ -854,7 +854,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           'background_color', 'pattern_type', 'pattern_scale', 'pattern_complexity',
           'reads_as', 'hem_finish', 'neckline', 'sleeve_length', 'sleeve_shape', 'length_hits_at',
           'silhouette', 'shoe_type', 'toe_shape', 'fabric_category', 'fabric_weight', 'visual_weight',
-          'accessory_subtype', 'bottom_subtype', 'jewelry_type', 'necklace_length',
+          'accessory_subtype', 'bottom_subtype', 'outerwear_subtype', 'top_subtype', 'jewelry_type', 'necklace_length',
           'fit_on_body', 'tuck_behavior', 'waistband_type',
           'opacity', 'stretch', 'needs_base', 'formality', 'heel_height', 'walk_support'
         ].forEach(key => {
