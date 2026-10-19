@@ -3282,6 +3282,13 @@ none/other/unknown. Gemini, given the same inputs, drew the jacket correctly fro
 OpenAI path kept losing garment detail; the revert (9ad8156) is itself reverted, so
 `IMAGE_PROVIDER=gemini` works again as described above. Still off by default.
 
+**Amended 2026-10-18 — renders record their calibration photos.** Every producer that fetches
+calibration references now stores `timings.calibrationReferenceIds`. Selection stays random (owner
+ruling, 2026-08-12). Why: renders copy more than likeness from these photos — the Gemini render's
+plaza and handbag match calibration #26, a sunglasses render matches #24, the Sep 13 deck and dune
+match #27, a living-room render matches #29 — and the caption says only "do not copy outfit", not
+setting or props. Until now, which two photos a render used was never stored.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

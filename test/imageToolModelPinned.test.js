@@ -72,3 +72,10 @@ test('the construction list states a tagged neckline, so a shawl collar survives
   assert.match(prompt, /charcoal textured cropped jacket: [^\n]*keep its shawl neckline\/collar exactly as in the reference photo/)
   assert.doesNotMatch(prompt, /plain tee: [^\n]*neckline\/collar/)
 })
+
+test('every render that fetches calibration photos records which ones it used', () => {
+  const fetches = (coreSource.match(/const calibrationRefs = await getCalibrationReferenceImagesForGeneration\(/g) || []).length
+  const records = (coreSource.match(/timings\.calibrationReferenceIds = calibrationRefs\.map\(img => img\.id\)/g) || []).length
+  assert.ok(fetches >= 3)
+  assert.equal(records, fetches)
+})

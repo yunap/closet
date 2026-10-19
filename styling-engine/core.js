@@ -2389,6 +2389,10 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2482,6 +2486,10 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2624,6 +2632,10 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2819,6 +2831,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     // anchor established before the selected garment's own worn photo (if it has one) matters even
     // more here — drift would repeat across every figure, not just one.
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
