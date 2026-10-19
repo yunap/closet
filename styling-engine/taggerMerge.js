@@ -1,6 +1,8 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
 import { normalizeFiberContent, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction } from './fiberTaxonomy.js'
 import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
+import { OUTERWEAR_SUBTYPE_VALUES } from './outerwearSubtype.js'
+import { TOP_SUBTYPE_VALUES } from './topSubtype.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
@@ -9,6 +11,8 @@ const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
 const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat', 'watch', 'glasses', 'gloves', 'other'])
 const VALID_BOTTOM_SUBTYPE = new Set(['pants', 'shorts', 'skirt', 'culottes', 'overalls', 'other', 'unknown'])
+const VALID_OUTERWEAR_SUBTYPE = new Set(OUTERWEAR_SUBTYPE_VALUES)
+const VALID_TOP_SUBTYPE = new Set(TOP_SUBTYPE_VALUES)
 const VALID_JEWELRY_TYPE = new Set(['necklace', 'earrings', 'bracelet', 'ring', 'pin'])
 const VALID_NECKLACE_LENGTH = new Set(['choker', 'short', 'long'])
 // fabric_category's valid values depend on the piece's category, and until 2026-09-01 the field had
@@ -34,6 +38,8 @@ export const CONFIDENCE_FIELDS = [
   'category',
   'accessory_subtype',
   'bottom_subtype',
+  'outerwear_subtype',
+  'top_subtype',
   'jewelry_type',
   'necklace_length',
   'colors',
@@ -101,6 +107,14 @@ export function normalizeAccessorySubtype(value) {
 
 export function normalizeBottomSubtype(value) {
   return normalizeEnumValue(value, VALID_BOTTOM_SUBTYPE)
+}
+
+export function normalizeOuterwearSubtype(value) {
+  return normalizeEnumValue(value, VALID_OUTERWEAR_SUBTYPE)
+}
+
+export function normalizeTopSubtype(value) {
+  return normalizeEnumValue(value, VALID_TOP_SUBTYPE)
 }
 
 export function normalizeJewelryType(value) {
@@ -357,6 +371,8 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   if ('walk_support' in patch) patch.walk_support = normalizeWalkSupport(patch.walk_support)
   if ('accessory_subtype' in patch) patch.accessory_subtype = normalizeAccessorySubtype(patch.accessory_subtype)
   if ('bottom_subtype' in patch) patch.bottom_subtype = normalizeBottomSubtype(patch.bottom_subtype)
+  if ('outerwear_subtype' in patch) patch.outerwear_subtype = normalizeOuterwearSubtype(patch.outerwear_subtype)
+  if ('top_subtype' in patch) patch.top_subtype = normalizeTopSubtype(patch.top_subtype)
   if ('jewelry_type' in patch) patch.jewelry_type = normalizeJewelryType(patch.jewelry_type)
   if ('necklace_length' in patch) patch.necklace_length = normalizeNecklaceLength(patch.necklace_length)
   if ('outerwear_role' in patch) patch.outerwear_role = normalizeOuterwearRole(patch.outerwear_role)

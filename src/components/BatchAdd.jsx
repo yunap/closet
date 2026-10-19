@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS, SLEEVE_SHAPE_VALUES } from '../../styling-engine/attributes.js'
+import { OUTERWEAR_SUBTYPE_VALUES } from '../../styling-engine/outerwearSubtype.js'
+import { TOP_SUBTYPE_VALUES } from '../../styling-engine/topSubtype.js'
 import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS } from '../../styling-engine/fiberTaxonomy.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 import { ColorEditor } from './ColorSelector.jsx'
@@ -84,7 +86,7 @@ function emptyForm() {
     silhouette: null, fabric_category: null, fabric_weight: null, visual_weight: null, opacity: null, needs_base: null, fiber_content: [], interior_construction: 'unknown', insulating_layer_materials: null,
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
-    accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
+    accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null, outerwear_subtype: null, top_subtype: null,
     shoe_type: null, toe_shape: null, weather_protection: [],
     style_profile_json: {},
     tagger_version: null,
@@ -548,7 +550,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
   const patternConstFields = [
     'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
     'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
-    'stretch', 'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
+    'stretch', 'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype', 'outerwear_subtype', 'top_subtype',
     'shoe_type', 'toe_shape', 'weather_protection'
   ]
   const hasLowConfidencePatternConst = patternConstFields.some(field => 
@@ -1000,6 +1002,19 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
               </div>
             )}
 
+            {/* Top Type */}
+            {form.category === 'top' && (
+              <div className="form-group">
+                <FieldLabel field="top_subtype">Top Type</FieldLabel>
+                <select className="form-select" value={form.top_subtype || ''} onChange={e => set('top_subtype', e.target.value || null)}>
+                  <option value="">-- Select Top Type --</option>
+                  {TOP_SUBTYPE_VALUES.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Bottom Type */}
             {form.category === 'bottom' && (
               <div className="form-group">
@@ -1007,6 +1022,19 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onPrev, thumbnailSiz
                 <select className="form-select" value={form.bottom_subtype || ''} onChange={e => set('bottom_subtype', e.target.value || null)}>
                   <option value="">-- Select Bottom Type --</option>
                   {['pants','shorts','skirt','culottes','overalls','other','unknown'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Outerwear Type */}
+            {form.category === 'outerwear' && (
+              <div className="form-group">
+                <FieldLabel field="outerwear_subtype">Outerwear Type</FieldLabel>
+                <select className="form-select" value={form.outerwear_subtype || ''} onChange={e => set('outerwear_subtype', e.target.value || null)}>
+                  <option value="">-- Select Outerwear Type --</option>
+                  {OUTERWEAR_SUBTYPE_VALUES.map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
@@ -1425,6 +1453,8 @@ export default function BatchAdd({ onDone }) {
             waistband_type:     tags.waistband_type     || null,
             accessory_subtype:  tags.accessory_subtype  || null,
             bottom_subtype:     tags.bottom_subtype     || null,
+            outerwear_subtype:  tags.outerwear_subtype  || null,
+            top_subtype:        tags.top_subtype        || null,
             shoe_type:          tags.shoe_type          || null,
             toe_shape:          tags.toe_shape          || null,
             weather_protection: tags.weather_protection || [],

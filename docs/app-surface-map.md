@@ -1266,6 +1266,17 @@ being linkable.
 - **[by design]** Generated `metadata` tasks are swept rather than accumulating —
   `POST /api/todos/clear-orphaned` deletes any whose linked piece is gone or no longer active. Only
   `metadata` is swept; user-created and retag tasks are never auto-deleted.
+- **[by design, 2026-10-18]** *Pick an outerwear type* tasks come from the one-time
+  `outerwear_subtype` backfill (`backfillOuterwearSubtypes`), one per outerwear piece whose name and
+  tagger text disagree about its type or name none. They are ordinary `metadata` tasks with
+  `field = 'outerwear_subtype'`, so they group under that field and close on save like the rest.
+  The wardrobe page's Outerwear chip gained a type dropdown at the same time, like Bottoms and Shoes.
+  *Pick a top type* tasks work the same way (`backfillTopSubtypes`, `field = 'top_subtype'`), and the
+  Tops chip gained its dropdown too. Tops also use sleeve length (no sleeves → Sleeveless) and, for
+  generically named pieces, fabric, so a top filled that way gets no task — correct it in the edit
+  form. **[2026-10-19]** The top list was revised to types visible in the photo (Tees, Knit tops,
+  Sleeveless, Shirts & blouses, Sweaters, Sweatshirts & hoodies, Other); a one-time remap converted
+  stored values and closed the tasks it resolved.
 - **[by design]** A `metadata` task closes itself when you fill its field: saving a garment
   (`PUT /api/pieces/:id`) marks done any open metadata task whose `field` now has a value (not
   empty, `unknown` or `[]`). Fields that are not a stored column (`footwear-comfort`) still need the

@@ -5,6 +5,8 @@
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, layerDirectionPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule } from './outfitValidation.js'
 import { SLEEVE_SHAPE_VALUES, FIT_ON_BODY_SCHEMA_DESCRIPTION } from './attributes.js'
+import { OUTERWEAR_SUBTYPE_VALUES } from './outerwearSubtype.js'
+import { TOP_SUBTYPE_VALUES } from './topSubtype.js'
 import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION } from './fiberTaxonomy.js'
 
 // thread_1789532397982/1789532668263/1789536455443 diagnosis (2026-09-16): every model-facing
@@ -1062,6 +1064,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|glasses|gloves|other|null (accessory only; null/omit for non-accessories)",
   "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",
+  "outerwear_subtype": "${OUTERWEAR_SUBTYPE_VALUES.join('|')}|null (outerwear only; null/omit for non-outerwear) — the kind of garment, nothing about warmth or length; hoodie covers hoodies, track jackets and zip-up sweatshirts, while a fleece jacket is a jacket",
+  "top_subtype": "${TOP_SUBTYPE_VALUES.join('|')}|null (top only; null/omit for non-tops) — the kind of top as seen in the photo, nothing about dressiness, length or cut: sleeveless is any top with no sleeves (tank, shell, cami, sleeveless blouse) unless it is a sweater or sweatshirt, and a vest worn as a top is other; tee is a T-shirt; knit_top is any other sleeved knit or jersey top; shirt_blouse is any sleeved woven top, button-front or not (buttons can be decorative); a pullover hoodie is a sweatshirt",
   "jewelry_type": "necklace|earrings|bracelet|ring|pin|null (only when accessory_subtype is jewelry; null/omit otherwise)",
   "necklace_length": "choker|short|long|null (only when jewelry_type is necklace; null/omit otherwise)",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
@@ -1146,6 +1150,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "category": "high|medium|low",
     "accessory_subtype": "high|medium|low",
     "bottom_subtype": "high|medium|low",
+    "outerwear_subtype": "high|medium|low",
+    "top_subtype": "high|medium|low",
     "jewelry_type": "high|medium|low",
     "necklace_length": "high|medium|low",
     "colors": "high|medium|low",

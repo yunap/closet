@@ -623,6 +623,21 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
           "first answer what was raised, in a sentence or two, from the garment's recorded facts and photograph — agree, disagree, or explain. Then offer named replacement pieces yourself instead of asking if she would like recommendations: when the garment is in an existing card or plan, use 'suggest_slot_swaps' for that slot, so only that piece changes in the look that wears it and the rest stays; call the 'search_wardrobe' tool to find alternatives in Yuna's wardrobe only when there is no existing card to revise.")
         .replace('— should trigger the clarifying question.', '— should trigger a question about the destination. This limits destination and weather questions only: when something else that would change the outfit is missing or the request could go different ways, ask.')
     }
+    // 2026-10-18 (owner request): the tagger gains outerwear_subtype, the outerwear counterpart of
+    // bottom_subtype — garment type only, values owned by OUTERWEAR_SUBTYPE_VALUES. Owner ruling: hoodies,
+    // track jackets and zip-up sweatshirts are 'hoodie'; a fleece jacket is a jacket. See
+    // docs/garment-field-reference.md. Same day, same pattern: top_subtype — revised 2026-10-19 to
+    // types visible in the photo (sleeveless, tee, knit_top, shirt_blouse, sweater, sweatshirt).
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace(
+        '  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",\n',
+        '  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",\n  "outerwear_subtype": "coat|jacket|hoodie|blazer|cardigan|vest|shrug|other|unknown|null (outerwear only; null/omit for non-outerwear) — the kind of garment, nothing about warmth or length; hoodie covers hoodies, track jackets and zip-up sweatshirts, while a fleece jacket is a jacket",\n  "top_subtype": "tee|knit_top|sleeveless|shirt_blouse|sweater|sweatshirt|other|unknown|null (top only; null/omit for non-tops) — the kind of top as seen in the photo, nothing about dressiness, length or cut: sleeveless is any top with no sleeves (tank, shell, cami, sleeveless blouse) unless it is a sweater or sweatshirt, and a vest worn as a top is other; tee is a T-shirt; knit_top is any other sleeved knit or jersey top; shirt_blouse is any sleeved woven top, button-front or not (buttons can be decorative); a pullover hoodie is a sweatshirt",\n'
+      )
+      expected = expected.replace(
+        '    "bottom_subtype": "high|medium|low",\n',
+        '    "bottom_subtype": "high|medium|low",\n    "outerwear_subtype": "high|medium|low",\n    "top_subtype": "high|medium|low",\n'
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

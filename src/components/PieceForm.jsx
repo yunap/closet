@@ -3,6 +3,8 @@ import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields, SLEEVE_SHAPE_VALUES, FIELD_CONSEQUENCE } from '../../styling-engine/attributes.js'
 import { fiberFamiliesForPiece, FIBER_FAMILY_LABELS, FIBER_FAMILIES, INTERIOR_CONSTRUCTION_OPTIONS } from '../../styling-engine/fiberTaxonomy.js'
 import { warmthCalibrationEvidenceState } from '../../styling-engine/warmthCalibration.js'
+import { OUTERWEAR_SUBTYPE_FORM_OPTIONS } from '../../styling-engine/outerwearSubtype.js'
+import { TOP_SUBTYPE_FORM_OPTIONS } from '../../styling-engine/topSubtype.js'
 import { ColorEditor } from './ColorSelector.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 
@@ -527,6 +529,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     necklace_length:    piece?.necklace_length    || null,
     // Bottom
     bottom_subtype:     piece?.bottom_subtype     || null,
+    outerwear_subtype:  piece?.outerwear_subtype  || null,
+    top_subtype:        piece?.top_subtype        || null,
     // Shoes
     shoe_type:          piece?.shoe_type          || null,
     toe_shape:          piece?.toe_shape          || null,
@@ -761,6 +765,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       applyTagValue(next, 'waistband_type', tags.waistband_type)
       applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
       applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
+      applyTagValue(next, 'outerwear_subtype', tags.outerwear_subtype)
+      applyTagValue(next, 'top_subtype', tags.top_subtype)
       applyTagValue(next, 'shoe_type', tags.shoe_type)
       applyTagValue(next, 'toe_shape', tags.toe_shape)
       applyTagValue(next, 'weather_protection', tags.weather_protection)
@@ -930,6 +936,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     walk_support: 'Walk support',
     accessory_subtype: 'Accessory type',
     bottom_subtype: 'Bottom type',
+    outerwear_subtype: 'Outerwear type',
+    top_subtype: 'Top type',
     shoe_type: 'Shoe type',
   }
   const revealMissingField = (field) => {
@@ -1428,10 +1436,24 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 </div>
               )}
 
+              {cat === 'top' && (
+                <div className={`form-group ${suggestedFields.has('top_subtype') ? 'retag-field-highlight' : ''}`} data-piece-field="top_subtype">
+                  <FieldLabel field="top_subtype">Top Type {suggestedFields.has('top_subtype') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                  <ChipRow options={TOP_SUBTYPE_FORM_OPTIONS} value={form.top_subtype} onChange={v => set('top_subtype', v)} />
+                </div>
+              )}
+
               {cat === 'bottom' && (
                 <div className={`form-group ${suggestedFields.has('bottom_subtype') ? 'retag-field-highlight' : ''}`} data-piece-field="bottom_subtype">
                   <FieldLabel field="bottom_subtype">Bottom Type {suggestedFields.has('bottom_subtype') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
                   <ChipRow options={BOTTOM_SUBTYPE_OPTIONS} value={form.bottom_subtype} onChange={v => set('bottom_subtype', v)} />
+                </div>
+              )}
+
+              {cat === 'outerwear' && (
+                <div className={`form-group ${suggestedFields.has('outerwear_subtype') ? 'retag-field-highlight' : ''}`} data-piece-field="outerwear_subtype">
+                  <FieldLabel field="outerwear_subtype">Outerwear Type {suggestedFields.has('outerwear_subtype') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                  <ChipRow options={OUTERWEAR_SUBTYPE_FORM_OPTIONS} value={form.outerwear_subtype} onChange={v => set('outerwear_subtype', v)} />
                 </div>
               )}
 
