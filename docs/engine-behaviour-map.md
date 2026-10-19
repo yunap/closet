@@ -3254,6 +3254,20 @@ The gpt-4o handoff cost is unchanged (~6–9k input tokens); the image model's o
 returned to the app before or after, and `IMAGE_CALL_FLAT_USD` (`lib/aiCallTelemetry.js`) is a
 constant, not a measurement.
 
+**Amended 2026-10-18 — Gemini as an alternative single-outfit renderer.** `IMAGE_PROVIDER=gemini`
+(with a Gemini key; otherwise OpenAI as before) sends `createWholeWardrobeOutfitImage` to Google's
+image model through `renderWithGeminiImageModel` (`styling-engine/geminiImage.js`): one
+`interactions.create` call with the same content parts the OpenAI path builds, converted by
+`openAIContentPartsToGeminiInput`, so the prompt reaches the image model verbatim. Defaults:
+`gemini-nano-banana-2.1` (`GEMINI_IMAGE_MODEL`), 2:3 at 2K (`GEMINI_IMAGE_SIZE`). Google documents
+up to 14 references, 10 object images and 4 "images of characters"; a four-garment render sends 10
+images, six showing the owner, and nothing is trimmed because "character" is undefined and an
+excess is not documented as an error — the first paid render decides. Unlike the OpenAI path, the
+cost is computed: `estimateGeminiImageCostUsd` prices Google's reported tokens at its published
+rates (thinking tokens as output), stored as `timings.estimatedCostUsd`, logged with `logAiCall`,
+and shown by the chat's cost line in place of the OpenAI rate card. `timings.imageEvidence` holds
+Google's model, status, usage and any text it returned. The mock-AI and photo-preserving checks
+still run first, so the sandbox never reaches it; the other four producers are unchanged.
 **Amended 2026-10-18 — the collar now reaches the image model.** A Gemini renderer
 (`IMAGE_PROVIDER=gemini`, commit 6ba30c2) was added and reverted the same day (9ad8156) to test
 whether it affected OpenAI renders; with the code byte-identical to before it, the charcoal cropped
@@ -3263,6 +3277,10 @@ the owner-set `neckline: shawl` was absent while `structured` and the `tweed` fa
 and gpt-4o's handoff read "structured, waist-length, charcoal tweed". The checklist now adds "keep
 its <neckline> neckline/collar exactly as in the reference photo" for any neckline other than
 none/other/unknown. Gemini, given the same inputs, drew the jacket correctly from the photos.
+
+**Amended 2026-10-18, later — Gemini renderer re-applied.** The owner reopened it after the
+OpenAI path kept losing garment detail; the revert (9ad8156) is itself reverted, so
+`IMAGE_PROVIDER=gemini` works again as described above. Still off by default.
 
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to

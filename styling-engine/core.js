@@ -12,6 +12,8 @@ import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
+import { logAiCall } from '../lib/aiCallTelemetry.js'
+import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
@@ -2453,7 +2455,10 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     reason: outfit.reason || '',
   }
 
-  if (mockAiEnabled() || (!forceAi && photoPreservingVisualsEnabled()) || !hasOpenAiKey()) {
+  // IMAGE_PROVIDER=gemini sends this render to Google's image model instead (styling-engine/geminiImage.js);
+  // it needs a Gemini key, not an OpenAI one, and falls back to OpenAI when no Gemini key resolves.
+  const imageProvider = getImageRenderProvider()
+  if (mockAiEnabled() || (!forceAi && photoPreservingVisualsEnabled()) || (imageProvider === 'openai' && !hasOpenAiKey())) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2469,7 +2474,6 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   }
 
   try {
-    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
 
     // Calibration goes before garment references, not after: several of the garment worn photos
@@ -2506,6 +2510,31 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
 
     contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season, hasIdentityReference: calibrationRefs.some(img => img.kind === 'real_photo') }), pieces) })
 
+    if (imageProvider === 'gemini') {
+      const geminiStartedAt = Date.now()
+      let rendered
+      try {
+        rendered = await renderWithGeminiImageModel({ contentParts })
+      } catch (err) {
+        await logAiCall({ provider: 'gemini', model: process.env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1', callKind: 'image', isImage: true, success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - geminiStartedAt, estimatedCostUsd: null })
+        throw err
+      }
+      timings.geminiImageMs = Date.now() - geminiStartedAt
+      timings.imageModel = rendered.model
+      timings.imageAspectRatio = '2:3'
+      // The cost line reads this server-side estimate; timings.usage stays unset so the OpenAI
+      // rate card in StylistChat is never applied to Google tokens.
+      timings.estimatedCostUsd = rendered.estimatedCostUsd
+      timings.imageEvidence = rendered.evidence
+      await logAiCall({ provider: 'gemini', model: rendered.model, callKind: 'image', isImage: true, success: true, latencyMs: timings.geminiImageMs, estimatedCostUsd: rendered.estimatedCostUsd, context: { usage: rendered.evidence.usage, status: rendered.evidence.status } })
+      const writeStartedAt = Date.now()
+      await sharp(Buffer.from(rendered.base64, 'base64')).png().toFile(outPath)
+      timings.writeMs = Date.now() - writeStartedAt
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gemini' }
+    }
+
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
@@ -2525,8 +2554,8 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
-    console.error('Whole-wardrobe GPT-4o image generation failed, falling back to collage:', err.message)
-    timings.gpt4oError = err.message
+    console.error(`Whole-wardrobe ${imageProvider === 'gemini' ? 'Gemini' : 'GPT-4o'} image generation failed, falling back to collage:`, err.message)
+    timings[imageProvider === 'gemini' ? 'geminiError' : 'gpt4oError'] = err.message
     const fallbackStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
