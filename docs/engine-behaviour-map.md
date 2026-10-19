@@ -3191,6 +3191,106 @@ All five call `client.responses.create` with **`model: 'gpt-4o'`** and
 `tools: [{ type: 'image_generation', size, quality: 'medium' }]`. Quality is hard-coded. Size
 resolves to **1024x1536** by default (`OPENAI_EDITORIAL_IMAGE_SIZE` / `OPENAI_IMAGE_SIZE` override).
 
+**Amended 2026-10-17 — the image tool now names its model.** Until this date the tool was sent no
+`model`, so OpenAI chose which GPT Image model drew every render. Renders from August to
+2026-10-09 share one photoreal look; both renders of thread_1791604684826 on 2026-10-17 came back
+warm-cast, airbrushed and with a generic face while the code, the calibration library, renderer
+memory and input token count were all unchanged — a provider-side choice is the one input that
+was never fixed here. Every producer now builds the tool with `openAIImageGenerationTool`, whose
+model comes from `getOpenAIImageToolModel` (default `gpt-image-1.5`, override
+`OPENAI_IMAGE_TOOL_MODEL`), and records it as `timings.imageModel`. This is **not**
+`OPENAI_IMAGE_MODEL`, which still drives only the `runOpenAIImageGeneration` fallback chain below.
+Which model produced the earlier look is not recorded anywhere.
+
+**Amended 2026-10-17, later — first pin was wrong.** The first default, `gpt-image-1.5`, was a
+guess; its one render (same thread, 23:06) drew a different, younger woman with the head cropped
+out of frame. The default is now **`gpt-image-1`**: the only model the tool's type lists in the
+openai SDK this app was tuned against (4.104), and the tool's documented default then. Each render
+also stores `timings.imageEvidence` (`openAIImageResponseEvidence`): the resolved mainline snapshot
+OpenAI reports (`response.model`) and the image call's own metadata such as `revised_prompt`,
+never the image bytes — so the next provider-side change is read, not inferred from pictures.
+
+**Amended 2026-10-17, third render — identity now travels in the prompt body.** The `gpt-image-1`
+render restored the garments but drew a stranger: different figure, build and setting. Its
+`imageEvidence` showed why the photos were not enough on their own: gpt-4o's `revised_prompt`
+said only "a woman… neutral or natural background", because the identity link lived solely in the
+calibration images' captions and the rewrite does not carry captions; and the call ran as
+`action: "edit"`, where OpenAI keeps likeness from input photos only at high input fidelity.
+`wholeWardrobeImagePrompt` now takes `hasIdentityReference` (true when a `real_photo` calibration
+image is attached) and, when set, states in its Person / scene lines that the woman is the person
+in those photos and the setting is like theirs. `openAIImageGenerationTool` sends
+`input_fidelity: 'high'` for every producer, which raises image input cost. The other four
+producers' prompts are unchanged; extend them only once a render confirms this works.
+
+**Amended 2026-10-17, fourth render — the tool was editing a photo, not composing.** With the
+identity line now carried by the rewrite (its `revised_prompt` said the woman "matches the
+identity/proportion calibration photos"), the render still drew a generic figure — standing in the
+grey linen trousers' worn-photo room: same white door, stairs and wood floor. Every render that
+night reported `action: "edit"`: left unset, the tool chose to repaint one input photo, here a worn
+photo sent at deliberately low resolution, rather than compose from all references. The Oct 9
+render's setting matches none of the input photos, consistent with a fresh generation.
+`openAIImageGenerationTool` now sends `action: 'generate'` for every producer.
+
+**Amended 2026-10-17, fifth render — two of the night's changes reverted.** The generate-mode render
+(thread_1791359199659) drew a fresh picture but set it in the owner's own living room, copied from a
+calibration photo because the Person / scene line asked for "a setting like her calibration
+photos"; that line is back to the original neutral/natural background. `input_fidelity: 'high'` is
+removed too: it holds detail from every input photo, worn references included, which undoes the
+deliberate worn-photo downscale (`WORN_REFERENCE_MAX_PX`) against face bleed, and it was never set
+when renders looked right. Kept: the `gpt-image-1` pin, `action: 'generate'`, the identity line
+for the person, and `imageEvidence`. Calibration selection stays random by owner ruling.
+
+**Amended 2026-10-17, sixth render — current model, auto action.** Forcing `action: 'generate'` on
+`gpt-image-1` drew a blonde stranger with the outfit label printed in the image, although its
+`revised_prompt` asked to match the calibration photos' face, hair and build: under gpt-4o's tool,
+`gpt-image-1` either repainted one photo (`edit`) or ignored them (`generate`). OpenAI's image
+guide now names only `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` ("Earlier GPT Image models"
+for the rest) and documents `action: "auto"` as the model's own choice. The default is now
+`gpt-image-2.5-flare` and `action` is no longer sent. The gpt-4o path chosen on 2026-05-16
+(commit 80fdb204, for its reference photos) is kept; the guide gives no price for either model. **Confirmed by the owner the same night:** three flare
+renders looked right again, still with `action: "edit"` chosen by the tool, so the model was the
+fix and the action needs no override. Flare also halved render time (16–18 s against 32–41 s).
+The gpt-4o handoff cost is unchanged (~6–9k input tokens); the image model's own charge is not
+returned to the app before or after, and `IMAGE_CALL_FLAT_USD` (`lib/aiCallTelemetry.js`) is a
+constant, not a measurement.
+
+**Amended 2026-10-18 — Gemini as an alternative single-outfit renderer.** `IMAGE_PROVIDER=gemini`
+(with a Gemini key; otherwise OpenAI as before) sends `createWholeWardrobeOutfitImage` to Google's
+image model through `renderWithGeminiImageModel` (`styling-engine/geminiImage.js`): one
+`interactions.create` call with the same content parts the OpenAI path builds, converted by
+`openAIContentPartsToGeminiInput`, so the prompt reaches the image model verbatim. Defaults:
+`gemini-nano-banana-2.1` (`GEMINI_IMAGE_MODEL`), 2:3 at 2K (`GEMINI_IMAGE_SIZE`). Google documents
+up to 14 references, 10 object images and 4 "images of characters"; a four-garment render sends 10
+images, six showing the owner, and nothing is trimmed because "character" is undefined and an
+excess is not documented as an error — the first paid render decides. Unlike the OpenAI path, the
+cost is computed: `estimateGeminiImageCostUsd` prices Google's reported tokens at its published
+rates (thinking tokens as output), stored as `timings.estimatedCostUsd`, logged with `logAiCall`,
+and shown by the chat's cost line in place of the OpenAI rate card. `timings.imageEvidence` holds
+Google's model, status, usage and any text it returned. The mock-AI and photo-preserving checks
+still run first, so the sandbox never reaches it; the other four producers are unchanged.
+**Amended 2026-10-18 — the collar now reaches the image model.** A Gemini renderer
+(`IMAGE_PROVIDER=gemini`, commit 6ba30c2) was added and reverted the same day (9ad8156) to test
+whether it affected OpenAI renders; with the code byte-identical to before it, the charcoal cropped
+jacket (thread_1791357375231) still rendered as a notch-lapel blazer. Cause: `pieceConstructionChecklist`
+stated silhouette, length, hem, sleeves, fit, tuck, waistband and opacity but never `neckline`, so
+the owner-set `neckline: shawl` was absent while `structured` and the `tweed` fabric were present,
+and gpt-4o's handoff read "structured, waist-length, charcoal tweed". The checklist now adds "keep
+its <neckline> neckline/collar exactly as in the reference photo" for any neckline other than
+none/other/unknown. Gemini, given the same inputs, drew the jacket correctly from the photos.
+
+**Amended 2026-10-18, later — Gemini renderer re-applied.** The owner reopened it after the
+OpenAI path kept losing garment detail; the revert (9ad8156) is itself reverted, so
+`IMAGE_PROVIDER=gemini` works again as described above. Still off by default.
+
+**Amended 2026-10-18 — renders record their calibration photos.** Every producer that fetches
+calibration references now stores `timings.calibrationReferenceIds`. Selection stays random (owner
+ruling, 2026-08-12). Renders draw more than likeness from these photos — the Gemini render's plaza
+and handbag match calibration #26, a sunglasses render matches #24, the Sep 13 deck and dune match
+#27, a living-room render matches #29 — and until now which two a render used was never stored.
+**Owner ruling, 2026-10-18: this is allowed.** Setting and person from a calibration photo may both
+be used when they help the outfit; do not add a "likeness only, no setting or props" caption. The
+problem that night was the person, not the setting.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

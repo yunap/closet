@@ -408,6 +408,9 @@ const DIRECTION_RANK_LABELS = {
 const directionRankLabel = (value) => DIRECTION_RANK_LABELS[String(value || '').toLowerCase()] || ''
 
 const calculateOpenAICost = (timings) => {
+  // A Gemini render (IMAGE_PROVIDER=gemini) carries its own server-side estimate from Google's
+  // published rates and no OpenAI usage, so the OpenAI rate card below never prices it.
+  if (Number.isFinite(timings?.estimatedCostUsd)) return timings.estimatedCostUsd
   if (!timings || !timings.usage) return null
   const input = (timings.usage.input_tokens || 0) * 0.0000025
   const output = (timings.usage.output_tokens || 0) * 0.00001

@@ -12,6 +12,8 @@ import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
+import { logAiCall } from '../lib/aiCallTelemetry.js'
+import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
@@ -1536,6 +1538,34 @@ export function getOpenAIImageSize(kind = 'generate') {
     : (process.env.OPENAI_EDITORIAL_IMAGE_SIZE || process.env.OPENAI_IMAGE_SIZE || '1024x1536')
 }
 
+// The gpt-4o renderers hand the drawing to OpenAI's image_generation tool. Until 2026-10-17 it was
+// sent no model, so OpenAI chose one, and a provider-side change silently replaced the tuned look
+// (thread_1791604684826). gpt-image-2.5-flare restored it; gpt-image-1 and gpt-image-1.5 did not.
+// The night's attempts are in docs/engine-behaviour-map.md, "The producers". OPENAI_IMAGE_TOOL_MODEL
+// overrides; OPENAI_IMAGE_MODEL only drives runOpenAIImageGeneration's fallback chain.
+export function getOpenAIImageToolModel() {
+  return String(process.env.OPENAI_IMAGE_TOOL_MODEL || '').trim() || 'gpt-image-2.5-flare'
+}
+
+// What OpenAI reports it actually ran, as opposed to what was asked: the resolved mainline
+// snapshot and the image call's own metadata (revised_prompt and the like), never the image bytes.
+// Without this, a provider-side change can only be inferred from how the pictures look.
+export function openAIImageResponseEvidence(response, imageItem) {
+  const { result, ...call } = imageItem || {}
+  return { responseModel: response?.model || null, imageCall: call }
+}
+
+export function openAIImageGenerationTool(size = getOpenAIImageSize('generate')) {
+  // action is left to the tool (auto). Under gpt-image-1 auto chose "edit" and repainted one input
+  // photo (the grey trousers' worn-photo room, 2026-10-17), and forcing "generate" ignored the
+  // photos entirely (a blonde stranger). Whether the current model needs either is read from
+  // imageEvidence.imageCall.action, not guessed.
+  // input_fidelity is left at its default (low). High was tried the same night and removed: it holds
+  // detail from every input photo, worn references included, undoing the deliberate worn-photo
+  // downscale (WORN_REFERENCE_MAX_PX) that stops a worn photo's face bleeding into the render.
+  return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium' }
+}
+
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {
   let lastError = null
   for (const model of getOpenAIImageFallbackModels()) {
@@ -2136,6 +2166,12 @@ function pieceConstructionChecklist(pieces) {
       piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
       piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
       piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
+      // The collar was the one construction fact never stated. Live 2026-10-18 (thread_1791357375231):
+      // the charcoal cropped jacket, neckline set to shawl by the owner, went out as only "structured
+      // … tweed", the gpt-4o handoff kept just that, and every flare render drew a notch-lapel blazer.
+      piece.neckline && !['none', 'other', 'unknown'].includes(String(piece.neckline))
+        ? `keep its ${String(piece.neckline).replaceAll('_', ' ')} neckline/collar exactly as in the reference photo`
+        : '',
       (() => {
         const length = piece.sleeve_length && piece.sleeve_length !== 'sleeveless' ? String(piece.sleeve_length).replaceAll('_', ' ') : ''
         const shape = piece.sleeve_shape && piece.sleeve_shape !== 'other' && piece.sleeve_shape !== 'unknown' ? String(piece.sleeve_shape).replaceAll('_', ' ') : ''
@@ -2154,7 +2190,7 @@ function pieceConstructionChecklist(pieces) {
   }).join('\n')
 }
 
-export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', hasIdentityReference = false }) {
   const pieceLines = pieces.map((piece, index) => {
     const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
     return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
@@ -2181,7 +2217,15 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     outfit.stylingInstructions ? `Authoritative styling instructions (how these garments relate to each other — follow exactly):\n${outfit.stylingInstructions}` : '',
     '',
     'Person / scene:',
-    '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
+    // The identity link used to live only in the calibration images' captions. gpt-4o rewrites
+    // this prompt before the image model sees it, and on 2026-10-17 (thread_1791604684826) the
+    // rewrite kept "a woman" and dropped the captions: figure, build and setting came out generic.
+    // Stated here, in the body the rewrite carries, it reaches the image model.
+    hasIdentityReference
+      ? '- The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model. Full figure visible from head to shoes, no beauty retouching.'
+      : '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
+    // A "setting like her calibration photos" variant was tried and removed the same night: the
+    // render copied her living room from one of them.
     '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
     '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
     '',
@@ -2345,6 +2389,10 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2368,13 +2416,15 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
@@ -2409,7 +2459,10 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     reason: outfit.reason || '',
   }
 
-  if (mockAiEnabled() || (!forceAi && photoPreservingVisualsEnabled()) || !hasOpenAiKey()) {
+  // IMAGE_PROVIDER=gemini sends this render to Google's image model instead (styling-engine/geminiImage.js);
+  // it needs a Gemini key, not an OpenAI one, and falls back to OpenAI when no Gemini key resolves.
+  const imageProvider = getImageRenderProvider()
+  if (mockAiEnabled() || (!forceAi && photoPreservingVisualsEnabled()) || (imageProvider === 'openai' && !hasOpenAiKey())) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2425,7 +2478,6 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   }
 
   try {
-    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
 
     // Calibration goes before garment references, not after: several of the garment worn photos
@@ -2434,6 +2486,10 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2460,27 +2516,54 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       }
     }
 
-    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }), pieces) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season, hasIdentityReference: calibrationRefs.some(img => img.kind === 'real_photo') }), pieces) })
 
+    if (imageProvider === 'gemini') {
+      const geminiStartedAt = Date.now()
+      let rendered
+      try {
+        rendered = await renderWithGeminiImageModel({ contentParts })
+      } catch (err) {
+        await logAiCall({ provider: 'gemini', model: process.env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1', callKind: 'image', isImage: true, success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - geminiStartedAt, estimatedCostUsd: null })
+        throw err
+      }
+      timings.geminiImageMs = Date.now() - geminiStartedAt
+      timings.imageModel = rendered.model
+      timings.imageAspectRatio = '2:3'
+      // The cost line reads this server-side estimate; timings.usage stays unset so the OpenAI
+      // rate card in StylistChat is never applied to Google tokens.
+      timings.estimatedCostUsd = rendered.estimatedCostUsd
+      timings.imageEvidence = rendered.evidence
+      await logAiCall({ provider: 'gemini', model: rendered.model, callKind: 'image', isImage: true, success: true, latencyMs: timings.geminiImageMs, estimatedCostUsd: rendered.estimatedCostUsd, context: { usage: rendered.evidence.usage, status: rendered.evidence.status } })
+      const writeStartedAt = Date.now()
+      await sharp(Buffer.from(rendered.base64, 'base64')).png().toFile(outPath)
+      timings.writeMs = Date.now() - writeStartedAt
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gemini' }
+    }
+
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
-    console.error('Whole-wardrobe GPT-4o image generation failed, falling back to collage:', err.message)
-    timings.gpt4oError = err.message
+    console.error(`Whole-wardrobe ${imageProvider === 'gemini' ? 'Gemini' : 'GPT-4o'} image generation failed, falling back to collage:`, err.message)
+    timings[imageProvider === 'gemini' ? 'geminiError' : 'gpt4oError'] = err.message
     const fallbackStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2549,6 +2632,10 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    // Which calibration rows this render used. Selection stays random by owner ruling; recording it lets
+    // a render that copied a setting or prop (2026-10-18: a plaza and bag from #26, sunglasses from #24)
+    // be traced to its photos instead of reconstructed.
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2578,13 +2665,15 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     const writeStartedAt = Date.now()
 
     const rawBuffer = Buffer.from(imageItem.result, 'base64')
@@ -2742,6 +2831,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     // anchor established before the selected garment's own worn photo (if it has one) matters even
     // more here — drift would repeat across every figure, not just one.
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
@@ -2764,13 +2854,15 @@ export async function createIdealAdditionsComparisonSheetImage({
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
-      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+      tools: [openAIImageGenerationTool()]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
     timings.usage = response.usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
@@ -3864,14 +3956,14 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
   const response = await client.responses.create({
     model: 'gpt-4o',
     input: [{ role: 'user', content: contentParts }],
-    tools: [{ type: 'image_generation', size, quality: 'medium' }]
+    tools: [openAIImageGenerationTool(size)]
   })
  
   const imageItem = response.output?.find(item => item.type === 'image_generation_call')
   if (!imageItem?.result) {
     throw new Error('GPT-4o Responses API did not return an image_generation_call result')
   }
-  return { result: imageItem.result, usage: response.usage }
+  return { result: imageItem.result, usage: response.usage, imageEvidence: openAIImageResponseEvidence(response, imageItem) }
 }
 
 export async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
@@ -3985,7 +4077,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
-    const { result: base64Result, usage } = await runGPT4oImageGeneration({
+    const { result: base64Result, usage, imageEvidence } = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
@@ -3996,6 +4088,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
     timings.usage = usage
     timings.imageSize = getOpenAIImageSize('generate')
+    timings.imageModel = getOpenAIImageToolModel()
+    timings.imageEvidence = imageEvidence
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
