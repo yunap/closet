@@ -1266,6 +1266,10 @@ being linkable.
 - **[by design]** Generated `metadata` tasks are swept rather than accumulating —
   `POST /api/todos/clear-orphaned` deletes any whose linked piece is gone or no longer active. Only
   `metadata` is swept; user-created and retag tasks are never auto-deleted.
+- **[by design]** A `metadata` task closes itself when you fill its field: saving a garment
+  (`PUT /api/pieces/:id`) marks done any open metadata task whose `field` now has a value (not
+  empty, `unknown` or `[]`). Fields that are not a stored column (`footwear-comfort`) still need the
+  done-toggle. Before this, retagging a garment left its "missing …" task open.
 - **[owner check wanted]** This surface never received the dialog audit the other modals did. It
   uses a plain overlay with click-outside-to-close, and has not been checked for focus trapping,
   Escape handling, or focus return. It is the one modal in the app outside the ratified dialog
