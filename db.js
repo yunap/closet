@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from './styling-engine/constitutionSeed.js'
 import { queueSleeveTaxonomyReviews } from './lib/sleeveTaxonomyReview.js'
 import { backfillOuterwearSubtypes } from './lib/outerwearSubtypeBackfill.js'
-import { backfillTopSubtypes } from './lib/topSubtypeBackfill.js'
+import { backfillTopSubtypes, remapTopSubtypesV1 } from './lib/topSubtypeBackfill.js'
 import { DEFAULT_USER_ID, getCurrentUserId } from './lib/requestContext.js'
 import {
   assertDefaultDatabaseAccess,
@@ -437,7 +437,7 @@ function initDb(dbPath) {
     // styling-engine/outerwearSubtype.js. Filled once from existing names/tagger
     // notes by backfillOuterwearSubtypes below, then by the tagger.
     'outerwear_subtype TEXT',
-    // top_subtype: tee|tank|shell|blouse|shirt|knit_top|sweater|sweatshirt|vest|other|unknown.
+    // top_subtype: tee|knit_top|sleeveless|shirt_blouse|sweater|sweatshirt|other|unknown.
     // NULL for non-tops. Type only; values owned by styling-engine/topSubtype.js. Filled once by
     // backfillTopSubtypes below, then by the tagger.
     'top_subtype TEXT',
@@ -665,12 +665,18 @@ function initDb(dbPath) {
   } catch (err) {
     console.warn('Failed to backfill outerwear_subtype:', err.message)
   }
-  // Same for top_subtype, which also falls back to sleeve length + formality/fabric for generically
-  // named tops — see lib/topSubtypeBackfill.js.
+  // Same for top_subtype, which also uses sleeve length and fabric — see lib/topSubtypeBackfill.js.
+  // Then, once, convert values stored under the first top list (tank/shell/shirt/blouse/vest) and
+  // apply "no sleeves wins"; a no-op on a database the backfill above just filled.
   try {
     backfillTopSubtypes(db)
   } catch (err) {
     console.warn('Failed to backfill top_subtype:', err.message)
+  }
+  try {
+    remapTopSubtypesV1(db)
+  } catch (err) {
+    console.warn('Failed to remap top_subtype to the current list:', err.message)
   }
 
   // One-time remap: silhouette per category. Top/dress gained new values with

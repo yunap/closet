@@ -626,12 +626,12 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     // 2026-10-18 (owner request): the tagger gains outerwear_subtype, the outerwear counterpart of
     // bottom_subtype — garment type only, values owned by OUTERWEAR_SUBTYPE_VALUES. Owner ruling: hoodies,
     // track jackets and zip-up sweatshirts are 'hoodie'; a fleece jacket is a jacket. See
-    // docs/garment-field-reference.md. Same day, same pattern: top_subtype (tank vs shell is casual
-    // vs dressy sleeveless; shirt is button-front; a pullover hoodie is a sweatshirt).
+    // docs/garment-field-reference.md. Same day, same pattern: top_subtype — revised 2026-10-19 to
+    // types visible in the photo (sleeveless, tee, knit_top, shirt_blouse, sweater, sweatshirt).
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace(
         '  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",\n',
-        '  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",\n  "outerwear_subtype": "coat|jacket|hoodie|blazer|cardigan|vest|shrug|other|unknown|null (outerwear only; null/omit for non-outerwear) — the kind of garment, nothing about warmth or length; hoodie covers hoodies, track jackets and zip-up sweatshirts, while a fleece jacket is a jacket",\n  "top_subtype": "tee|tank|shell|blouse|shirt|knit_top|sweater|sweatshirt|vest|other|unknown|null (top only; null/omit for non-tops) — the kind of garment, nothing about length or cut: a tunic or crop top is typed by what it is; tank is a casual sleeveless top and shell a dressier one; shirt means button-front; knit_top is a fine-knit or jersey top that is not a tee; a pullover hoodie is a sweatshirt",\n'
+        '  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",\n  "outerwear_subtype": "coat|jacket|hoodie|blazer|cardigan|vest|shrug|other|unknown|null (outerwear only; null/omit for non-outerwear) — the kind of garment, nothing about warmth or length; hoodie covers hoodies, track jackets and zip-up sweatshirts, while a fleece jacket is a jacket",\n  "top_subtype": "tee|knit_top|sleeveless|shirt_blouse|sweater|sweatshirt|other|unknown|null (top only; null/omit for non-tops) — the kind of top as seen in the photo, nothing about dressiness, length or cut: sleeveless is any top with no sleeves (tank, shell, cami, sleeveless blouse) unless it is a sweater or sweatshirt, and a vest worn as a top is other; tee is a T-shirt; knit_top is any other sleeved knit or jersey top; shirt_blouse is any sleeved woven top, button-front or not (buttons can be decorative); a pullover hoodie is a sweatshirt",\n'
       )
       expected = expected.replace(
         '    "bottom_subtype": "high|medium|low",\n',
