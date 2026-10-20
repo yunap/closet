@@ -762,6 +762,13 @@ export async function resolveToolStylingContext({
       // indoorOnly says the same thing about a forecast restored from the thread's own cards (a trip
       // follow-up, thread_1791444946137): it is not the walk to this room either.
       ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null, indoorOnly: true } : {}),
+      // The router read the request as giving no place or time (routes/ai.js, owner ruling
+      // 2026-10-19): no outdoor conditions apply to this turn's outfits, and a model-volunteered
+      // estimate is dropped for the same reason as above. Never on a trip thread: its looks are
+      // for the trip's days, whose weather the packed suitcase was chosen for.
+      ...(toolContext.executionRouterNoSituation === true && !(toolContext.packingRosterIds instanceof Set && toolContext.packingRosterIds.size)
+        ? { weatherEstimate: null, noSituation: true }
+        : {}),
       location: safeExplicitLocation,
       // The narrow one-outfit route extracts an explicit numeric range before the model call.
       // Keep it authoritative even if the model omits the duplicate tool argument.
@@ -2666,7 +2673,8 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           advisoryNotes.push({
             type: finding.code?.startsWith('env_') || finding.kind === 'environment' || Object.values(ENVIRONMENTAL_ADEQUACY_CODES).includes(finding.code) ? 'Weather note' : 'Fit note',
             message: msg,
-            cardMessage: cardMsg
+            cardMessage: cardMsg,
+            ...(finding.modelOnly ? { modelOnly: true } : {})
           })
         }
         if (isSingleOutfit) {
@@ -2789,10 +2797,13 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         const finalAnnotations = [
           ...(advisoryNotes || [])
         ]
-        const cardAnnotations = finalAnnotations.map(({ cardMessage, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
-        const modelNotes = finalAnnotations.map(({ cardMessage, ...note }) => note)
+        // modelOnly notes (an instruction to the stylist, e.g. layer_direction_unknown) go back in the
+        // tool result and never onto the card.
+        const cardAnnotations = finalAnnotations.filter(note => !note.modelOnly)
+          .map(({ cardMessage, modelOnly, ...note }) => (cardMessage ? { ...note, message: cardMessage } : note))
+        const modelNotes = finalAnnotations.map(({ cardMessage, modelOnly, ...note }) => note)
         const shownCardNotes = cardAnnotations.map(note => note.message).filter(Boolean)
-        const finalDisposition = finalAnnotations.length ? 'annotated' : 'accepted'
+        const finalDisposition = cardAnnotations.length ? 'annotated' : 'accepted'
         const proposedOutfit = normalizeOutfitResult({
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -2815,7 +2826,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         }, {
           disposition: finalDisposition,
           annotations: cardAnnotations,
-          findings: (advisoryNotes || []).map(n => ({ message: n.cardMessage || n.message, kind: 'advisory', severity: 'warning' })),
+          findings: (advisoryNotes || []).filter(n => !n.modelOnly).map(n => ({ message: n.cardMessage || n.message, kind: 'advisory', severity: 'warning' })),
           provenance: {
             flow: 'freeform_propose_outfit',
             source: 'proposed',

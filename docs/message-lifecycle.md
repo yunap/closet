@@ -223,6 +223,8 @@ structured-output call, `maxTokens: 350`, against `FREEFORM_EXECUTION_ROUTER_SYS
 
 **[amended 2026-10-02]** The router’s answer also carries a required `setting` (`indoor_only | includes_outdoors`). Like its activity and season, it is a turn-level fact the later tool calls cannot override: `indoor_only` makes every tool in the turn resolve weather as indoor. An ordinary “what should I wear?” now routes to `single_outfit`, not `bounded_multi` (owner ruling the same day).
 
+**[amended 2026-10-19]** `setting` is now `indoor_only | includes_outdoors | not_stated`. `not_stated` means the user has not said where or when the clothes will be worn and does not ask about weather; the turn's outfits are judged on occasion and season with no forecast (`weatherSource: 'not_stated'`). It is ignored on a thread with an active packing roster. See [engine-behaviour-map.md](engine-behaviour-map.md) item 85.
+
 ### The six profiles
 
 | Profile | Ends the turn as | Model calls |

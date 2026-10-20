@@ -7158,6 +7158,11 @@ router.post('/ask', async (req, res) => {
           // did not hold (it marked the search and not the proposal). resolveToolStylingContext
           // reads this and resolves the turn's weather as indoor for every tool.
           toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
+          // Owner ruling 2026-10-19 (thread_1792453320490): a request that gives no place or time —
+          // "which tops can I wear under this?" with city and fall picked — is a styling question,
+          // not an outing. It was routed includes_outdoors ("anything unclear") and the card was told
+          // it lacked a layer for a 53°F low nobody asked about. Occasion and season still apply.
+          toolContext.executionRouterNoSituation = routed.value?.setting === 'not_stated'
           // Fourth turn-level fact. Live thread_1791327434563: "Tonight I'm going to a guitar concert"
           // was dressed for "a forecast high of 90°F and low of 58°F" — the 4pm peak and the
           // early-morning low — while the evening itself ran 89°F down to 64°F.
@@ -7170,6 +7175,10 @@ router.post('/ask', async (req, res) => {
           // of the evening") — which the router again read as indoor_only — was dressed for today's
           // 96°F outdoor forecast, because the setting was applied to fresh requests only.
           toolContext.executionRouterIndoorOnly = true
+        } else if (routed.value?.setting === 'not_stated') {
+          // The router keeps a situation the conversation already gave (its setting rule), so a
+          // follow-up it reads as not_stated has none to carry: the same styling-question case.
+          toolContext.executionRouterNoSituation = true
         }
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {

@@ -4391,7 +4391,7 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
     location: routed.location || body.location || '',
     date: routed.date || '',
     season: routed.season || body.season || '',
-    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : {}),
+    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : routed.setting === 'not_stated' ? { setting: 'no place or time given' } : {}),
     mood: routed.mood || body.mood || '',
     mission: routed.mission || body.mission || 'mix',
     user_weather: userWeather || null,
@@ -4412,7 +4412,9 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
             }`
           : routed.setting === 'indoor_only'
             ? 'This occasion is spent indoors in one room for its whole duration. Dress for the room: do not supply user_weather or weather_estimate, and add no layer for warmth.'
-            : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
+            : routed.setting === 'not_stated'
+              ? 'No place or time was given for this outfit and no weather was asked about. Dress for the occasion and season: do not supply user_weather or weather_estimate.'
+              : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
       ].join('\n')
     }],
     maxTokens: 1200,
