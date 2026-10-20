@@ -1135,6 +1135,19 @@ export function compactRecentHistory(history = [], limit = 4) {
   return entries.map(entry => `${entry.role}: ${String(entry.content || '').trim()}`).join('\n')
 }
 
+// The user's side of the same window, for the router's setting judgment (engine-behaviour-map
+// item 85): the assistant reply stays in the recent exchange for its own purpose (answers to the
+// stylist's question), but where and when the clothes are worn is judged from the user's words.
+export function compactRecentUserWords(history = [], limit = 2) {
+  return (Array.isArray(history) ? history : [])
+    .filter(entry => entry?.role === 'user' || entry?.role === 'assistant')
+    .slice(-limit)
+    .filter(entry => entry.role === 'user')
+    .map(entry => String(entry.content || '').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 // A vague reference like "these shorts" or "this top" names a garment CATEGORY, not an exact piece
 // or ID — exactNamedPieceIdsFromQuestion and explicitPieceIdMentionsFromQuestion both miss it, so it
 // previously fell through to every piece across the whole accumulated current-card set (see
@@ -7114,6 +7127,7 @@ router.post('/ask', async (req, res) => {
           // while answering "which outfit's layer?" — read like a standalone garment_fact question).
           // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
           recentExchange: compactRecentHistory(priorConversationHistory, 2),
+          recentUserWords: compactRecentUserWords(priorConversationHistory, 2),
           explicitActivity: req.body.activity || '',
           providerOverride: toolContext.providerOverride
         })
