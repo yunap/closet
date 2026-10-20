@@ -2640,6 +2640,20 @@ fields) for consistency, though the prompt injection is the actual fix. `test/ed
 gained two more cases: a direction with `stylingInstructions` produces the authoritative line ordered
 before `Stylist logic:`, and one without it produces neither.
 
+**[anchor correction, 2026-10-19] The anchor must be a garment the card contains.** Live
+`thread_1792472450521`: the thread opened with "Style this piece" on the metallic stripe scoop tank;
+a later `/ask` turn proposed "Noir Turtleneck Floral Contrast" (floral top, black turtleneck, trousers,
+flats). Its render showed the tank in place of the floral top: the image call's revised prompt read
+"wearing the metallic stripe scoop tank as the anchor garment", and saved board 295 recorded five
+pieces. `StylistChat.jsx` treated every preview card in a piece-context thread as a selected-piece
+direction and sent `pieceId: outfit.pieceId || activeContext?.id`, so the thread's piece became the
+anchor of a card that did not contain it. Now `editorialAnchorId` is `outfit.pieceId`, then
+`outfit.selectedPieceId`, then the thread's piece only when the card's own pieces include it; a card
+with no such anchor renders through `/generate-wardrobe-outfit-image` with its own pieces, as it
+already did in threads without a piece context. Server unchanged. Pinned in
+`test/aiEndpointContracts.test.js`; verified in the sandbox (mock AI) on a planted copy of the thread:
+the later cards call `/generate-wardrobe-outfit-image` and the board shows only the card's four pieces.
+
 **[projection-accuracy correction, 2026-08-26 same day] The first projection dropped a real evidence
 branch and conflated relationship with direction.** It omitted `pieceRequiresBaseLayer` — the
 role-aware `layer_top + primary_top` path treats a dependent `layer_top` (`needs_base: yes`) as

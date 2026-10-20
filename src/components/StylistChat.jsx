@@ -2310,7 +2310,7 @@ export default function StylistChat({
   }
 
   // ── Render one editorial direction image on demand ──────────────────────────
-  const renderOneEditorialDirection = async (outfit, messageIndex, idx) => {
+  const renderOneEditorialDirection = async (outfit, messageIndex, idx, anchorPieceId) => {
     const key = `${messageIndex}:${idx}`
     let statusTimers = []
     const clearImageTimers = () => {
@@ -2329,7 +2329,7 @@ export default function StylistChat({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pieceId: outfit.pieceId || activeContext?.id,
+          pieceId: anchorPieceId,
           direction: outfit,
           occasion: outfit.occasion || generateOccasion,
           season: outfit.season || generateSeason,
@@ -3238,8 +3238,19 @@ export default function StylistChat({
           const isTextOnly = Boolean(outfit.textOnly || message?.textOnly || message?.wholeWardrobe)
           const hasRenderableOutfitPieces = (Array.isArray(outfit.pieceIds) && outfit.pieceIds.length > 0) ||
             (Array.isArray(outfit.pieces) && outfit.pieces.some(p => p?.id))
+          // The anchored (editorial) render puts one garment on as "the anchor". It may only be a
+          // garment this card actually contains. Live thread_1792472450521: a thread opened with
+          // "Style this piece" on the metallic tank later proposed a floral-top look, and its
+          // render fell back to the thread's piece — the image showed the tank in place of the
+          // floral top. A card whose own pieces do not include an anchor renders as a whole outfit.
+          const outfitPieceIdSet = new Set([
+            ...(Array.isArray(outfit.pieceIds) ? outfit.pieceIds : []),
+            ...(Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.id) : []),
+          ].map(Number).filter(Boolean))
+          const editorialAnchorId = outfit.pieceId || outfit.selectedPieceId
+            || (activeContext?.type === 'piece' && outfitPieceIdSet.has(Number(activeContext.id)) ? activeContext.id : null)
           const canRenderStructuredOutfit = isPreview
-            ? (activeContext?.type === 'piece' || outfit.pieceId || outfit.selectedPieceId)
+            ? Boolean(editorialAnchorId)
             : !message?.wholeWardrobe && !message?.wardrobeEvaluation && hasRenderableOutfitPieces
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
@@ -3717,7 +3728,7 @@ export default function StylistChat({
                 </details>
               )}
 
-              {!canRenderStructuredOutfit && (message?.wholeWardrobe || (activeContext?.type !== 'piece' && !outfit.pieceId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
+              {!canRenderStructuredOutfit && (message?.wholeWardrobe || (!editorialAnchorId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
                 <>
                   <div className="stylist-outfit-actions">
                     <button
@@ -3745,7 +3756,7 @@ export default function StylistChat({
                     {isPreview ? (
                       // Preview mode: render this single direction on demand
                       <button
-                        onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx)}
+                        onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx, editorialAnchorId)}
                         disabled={isRendering}
                         style={{
                           fontSize: 12, color: 'var(--accent)',

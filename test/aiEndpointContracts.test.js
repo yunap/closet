@@ -3318,7 +3318,19 @@ test('StylistChat scopes rendered wardrobe boards to each generation result', ()
 test('StylistChat does not show duplicate image and evaluation buttons on whole-wardrobe cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const canRenderStructuredOutfit = isPreview[\s\S]*: !message\?\.wholeWardrobe && !message\?\.wardrobeEvaluation && hasRenderableOutfitPieces/)
-  assert.match(src, /\(message\?\.wholeWardrobe \|\| \(activeContext\?\.type !== 'piece'/)
+  assert.match(src, /\(message\?\.wholeWardrobe \|\| \(!editorialAnchorId && Array\.isArray\(outfit\.pieces\)/)
+})
+
+// thread_1792472450521: a later card in a "Style this piece" thread was rendered with the thread's
+// piece (the metallic tank) as its anchor although the card did not contain it, so the image showed
+// the tank in place of the card's floral top.
+test('StylistChat anchors an editorial render only on a garment the card contains', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /\|\| \(activeContext\?\.type === 'piece' && outfitPieceIdSet\.has\(Number\(activeContext\.id\)\) \? activeContext\.id : null\)/)
+  assert.match(src, /const canRenderStructuredOutfit = isPreview\s*\n\s*\? Boolean\(editorialAnchorId\)/)
+  assert.match(src, /renderOneEditorialDirection\(outfit, messageIndex, idx, editorialAnchorId\)/)
+  assert.match(src, /pieceId: anchorPieceId,/)
+  assert.doesNotMatch(src, /pieceId: outfit\.pieceId \|\| activeContext\?\.id/)
 })
 
 test('StylistChat visibly marks broken diagnostic local-fill cards with a plain-language disclaimer', () => {
