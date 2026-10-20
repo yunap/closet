@@ -1330,6 +1330,43 @@ test('execution router receives the immediately preceding exchange, not the whol
   }
 })
 
+test('execution router gets the user\'s own earlier words on their own line, and judges setting from them', async () => {
+  // engine-behaviour-map item 85 (thread_1792453320490): a "Style this piece" reply's "Best for: city
+  // autumn day" lines, read as the recent exchange, made the router return includes_outdoors for a
+  // pure styling question. The user's side of that turn is now a separate labelled line.
+  const { compactRecentUserWords } = await import('../routes/ai.js')
+  const history = [
+    { role: 'user', content: 'older message' },
+    { role: 'assistant', content: 'older reply' },
+    { role: 'user', content: ' Style this piece using my existing wardrobe. ' },
+    { role: 'assistant', content: 'Best for: city autumn day' },
+  ]
+  assert.equal(compactRecentUserWords(history, 2), 'Style this piece using my existing wardrobe.')
+  assert.equal(compactRecentUserWords([], 2), '')
+  assert.equal(compactRecentUserWords([{ role: 'assistant', content: 'only a reply' }], 2), '')
+
+  let captured = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
+    captured = call
+    return { profile: 'full_stylist', occasion: 'city', activity: 'none', setting: 'not_stated', season: 'fall', mood: '', mission: 'mix', limit: 0, location: '', date: '', subject: '' }
+  }
+  try {
+    await routeFreeformExecutionProfile({
+      question: 'are there tops with long sleeves that I can wear under the vibrant floral print top?',
+      recentExchange: 'user: Style this piece using my existing wardrobe.\nassistant: Best for: city autumn day',
+      recentUserWords: 'Style this piece using my existing wardrobe.',
+    })
+    const content = captured.messages[0].content
+    assert.match(content, /Recent exchange[^\n]*\nuser: Style this piece[^\n]*\nassistant: Best for: city autumn day\nThe user's own earlier words \(same turn as the recent exchange\): Style this piece using my existing wardrobe\.\nRequest: are there tops/)
+    assert.match(captured.system, /Judge it only from the user's own words, which are the Request and the line of the user's earlier words: the assistant's replies in the recent exchange are suggestions/)
+
+    await routeFreeformExecutionProfile({ question: 'What should I wear today?', recentUserWords: '  ' })
+    assert.doesNotMatch(captured.messages[0].content, /earlier words/)
+  } finally {
+    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
+  }
+})
+
 test('execution router omits the recent-exchange block entirely when none is supplied', async () => {
   let captured = null
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
