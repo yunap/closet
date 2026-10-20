@@ -293,6 +293,11 @@ function layerDirectionPair(addedPiece, basePiece, { relationship, direction = n
       resolutionPolicy: 'provisional_visual_judgment',
     },
   )
+  // An instruction to the composer, not a note for the wearer. Live thread_1792453320490 (owner,
+  // 2026-10-19): the card showed "has no recorded over/under direction; inspect both pieces…"
+  // under the stylist's own "How to wear it", which had already put the cream top underneath.
+  // Card builders (advisoryFindingsToSystemFlags, propose_outfit) leave modelOnly findings off.
+  finding.modelOnly = true
   return {
     verdict: 'unknown',
     addedPiece,

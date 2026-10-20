@@ -971,7 +971,7 @@ const ENVIRONMENTAL_CODE_VALUES = new Set(Object.values(ENVIRONMENTAL_ADEQUACY_C
 // (outfitSetPlanner's plan slots, rules.js's whole-wardrobe gate). It was copied prose-for-prose in
 // both before this, which is how one of them could have drifted.
 export function advisoryFindingsToSystemFlags(findings = []) {
-  return collapseWarmthAdvisoryFindings(findings).map(finding => ({
+  return collapseWarmthAdvisoryFindings(findings).filter(finding => !finding?.modelOnly).map(finding => ({
     type: ENVIRONMENTAL_CODE_VALUES.has(finding.code) || finding.stage === 'environment' || finding.kind === 'environment' || String(finding.code || '').startsWith('env_')
       ? 'Weather note'
       : 'Fit note',

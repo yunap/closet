@@ -4798,7 +4798,7 @@ test('a router-classified indoor-only look on a trip thread is not judged agains
 test('the router must classify the setting, and a single-outfit proposal must carry the stylist note', async () => {
   const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
   assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('setting'))
-  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'includes_outdoors'])
+  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'includes_outdoors', 'not_stated'])
 
   const single = stylistToolsForTurn({ executionProfile: 'single_outfit', allowedToolNames: ['search_wardrobe', 'view_pieces', 'propose_outfit'] })
   assert.deepEqual(single.map(tool => tool.name).sort(), ['propose_outfit', 'search_wardrobe', 'view_pieces'])
@@ -4819,4 +4819,125 @@ test('the router must classify the setting, and a single-outfit proposal must ca
     { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: 'fall', limit: 1 }).messages[0].content
   assert.doesNotMatch(outdoorText, /"setting"/)
   assert.match(outdoorText, /let the tools resolve weather/)
+})
+
+// thread_1792453320490 (owner ruling 2026-10-19): "are there tops with long sleeves that I can wear
+// under the vibrant floral print top?", with city and fall picked, was routed includes_outdoors and
+// the card was told it had "no layer to put on for the cooler part of the day" for a 53°F low. The
+// owner: "I do not need it to be appropriate for outdoor weather unless I ask for it, or unless the
+// situation calls for it." The same card showed "has no recorded over/under direction; inspect both
+// pieces…" under the stylist's own "How to wear it", which had already decided it.
+const NO_SITUATION_PIECES = [
+  { id: 9301, name: 'cream ribbed long sleeve top', category: 'top', fabric_weight: 'medium', sleeve_length: 'long' },
+  { id: 9302, name: 'floral boxy top', category: 'top', fabric_weight: 'light', sleeve_length: 'cap' },
+  { id: 9303, name: 'charcoal tailored trousers', category: 'bottom', fabric_weight: 'medium' },
+  { id: 9304, name: 'pointed heels', category: 'shoes', walk_support: 'medium' },
+]
+function insertNoSituationPieces() {
+  for (const p of NO_SITUATION_PIECES) {
+    db.prepare('INSERT OR REPLACE INTO pieces (id, name, category, fabric_weight, walk_support, sleeve_length) VALUES (?, ?, ?, ?, ?, ?)').run(
+      p.id, p.name, p.category, p.fabric_weight || null, p.walk_support || null, p.sleeve_length || null)
+  }
+}
+const NO_SITUATION_ARGS = {
+  pieces: [{ id: 9301, role: 'primary_top' }, { id: 9302, role: 'layer_top' }, { id: 9303, role: 'primary_bottom' }, { id: 9304, role: 'shoes' }],
+  label: 'Botanical Layered Column',
+  why_it_works: 'A quiet ribbed base under the print.',
+  styling_instructions: 'Wear the cream ribbed top underneath the floral top.',
+  stylist_note: 'Intro.\n\nPick.',
+  weather_estimate: { high_f: 66, low_f: 53 },
+}
+function noSituationContext({ noSituation, packingRosterIds = new Set(), resolvedWeatherContext = null }) {
+  const ids = NO_SITUATION_PIECES.map(p => p.id)
+  const toolContext = {
+    executionProfile: 'single_outfit',
+    singleOutfitCatalogEligibleIds: new Set(ids),
+    retrievedPieceIds: new Set(ids),
+    visuallySeenPieceIds: new Set(ids),
+    freeformDiagnostics: {},
+    activity: 'none',
+    executionRouterNoSituation: noSituation,
+    packingRosterIds,
+    ...(resolvedWeatherContext ? { resolvedWeatherContext } : {}),
+  }
+  declareSingleOutfitIntent(toolContext)
+  return toolContext
+}
+
+test('a request that gives no place or time is not judged against outdoor weather; one that does still is', async () => {
+  insertNoSituationPieces()
+  // The live turn had a forecast without anyone asking for one: the thread's established location.
+  // A follow-up restores the same kind of forecast from the thread's earlier card.
+  const { threadWeatherContextFromOutfitSet } = await import('../routes/ai.js')
+  const earlierCard = { resolved_weather_context: {
+    status: 'resolved', location: 'Walnut Creek, CA', date_range: { start: '2026-10-19', end: '2026-10-19' },
+    temperature: { high_f: 66.4, low_f: 52.7, needs_removable_cool_layer: true, source: 'live', provider: 'Open-Meteo' },
+    precipitation: { value: 'unknown', source: 'live' }, wind: { value: 'unknown', source: 'unavailable' }, overall_source: 'live',
+  } }
+  const restored = () => threadWeatherContextFromOutfitSet([earlierCard])
+  const { weather_estimate, ...args } = NO_SITUATION_ARGS
+  const quiet = noSituationContext({ noSituation: true, resolvedWeatherContext: restored() })
+  await executeTool('propose_outfit', args, quiet)
+  const quietRestored = quiet.generatedOutfits.at(-1)
+  assert.ok(!(quietRestored.result?.annotations || []).some(a => a.type === 'Weather note'),
+    `a forecast the thread happens to hold is not applied when no situation was given: ${JSON.stringify(quietRestored.result?.annotations)}`)
+  const outRestored = noSituationContext({ noSituation: false, resolvedWeatherContext: restored() })
+  await executeTool('propose_outfit', args, outRestored)
+  assert.ok((outRestored.generatedOutfits.at(-1).result?.annotations || []).some(a => a.type === 'Weather note'),
+    'the same restored forecast still applies when the request has a situation')
+
+  quiet.generatedOutfits = []
+  await executeTool('propose_outfit', NO_SITUATION_ARGS, quiet)
+  const quietCard = quiet.generatedOutfits.at(-1)
+  assert.ok(!quietCard.broken, quietCard.rejectionReason)
+  assert.ok(!(quietCard.result?.annotations || []).some(a => a.type === 'Weather note'),
+    `no situation was given, so no outdoor requirement applies: ${JSON.stringify(quietCard.result?.annotations)}`)
+  assert.equal(quiet.weatherProfile?.needsRemovableCoolLayer || false, false)
+
+  const out = noSituationContext({ noSituation: false })
+  await executeTool('propose_outfit', NO_SITUATION_ARGS, out)
+  assert.ok((out.generatedOutfits.at(-1).result?.annotations || []).some(a => a.type === 'Weather note'),
+    'a request with a situation still answers to the day, high and low')
+})
+
+test('on a trip thread a no-situation reading does not drop the trip forecast', async () => {
+  insertNoSituationPieces()
+  const { threadWeatherContextFromOutfitSet } = await import('../routes/ai.js')
+  const tripCard = { resolved_weather_context: {
+    status: 'resolved', location: 'Vienna, VA', date_range: { start: '2026-10-12', end: '2026-10-18' },
+    temperature: { high_f: 66, low_f: 49.7, needs_removable_cool_layer: true, source: 'live', provider: 'Open-Meteo' },
+    precipitation: { value: 'unknown', source: 'live' }, wind: { value: 'unknown', source: 'unavailable' }, overall_source: 'live',
+  } }
+  const trip = noSituationContext({
+    noSituation: true,
+    packingRosterIds: new Set(NO_SITUATION_PIECES.map(p => p.id)),
+    resolvedWeatherContext: threadWeatherContextFromOutfitSet([tripCard]),
+  })
+  const { weather_estimate, ...args } = NO_SITUATION_ARGS
+  await executeTool('propose_outfit', args, trip)
+  assert.ok((trip.generatedOutfits.at(-1).result?.annotations || []).some(a => a.type === 'Weather note'),
+    `a trip look is still for the trip's days: ${JSON.stringify(trip.generatedOutfits.at(-1).result?.annotations)}`)
+})
+
+test('an unknown layer direction is told to the stylist and never shown on the card', async () => {
+  insertNoSituationPieces()
+  const toolContext = noSituationContext({ noSituation: true })
+  const result = await executeTool('propose_outfit', NO_SITUATION_ARGS, toolContext)
+  const card = toolContext.generatedOutfits.at(-1)
+  const direction = /no recorded over\/under direction/
+  assert.ok(!(card.result?.annotations || []).some(a => direction.test(a.message)), JSON.stringify(card.result?.annotations))
+  assert.ok(!(card.result?.findings || []).some(f => direction.test(f.message)))
+  assert.ok((result.systemNotes || []).some(n => direction.test(n.message)),
+    `the stylist still receives it: ${JSON.stringify(result.systemNotes)}`)
+
+  const { advisoryFindingsToSystemFlags } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  assert.deepEqual(advisoryFindingsToSystemFlags([{ code: 'layer_direction_unknown', message: 'x', modelOnly: true, severity: 'warning' }]), [])
+})
+
+test('the single-outfit brief states a no-situation request plainly and asks for no weather', () => {
+  const text = buildSingleOutfitConversationPayload(
+    { question: 'which long-sleeve tops go under my floral top?' },
+    { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'not_stated', season: 'fall', limit: 1 }).messages[0].content
+  assert.match(text, /"setting": "no place or time given"/)
+  assert.match(text, /Dress for the occasion and season: do not supply user_weather or weather_estimate/)
 })

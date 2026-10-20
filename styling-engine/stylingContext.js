@@ -446,6 +446,16 @@ async function resolveWeather({
     }
   }
 
+  // The router found no place or time in the request (resolveToolStylingContext): the outfit is
+  // judged on occasion and season alone, so no forecast is looked up or restored for it. Weather
+  // the user stated this turn still goes through below.
+  if (explicitRequest.noSituation === true && !explicitStatedWeather && !validateUserWeather(explicitRequest.userWeather)) {
+    return {
+      profile: { isHot: false, isCold: false, weatherSource: 'not_stated' },
+      provenance: { source: 'explicit_request.no_situation' },
+    }
+  }
+
   // Explicit structured user/model weather owns the request even when an
   // older profile or prose snapshot is also present.
   if (hasExplicitStructuredWeather) {
