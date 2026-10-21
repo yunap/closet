@@ -638,6 +638,19 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         '    "bottom_subtype": "high|medium|low",\n    "outerwear_subtype": "high|medium|low",\n    "top_subtype": "high|medium|low",\n'
       )
     }
+    // 2026-10-19 (owner request): ideal-additions directions describe each new piece (pieceNotes),
+    // so the owner can picture and shop for it, and every garment the visualPrompt shows besides the
+    // anchor must be listed in missingPieces (thread_1792476353706: the render showed a sweater the
+    // card never listed).
+    if (key === 'EDITORIAL_NEW_PIECES_SYSTEM') {
+      expected = expected.replace(
+        '- posture/energy: "relaxed confident stance, not front-facing catalog posture"\n \nJSON shape:',
+        '- posture/energy: "relaxed confident stance, not front-facing catalog posture"\n\nFor each missing piece, also write a pieceNotes entry so Yuna can picture it and shop for it: what it is made of and how heavy or soft it feels, how it is cut and where it sits on the body, the detail that makes it this piece rather than a generic one, and what it does for the anchor. Copy the piece name exactly as it appears in missingPieces. Every garment the visualPrompt shows besides the anchor must appear in missingPieces.\n \nJSON shape:'
+      ).replace(
+        '      "missingPieces": ["specific archetype 1", "specific archetype 2"],\n',
+        '      "missingPieces": ["specific archetype 1", "specific archetype 2"],\n      "pieceNotes": [\n        { "piece": "specific archetype 1", "description": "Fabric and weight, cut and fit, defining detail, and what it does for the anchor" }\n      ],\n'
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

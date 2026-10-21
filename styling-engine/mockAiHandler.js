@@ -158,9 +158,28 @@ export function installMockAiHandler(db) {
         directions: [{
           title: 'Mock editorial direction',
           missingPieces: ['tailored trench', 'block-heel boot'],
+          pieceNotes: [
+            { piece: 'tailored trench', description: 'Mock note: dense cotton gabardine, hip length, single-breasted, worn open so the anchor shows.' },
+            { piece: 'block-heel boot', description: 'Mock note: smooth leather ankle boot on a low walkable block heel.' }
+          ],
           reason: 'Mock sandbox reasoning — no billed call was made.',
           watchFor: 'Grounding watch.',
           visualPrompt: 'Neutral studio mood board.'
+        }, {
+          title: 'Mock column skirt direction',
+          missingPieces: ['charcoal column midi skirt', 'black leather ankle boot'],
+          pieceNotes: [
+            { piece: 'charcoal column midi skirt', description: 'Mock note: weighted crepe that falls straight from the waist to mid-calf.' }
+          ],
+          reason: 'Mock sandbox reasoning — no billed call was made.',
+          watchFor: 'Grounding watch.',
+          visualPrompt: 'Neutral studio mood board, second direction.'
+        }, {
+          title: 'Mock utility pant direction',
+          missingPieces: ['olive straight utility pant', 'black crossbody bag'],
+          reason: 'Mock sandbox reasoning — no billed call was made.',
+          watchFor: 'Grounding watch.',
+          visualPrompt: 'Neutral studio mood board, third direction.'
         }]
       }
     }

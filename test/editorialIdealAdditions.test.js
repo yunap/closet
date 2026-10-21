@@ -11,6 +11,7 @@ process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
 const {
   dedupeAndDifferentiateEditorialDirections,
   ownedLooksSimilarToArchetype,
+  ownedNearlyMatchesArchetype,
   anchorFidelityInstructions,
   editorialImagePrompt,
   anchorRegisterFootwearComputedChecks,
@@ -259,4 +260,53 @@ test('editorialImagePrompt omits the styling-instructions line when the outfit h
   })
 
   assert.doesNotMatch(prompt, /Authoritative styling instructions/)
+})
+
+// Owner ruling 2026-10-19 (thread_1792476353706): on a 289-piece wardrobe the color + category
+// family match rewrote 9 of 11 distinct model suggestions into stock pool pieces. Only a near-exact
+// name match with an owned piece rewrites a suggestion now.
+test('editorial ideal additions keep distinct suggestions that only share color and category with owned pieces', () => {
+  const selectedPiece = { id: 232, name: 'mauve corduroy slim fit pants', category: 'bottom', colors: ['mauve'] }
+  const ownedPieces = [
+    { id: 1, name: 'brown leather penny loafers', category: 'shoes', colors: ['brown'] },
+    { id: 2, name: 'black ribbed tank', category: 'top', colors: ['black'] },
+    { id: 3, name: 'navy wool peacoat', category: 'outerwear', colors: ['navy'] },
+  ]
+  const directions = [{
+    title: 'Structured Utility Contrast',
+    missingPieces: ['ink navy boxy chore jacket in sturdy cotton canvas', 'fitted black ribbed cotton long-sleeve tee', 'structured dark brown leather loafer'],
+    pieceNotes: [
+      { piece: 'ink navy boxy chore jacket in sturdy cotton canvas', description: 'Stiff canvas, boxy hip length, patch pockets.' },
+      { piece: 'fitted black ribbed cotton long-sleeve tee', description: 'Close rib knit that sits just below the waistband.' },
+    ],
+    reason: 'Sharp navy over soft mauve.',
+    visualPrompt: '',
+  }]
+
+  assert.equal(ownedLooksSimilarToArchetype('structured dark brown leather loafer', ownedPieces), true)
+  assert.equal(ownedNearlyMatchesArchetype('structured dark brown leather loafer', ownedPieces), false)
+
+  const [cleaned] = dedupeAndDifferentiateEditorialDirections(directions, selectedPiece, ownedPieces)
+  assert.deepEqual(cleaned.missingPieces, directions[0].missingPieces)
+  assert.deepEqual(cleaned.pieceNotes, directions[0].pieceNotes)
+})
+
+test('editorial ideal additions drop the note of a suggestion they rewrite', () => {
+  const selectedPiece = { id: 232, name: 'mauve corduroy slim fit pants', category: 'bottom', colors: ['mauve'] }
+  const ownedPieces = [{ id: 1, name: 'sleek black leather loafers', category: 'shoes', colors: ['black'] }]
+  const directions = [{
+    title: 'Owned echo',
+    missingPieces: ['black leather loafer', 'cropped camel suede jacket'],
+    pieceNotes: [
+      { piece: 'black leather loafer', description: 'Note for a garment the owner already has.' },
+      { piece: 'cropped camel suede jacket', description: 'Soft suede, waist length.' },
+    ],
+    reason: '',
+    visualPrompt: '',
+  }]
+
+  const [cleaned] = dedupeAndDifferentiateEditorialDirections(directions, selectedPiece, ownedPieces)
+  assert.notEqual(cleaned.missingPieces[0], 'black leather loafer')
+  assert.equal(cleaned.missingPieces[1], 'cropped camel suede jacket')
+  assert.deepEqual(cleaned.pieceNotes, [{ piece: 'cropped camel suede jacket', description: 'Soft suede, waist length.' }])
 })

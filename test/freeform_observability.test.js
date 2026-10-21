@@ -4978,3 +4978,43 @@ test('the single-outfit brief states a no-situation request plainly and asks for
   assert.match(text, /"setting": "no place or time given"/)
   assert.match(text, /Dress for the occasion and season: do not supply user_weather or weather_estimate/)
 })
+
+// thread_1792476353706: "tell me more about the fitted black tee in Ink Navy Contrast" on an
+// ideal-additions thread reached garment_fact with only the anchor's record, and the stylist said
+// no such garment existed. Suggested (unowned) pieces now ride along as card text, never as pieceIds.
+test('compact answers see suggested new pieces from ideal-additions cards as unowned card text', () => {
+  const context = compactFreeformContext({
+    body: {
+      activeContext: { type: 'piece', id: 232 },
+      generatedOutfits: [{
+        title: 'Ink Navy Contrast',
+        previewOnly: true,
+        pieceId: 232,
+        missingPieces: ['ink navy cotton button-down shirt', 'fitted black ribbed tee'],
+        pieceNotes: [{ piece: 'fitted black ribbed tee', description: 'Close cotton rib, sits at the hip.' }],
+        visualPrompt: 'Navy shirt worn open over a fitted black tee and the mauve corduroy pants.'
+      }]
+    },
+    state: {}
+  })
+  assert.deepEqual(context.pieceIds, [232])
+  assert.deepEqual(context.suggestedCards, [{
+    card: 'Ink Navy Contrast',
+    suggested_pieces: [
+      { name: 'ink navy cotton button-down shirt' },
+      { name: 'fitted black ribbed tee', description: 'Close cotton rib, sits at the hip.' }
+    ],
+    full_look: 'Navy shirt worn open over a fitted black tee and the mauve corduroy pants.'
+  }])
+
+  const message = compactFreeformAnswerMessage({
+    profile: 'garment_fact',
+    question: 'tell me more about the fitted black tee in Ink Navy Contrast',
+    context,
+    pieces: [{ id: 232, name: 'mauve corduroy slim fit pants', category: 'bottom' }]
+  })
+  assert.match(message, /Suggested new pieces on the current cards\. The user does not own these/)
+  assert.match(message, /Close cotton rib, sits at the hip\./)
+  assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'general_advice', question: 'q', context }), /Suggested new pieces/)
+  assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'garment_fact', question: 'q', context: { pieceIds: [1] } }), /Suggested new pieces/)
+})

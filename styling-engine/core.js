@@ -3468,6 +3468,31 @@ export function normalizeArchetypeText(value = '') {
   return normalizeForMatch(String(value || '').replace(/\(missing piece\)/gi, ''))
 }
 
+const ARCHETYPE_FILLER_WORDS = new Set(['with', 'and', 'the', 'for', 'in', 'of', 'a', 'an', 'worn', 'open'])
+const archetypeTokens = (value = '') => new Set(normalizeArchetypeText(value)
+  .split(/\s+/)
+  .filter(token => token.length > 1 && !ARCHETYPE_FILLER_WORDS.has(token))
+  .map(token => token.replace(/(?<=[a-z]{3})s$/, '')))
+
+// Owner ruling 2026-10-19: an ideal-additions suggestion is rewritten only when it is (nearly) a
+// piece the owner already has by name — the 2026-07-11 incident, where the model re-suggested owned
+// garments word for word. The color + category family match below is far too coarse for that job
+// on a large wardrobe (any brown shoe "matched" any brown shoe): on a 289-piece wardrobe it rewrote
+// 9 of 11 distinct model suggestions into stock pool pieces (thread_1792476353706). Still used to
+// pick stock pool pieces, where coarse is the right bias.
+export function ownedNearlyMatchesArchetype(archetype = '', ownedPieces = []) {
+  const wanted = archetypeTokens(archetype)
+  if (!wanted.size) return false
+  return (ownedPieces || []).some(piece => {
+    const owned = archetypeTokens(piece?.name || '')
+    if (!owned.size) return false
+    let shared = 0
+    wanted.forEach(token => { if (owned.has(token)) shared++ })
+    if (shared === wanted.size) return true
+    return shared / new Set([...wanted, ...owned]).size >= 0.75
+  })
+}
+
 export function ownedLooksSimilarToArchetype(archetype = '', ownedPieces = []) {
   const a = normalizeArchetypeText(archetype)
   if (!a) return false
@@ -3629,17 +3654,25 @@ export function dedupeAndDifferentiateEditorialDirections(directions = [], selec
     if (titleKey) seenTitles.add(titleKey)
 
     const missing = Array.isArray(copy.missingPieces) ? copy.missingPieces : []
+    const notesByPiece = new Map((Array.isArray(copy.pieceNotes) ? copy.pieceNotes : [])
+      .filter(note => note?.piece && note?.description)
+      .map(note => [normalizeArchetypeText(note.piece), String(note.description).trim()]))
+    const keptNotes = []
     let replacedAnchorRole = false
     copy.missingPieces = missing.map(piece => {
       const raw = typeof piece === 'string' ? piece : piece?.name || String(piece || '')
       let next = raw.replace(/\(missing piece\)/gi, '').trim()
       const key = normalizeArchetypeText(next)
       if (!next) next = 'specific editorial support piece'
-      if (violatesAnchorRole(next) || usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
+      if (violatesAnchorRole(next) || usedMissing.has(key) || ownedNearlyMatchesArchetype(next, ownedPieces)) {
         if (violatesAnchorRole(next)) replacedAnchorRole = true
         next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing, ownedPieces)
       } else {
         usedMissing.add(key)
+        // A note describes the model's own piece; a rewritten piece is a different garment, so its
+        // note is dropped rather than attached to the replacement.
+        const description = notesByPiece.get(key)
+        if (description) keptNotes.push({ piece: next, description })
       }
       return next
     }).filter(Boolean)
@@ -3647,6 +3680,7 @@ export function dedupeAndDifferentiateEditorialDirections(directions = [], selec
     while (copy.missingPieces.length < 2) {
       copy.missingPieces.push(makeDistinctNewPieceArchetype('', selectedPiece, usedMissing, ownedPieces))
     }
+    copy.pieceNotes = keptNotes
 
     if (replacedAnchorRole && anchorGroup === 'bottom') {
       copy.reason = `Keeps ${selectedPiece.name} as the visual anchor and changes the support pieces around it instead of replacing the bottom.`
