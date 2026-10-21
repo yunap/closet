@@ -1238,6 +1238,8 @@ For each direction, write a visualPrompt that encodes:
 - fabric feel (e.g. "matte, weighted, with real drape")
 - one specific color story (e.g. "dark olive on cream, grounded by a cognac leather tote")
 - posture/energy: "relaxed confident stance, not front-facing catalog posture"
+
+For each missing piece, also write a pieceNotes entry so ${name} can picture it and shop for it: what it is made of and how heavy or soft it feels, how it is cut and where it sits on the body, the detail that makes it this piece rather than a generic one, and what it does for the anchor. Copy the piece name exactly as it appears in missingPieces. Every garment the visualPrompt shows besides the anchor must appear in missingPieces.
  
 JSON shape:
 {
@@ -1245,6 +1247,9 @@ JSON shape:
     {
       "title": "Short evocative label",
       "missingPieces": ["specific archetype 1", "specific archetype 2"],
+      "pieceNotes": [
+        { "piece": "specific archetype 1", "description": "Fabric and weight, cut and fit, defining detail, and what it does for the anchor" }
+      ],
       "reason": "One sentence: what this direction does and why it works for this anchor piece",
       "watchFor": "One specific drift risk to avoid when rendering",
       "visualPrompt": "Full outfit direction for the image renderer — silhouette, fabric, color story, shoe, posture"

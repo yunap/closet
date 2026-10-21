@@ -1204,7 +1204,23 @@ export function compactFreeformContext({ body = {}, state = {}, namedPieceIds = 
       ? outfit.pieceIds
       : (Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])),
   ].map(Number).filter(Boolean))].slice(0, 16)
-  return { outfits: outfits.slice(0, 8), pieceIds }
+  // New pieces the current cards suggest buying (ideal additions). They have no garment record, so
+  // they never reach pieceIds; the card's own text is everything the app knows about them.
+  // thread_1792476353706: "tell me more about the fitted black tee in Ink Navy Contrast" reached
+  // garment_fact with only the anchor's record and answered that no such garment existed.
+  const suggestedCards = bodyOutfits
+    .filter(outfit => Array.isArray(outfit?.missingPieces) && outfit.missingPieces.length)
+    .slice(0, 8)
+    .map(outfit => ({
+      card: outfit.title || outfit.label || '',
+      suggested_pieces: outfit.missingPieces.map(piece => {
+        const name = typeof piece === 'string' ? piece : String(piece?.name || '')
+        const note = (Array.isArray(outfit.pieceNotes) ? outfit.pieceNotes : []).find(entry => entry?.piece === name)
+        return note?.description ? { name, description: note.description } : { name }
+      }),
+      ...(outfit.visualPrompt ? { full_look: outfit.visualPrompt } : {}),
+    }))
+  return { outfits: outfits.slice(0, 8), pieceIds, suggestedCards }
 }
 
 export function compactProfileHasContext(profile, context = {}) {
@@ -1345,6 +1361,9 @@ export function compactFreeformAnswerMessage({ profile, question = '', context =
       ? `Card membership as composed (garment IDs and names only — the composer's own reason and weather/warmth conclusions are withheld here; any untrusted_display_label is composer-written display text, not evidence; explain or judge the outfit afresh from the garment facts and photographs below, and from the user's own words above):\n${JSON.stringify(sanitizedOutfits)}`
       : '',
     profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
+    profile !== 'general_advice' && context.suggestedCards?.length
+      ? `Suggested new pieces on the current cards. The user does not own these: there is no garment record or photograph, only the card's own text. When the question is about one of them, answer from that text, say it is a suggestion rather than something they own, and where the text leaves something open, say so and give your advice on what to look for:\n${JSON.stringify(context.suggestedCards)}`
+      : '',
     profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
   ].filter(Boolean).join('\n\n')
 }
@@ -4998,7 +5017,8 @@ router.post('/editorial-directions-preview', async (req, res) => {
 
     const raw = await askStylist({
       system: prompts.EDITORIAL_NEW_PIECES_SYSTEM,
-      maxTokens: 1200,
+      // Per-piece notes roughly double the output; 1200 truncated into the deterministic fallback.
+      maxTokens: 2400,
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
         { role: 'user', content }
@@ -5008,7 +5028,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
 
     let directions = []
     try {
-      const parsed = parseModelJson(raw, { context: 'editorial new pieces', maxTokens: 1200 })
+      const parsed = parseModelJson(raw, { context: 'editorial new pieces', maxTokens: 2400 })
       directions = Array.isArray(parsed?.directions) ? parsed.directions : []
     } catch (err) {
       // A truncated/unparseable response should fall through to the deterministic
@@ -5035,6 +5055,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
       directions: directions.slice(0, 3).map(d => ({
         title: d.title || 'Ideal direction',
         missingPieces: Array.isArray(d.missingPieces) ? d.missingPieces : [],
+        pieceNotes: Array.isArray(d.pieceNotes) ? d.pieceNotes : [],
         reason: d.reason || '',
         watchFor: d.watchFor || '',
         visualPrompt: d.visualPrompt || '',

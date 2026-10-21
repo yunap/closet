@@ -326,6 +326,27 @@ const getTeaserText = (text) => {
   return firstSentence
 }
 
+// A one-sentence reason is its own teaser: show it once instead of a disclosure that expands to
+// repeat the same sentence.
+const ReasonTeaser = ({ text, fontSize = 12, lineHeight = 1.5 }) => {
+  const full = String(text || '').trim()
+  if (!full) return null
+  const teaser = getTeaserText(full)
+  if (teaser === full) {
+    return <div style={{ marginTop: 4, fontSize, fontWeight: 650, color: 'var(--accent)', lineHeight }}>{full}</div>
+  }
+  return (
+    <details className="rationale-details" style={{ marginTop: 4 }}>
+      <summary style={{ cursor: 'pointer', fontSize, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+        {teaser} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+      </summary>
+      <div style={{ fontSize, color: 'var(--text-muted)', marginTop: 4, lineHeight }}>
+        {full}
+      </div>
+    </details>
+  )
+}
+
 const timingSummary = (timings = {}) => Object.entries(timings || {})
   .filter(([, value]) => typeof value === 'number')
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
@@ -362,6 +383,11 @@ const composerUsageSummary = (usage = null) => {
 // raw gate-rejection vocabulary) are for tuning the model/engine, not for regular users.
 // Set VITE_STYLIST_DEBUG=true (see sandbox-web in .claude/launch.json) to surface them.
 const STYLIST_DEBUG_ENABLED = import.meta.env.VITE_STYLIST_DEBUG === 'true'
+// PROTOTYPE (option A): ideal-pieces directions render all of their images as soon as they arrive,
+// and the card leads with the image instead of the text description. Off unless
+// VITE_IDEAL_AUTO_RENDER=true (set only on the sandbox web configs), because each render is a paid
+// image call outside mock mode.
+const IDEAL_AUTO_RENDER_ENABLED = import.meta.env.VITE_IDEAL_AUTO_RENDER === 'true'
 
 const ROSTER_CATEGORY_PLURAL_LABELS = {
   top: 'tops',
@@ -436,8 +462,8 @@ const renderCost = (timings) => {
   return ` · Measured cost: $${cost.toFixed(3)}`
 }
 
-// Renderer/timing telemetry stays behind STYLIST_DEBUG_ENABLED; the measured cost line is
-// deliberately always visible per the product's paid-action honesty.
+// Renderer/timing telemetry and the measured cost line are owner-facing instrumentation, shown only
+// behind STYLIST_DEBUG_ENABLED (owner ruling 2026-10-19: no cost labels in the user-facing UI).
 const renderTelemetryDetailBody = (timings, renderer) => {
   const cost = calculateOpenAICost(timings)
   return [
@@ -746,6 +772,12 @@ export default function StylistChat({
   const [savedBoardsByUrl, setSavedBoardsByUrl] = useState({})
 
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
+  // Editorial direction renders can run concurrently (auto-render fires all of them at once), so
+  // they track their own in-flight keys instead of the single shared boardLoadingIndex.
+  const [editorialRenderingKeys, setEditorialRenderingKeys] = useState(() => new Set())
+  // Tokens for ideal-directions replies created in THIS page session. Deliberately not persisted:
+  // a reload must never re-fire paid renders for a message that already exists.
+  const idealAutoRenderTokensRef = useRef(new Set())
   const [previewImage, setPreviewImage] = useState(null)
   const previewDialogRef = useRef(null)
   const previewCloseRef = useRef(null)
@@ -2302,6 +2334,7 @@ export default function StylistChat({
         outfit.bestFor ? `Best for: ${outfit.bestFor}` : '',
         pieceLines ? `Pieces:\n${pieceLines}` : '',
         Array.isArray(outfit.missingPieces) && outfit.missingPieces.length ? `Suggested additions (not owned): ${outfit.missingPieces.join(' + ')}` : '',
+        Array.isArray(outfit.pieceNotes) && outfit.pieceNotes.length ? `How the suggested additions were described:\n${outfit.pieceNotes.filter(note => note?.piece && note?.description).map(note => `- ${note.piece}: ${note.description}`).join('\n')}` : '',
         outfit.reason ? `Reason: ${outfit.reason}` : '',
         outfit.watchFor ? `Watch: ${outfit.watchFor}` : '',
       ].filter(Boolean).join('\n')
@@ -2317,7 +2350,7 @@ export default function StylistChat({
       statusTimers.forEach(clearTimeout)
       statusTimers = []
     }
-    setBoardLoadingIndex(key)
+    setEditorialRenderingKeys(prev => new Set(prev).add(key))
     setImageStatusByKey(prev => ({ ...prev, [key]: 'Loading garment reference photos...' }))
     statusTimers = [
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Sending direction details to the image model...' })), 4000),
@@ -2347,9 +2380,34 @@ export default function StylistChat({
         delete next[key]
         return next
       })
-      setBoardLoadingIndex(null)
+      setEditorialRenderingKeys(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
     }
   }
+
+  const createIdealAutoRenderToken = () => {
+    if (!IDEAL_AUTO_RENDER_ENABLED) return undefined
+    const token = `ideal-auto:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+    idealAutoRenderTokensRef.current.add(token)
+    return token
+  }
+
+  useEffect(() => {
+    if (!IDEAL_AUTO_RENDER_ENABLED || !idealAutoRenderTokensRef.current.size) return
+    messages.forEach((message, messageIndex) => {
+      const token = message?.idealAutoRenderToken
+      if (!token || !idealAutoRenderTokensRef.current.has(token)) return
+      idealAutoRenderTokensRef.current.delete(token)
+      const outfits = Array.isArray(message.structuredOutfits) ? message.structuredOutfits : []
+      outfits.forEach((outfit, idx) => {
+        const anchorId = outfit?.pieceId || outfit?.selectedPieceId
+        if (outfit?.previewOnly && anchorId) renderOneEditorialDirection(outfit, messageIndex, idx, anchorId)
+      })
+    })
+  }, [messages])
 
   const renderStructuredAdvice = (message, messageIndex) => {
     const allOutfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
@@ -2917,17 +2975,10 @@ export default function StylistChat({
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                           
                           {board.reason && (
-                            <details className="rationale-details" style={{ marginTop: 4 }}>
-                              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
-                                {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
-                              </summary>
-                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-                                {board.reason}
-                              </div>
-                            </details>
+                            <ReasonTeaser text={board.reason} fontSize={12} lineHeight={1.5} />
                           )}
 
-                          {board.debug?.timings && (() => {
+                          {STYLIST_DEBUG_ENABLED && board.debug?.timings && (() => {
                             const cost = calculateOpenAICost(board.debug.timings)
                             const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                             return (
@@ -3002,7 +3053,7 @@ export default function StylistChat({
                   disabled={isGeneratingIdealComparison}
                   style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingIdealComparison ? 'default' : 'pointer', opacity: isGeneratingIdealComparison ? 0.65 : 1 }}
                 >
-                  {isGeneratingIdealComparison ? 'Generating preview...' : (idealComparisonBoards.length ? 'Regenerate comparison' : 'Preview all directions (~$0.07)')}
+                  {isGeneratingIdealComparison ? 'Generating preview...' : (idealComparisonBoards.length ? 'Regenerate comparison' : 'Preview all directions')}
                 </button>
               </div>
               {(isGeneratingIdealComparison || idealComparisonBoards.length > 0) && (
@@ -3035,14 +3086,7 @@ export default function StylistChat({
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                             
                             {board.reason && (
-                              <details className="rationale-details" style={{ marginTop: 4 }}>
-                                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
-                                  {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
-                                </summary>
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-                                  {board.reason}
-                                </div>
-                              </details>
+                              <ReasonTeaser text={board.reason} fontSize={12} lineHeight={1.5} />
                             )}
 
                             {board.stylingInstructions && (
@@ -3051,7 +3095,7 @@ export default function StylistChat({
                               </div>
                             )}
 
-                            {board.debug?.timings && (() => {
+                            {STYLIST_DEBUG_ENABLED && board.debug?.timings && (() => {
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                               return (
@@ -3253,7 +3297,7 @@ export default function StylistChat({
             ? Boolean(editorialAnchorId)
             : !message?.wholeWardrobe && !message?.wardrobeEvaluation && hasRenderableOutfitPieces
           const hasRendered = Boolean(boardResults[boardKey]?.length)
-          const isRendering = boardLoadingIndex === boardKey
+          const isRendering = boardLoadingIndex === boardKey || editorialRenderingKeys.has(boardKey)
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
           // previewOnly is shared with the unrelated single-piece "ideal directions" feature
           // (editorial-directions-preview), the only flow that anchors a card to one piece via
@@ -3476,333 +3520,29 @@ export default function StylistChat({
             )
           }
 
-          return (
-            <div
-              key={idx}
-              className={`stylist-outfit-result-card ${isBrokenCard ? 'is-broken' : ''} ${isRankedCard ? 'is-ranked' : ''}`.trim()}
-            >
-              <div className="stylist-outfit-result-body">
-                <div className="stylist-outfit-result-heading">
-                  <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
-                  <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
-                </div>
-                {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
-                  <div className="stylist-outfit-system-flags">
-                    {outfit.systemFlags.map((flag, flagIndex) => (
-                      <div key={`${flag.type || 'note'}-${flagIndex}`} className="stylist-outfit-flag-chip">
-                        <strong>{flag.type || 'Note'}:</strong> {flag.message}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {!isBrokenCard && outfit.engineNote && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, fontStyle: 'italic' }}>
-                    {outfit.engineNote}
-                  </div>
-                )}
-                {isBrokenCard && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45 }}>
-                    <div>
-                      This direction didn't clear one of the engine's structural checks, so it's shown here for review rather than as a validated suggestion.
-                    </div>
-                    {outfit.rejectionReason && (
-                      <div style={{ marginTop: 4 }}>
-                        <strong>What didn't clear:</strong> {outfit.rejectionReason}
-                      </div>
-                    )}
-                    {outfit.capsuleRepair?.slotId && outfit.capsulePlanContext && (
-                      <div style={{ marginTop: 8 }}>
-                        <button
-                          type="button"
-                          className="stylist-inline-action"
-                          disabled={repairingCardKey === `repair:${boardKey}`}
-                          onClick={() => repairCapsuleLook(outfit, messageIndex, `repair:${boardKey}`)}
-                        >
-                          {repairingCardKey === `repair:${boardKey}` ? 'Fixing…' : 'Fix this look'}
-                        </button>
-                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-light)' }}>
-                          Swaps the blocked piece for another from this capsule — free, no AI call.
-                        </span>
-                        {repairErrorByCard[`repair:${boardKey}`] && (
-                          <div style={{ marginTop: 6 }}>{repairErrorByCard[`repair:${boardKey}`]}</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {isBrokenCard && STYLIST_DEBUG_ENABLED && outfit.resolutionNote && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4, fontStyle: 'italic' }}>
-                    <strong>Dev: resolution note:</strong> {outfit.resolutionNote}
-                  </div>
-                )}
-                {isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows.length > 0 && (
-                  <div style={{ marginTop: 6, display: 'grid', gap: 3, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
-                    <div style={{ fontWeight: 650 }}>Dev: rejected pieces:</div>
-                    {brokenReasonRows.map((piece, reasonIdx) => (
-                      <div key={`${piece.id || piece.name}-${reasonIdx}`}>
-                        <strong>{piece.name}:</strong> {piece.reason}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {isBrokenCard && STYLIST_DEBUG_ENABLED && (() => {
-                  const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
-                  if (!trace) return null
-                  const resolvedAct = trace.resolvedActivity || 'none'
-                  const actSrc = trace.activitySource || 'none'
-                  const isWalk = trace.walkable ? 'true' : 'false'
-                  const regCeil = trace.registerCeiling || 'none'
-                  const counts = trace.rosterCounts || trace.categoryCounts || {}
-                  const countsStr = Object.keys(counts).length > 0
-                    ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(' · ')
-                    : 'none'
+          // The ideal pieces a direction adds, each with the model's description of it when one
+          // survived (a piece the engine rewrote has no description: the note was for another garment).
+          const renderNewPieceList = () => {
+            const missing = Array.isArray(outfit.missingPieces) ? outfit.missingPieces : []
+            if (!isPreview || !missing.length) return null
+            const notes = Array.isArray(outfit.pieceNotes) ? outfit.pieceNotes : []
+            return (
+              <div className="stylist-new-piece-list" style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>New pieces</div>
+                {missing.map((piece, pieceIdx) => {
+                  const note = notes.find(entry => entry?.piece === piece)
                   return (
-                    <div style={{
-                      marginTop: 8,
-                      padding: '8px 10px',
-                      background: 'rgba(168, 64, 64, 0.05)',
-                      border: '1px dashed var(--repair)',
-                      borderRadius: 8,
-                      fontSize: 11,
-                      color: 'var(--repair)',
-                      lineHeight: 1.45
-                    }}>
-                      <div style={{ fontWeight: 650, marginBottom: 4 }}>Dev: styling engine debug trace</div>
-                      <div><strong>Resolved Activity:</strong> {resolvedAct} ({actSrc})</div>
-                      <div><strong>Walkable:</strong> {isWalk}</div>
-                      <div><strong>Register Ceiling:</strong> {regCeil}</div>
-                      <div><strong>Roster counts (survived gates):</strong> {countsStr}</div>
+                    <div key={pieceIdx} style={{ fontSize: 13, lineHeight: 1.45, marginTop: pieceIdx ? 6 : 0 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text)' }}>{piece}</div>
+                      {note?.description && <div style={{ color: 'var(--text-muted)' }}>{note.description}</div>}
                     </div>
                   )
-                })()}
-                {showOutfitSketch && renderOutfitSketch(outfit)}
-                {showOutfitSketch && buildVisualThesis(outfit) && (
-                  <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginTop: 4, marginBottom: 2, lineHeight: 1.4 }}>
-                    {buildVisualThesis(outfit)}
-                  </div>
-                )}
-                {showOutfitSketch && outfit.visualPrompt && (
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
-                    <strong>Full look:</strong> {outfit.visualPrompt}
-                  </div>
-                )}
-              {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
-                <div className="stylist-outfit-result-meta">
-                  {!isTripCard && outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
-                  {!isTripCard && outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
-                  {!isTripCard && outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
-                  {outfit.bestFor && <div><strong>Best for:</strong> {outfit.bestFor}</div>}
-                </div>
-              )}
-              {/* Show missingPieces for preview directions */}
-              {isPreview && Array.isArray(outfit.missingPieces) && outfit.missingPieces.length > 0 && (
-                <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 7, lineHeight: 1.45 }}>
-                  <strong>Suggested additions:</strong> {outfit.missingPieces.join(' + ')}
-                </div>
-              )}
-              {pieces.length > 0 && !(Array.isArray(outfit.pieces) && outfit.pieces.length > 0) && (
-                <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 7, lineHeight: 1.45 }}>
-                  <strong>Pieces:</strong> {pieces.join(' + ')}
-                </div>
-              )}
-              {((Array.isArray(outfit.pieces) && outfit.pieces.length > 0) || assignedLayerPieces.length > 0) && (
-                <div
-                  className="stylist-outfit-piece-list"
-                  aria-label={`Pieces in ${cardDisplayTitle}`}
-                >
-                  {Array.isArray(outfit.pieces) && outfit.pieces.map((rawPiece, pieceIdx) => renderPieceItem(rawPiece, pieceIdx, { isLayer: assignedLayerIdSet.has(Number(rawPiece?.id)) }))}
-                  {extraLayerPieces.map((piece, layerIdx) => renderPieceItem(piece, (outfit.pieces?.length || 0) + layerIdx, { isLayer: true }))}
-                </div>
-              )}
-              {pendingWrongChoice?.outfitKey === `${messageIndex}:${idx}` && (
-                <form
-                  className="stylist-wrong-choice-reason"
-                  onSubmit={event => {
-                    event.preventDefault()
-                    commitPendingWrongChoice(wrongChoiceReason)
-                  }}
-                >
-                  <label htmlFor={`wrong-choice-reason-${messageIndex}-${idx}`}>
-                    What made {pendingWrongChoice.pieceName} wrong for this outfit? <span>Optional</span>
-                  </label>
-                  <input
-                    id={`wrong-choice-reason-${messageIndex}-${idx}`}
-                    value={wrongChoiceReason}
-                    onChange={event => setWrongChoiceReason(event.target.value)}
-                    placeholder="For example: canvas is a poor choice in wet, foggy weather"
-                    autoFocus
-                  />
-                  <div className="stylist-wrong-choice-reason-actions">
-                    <button type="submit" className="btn-primary">Save feedback</button>
-                    <button type="button" className="btn-secondary" onClick={() => commitPendingWrongChoice('')}>Skip reason</button>
-                    <button type="button" className="btn-link" onClick={() => { setPendingWrongChoice(null); setWrongChoiceReason('') }}>Cancel</button>
-                  </div>
-                </form>
-              )}
-              {(outfit.reason || assignedLayerPieces.length > 0) && (
-                <details className="stylist-outfit-reason">
-                  <summary>
-                    Why this outfit
-                  </summary>
-                  <div className="stylist-outfit-reason-body">
-                    {outfit.reason && (
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                        {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
-                      </div>
-                    )}
-                    {assignedLayerPieces.length > 0 && (
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: outfit.reason ? 8 : 0 }}>
-                        <strong>{assignedLayerPieces.length > 1 ? 'Packed layers:' : 'Packed layer:'}</strong> Packed for cooler transitions / temperature drops
-                      </div>
-                    )}
-                    {outfit.stylingInstructions && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>
-                        <strong>How to wear it:</strong> {outfit.stylingInstructions}
-                      </div>
-                    )}
-                    {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
-                        <strong>Watch:</strong> {outfit.watchFor}
-                      </div>
-                    )}
-                    {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
-                      <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
-                        {outfit.systemFlags.map((flag, flagIndex) => (
-                          <div key={`${flag.type || 'note'}-${flagIndex}`} style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4 }}>
-                            <strong>{flag.type || 'Note'}:</strong> {flag.message}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {outfit.systemSuggestion?.message && (
-                      <div style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, marginTop: 6 }}>
-                        <strong>System suggests:</strong> {outfit.systemSuggestion.message}
-                      </div>
-                    )}
-                    {STYLIST_DEBUG_ENABLED && (() => {
-                      const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
-                      if (!trace) return null
-                      const resolvedAct = trace.resolvedActivity || 'none'
-                      const actSrc = trace.activitySource || 'none'
-                      const isWalk = trace.walkable ? 'true' : 'false'
-                      const regCeil = trace.registerCeiling || 'none'
-                      const counts = trace.rosterCounts || trace.categoryCounts || {}
-                      const countsStr = Object.keys(counts).length > 0
-                        ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(', ')
-                        : 'none'
-                      return (
-                        <div style={{
-                          marginTop: 8,
-                          paddingTop: 6,
-                          borderTop: '1px dashed var(--border-light)',
-                          fontSize: 12,
-                          color: 'var(--text-light)',
-                          display: 'grid',
-                          gap: 3,
-                          lineHeight: 1.45
-                        }}>
-                          <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Dev: styling engine trace</div>
-                          <div>Activity: {resolvedAct} ({actSrc}) · Walkable: {isWalk} · Ceiling: {regCeil}</div>
-                          <div>Roster: {countsStr}</div>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </details>
-              )}
+                })}
+              </div>
+            )
+          }
 
-              {isEvaluating && (
-                <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--accent)', marginTop: 8 }}>
-                  <span className="typing-dots"><span /><span /></span>
-                  <span>Evaluating this outfit...</span>
-                </div>
-              )}
-              {hasCritique && (
-                <details defaultOpen={true} style={{ width: '100%', marginTop: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
-                  <summary style={{ cursor: 'pointer', fontWeight: 650, color: 'var(--accent)', fontSize: 12, userSelect: 'none' }}>
-                    🔍 View Outfit Critique
-                  </summary>
-                  <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
-                    <CritiqueBody text={critiqueText} />
-                  </div>
-                </details>
-              )}
-
-              {!canRenderStructuredOutfit && (message?.wholeWardrobe || (!editorialAnchorId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
-                <>
-                  <div className="stylist-outfit-actions">
-                    <button
-                      onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
-                      disabled={isRendering}
-                      style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
-                    >
-                      {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
-                    </button>
-                    <button
-                      onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
-                      disabled={isEvaluating}
-                      style={{ fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer' }}
-                    >
-                      {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
-                    </button>
-                    {renderOutfitFeedbackButtons()}
-                  </div>
-                </>
-              )}
-
-              {canRenderStructuredOutfit && (
-                <>
-                  <div className="stylist-outfit-actions">
-                    {isPreview ? (
-                      // Preview mode: render this single direction on demand
-                      <button
-                        onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx, editorialAnchorId)}
-                        disabled={isRendering}
-                        style={{
-                          fontSize: 12, color: 'var(--accent)',
-                          padding: '3px 9px', borderRadius: 12,
-                          border: '1px solid var(--accent)',
-                          background: 'var(--surface)',
-                          cursor: isRendering ? 'default' : 'pointer',
-                          opacity: isRendering ? 0.65 : 1,
-                        }}
-                      >
-                        {isRendering ? 'Rendering…' : hasRendered ? 'Regenerate outfit image (~$0.07)' : 'Generate outfit image (~$0.07)'}
-                      </button>
-                    ) : (
-                      // Wardrobe-board generation button (original mode)
-                      <>
-                        <button
-                          onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
-                          disabled={isRendering}
-                          style={{
-                            fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
-                            border: '1px solid var(--accent)', background: 'var(--surface)',
-                            cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
-                          }}
-                        >
-                          {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
-                        </button>
-                        <button
-                          onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
-                          disabled={isEvaluating}
-                          style={{
-                            fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
-                            border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)',
-                            cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
-                          }}
-                        >
-                          {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
-                        </button>
-                      </>
-                    )}
-                    {!isPreview && renderOutfitFeedbackButtons()}
-                  </div>
-                </>
-              )}
-
-              {/* Rendered image for this direction */}
-              {(isRendering || hasRendered) && (
+          const renderDirectionImages = () => ((isRendering || hasRendered) && (
                 <div className="generated-visual-grid" style={{ marginTop: 10 }}>
                   {isRendering && (
                     <div className="generated-visual-card skeleton-pulse" role="status" aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
@@ -3832,14 +3572,7 @@ export default function StylistChat({
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                             
                             {board.reason && (
-                              <details className="rationale-details" style={{ marginTop: 4 }}>
-                                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
-                                  {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
-                                </summary>
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-                                  {board.reason}
-                                </div>
-                              </details>
+                              <ReasonTeaser text={board.reason} fontSize={12} lineHeight={1.5} />
                             )}
 
                             {board.stylingInstructions && (
@@ -3848,7 +3581,7 @@ export default function StylistChat({
                               </div>
                             )}
 
-                            {board.debug?.timings && (() => {
+                            {STYLIST_DEBUG_ENABLED && board.debug?.timings && (() => {
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                               return (
@@ -4047,7 +3780,350 @@ export default function StylistChat({
                     )
                   })}
                 </div>
+          ))
+          // PROTOTYPE (option A): auto-rendered ideal directions lead with their image.
+          const directionImageFirst = IDEAL_AUTO_RENDER_ENABLED && showOutfitSketch
+          return (
+            <div
+              key={idx}
+              className={`stylist-outfit-result-card ${isBrokenCard ? 'is-broken' : ''} ${isRankedCard ? 'is-ranked' : ''}`.trim()}
+            >
+              <div className="stylist-outfit-result-body">
+                <div className="stylist-outfit-result-heading">
+                  <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
+                  <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
+                </div>
+                {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                  <div className="stylist-outfit-system-flags">
+                    {outfit.systemFlags.map((flag, flagIndex) => (
+                      <div key={`${flag.type || 'note'}-${flagIndex}`} className="stylist-outfit-flag-chip">
+                        <strong>{flag.type || 'Note'}:</strong> {flag.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!isBrokenCard && outfit.engineNote && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, fontStyle: 'italic' }}>
+                    {outfit.engineNote}
+                  </div>
+                )}
+                {isBrokenCard && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45 }}>
+                    <div>
+                      This direction didn't clear one of the engine's structural checks, so it's shown here for review rather than as a validated suggestion.
+                    </div>
+                    {outfit.rejectionReason && (
+                      <div style={{ marginTop: 4 }}>
+                        <strong>What didn't clear:</strong> {outfit.rejectionReason}
+                      </div>
+                    )}
+                    {outfit.capsuleRepair?.slotId && outfit.capsulePlanContext && (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="stylist-inline-action"
+                          disabled={repairingCardKey === `repair:${boardKey}`}
+                          onClick={() => repairCapsuleLook(outfit, messageIndex, `repair:${boardKey}`)}
+                        >
+                          {repairingCardKey === `repair:${boardKey}` ? 'Fixing…' : 'Fix this look'}
+                        </button>
+                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-light)' }}>
+                          Swaps the blocked piece for another from this capsule — free, no AI call.
+                        </span>
+                        {repairErrorByCard[`repair:${boardKey}`] && (
+                          <div style={{ marginTop: 6 }}>{repairErrorByCard[`repair:${boardKey}`]}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && outfit.resolutionNote && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4, fontStyle: 'italic' }}>
+                    <strong>Dev: resolution note:</strong> {outfit.resolutionNote}
+                  </div>
+                )}
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows.length > 0 && (
+                  <div style={{ marginTop: 6, display: 'grid', gap: 3, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
+                    <div style={{ fontWeight: 650 }}>Dev: rejected pieces:</div>
+                    {brokenReasonRows.map((piece, reasonIdx) => (
+                      <div key={`${piece.id || piece.name}-${reasonIdx}`}>
+                        <strong>{piece.name}:</strong> {piece.reason}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && (() => {
+                  const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
+                  if (!trace) return null
+                  const resolvedAct = trace.resolvedActivity || 'none'
+                  const actSrc = trace.activitySource || 'none'
+                  const isWalk = trace.walkable ? 'true' : 'false'
+                  const regCeil = trace.registerCeiling || 'none'
+                  const counts = trace.rosterCounts || trace.categoryCounts || {}
+                  const countsStr = Object.keys(counts).length > 0
+                    ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(' · ')
+                    : 'none'
+                  return (
+                    <div style={{
+                      marginTop: 8,
+                      padding: '8px 10px',
+                      background: 'rgba(168, 64, 64, 0.05)',
+                      border: '1px dashed var(--repair)',
+                      borderRadius: 8,
+                      fontSize: 11,
+                      color: 'var(--repair)',
+                      lineHeight: 1.45
+                    }}>
+                      <div style={{ fontWeight: 650, marginBottom: 4 }}>Dev: styling engine debug trace</div>
+                      <div><strong>Resolved Activity:</strong> {resolvedAct} ({actSrc})</div>
+                      <div><strong>Walkable:</strong> {isWalk}</div>
+                      <div><strong>Register Ceiling:</strong> {regCeil}</div>
+                      <div><strong>Roster counts (survived gates):</strong> {countsStr}</div>
+                    </div>
+                  )
+                })()}
+                {directionImageFirst && renderDirectionImages()}
+                {directionImageFirst && renderNewPieceList()}
+                {showOutfitSketch && IDEAL_AUTO_RENDER_ENABLED ? (
+                  <details className="rationale-details" style={{ marginTop: 6 }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>Look details</summary>
+                    {renderOutfitSketch(outfit)}
+                    {buildVisualThesis(outfit) && (
+                      <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginTop: 4, marginBottom: 2, lineHeight: 1.4 }}>
+                        {buildVisualThesis(outfit)}
+                      </div>
+                    )}
+                    {outfit.visualPrompt && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
+                        <strong>Full look:</strong> {outfit.visualPrompt}
+                      </div>
+                    )}
+                  </details>
+                ) : null}
+                {!IDEAL_AUTO_RENDER_ENABLED && showOutfitSketch && renderOutfitSketch(outfit)}
+                {showOutfitSketch && !IDEAL_AUTO_RENDER_ENABLED && buildVisualThesis(outfit) && (
+                  <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginTop: 4, marginBottom: 2, lineHeight: 1.4 }}>
+                    {buildVisualThesis(outfit)}
+                  </div>
+                )}
+                {showOutfitSketch && !IDEAL_AUTO_RENDER_ENABLED && outfit.visualPrompt && (
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
+                    <strong>Full look:</strong> {outfit.visualPrompt}
+                  </div>
+                )}
+              {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
+                <div className="stylist-outfit-result-meta">
+                  {!isTripCard && outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
+                  {!isTripCard && outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
+                  {!isTripCard && outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
+                  {outfit.bestFor && <div><strong>Best for:</strong> {outfit.bestFor}</div>}
+                </div>
               )}
+              {/* Show missingPieces for preview directions */}
+              {isPreview && !directionImageFirst && renderNewPieceList()}
+              {pieces.length > 0 && !(Array.isArray(outfit.pieces) && outfit.pieces.length > 0) && (
+                <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 7, lineHeight: 1.45 }}>
+                  <strong>Pieces:</strong> {pieces.join(' + ')}
+                </div>
+              )}
+              {((Array.isArray(outfit.pieces) && outfit.pieces.length > 0) || assignedLayerPieces.length > 0) && (
+                <div
+                  className="stylist-outfit-piece-list"
+                  aria-label={`Pieces in ${cardDisplayTitle}`}
+                >
+                  {Array.isArray(outfit.pieces) && outfit.pieces.map((rawPiece, pieceIdx) => renderPieceItem(rawPiece, pieceIdx, { isLayer: assignedLayerIdSet.has(Number(rawPiece?.id)) }))}
+                  {extraLayerPieces.map((piece, layerIdx) => renderPieceItem(piece, (outfit.pieces?.length || 0) + layerIdx, { isLayer: true }))}
+                </div>
+              )}
+              {pendingWrongChoice?.outfitKey === `${messageIndex}:${idx}` && (
+                <form
+                  className="stylist-wrong-choice-reason"
+                  onSubmit={event => {
+                    event.preventDefault()
+                    commitPendingWrongChoice(wrongChoiceReason)
+                  }}
+                >
+                  <label htmlFor={`wrong-choice-reason-${messageIndex}-${idx}`}>
+                    What made {pendingWrongChoice.pieceName} wrong for this outfit? <span>Optional</span>
+                  </label>
+                  <input
+                    id={`wrong-choice-reason-${messageIndex}-${idx}`}
+                    value={wrongChoiceReason}
+                    onChange={event => setWrongChoiceReason(event.target.value)}
+                    placeholder="For example: canvas is a poor choice in wet, foggy weather"
+                    autoFocus
+                  />
+                  <div className="stylist-wrong-choice-reason-actions">
+                    <button type="submit" className="btn-primary">Save feedback</button>
+                    <button type="button" className="btn-secondary" onClick={() => commitPendingWrongChoice('')}>Skip reason</button>
+                    <button type="button" className="btn-link" onClick={() => { setPendingWrongChoice(null); setWrongChoiceReason('') }}>Cancel</button>
+                  </div>
+                </form>
+              )}
+              {(outfit.reason || assignedLayerPieces.length > 0) && (
+                <details className="stylist-outfit-reason">
+                  <summary>
+                    Why this outfit
+                  </summary>
+                  <div className="stylist-outfit-reason-body">
+                    {outfit.reason && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
+                      </div>
+                    )}
+                    {assignedLayerPieces.length > 0 && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: outfit.reason ? 8 : 0 }}>
+                        <strong>{assignedLayerPieces.length > 1 ? 'Packed layers:' : 'Packed layer:'}</strong> Packed for cooler transitions / temperature drops
+                      </div>
+                    )}
+                    {outfit.stylingInstructions && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>
+                        <strong>How to wear it:</strong> {outfit.stylingInstructions}
+                      </div>
+                    )}
+                    {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
+                        <strong>Watch:</strong> {outfit.watchFor}
+                      </div>
+                    )}
+                    {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                      <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
+                        {outfit.systemFlags.map((flag, flagIndex) => (
+                          <div key={`${flag.type || 'note'}-${flagIndex}`} style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4 }}>
+                            <strong>{flag.type || 'Note'}:</strong> {flag.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {outfit.systemSuggestion?.message && (
+                      <div style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, marginTop: 6 }}>
+                        <strong>System suggests:</strong> {outfit.systemSuggestion.message}
+                      </div>
+                    )}
+                    {STYLIST_DEBUG_ENABLED && (() => {
+                      const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
+                      if (!trace) return null
+                      const resolvedAct = trace.resolvedActivity || 'none'
+                      const actSrc = trace.activitySource || 'none'
+                      const isWalk = trace.walkable ? 'true' : 'false'
+                      const regCeil = trace.registerCeiling || 'none'
+                      const counts = trace.rosterCounts || trace.categoryCounts || {}
+                      const countsStr = Object.keys(counts).length > 0
+                        ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(', ')
+                        : 'none'
+                      return (
+                        <div style={{
+                          marginTop: 8,
+                          paddingTop: 6,
+                          borderTop: '1px dashed var(--border-light)',
+                          fontSize: 12,
+                          color: 'var(--text-light)',
+                          display: 'grid',
+                          gap: 3,
+                          lineHeight: 1.45
+                        }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Dev: styling engine trace</div>
+                          <div>Activity: {resolvedAct} ({actSrc}) · Walkable: {isWalk} · Ceiling: {regCeil}</div>
+                          <div>Roster: {countsStr}</div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </details>
+              )}
+
+              {isEvaluating && (
+                <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--accent)', marginTop: 8 }}>
+                  <span className="typing-dots"><span /><span /></span>
+                  <span>Evaluating this outfit...</span>
+                </div>
+              )}
+              {hasCritique && (
+                <details defaultOpen={true} style={{ width: '100%', marginTop: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 650, color: 'var(--accent)', fontSize: 12, userSelect: 'none' }}>
+                    🔍 View Outfit Critique
+                  </summary>
+                  <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+                    <CritiqueBody text={critiqueText} />
+                  </div>
+                </details>
+              )}
+
+              {!canRenderStructuredOutfit && (message?.wholeWardrobe || (!editorialAnchorId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
+                <>
+                  <div className="stylist-outfit-actions">
+                    <button
+                      onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
+                      disabled={isRendering}
+                      style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
+                    >
+                      {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                    </button>
+                    <button
+                      onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                      disabled={isEvaluating}
+                      style={{ fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer' }}
+                    >
+                      {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
+                    </button>
+                    {renderOutfitFeedbackButtons()}
+                  </div>
+                </>
+              )}
+
+              {canRenderStructuredOutfit && (
+                <>
+                  <div className="stylist-outfit-actions">
+                    {isPreview ? (
+                      // Preview mode: render this single direction on demand
+                      <button
+                        onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx, editorialAnchorId)}
+                        disabled={isRendering}
+                        style={{
+                          fontSize: 12, color: 'var(--accent)',
+                          padding: '3px 9px', borderRadius: 12,
+                          border: '1px solid var(--accent)',
+                          background: 'var(--surface)',
+                          cursor: isRendering ? 'default' : 'pointer',
+                          opacity: isRendering ? 0.65 : 1,
+                        }}
+                      >
+                        {isRendering ? 'Rendering…' : hasRendered ? 'Regenerate outfit image' : 'Generate outfit image'}
+                      </button>
+                    ) : (
+                      // Wardrobe-board generation button (original mode)
+                      <>
+                        <button
+                          onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
+                          disabled={isRendering}
+                          style={{
+                            fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
+                            border: '1px solid var(--accent)', background: 'var(--surface)',
+                            cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
+                          }}
+                        >
+                          {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                        </button>
+                        <button
+                          onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                          disabled={isEvaluating}
+                          style={{
+                            fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
+                            border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)',
+                            cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
+                          }}
+                        >
+                          {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
+                        </button>
+                      </>
+                    )}
+                    {!isPreview && renderOutfitFeedbackButtons()}
+                  </div>
+                </>
+              )}
+
+              {/* Rendered image for this direction */}
+              {!directionImageFirst && renderDirectionImages()}
               </div>
             </div>
           )
@@ -4661,7 +4737,7 @@ export default function StylistChat({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate ideal additions')
 
-      const replyText = withEditorialFallbackNote(`Here are three ideal-additions directions inspired by ${boardTitle}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
+      const replyText = withEditorialFallbackNote(`Here are three ideal-additions directions inspired by ${boardTitle}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
       const replyStructuredOutfits = (data.directions || []).map(d => ({
         ...d,
         label: d.title,
@@ -4676,7 +4752,7 @@ export default function StylistChat({
         },
       }))
 
-      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, mode: 'ideal_styling_directions' }])
+      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, mode: 'ideal_styling_directions', idealAutoRenderToken: createIdealAutoRenderToken() }])
       addToHistory('assistant', replyText)
       if (replyStructuredOutfits.length) {
         setThreadMemory({
@@ -5383,7 +5459,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = withEditorialFallbackNote(`Here are three styling directions for ${pieceToSend.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${pieceToSend.name}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,
@@ -5451,7 +5527,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = withEditorialFallbackNote(`Here are three styling directions for ${activeContext.name}. Review them and click "Generate image (~$0.07)" on any you want to render.`, data)
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${activeContext.name}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,
@@ -5807,6 +5883,7 @@ export default function StylistChat({
         debug: replyDebug,
         isLocalAcknowledgment: replyIsLocalAcknowledgment,
         mode: replyMode,
+        idealAutoRenderToken: replyMode === 'ideal_styling_directions' ? createIdealAutoRenderToken() : undefined,
         savedOutfitVariantMode: replySavedOutfitVariantMode,
         variantSourceOutfit: replyVariantSourceOutfit,
         queryOptions: replyQueryOptions || (shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
@@ -6802,14 +6879,7 @@ export default function StylistChat({
                                 {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
                                 
                                 {visual.reason && (
-                                  <details className="rationale-details" style={{ marginTop: 4 }}>
-                                    <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
-                                      {getTeaserText(visual.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
-                                    </summary>
-                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                                      {visual.reason}
-                                    </div>
-                                  </details>
+                                  <ReasonTeaser text={visual.reason} fontSize={10} lineHeight={1.4} />
                                 )}
 
                                 {visual.watchFor && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}><strong>Watch:</strong> {visual.watchFor}</div>}
@@ -6930,14 +7000,7 @@ export default function StylistChat({
                                 <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
                                 
                                 {board.reason && (
-                                  <details className="rationale-details" style={{ marginTop: 4 }}>
-                                    <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
-                                      {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
-                                    </summary>
-                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                                      {board.reason}
-                                    </div>
-                                  </details>
+                                  <ReasonTeaser text={board.reason} fontSize={10} lineHeight={1.4} />
                                 )}
 
                                 {board.stylingInstructions && (

@@ -635,13 +635,12 @@ behind **Why this outfit**, and an action row.
   wardrobe photos and, on editorial ideal-additions cards, a free CSS croquis sketch, a
   plain-language thesis line, and a **Full look:** description — all free, all intended to let you
   choose a direction before paying.
-- **[owner check wanted] Price labelling is inconsistent across the three render-button variants.**
-  One reads `Generate outfit image (~$0.07)` (`:3129`); the other two read `Generate outfit image`
-  with no price (`:3098`, `:3143`). Same action, same cost, three labels.
-- **[owner check wanted] `Evaluate outfit` is a paid model call and is never priced anywhere.**
-  Neither is the generation that produced the card. The `~$0.07` labels were added as owner-facing
-  instrumentation, not as a user pricing scheme — see outstanding issue on cost visibility.
-- **[by design] `Preview all directions (~$0.07)` costs the same as rendering one card.** So
+- **[owner ruling 2026-10-19] No cost labels in the user-facing UI.** The `(~$0.07)` suffixes on
+  `Generate outfit image` / `Preview all directions`, the price in the ideal-directions reply text,
+  and the per-image `Cost: $x` line under rendered images are gone. Measured cost stays visible
+  only behind `VITE_STYLIST_DEBUG` (sandbox-web) as owner instrumentation. This supersedes the
+  earlier inconsistent-labelling and unpriced-`Evaluate outfit` checks.
+- **[by design] `Preview all directions` costs the same as rendering one card (~$0.07).** So
   rendering three directions individually costs three times as much as the batch. The batch sits
   below the free compare strip.
 - **[by design] Garment truth survives card → render → critique.** Generated outfit payloads carry
