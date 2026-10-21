@@ -59,7 +59,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "VITE_PORT=5174 VITE_API_PROXY_TARGET=http://localhost:3098 VITE_STYLIST_DEBUG=true VITE_IDEAL_AUTO_RENDER=true npx vite"
+        "VITE_PORT=5174 VITE_API_PROXY_TARGET=http://localhost:3098 VITE_STYLIST_DEBUG=true npx vite"
       ],
       "port": 5174
     },
@@ -68,7 +68,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "VITE_PORT=5176 VITE_API_PROXY_TARGET=http://localhost:3098 VITE_IDEAL_AUTO_RENDER=true npx vite"
+        "VITE_PORT=5176 VITE_API_PROXY_TARGET=http://localhost:3098 npx vite"
       ],
       "port": 5176
     }

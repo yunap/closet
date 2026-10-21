@@ -631,10 +631,12 @@ behind **Why this outfit**, and an action row.
 
 **What actually happens.**
 
-- **[by design] Cost is opt-in.** Nothing renders an image until you ask. A card shows real
-  wardrobe photos and, on editorial ideal-additions cards, a free CSS croquis sketch, a
-  plain-language thesis line, and a **Full look:** description — all free, all intended to let you
-  choose a direction before paying.
+- **[by design] Cost is opt-in, except ideal-pieces cards.** Nothing renders an image until you ask.
+  A card shows real wardrobe photos — all free, intended to let you choose a direction before
+  paying. **[owner ruling 2026-10-20]** Editorial ideal-additions cards are the exception: every
+  direction's image renders as soon as the reply arrives (one paid image per direction, in
+  parallel), and the card leads with it. Their croquis sketch, thesis line and **Full look:** text
+  fold under **Look details**; the new pieces and their descriptions show below the image.
 - **[owner ruling 2026-10-19] No cost labels in the user-facing UI.** The `(~$0.07)` suffixes on
   `Generate outfit image` / `Preview all directions`, the price in the ideal-directions reply text,
   and the per-image `Cost: $x` line under rendered images are gone. Measured cost stays visible

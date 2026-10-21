@@ -21,18 +21,17 @@ the image model (GPT-4o), diamonds are decisions.
 ```mermaid
 flowchart TD
     A["Piece → ask stylist → 'Explore additions'<br/>→ 'Suggest ideal additions'"] --> P{{"LLM · editorial directions<br/>up to 3 ideal new-piece ideas"}}
-    P --> D["Show direction cards<br/>title · missing pieces · why · watch-for"]
-    D --> R{"Render the directions?"}
-    R -->|"keep as text"| T["Directions stay as cards"]
-    R -->|"one direction"| E{{"Image · render one look<br/>editorial concept image"}}
+    P --> D["Show direction cards<br/>image slot · new pieces · look details"]
+    D --> E{{"Image · render each look<br/>automatically, in parallel"}}
+    E --> OUT["Cards lead with their image"]
+    OUT --> R{"Want more?"}
+    R -->|"regenerate one"| E
     R -->|"all together"| S{{"Image · comparison sheet<br/>all directions on one sheet"}}
-    E --> OUT["Show rendered image in chat"]
-    S --> OUT
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
-    class A,D,T,OUT app;
+    class A,D,OUT app;
     class P,E,S model;
     class R check;
 ```
@@ -42,9 +41,12 @@ Three takeaways for a PM:
 - **This is the only flow that invents pieces you don't own.** Every other flow
   composes from the wardrobe; here the text model is explicitly told to propose
   *conceptual missing pieces* (and not to re-suggest things you already have).
-- **One text call, then optional rendering.** The directions are text first
-  (cheap, fast). Rendering is a separate, opt-in step — and there are two ways to
-  render: one look at a time, or a single sheet with all directions side by side.
+- **One text call, then every look renders automatically.** **[owner ruling 2026-10-20]** As soon
+  as the directions arrive, each card's image renders (all of them in parallel, one image call per
+  direction), and the card leads with the image; the sketch, summary and full-look text fold under
+  **Look details**. This supersedes the earlier "cost is opt-in" ruling for this flow. Renders fire
+  only for a reply created in the current page session, never on a reload. The comparison sheet is
+  still an extra, on-request render.
 - **The renders are conditional GPT-4o.** Both image steps fall back to a local
   collage / placeholder when `PHOTO_PRESERVING_VISUALS` is on or there's no API key
   — the same pattern as [saved-outfit variants](saved-outfit-variants.md).
