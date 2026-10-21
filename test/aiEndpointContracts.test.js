@@ -3015,7 +3015,7 @@ test('affected Stylist flows expose shared rotation memory in the header and can
 test('StylistChat uses outfit sketch instead of color balance on ideal direction cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const renderOutfitSketch = \(outfit, \{ compact = false \} = \{\}\) =>/)
-  assert.match(src, /showOutfitSketch && renderOutfitSketch\(outfit\)/)
+  assert.match(src, /\{renderOutfitSketch\(outfit\)\}/)
   assert.match(src, /lower\.includes\('trouser'\)/)
   assert.match(src, /background_color: targetPiece\.background_color \|\| ''/)
   assert.match(src, /beige: '#d8c7aa'/)

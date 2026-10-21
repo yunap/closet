@@ -383,11 +383,6 @@ const composerUsageSummary = (usage = null) => {
 // raw gate-rejection vocabulary) are for tuning the model/engine, not for regular users.
 // Set VITE_STYLIST_DEBUG=true (see sandbox-web in .claude/launch.json) to surface them.
 const STYLIST_DEBUG_ENABLED = import.meta.env.VITE_STYLIST_DEBUG === 'true'
-// PROTOTYPE (option A): ideal-pieces directions render all of their images as soon as they arrive,
-// and the card leads with the image instead of the text description. Off unless
-// VITE_IDEAL_AUTO_RENDER=true (set only on the sandbox web configs), because each render is a paid
-// image call outside mock mode.
-const IDEAL_AUTO_RENDER_ENABLED = import.meta.env.VITE_IDEAL_AUTO_RENDER === 'true'
 
 const ROSTER_CATEGORY_PLURAL_LABELS = {
   top: 'tops',
@@ -2388,15 +2383,17 @@ export default function StylistChat({
     }
   }
 
+  // Owner ruling 2026-10-20: ideal-pieces directions render all of their images as soon as they
+  // arrive, and the card leads with the image instead of the text description. This supersedes the
+  // earlier "cost is opt-in" ruling for this flow only (docs/app-surface-map.md).
   const createIdealAutoRenderToken = () => {
-    if (!IDEAL_AUTO_RENDER_ENABLED) return undefined
     const token = `ideal-auto:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
     idealAutoRenderTokensRef.current.add(token)
     return token
   }
 
   useEffect(() => {
-    if (!IDEAL_AUTO_RENDER_ENABLED || !idealAutoRenderTokensRef.current.size) return
+    if (!idealAutoRenderTokensRef.current.size) return
     messages.forEach((message, messageIndex) => {
       const token = message?.idealAutoRenderToken
       if (!token || !idealAutoRenderTokensRef.current.has(token)) return
@@ -3781,8 +3778,8 @@ export default function StylistChat({
                   })}
                 </div>
           ))
-          // PROTOTYPE (option A): auto-rendered ideal directions lead with their image.
-          const directionImageFirst = IDEAL_AUTO_RENDER_ENABLED && showOutfitSketch
+          // Ideal-pieces directions lead with their (automatically rendered) image.
+          const directionImageFirst = showOutfitSketch
           return (
             <div
               key={idx}
@@ -3884,7 +3881,7 @@ export default function StylistChat({
                 })()}
                 {directionImageFirst && renderDirectionImages()}
                 {directionImageFirst && renderNewPieceList()}
-                {showOutfitSketch && IDEAL_AUTO_RENDER_ENABLED ? (
+                {showOutfitSketch && (
                   <details className="rationale-details" style={{ marginTop: 6 }}>
                     <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>Look details</summary>
                     {renderOutfitSketch(outfit)}
@@ -3899,17 +3896,6 @@ export default function StylistChat({
                       </div>
                     )}
                   </details>
-                ) : null}
-                {!IDEAL_AUTO_RENDER_ENABLED && showOutfitSketch && renderOutfitSketch(outfit)}
-                {showOutfitSketch && !IDEAL_AUTO_RENDER_ENABLED && buildVisualThesis(outfit) && (
-                  <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginTop: 4, marginBottom: 2, lineHeight: 1.4 }}>
-                    {buildVisualThesis(outfit)}
-                  </div>
-                )}
-                {showOutfitSketch && !IDEAL_AUTO_RENDER_ENABLED && outfit.visualPrompt && (
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
-                    <strong>Full look:</strong> {outfit.visualPrompt}
-                  </div>
                 )}
               {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
                 <div className="stylist-outfit-result-meta">
@@ -4737,7 +4723,7 @@ export default function StylistChat({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate ideal additions')
 
-      const replyText = withEditorialFallbackNote(`Here are three ideal-additions directions inspired by ${boardTitle}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
+      const replyText = withEditorialFallbackNote(`Here are three ideal-additions directions inspired by ${boardTitle}. Rendering each look now.`, data)
       const replyStructuredOutfits = (data.directions || []).map(d => ({
         ...d,
         label: d.title,
@@ -5459,7 +5445,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = withEditorialFallbackNote(`Here are three styling directions for ${pieceToSend.name}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${pieceToSend.name}. Rendering each look now.`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,
@@ -5527,7 +5513,7 @@ export default function StylistChat({
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
-        replyText = withEditorialFallbackNote(`Here are three styling directions for ${activeContext.name}. ${IDEAL_AUTO_RENDER_ENABLED ? 'Rendering each look now.' : 'Review them and click "Generate outfit image" on any you want to render.'}`, data)
+        replyText = withEditorialFallbackNote(`Here are three styling directions for ${activeContext.name}. Rendering each look now.`, data)
         replyStructuredOutfits = (data.directions || []).map(d => ({
           ...d,
           label: d.title,
