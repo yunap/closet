@@ -58,7 +58,7 @@ import {
   identifyColdLayerRepairableFailures,
   identifyIncompleteLookRepairableFailures
 } from './outfitSetPlanner.js'
-import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES } from './stylingIntent.js'
+import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, extractExplicitActivity, extractWeatherContext, normalizeActivity } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
 import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
@@ -735,9 +735,20 @@ export async function resolveToolStylingContext({
   // That result is the authority for the whole turn. The stylist may omit activity, but may not
   // invent "walking" later and thereby change footwear and thermal physics (live acceptance:
   // thread_1788767789621). Plan slots remain independent; they do not resolve through this path.
+  // A follow-up is not locked, but an activity a tool call names must still come from somewhere the
+  // user put it: the router's reading of this message, the thread's own activity, or the user's words.
+  // thread_1792781414837: a follow-up search passed activity 'walking' that nobody had mentioned, and
+  // the walking footwear rules shaped the cards. Otherwise the thread's activity stands.
+  const namedActivity = normalizeActivity(explicitRequest.activity)
+  const activityUserWords = [toolContext.userWords, toolContext.question].filter(Boolean).join('\n')
+  const namedActivityHasSource = !explicitRequest.activity || namedActivity === 'none' || !activityUserWords.trim()
+    || namedActivity === normalizeActivity(toolContext.activity)
+    || namedActivity === normalizeActivity(toolContext.followUpRouterActivity)
+    || namedActivity === extractExplicitActivity(activityUserWords)
+  if (!namedActivityHasSource) bumpFreeformDiagnostic(toolContext, 'unstatedActivityDropped')
   const activityFromAuthority = toolContext.executionRouterActivityLocked === true
     ? toolContext.executionRouterActivity
-    : explicitRequest.activity
+    : (namedActivityHasSource ? explicitRequest.activity : (toolContext.activity || ''))
   // 2026-09-16 (owner review, thread_1789546295700): same lock, same reason, for season. A later
   // tool call's own `season` argument is often a temperature descriptor ("warm", "cool") answering
   // that field's own schema wording, not a calendar correction — and letting it overwrite the
@@ -1674,8 +1685,32 @@ export async function executeTool(name, args, toolContext = {}) {
 // is the model's guess in the wrong field: it is dropped, and the estimate keeps its own rank (below
 // the forecast). The same test as the thread-copy check in resolveToolStylingContext; a user_weather
 // that differs from the estimate, or any on a request that does state weather, is taken as before.
+//
+// 2026-10-23 (thread_1792781414837): a follow-up whose user had said nothing about weather got
+// search_wardrobe(user_weather: {temperature_band: 'hot'}). The hot-weather gates removed 117 pieces
+// and heavy cool-season pants were styled with summer tops. `user_weather` is now dropped from any
+// call when nothing the user typed in the thread states weather (userWordsStateWeather). This checks
+// where the claim came from, not what the weather is; with any weather words present, the call is
+// taken as before.
+export function userWordsStateWeather(text = '') {
+  const value = String(text || '')
+  return requestStatesWeather(value) || Boolean(extractWeatherContext(value)) || /\b(?:weather|forecast|temperatures?|temps?)\b/i.test(value) // ratchet-allow: matches the USER'S OWN words for any weather statement, never a garment field, and sets no value
+}
+
 export function withoutEchoedUserWeather(args, toolContext = {}) {
   if (!args || typeof args !== 'object') return args
+  const userWords = [toolContext.userWords, toolContext.request, toolContext.question].filter(Boolean).join('\n')
+  const slotsWithUserWeather = Array.isArray(args.slots) && args.slots.some(slot => slot?.user_weather)
+  // With no user words at all (a direct tool call outside a chat turn) there is nothing to check the
+  // claim against, so it is taken as before.
+  if ((args.user_weather || slotsWithUserWeather) && userWords.trim() && !userWordsStateWeather(userWords)) {
+    bumpFreeformDiagnostic(toolContext, 'unstatedUserWeatherDropped')
+    const { user_weather: unstated, ...rest } = args
+    return {
+      ...rest,
+      ...(Array.isArray(args.slots) ? { slots: args.slots.map(slot => { if (!slot?.user_weather) return slot; const { user_weather: dropped, ...kept } = slot; return kept }) } : {}),
+    }
+  }
   const requestText = [toolContext.request, toolContext.question].filter(Boolean).join(' ')
   if (requestStatesWeather(requestText)) return args
   const degrees = (weather, key) => Number(weather?.[`${key}_f`] ?? weather?.[`${key}F`])

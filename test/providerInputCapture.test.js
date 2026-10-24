@@ -154,3 +154,62 @@ test('enabled with no request context: attribution fields are present and empty,
     delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
   }
 })
+
+// thread_1792569468413 (2026-10-21): a review package had to rebuild every image by hash-matching
+// wardrobe photos, and could not recover the browser-drawn reference sheet at all. Images are now
+// saved once beside the records, by full sha256; the records themselves still hold no base64.
+test('enabled: each image sent is saved once under images/, named by its sha256, and the record names the file', async () => {
+  const dir = path.join(tmpRoot, 'images')
+  process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR = dir
+  const sharp = (await import('sharp')).default
+  const crypto = await import('node:crypto')
+  const noisy = { width: 64, height: 64, channels: 3, noise: { type: 'gaussian', mean: 128, sigma: 40 } }
+  const png = (await sharp({ create: noisy }).png().toBuffer()).toString('base64')
+  const jpeg = (await sharp({ create: noisy }).jpeg().toBuffer()).toString('base64')
+  const signature = 'Q'.repeat(2500)
+  const { captureNormalizedProviderInput, captureWireProviderInput } = await import('../lib/providerInputCapture.js')
+  try {
+    captureNormalizedProviderInput({
+      provider: 'anthropic', model: 'x', system: 'sys', tools: [],
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg } },
+      ] }],
+    })
+    // The same image again, in Gemini's wire shape, plus a non-image base64 blob.
+    captureWireProviderInput({ provider: 'gemini', model: 'x', request: { input: [{ type: 'image', data: png, mime_type: 'image/png' }], signature } })
+
+    const sha = value => crypto.createHash('sha256').update(value).digest('hex')
+    const saved = fs.readdirSync(path.join(dir, 'images')).sort()
+    assert.deepEqual(saved, [`${sha(jpeg)}.jpg`, `${sha(png)}.png`].sort(), 'one file per distinct image; the non-image blob is not saved')
+    assert.equal(fs.readFileSync(path.join(dir, 'images', `${sha(png)}.png`)).toString('base64'), png, 'the saved file holds exactly the bytes sent')
+
+    const records = fs.readdirSync(dir).filter(file => file.endsWith('.json')).sort().map(file => fs.readFileSync(path.join(dir, file), 'utf8'))
+    for (const text of records) {
+      assert.ok(!text.includes(png.slice(0, 200)) && !text.includes(jpeg.slice(0, 200)), 'records still hold no base64')
+    }
+    assert.match(records[0], new RegExp(`sha256:${sha(png).slice(0, 16)}, saved images/${sha(png)}\\.png`))
+    assert.match(records[1], new RegExp(`saved images/${sha(png)}\\.png`))
+    assert.match(records[1], new RegExp(`redacted base64, 2500 chars, sha256:${sha(signature).slice(0, 16)}\\]`))
+  } finally {
+    delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
+  }
+})
+
+test('enabled: tool definitions keep their parameter schemas', async () => {
+  const dir = path.join(tmpRoot, 'tool-schemas')
+  process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR = dir
+  const { captureNormalizedProviderInput } = await import('../lib/providerInputCapture.js')
+  try {
+    const inputSchema = { type: 'object', properties: { outfit_index: { type: 'integer' } }, required: ['outfit_index'] }
+    captureNormalizedProviderInput({
+      provider: 'gemini', model: 'x', system: 'sys', messages: [],
+      tools: [{ name: 'suggest_slot_swaps', description: 'swap one slot', input_schema: inputSchema, execute: () => {} }],
+    })
+    const [file] = fs.readdirSync(dir)
+    const record = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'))
+    assert.deepEqual(record.tools, [{ name: 'suggest_slot_swaps', description: 'swap one slot', input_schema: inputSchema }])
+  } finally {
+    delete process.env.WARDROBE_CAPTURE_PROVIDER_INPUT_DIR
+  }
+})

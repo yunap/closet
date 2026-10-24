@@ -511,3 +511,9 @@ recurring layering failures that are independent of shape. If the audit establis
 orthogonal nullable field — never proxy thickness through length, and never expand the
 `sleeve_shape` vocabulary to carry it, since that would conflate two axes the 2026-08-14 split
 exists to keep apart.
+
+**Audit done 2026-10-21:** [sleeve-thickness-audit-2026-10-21.md](sleeve-thickness-audit-2026-10-21.md).
+Two owner-confirmed failures independent of shape (238 under the puffer; the charcoal sheath 996791
+under the plum cardigan), each with a same-shape control or pair, and a replay in which a stronger
+model repeated the mistake. **Owner ruling 2026-10-21: no sleeve-thickness field.** The stylist must
+judge thickness from the photographs, as a person would; do not propose `sleeve_bulk` again.

@@ -820,7 +820,12 @@ export function evaluateLayerPairConstruction(pieces = [], { roleAware = false }
 // sleeves fit under a fitted puffer, while a substantial knit sleeve (238) does not, and no field yet
 // records sleeve structure or compressibility. Every model-facing layering rule therefore states only
 // this neutral sentence; the geometry verdict itself is shadow evidence (see evaluateWearableOutfit).
-export const NEUTRAL_SLEEVE_LAYERING_STATEMENT = 'Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient.'
+// Reworded 2026-10-21 (thread_1792569468413): the first version ("Sleeve shape and relative sleeve
+// length alone do not establish whether two garments layer…") was read as a reason to distrust sleeve
+// evidence. The composer put a fine, fitted 3/4-sleeve cardigan over a heavy long-sleeved ribbed knit
+// dress as its signature look while naming both weights. It still forbids deciding from labels or
+// length; it now also says a conflict visible in the separate photographs counts.
+export const NEUTRAL_SLEEVE_LAYERING_STATEMENT = 'Do not decide whether two garments layer from sleeve labels or lengths alone. Judge the actual two garments from their photographs and recorded construction: sleeve bulk and structure, armhole volume, fabric substance, and how far the inner garment can compress. An obvious physical conflict visible in the separate garment photographs is evidence; you do not need a photograph of the two worn together. Say so when the evidence is genuinely unclear.'
 
 // GARMENT-FACT INTEGRITY: TUCK (live thread_1789508440573, 2026-09-15). A card's styling_instructions told the wearer to tuck
 // tops recorded as \`wear_over_only\` (133, 140) although the fact line said so — and the image renderer obeys the recorded fact,
@@ -877,6 +882,15 @@ export function correctTuckInstruction({ pieces = [], stylingInstructions = '' }
 
 export function layerConstructionPromptRule() {
   return `- ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`
+}
+
+// The composers' reasoning order for layered cards (2026-10-21, thread_1792569468413). The composer
+// had the photographs and the recorded weights, and wrote both into its own card, yet chose the pairing
+// for its look ("sleek column + fluid layer") and explained it afterwards. Physical fit is now judged
+// first, per pair, as a condition of choosing the pair at all; it names no sleeve shape, length or
+// fabric that decides the answer, because none does on its own (owner ruling 2026-09-14).
+export function layerWearabilityFirstPromptRule() {
+  return '- Wearability comes first for every layered pair. Whenever one garment goes over or under another (a middle or outer layer over the base, or a top under a dress), first name which garment is inside and which is outside, look at both photographs and their recorded construction, and ask whether the inner garment can physically sit inside the outer one at the sleeves, the armholes and the body. Write that check in the card\'s `layering_check` before anything else on the card. Only a pairing that passes is then judged on colour, proportion, texture, register and the outfit\'s idea. If the photographs make a conflict reasonably clear, do not use that pairing, however well its colours or silhouette work. If you genuinely cannot tell, choose a candidate you can see is wearable rather than assuming this one works.'
 }
 
 function structureFinding(code, message, evidence = {}) {

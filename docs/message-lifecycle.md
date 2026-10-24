@@ -108,14 +108,17 @@ with the context attached. Typing is only ever the *last* branch.
 Three derived booleans then fire off a regex against the typed text:
 
 ```js
-const editorialRequestPattern = /suggest ideal|ideal addition|…|not.*wardrobe|…|new item/i
+const editorialRequestPattern = /suggest ideal|ideal addition|…|not (?:from|in|using|limited to) my wardrobe|outside (?:of )?my wardrobe|…|new item/i
 const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
 const shouldGenerateOutfits          = Boolean(pieceToSend && effectiveGenerateOutfitMode && !shouldGenerateEditorialVisuals)
 const shouldGenerateActiveEditorialVisuals = Boolean(!pieceToSend && activeContext?.type === 'piece' && editorialRequestPattern.test(q))
 ```
 
-Note `not.*wardrobe` in that pattern. With a piece active, typing *"is this not in my wardrobe?"*
-matches, and the turn is routed to editorial image generation instead of being answered.
+**[fixed 2026-10-23]** The pattern used to contain `not.*wardrobe`: any "not" followed later by
+"wardrobe" matched. Live `thread_1792781414837`: "ok these are not bad, but … what else can you see to
+pair these with in my wardrobe?" was routed to ideal new pieces, the opposite of the request. Only an
+explicit ask to go outside the wardrobe matches now (`test/editorialRequestPattern.test.js`). The
+branch is still a regex on typed text, not a routing decision.
 
 ### The dispatch table
 

@@ -146,6 +146,66 @@ test('a fresh this-is request stays new after transport history is projected', a
   assert.equal(payload.historyDiagnostics.historyMessagesReceived, 0)
 })
 
+// thread_1792821629010 (2026-10-24): the assistant's card said "the cognac boots echo the warm tones
+// in the tweed"; the weather word match read the thread context, returned "hot weather", stored it,
+// and every later turn was told to pass hot weather to search_wardrobe. Weather is the user's words.
+test('the assistant\'s own words never become the thread\'s weather; the user\'s still do', async () => {
+  const card = 'Tweed Vest Layered City Look: the cognac brown boots echo the warm tones in the tweed.'
+  const quiet = await buildStylistConversationPayload({
+    question: 'ok, give me few examples following the above directions', conversationMode: 'followup',
+    sessionId: `assistant-warm-${Date.now()}`,
+    history: [
+      { role: 'user', content: 'Style this piece using my existing wardrobe.' },
+      { role: 'assistant', content: card },
+      { role: 'user', content: 'ok, give me few examples following the above directions' },
+    ],
+    threadContext: card, generatedContext: card,
+  })
+  assert.doesNotMatch(quiet.system, /Established weather context for this turn/)
+  assert.equal(quiet.threadState?.established?.weather, undefined)
+
+  const stated = await buildStylistConversationPayload({
+    question: 'ok, give me few examples following the above directions', conversationMode: 'followup',
+    sessionId: `user-hot-${Date.now()}`,
+    history: [
+      { role: 'user', content: "It's going to be hot tomorrow. Style this piece using my existing wardrobe." },
+      { role: 'assistant', content: card },
+      { role: 'user', content: 'ok, give me few examples following the above directions' },
+    ],
+  })
+  assert.match(stated.system, /Established weather context for this turn: hot weather/)
+})
+
+// thread_1792793923755 (2026-10-23): "what other directions can we explore?" and "let's think about
+// these pants some more…" were invitations to think and got cards. The router now says how to answer
+// (answer_form); a words turn gets an instruction to talk through directions and no card tools.
+test('an invitation to think is answered in words: router field, turn instruction, informational tools only', async () => {
+  const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
+  assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('answer_form'))
+  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.answer_form.enum, ['cards', 'words'])
+
+  const question = 'ok, what other directions can we explore?'
+  const words = await buildStylistConversationPayload({
+    question, conversationMode: 'followup', sessionId: `words-${Date.now()}`,
+    history: [{ role: 'user', content: question }], answerInWords: true,
+  })
+  assert.equal(words.answerInWords, true)
+  assert.match(words.system, /The user is thinking with you this turn, not asking to see outfits/)
+  assert.match(words.system, /offer to build any of them as cards/)
+  const cards = await buildStylistConversationPayload({
+    question: 'make me an outfit with these pants', conversationMode: 'followup', sessionId: `cards-${Date.now()}`,
+    history: [{ role: 'user', content: 'make me an outfit with these pants' }],
+  })
+  assert.equal(cards.answerInWords, false)
+  assert.doesNotMatch(cards.system, /thinking with you this turn/)
+
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /toolContext\.answerInWords = routed\.value\?\.profile === 'full_stylist' && routed\.value\?\.answer_form === 'words'/)
+  assert.match(routeSrc, /if \(payload\.restrictToInformationalTools \|\| payload\.answerInWords\) \{\s*toolContext\.allowedToolNames = \['search_wardrobe', 'view_pieces', 'get_garment_details'\]/)
+  const offered = stylistToolsForTurn({ allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'] }).map(tool => tool.name)
+  assert.ok(!offered.some(name => ['propose_outfit', 'generate_outfits', 'plan_outfit_set', 'suggest_slot_swaps', 'render_preview'].includes(name)))
+})
+
 test('whole-wardrobe composer labels (shared fact line) expose opacity and explicit base-layer status, and no tagger do-not-pair text', async () => {
   const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
   const lace = sharedGarmentEvidenceLine({ id: 1, name: 'lace top', category: 'top', fabric_category: 'lace', opacity: 'opaque', needs_base: 'no', tuck_behavior: 'wear_over_only' })
@@ -1000,6 +1060,54 @@ test('garment_fact states the neutral sleeve sentence and never receives a compu
   assert.doesNotMatch(system, /sleeve_type/, 'must not cite the retired sleeve_type field')
 })
 
+// thread_1792563578975 (2026-10-20): asked how a cardigan's fitted 3/4 sleeves work over two cards'
+// long sleeves, existing_card_explanation said they would "peek out cleanly without bunching" over a
+// turtleneck recorded as ruched and extra-long. The neutral layering sentence was garment_fact's only.
+test('existing_card_explanation states the neutral sleeve sentence and judges how garments sit together afresh', async () => {
+  const { NEUTRAL_SLEEVE_LAYERING_STATEMENT } = await import('../styling-engine/outfitValidation.js')
+  const system = compactFreeformAnswerSystem('existing_card_explanation')
+  assert.ok(system.includes(NEUTRAL_SLEEVE_LAYERING_STATEMENT))
+  assert.match(system, /or how its garments will sit, layer or look together, judge it fresh/)
+  assert.match(system, /Do not describe how a garment will behave as settled when neither the facts nor the photographs show it/)
+  assert.ok(compactFreeformAnswerSystem('garment_fact').includes(NEUTRAL_SLEEVE_LAYERING_STATEMENT))
+  assert.doesNotMatch(compactFreeformAnswerSystem('general_advice'), /sleeve labels or lengths alone/)
+})
+
+test('cardExplanationVisualPieceIds takes the named cards\' pieces after any exactly named garment, else every card', async () => {
+  const { cardExplanationVisualPieceIds } = await import('../routes/ai.js')
+  const outfits = [
+    { label: 'Plum & Emerald City Column', pieceIds: [996793, 104, 996887, 215] },
+    { label: 'Tonal Plum & Grey Layer', piece_ids: [144, 996877, 996887, 198] },
+    { title: 'Plum Cardigan Over Black Sheath', pieceIds: [996791, 996887, 202] },
+  ]
+  const question = 'tell me how it is going to work with Plum Cardigan Over Black Sheath or Tonal Plum & Grey Layer'
+  assert.deepEqual(cardExplanationVisualPieceIds({ question, outfits }), [144, 996877, 996887, 198, 996791, 202])
+  assert.deepEqual(cardExplanationVisualPieceIds({ question, outfits, leadPieceIds: [215] }), [215, 144, 996877, 996887, 198, 996791, 202])
+  // No card named (an index, a pronoun): every card, in card order, without repeats.
+  assert.deepEqual(cardExplanationVisualPieceIds({ question: 'why the second one?', outfits }),
+    [996793, 104, 996887, 215, 144, 996877, 198, 996791, 202])
+  // A label matches only as whole words, so "Layer" alone does not pick card 2.
+  assert.deepEqual(cardExplanationVisualPieceIds({ question: 'is the layer warm?', outfits: [outfits[1], { label: 'Layer', pieceIds: [7] }] }), [7])
+  assert.deepEqual(cardExplanationVisualPieceIds({ question, outfits: [] }), [])
+})
+
+test('compact garment visual evidence allows a larger budget only when asked, up to eight images', async () => {
+  const uploadsDir = path.join(tmpRoot, 'compact-visuals-card-budget')
+  fs.mkdirSync(uploadsDir, { recursive: true })
+  const sharp = (await import('sharp')).default
+  const pieces = []
+  for (let index = 0; index < 10; index += 1) {
+    await sharp({ create: { width: 12, height: 12, channels: 3, background: '#f4f0ea' } })
+      .png()
+      .toFile(path.join(uploadsDir, `budget-${index}.png`))
+    pieces.push({ id: 400 + index, name: `budget piece ${index}`, photo: `budget-${index}.png` })
+  }
+  const images = blocks => blocks.filter(block => block.type === 'image').length
+  assert.equal(images(await compactGarmentVisualEvidence(pieces, { uploadsDir })), 5, 'the default stays the five-garment structural maximum')
+  assert.equal(images(await compactGarmentVisualEvidence(pieces, { uploadsDir, maxImages: 6 })), 6)
+  assert.equal(images(await compactGarmentVisualEvidence(pieces, { uploadsDir, maxImages: 40 })), 8, 'never more than eight')
+})
+
 test('compactGarmentFactLayeringEvidence computes the canonical verdict for the original incident, now conservative under missing evidence', async () => {
   const { compactGarmentFactLayeringEvidence } = await import('../routes/ai.js')
   // Original incident evidence: both long-sleeve, neither sleeve_shape nor fabric_weight supplied.
@@ -1399,7 +1507,7 @@ test('single-outfit payload keeps exact weather and excludes the universal workb
   assert.ok(payload.system.length < 15000, `narrow system unexpectedly large: ${payload.system.length}`)
   assert.match(payload.system, /Walking, sightseeing, and city errands are low-exertion outdoor exposure and do not earn warmth credits/)
   // 2026-09-14: the categorical sleeve rule was replaced by the neutral sentence (sleeve geometry is log-only).
-  assert.match(payload.system, /Layering & Sleeve Physics: Sleeve shape and relative sleeve length alone do not establish whether two garments layer\./)
+  assert.match(payload.system, /Layering & Sleeve Physics: Do not decide whether two garments layer from sleeve labels or lengths alone\./)
   assert.doesNotMatch(payload.system, /Follow sleeve layering compatibility|cannot accommodate an inner sleeve/)
   // 2026-09-15 (owner ruling, two passes): the "insulating coat or three-layer system" formula and
   // its garment-category prescription are retired — thermal adequacy is judged from the system's
@@ -1710,7 +1818,7 @@ test('saved-photo presence is exposed to the router without leaking garment iden
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   assert.match(routeSrc, /SELECT id, name, photo, worn_photo FROM pieces/)
   assert.match(routeSrc, /saved garment photographs available: \$\{compactSavedPhotoCount\} resolved subject\(s\)/)
-  assert.match(routeSrc, /compactGarmentVisualEvidence\(visualPieces\)/)
+  assert.match(routeSrc, /compactGarmentVisualEvidence\(visualPieces[,)]/)
   assert.match(routeSrc, /Refusing expensive full-stylist fallback/)
 })
 
@@ -1935,6 +2043,38 @@ test('looksLikeTimezoneIdentifier does not false-positive on real place names', 
   assert.equal(looksLikeTimezoneIdentifier('Seattle'), false)
   assert.equal(looksLikeTimezoneIdentifier(''), false)
   assert.equal(looksLikeTimezoneIdentifier(undefined), false)
+})
+
+// thread_1792781414837 (2026-10-23): a follow-up whose user never mentioned weather or activity
+// searched with user_weather {temperature_band: 'hot'} and activity 'walking'; the hot-weather gates
+// removed 117 pieces and the cards were summer tops on heavy cool-season pants.
+test('a tool call cannot claim weather or an activity the user never stated in the thread', async () => {
+  const userWords = [
+    'Style this piece using my existing wardrobe.',
+    "ok these are not bad, but let's think about these pants some more. what else can you see to pair these with in my wardrobe?",
+    'these are greate, but how about the items from my wardrobe?',
+  ].join('\n')
+  const invented = { category: 'shoes', occasion: 'casual', activity: 'walking', user_weather: { temperature_band: 'hot' } }
+  const followUp = { question: 'these are greate, but how about the items from my wardrobe?', userWords, followUpRouterActivity: 'none', executionRouterNoSituation: true }
+  const dropped = { ...followUp, freeformDiagnostics: {} }
+  await executeTool('search_wardrobe', invented, dropped)
+  // At least once: the search widens its own filters and re-runs the check on each pass.
+  assert.ok(dropped.freeformDiagnostics.unstatedUserWeatherDropped >= 1)
+  assert.ok(dropped.freeformDiagnostics.unstatedActivityDropped >= 1)
+  assert.notEqual(dropped.activity, 'walking')
+  assert.notEqual(dropped.weatherProfile?.isHot, true, 'no hot-weather gates on a turn nobody called hot')
+
+  // The same arguments are the user's when the user said them, in this message or earlier in the thread.
+  const stated = { ...followUp, userWords: `It's going to be hot and I'll be walking around the city all day.\n${userWords}`, freeformDiagnostics: {} }
+  await executeTool('search_wardrobe', invented, stated)
+  assert.equal(stated.freeformDiagnostics.unstatedUserWeatherDropped, undefined)
+  assert.equal(stated.freeformDiagnostics.unstatedActivityDropped, undefined)
+  assert.equal(stated.activity, 'walking')
+
+  // The router's reading of the message counts as the user's words ("sightseeing" is walking to it).
+  const routed = { ...followUp, followUpRouterActivity: 'walking', freeformDiagnostics: {} }
+  await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'walking' }, routed)
+  assert.equal(routed.activity, 'walking')
 })
 
 test('executeTool search_wardrobe records a search call and gate-exclusion count in toolContext.freeformDiagnostics', async () => {

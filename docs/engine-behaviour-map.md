@@ -2785,6 +2785,24 @@ a weak/missing tag for feasibility only. The shown result is judged separately; 
 not imply preference, and an unseen alternative cannot be ranked. It does not change the conservative metadata authority used by automatic
 composition. The call records `compactVisualImages` and never loads a wardrobe-wide visual roster.
 
+**[card-explanation correction, 2026-10-20] A card explanation sees the cards it is asked about.**
+Live `thread_1792563578975`: a thread opened with "Style this piece" on the plum ruffled cardigan
+(996887) asked how its "pretty fitted 3/4 sleeves" would work in two named cards. The
+`existing_card_explanation` answer said the long sleeves underneath would "peek out cleanly without
+bunching up" over the black turtleneck (144), whose supplied facts were `extra_long` and
+`gathered_ruched`. Two causes. (a) Photos were chosen by the thread's active piece whenever one
+existed, so the answer saw only the cardigan (`compactVisualImages: 1`). The photos now come from
+`cardExplanationVisualPieceIds` (`routes/ai.js`): any exactly named garment first, then the pieces of
+the cards whose label the question names as whole words, or of every card when none is named. One
+photo per garment across those cards, up to `MAX_CARD_EXPLANATION_IMAGES = 8`; the default for every
+other caller stays five. `garment_fact` is unchanged. (b) The neutral sleeve sentence
+(`NEUTRAL_SLEEVE_LAYERING_STATEMENT`; owner ruling 2026-09-14: shape or length alone neither proves nor
+rules out a layer) was in `garment_fact`'s prompt only, and `existing_card_explanation`'s instruction
+to judge afresh and admit uncertainty was scoped to conditions, weather or comfort. Both profiles now
+state the sentence, and that instruction also covers how a card's garments will sit, layer or look
+together. Verified offline on that turn: six photos (both named cards' pieces) where one was sent.
+Whether the answer then judges the sleeve differently is not tested; that needs a paid run.
+
 **[rollout contract 2026-08-19] Routing coverage is a tracked corpus.**
 `test/fixtures/freeform_execution_routing_corpus.json` exercises every execution profile and the
 full-stylist fallback classes through `routeFreeformExecutionProfile`. The provider is hermetically
@@ -4716,6 +4734,101 @@ single-shot call (`askStylistWithUsage`, including its Anthropic path through `a
 captured call, tool-loop turns included, has exactly three records — normalized, wire, output — sharing
 one `callId` and `iterationIndex`. `test/providerCaptureCallIdPairing.test.js` drives the real functions
 for all three providers against stubbed SDK methods and asserts this.
+
+**[amended 2026-10-24 — a check's retry note is not the user's message]** Three threads in a row opened a
+reply with "Now that we've checked those pieces…" / "With those pieces verified from your wardrobe…".
+Traced in `thread_1792822990468` turn 4: the stylist's first answer cited garment IDs from the wardrobe
+manifest, the `unverifiedCitation` check sent back "You cited piece ID(s) … without verifying them this
+turn … Call view_pieces … then answer again", and the second answer narrated compliance with that note.
+Every check's retry note now ends with `RETRY_IS_UNSEEN` (`provider.js`, appended in
+`applyFreeformOutputChecks`' single `fail()`): the user has not seen the previous answer or the note, so
+the reply is written fresh without mentioning the check or its lookups. One sentence for every check, no
+phrase list. Pinned in `test/aiEndpointContracts.test.js`. Replayed turn 4's retry from its capture 3 times (continuation of the stored first answer, same eight garments looked up, captured view_pieces result handed back; $0.020): none of the three replies mentions the check or the lookups ("These black wide-leg knit trousers have a substantial drape…", "Here are a few other directions…").
+
+**[amended 2026-10-24 — weather comes from the user's words; examples are new outfits]** Live
+`thread_1792821629010`. (1) Every stylist turn was told "Established weather context for this turn:
+hot weather. Pass this weather to search_wardrobe", though the user never mentioned weather. In
+`buildStylistConversationPayload`, `contextualTurnWeather` ran `extractWeatherContext` over the thread
+and card context the client sends, which is the assistant's own text, and turn 2's card said "the
+cognac brown boots echo the warm tones in the tweed": "warm" became hot weather, was stored as
+`established.weather`, and was restored on every later turn. `contextualTurnWeather` now reads only the
+user's own messages in the history; a stored weather label with no number is no longer restored on its
+own (a numeric one still is); `routes/ai.js` reads `toolContext.weather` from the user's words only. The
+same "hot" had been reaching `search_wardrobe` in this thread and the two before it (dropped there since
+the 2026-10-23 provenance check). Offline: turn 8's rebuilt request carries no weather line. (2) "ok, give
+me few examples following the above directions" got turn 2's first two cards again, garment for garment:
+the request held turn 4's three directions and the search returned all their garments, but turn 6's
+answer had cited "Outfit 1" and "Outfit 2" as examples and nothing said not to repeat. The stylist's
+card rule now adds: examples, more options or something else are outfits not already shown in this
+thread unless the user asks for one again, and examples of directions just discussed build those
+directions. End to end on an isolated copy with the pre-turn-8 thread state restored (2 runs, $0.13):
+no repeats; run 1 built exactly turn 4's three directions, run 2 built one of them. The number of cards
+for "few" still varies (router limit 2 when no number is given).
+
+**[amended 2026-10-23 — an invitation to think is answered in words]** Live `thread_1792793923755`:
+"let's think about these pants some more… what else can you see" and "what other directions can we
+explore?" were, in the owner's words, invitations to think about styling directions, and both got
+cards. The `/ask` stylist's "Proposing Outfits (default)" rule listed "suggestions" and "ideas for…"
+as card requests, and the `declare_intent` tool tells the model not to declare prose, so rewording
+that rule alone moved one of six replays. Now:
+- The execution router returns `answer_form` (`cards` | `words`, `FREEFORM_EXECUTION_ROUTE_SCHEMA`):
+  words when the user is thinking with the stylist and not asking to see, build or change an outfit;
+  cards otherwise, including a request for the outfits just shown to be made another way, and for
+  every profile but `full_stylist`. A missing field means cards.
+- On a words turn (`toolContext.answerInWords`) the stylist gets only `search_wardrobe`,
+  `view_pieces` and `get_garment_details` (the existing informational set) and a turn instruction to
+  talk through directions rather than finished outfits, cite the garments, and offer to build any of
+  them as cards. The `outfitProse` guard stands down on such a turn, and on one that declared
+  `want:'text'`.
+- The default rule itself is reworded: cards when the user asks to see, build or be dressed in
+  outfits; words when they are thinking with the stylist.
+Replays (flash-lite): router `words` on turns 4, 6 and 8 (15/15), `cards` on four clean card requests
+from earlier threads (8/8); "how about the items from my wardrobe?" after an invitation to think was
+read as words (6/6). End to end through the branch's `/ask` route on an isolated database copy:
+turns 4 and 8 each answered with three named directions, their garments, and an offer to build.
+
+**[amended 2026-10-23 — tool calls cannot claim weather or activity the user did not state]** Live
+`thread_1792781414837`, a follow-up ("how about the items from my wardrobe?"): the router read the
+setting as not stated and the activity as none, but the stylist called `search_wardrobe` with
+`user_weather: {temperature_band: 'hot'}` and `activity: 'walking'`. `user_weather` was trusted as the
+user's statement, and the activity lock applied only to fresh requests, so the hot-weather gates removed
+117 pieces (25 warm-season and 7 cool-season items left) and heavy cool-season pants were styled with
+summer tops. Two provenance checks, no styling rule:
+- `withoutEchoedUserWeather` (`tools.js`, on every tool call) drops `user_weather`, top-level and per
+  plan slot, when nothing the user typed in the thread states weather (`userWordsStateWeather`: a
+  temperature or precipitation, `extractWeatherContext`'s weather words, or "weather/forecast/
+  temperature"). The earlier estimate-echo rule still applies when weather is mentioned.
+- `resolveToolStylingContext` accepts a tool call's `activity` on a follow-up only when it matches the
+  thread's activity, the router's reading of this message (`toolContext.followUpRouterActivity`, new),
+  or the user's own words (`extractExplicitActivity`); otherwise the thread's activity stands. Fresh
+  requests keep the router lock as before.
+The user's words are `toolContext.userWords` (all of the user's messages in the thread, never the
+assistant's). With no user words at all (a direct tool call outside a chat turn) both checks are
+skipped. Offline replay of turn 6's captured search: 14 pieces excluded instead of 117; 44 cool-season
+and 41 outerwear candidates instead of 7 and 6. Counted as `unstatedUserWeatherDropped` /
+`unstatedActivityDropped`. Pinned in `test/freeform_observability.test.js` and
+`test/aiEndpointContracts.test.js`.
+
+**[amended 2026-10-21 — wearability-first layering in the visual composers]** The composers now
+check each layered pair's physical fit before the card's idea: a reworded
+`NEUTRAL_SLEEVE_LAYERING_STATEMENT`, `layerWearabilityFirstPromptRule()` in the composition rules, and
+`layering_check` as the first field of every card (`composerOutfitSlotsSchema`). The field is not
+carried onto cards (`normalizeWholeWardrobeOutfitObject` keeps known fields only); it survives in the
+raw output and the capture. No gate, tag or sleeve rule was added. Evidence and replay results:
+[sleeve-thickness-audit-2026-10-21.md](sleeve-thickness-audit-2026-10-21.md).
+
+**[amended 2026-10-21 — images and tool schemas are captured]** Building an outside-review package
+for `thread_1792569468413` showed two gaps. Images were reduced to a length and hash on the theory that
+the wardrobe photos are already on disk, but a call sends a resized derivative, and the tool loop's
+browser-drawn "garment-reference sheet" is stored nowhere, so the package had to rebuild 42 images by
+hash-matching and could not recover the sheet. And tool definitions kept only name and description, so
+a capture did not show what arguments a tool accepted. Now every image payload a record would redact is
+also written once to `<capture dir>/images/<full sha256>.<jpg|png|gif|webp>` (type read from the
+payload's first bytes, so non-image base64 such as Gemini thought signatures is not saved), and its
+placeholder reads `[redacted, N chars, sha256:<16>, saved images/<file>]`. The JSON records still hold no
+base64. Normalized records keep each tool's `input_schema` / `parameters`. A reader that lists the
+capture directory must now skip the `images/` subdirectory (`test/composerOnlyCaptureIntegration.test.js`
+reads `.json` files only). Pinned in `test/providerInputCapture.test.js`.
 
 
 ### Amendment (2026-09-13) — A/B instrumentation: neutral-verdict flag and Stage 1 preflight harness

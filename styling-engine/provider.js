@@ -149,12 +149,18 @@ export function extractPieceIdsFromProse(answerText = '', { knownPieceIds = null
 // want:'image' has no delivery clause on purpose: in-chat rendering does not
 // exist yet (step 2 postponed) and declare_intent's ack already instructs the
 // honest capability-gap answer.
+// Every check's retry note ends with this. The user sees only the reply that follows the retry, so a
+// reply that answers the note ("With those pieces verified from your wardrobe, here are…",
+// thread_1792822990468, after the unverifiedCitation check asked her to verify the IDs she cited)
+// narrates a step the user never saw.
+export const RETRY_IS_UNSEEN = ' The user has not seen your previous answer or this note: write your reply to them fresh, without mentioning this check or the lookups it asked for.'
+
 export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set(), { record = true } = {}) {
   const fail = (blockType, diagnostic, correctionMessage) => {
     // `record: false` is the disclosure pass below re-running the same predicates to see what is
     // STILL failing after its one retry. It must not double-count the diagnostics.
     if (record) bumpFreeformDiagnostic(toolContext, diagnostic)
-    return { block: true, blockType, correctionMessage }
+    return { block: true, blockType, correctionMessage: `${correctionMessage}${RETRY_IS_UNSEEN}` }
   }
 
   // ── truth ───────────────────────────────────────────────────────────────
@@ -273,7 +279,11 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   const establishedIds = new Set((Array.isArray(toolContext?.knownOutfitPieceIds) ? toolContext.knownOutfitPieceIds : []).map(Number))
   const citedInAnswer = extractPieceIdsFromProse(answerText)
   const discussesEstablishedPieces = citedInAnswer.length > 0 && citedInAnswer.every(id => establishedIds.has(Number(id)))
-  if (!boundedCompositionCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
+  // A turn the stylist declared as a prose answer (want:'text') may name garments while discussing
+  // directions; forcing it into a card overrides the decision the prompt asks her to make
+  // (thread_1792793923755: "what other directions can we explore?" was an invitation to think).
+  const declaredProse = toolContext?.declaredIntent?.want === 'text' || toolContext?.answerInWords === true
+  if (!boundedCompositionCompleted && !declaredProse && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
       !discussesEstablishedPieces && looksLikeUnproposedOutfitProse(answerText)) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
@@ -1478,9 +1488,10 @@ export async function askStylistStructuredWithUsage({
 export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
+  required: ['profile', 'answer_form', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
   properties: {
     profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
+    answer_form: { type: 'string', enum: ['cards', 'words'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
     setting: { type: 'string', enum: ['indoor_only', 'includes_outdoors', 'not_stated'] },
@@ -1514,6 +1525,8 @@ Choose wardrobe_inventory only when the user asks for exact counts of active war
 Choose trip_plan ONLY for a request to pack for, or plan what to wear on, a trip or stay away from home lasting more than one day ("what should I pack for…", "I'm going to X for a week/weekend"), including when the user is answering your question about such a trip, and when the user asks for a trip plan this thread already holds to be made again as a whole. Not for a capsule wardrobe, a work week at home, a single outing in another city, or a question about, or a change to, part of a plan or cards that already exist (one look, one piece, one day); those are full_stylist. Use limit 0.
 
 Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
+
+answer_form says how the stylist should answer a full_stylist turn. Use words when the user is thinking with the stylist — exploring directions, asking how she sees a piece, what could go with it or what to consider — and is not asking to see, build or change an outfit; the stylist then talks it through and offers to build any of it. Use cards when the user asks to see, build, be dressed in, or change outfits — including asking for the outfits just shown to be made another way, such as from their own wardrobe — and for every profile other than full_stylist.
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 

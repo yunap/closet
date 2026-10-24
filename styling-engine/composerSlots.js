@@ -49,6 +49,8 @@ export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutf
         type: 'object',
         additionalProperties: false,
         properties: {
+          // First, so the physical check is written before the card's idea (layerWearabilityFirstPromptRule).
+          layering_check: { type: 'string' },
           label: { type: 'string' },
           strength: { type: 'string', enum: ['signature', 'strong', 'usable', 'experimental'] },
           dominantDirection: { type: 'string' },
@@ -60,7 +62,7 @@ export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutf
           watchFor: { type: 'string' },
           ...(wearThroughDay ? { wear_through_day: { type: 'string' } } : {}),
         },
-        required: ['label', 'strength', 'dominantDirection', 'silhouette', 'bestFor', ...COMPOSER_SLOTS.map(slot => slot.key), 'reason', 'styling_instructions', 'watchFor', ...(wearThroughDay ? ['wear_through_day'] : [])],
+        required: ['layering_check', 'label', 'strength', 'dominantDirection', 'silhouette', 'bestFor', ...COMPOSER_SLOTS.map(slot => slot.key), 'reason', 'styling_instructions', 'watchFor', ...(wearThroughDay ? ['wear_through_day'] : [])],
       },
     },
     skip: { type: 'string' },

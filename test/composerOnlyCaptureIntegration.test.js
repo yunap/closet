@@ -104,7 +104,8 @@ test('COMPOSER-ONLY EXPERIMENT through the real provider path: one composer call
   assert.deepEqual(json.experimentComposerOnly.raw, composerAnswer, 'the raw provider answer is preserved')
   assert.equal(sdkRequests.length, 1, 'exactly one provider request: the composer; no critic, repair or other call')
 
-  const records = fs.readdirSync(captureDir).map(file => JSON.parse(fs.readFileSync(path.join(captureDir, file), 'utf8')))
+  // Records only: the images/ directory beside them holds the photos the call sent.
+  const records = fs.readdirSync(captureDir).filter(file => file.endsWith('.json')).map(file => JSON.parse(fs.readFileSync(path.join(captureDir, file), 'utf8')))
   assert.deepEqual(records.map(r => r.stage).sort(), ['normalized', 'output', 'wire'], 'exactly one record per capture stage')
   assert.equal(new Set(records.map(r => r.callId)).size, 1, 'one shared callId')
   assert.match(records[0].callId, /^[0-9a-f]{12}$/)

@@ -4487,7 +4487,8 @@ export async function buildStylistConversationPayload(body) {
     weather,
     mood,
     mission,
-    activity
+    activity,
+    answerInWords = false
   } = body
 
   // This is semantic conversation history. The transport history includes the current user
@@ -4575,10 +4576,14 @@ export async function buildStylistConversationPayload(body) {
     ? `a forecast high of ${structuredTurnWeather.high_f}°F and low of ${structuredTurnWeather.low_f}°F`
     : ''
   const explicitTurnWeather = statedRangeText || weather || extractWeatherContext(question || '')
-  const contextualTurnWeather = extractWeatherContext([
-    threadContextText,
-    generatedOutfitContextText
-  ].join('\n'))
+  // The user's own earlier words only. This used to read the thread and card context, which is the
+  // assistant's text: thread_1792821629010's card said "the cognac boots echo the warm tones in the
+  // tweed", the word match returned "hot weather", and every later turn was told "Established weather
+  // context for this turn: hot weather. Pass this weather to search_wardrobe" with no weather stated.
+  const contextualTurnWeather = extractWeatherContext((Array.isArray(history) ? history : [])
+    .filter(entry => entry?.role === 'user')
+    .map(entry => String(entry?.content || entry?.text || ''))
+    .join('\n'))
   const turnWeather = explicitTurnWeather || contextualTurnWeather
   // A new explicit weather statement owns this turn. Otherwise retain resolved numeric physics
   // separately from display season text so "summer; mild; 78/56" cannot be reparsed as hot.
@@ -4628,7 +4633,8 @@ export async function buildStylistConversationPayload(body) {
     || restoredRangeText
     || cardRangeText
     || contextualTurnWeather
-    || restoredEstablished.weather
+    // A stored label with no number ("hot weather") is no longer restored on its own: it cannot say
+    // whether the user or the assistant's prose produced it, and the user's words are read above.
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
   const travelOrPackingRequest = isTravelOrPackingRequest(question, effectiveOccasion)
@@ -5160,6 +5166,9 @@ export async function buildStylistConversationPayload(body) {
     restrictToInformationalTools
       ? 'This turn asks about a FACT of the plan already generated (its assumed weather, budget, date range, or location), not for a revision. No tool that produces new outfits is available this turn on purpose. Answer from THREAD STATE\'s current_outfit_set — each card carries its own weather_used and resolved_weather_context — and from the plan details already shown above. If a specific number was never resolved (e.g. weatherSource was a heuristic guess with no high_f/low_f), say so plainly instead of inventing one.'
       : '',
+    answerInWords
+      ? 'The user is thinking with you this turn, not asking to see outfits. Answer in words, as a conversation about directions rather than finished outfits: name the directions worth exploring, what each would do for the piece, and which of their garments it would draw on (cite them as (ID <n>)), then offer to build any of them as cards. No tool that builds cards is available this turn on purpose.'
+      : '',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     // Live thread_1791416150174: after a trip plan, "I'll do some sightseeing in Alexandria first,
     // then check out the fall foliage in the surrounding parks" got the plan described again by
@@ -5255,6 +5264,7 @@ export async function buildStylistConversationPayload(body) {
     // qualify: it owns identity only, so search must return the missing stable truth.
     wardrobeManifestIncluded: Boolean(wardrobeManifestText),
     tripFollowupTurn,
-    restrictToInformationalTools
+    restrictToInformationalTools,
+    answerInWords: answerInWords === true
   }
 }

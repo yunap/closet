@@ -19,7 +19,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache, outfitEvaluationSystemPrompt, buildStylistConversationPayload } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
+const { RETRY_IS_UNSEEN, extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
 const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, compactFreeformAnswerSystem, orderLayersByThermalFit } = await import('../routes/ai.js')
 
 let server
@@ -6243,6 +6243,18 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
   const undeclaredProseCards = applyFreeformOutputChecks(proseOutfit, undeclaredContext)
   assert.equal(undeclaredProseCards.block, true, 'an outfit written as prose is still caught without a declaration')
   assert.equal(undeclaredProseCards.blockType, 'outfitProse')
+
+  // 2026-10-24 (thread_1792822990468): the user never sees the answer a check sends back, so every
+  // retry note says so; the reply that followed "verify these IDs" opened "With those pieces verified".
+  assert.ok(undeclaredProseCards.correctionMessage.endsWith(RETRY_IS_UNSEEN))
+  const cited = applyFreeformOutputChecks('Try the rooster knit (ID 996915) with these.', { generatedOutfits: [], freeformDiagnostics: {}, retrievedPieceIds: new Set() })
+  assert.equal(cited.blockType, 'unverifiedCitation')
+  assert.ok(cited.correctionMessage.endsWith(RETRY_IS_UNSEEN))
+
+  // 2026-10-23: a turn the router marked as an invitation to think, or that declared prose, may name
+  // garments while discussing directions; it is not forced into a card.
+  assert.equal(applyFreeformOutputChecks(proseOutfit, { ...undeclaredContext, answerInWords: true }).block, false)
+  assert.equal(applyFreeformOutputChecks(proseOutfit, { ...undeclaredContext, declaredIntent: { want: 'text' } }).block, false)
 })
 
 test('turn contract blocks a declared cards turn that delivered zero cards', () => {
@@ -9247,16 +9259,23 @@ test('an estimate repeated as user_weather is not the user\'s; a trip thread res
   const cleaned = withoutEchoedUserWeather(echoed, quiet)
   assert.equal('user_weather' in cleaned, false, 'her own estimate, sent twice, is not something the user said')
   assert.deepEqual(cleaned.weather_estimate, estimate)
-  assert.equal(quiet.freeformDiagnostics.userWeatherEchoedEstimateDropped, 1)
+  // 2026-10-23 (owner, thread_1792781414837): a request that states no weather keeps no user_weather
+  // at all, echo or not — it was counted under the echo rule before and is now the general one.
+  assert.equal(quiet.freeformDiagnostics.unstatedUserWeatherDropped, 1)
   assert.equal(echoed.user_weather.high_f, 65, 'the caller\'s arguments are not mutated')
   const stated = withoutEchoedUserWeather(echoed, { question: 'It will be 65 degrees and 45 at night in Vienna. What should I pack?' })
   assert.ok(stated.user_weather, 'a request that states the weather keeps user_weather even when the estimate agrees')
   const differs = withoutEchoedUserWeather({ ...echoed, user_weather: { high_f: 70, low_f: 50 } }, quiet)
-  assert.ok(differs.user_weather, 'a user_weather that is not the estimate is taken as before')
-  assert.ok(withoutEchoedUserWeather({ user_weather: { high_f: 70, low_f: 50 } }, quiet).user_weather, 'and so is one with no estimate beside it')
+  assert.equal('user_weather' in differs, false, 'a user_weather the user never stated is dropped even when it is not the estimate')
+  assert.equal('user_weather' in withoutEchoedUserWeather({ user_weather: { high_f: 70, low_f: 50 } }, quiet), false, 'and so is one with no estimate beside it')
   const slotEcho = withoutEchoedUserWeather({ weather_estimate: estimate, slots: [{ label: 'A', user_weather: { high_f: 65, low_f: 45 } }, { label: 'B', user_weather: { high_f: 80, low_f: 60 } }] }, quiet)
   assert.equal('user_weather' in slotEcho.slots[0], false)
-  assert.ok(slotEcho.slots[1].user_weather)
+  assert.equal('user_weather' in slotEcho.slots[1], false)
+  // The echo rule still applies when the user's words mention weather but state no temperature.
+  const mentioned = { question: 'Trip to Vienna, Virginia on October 12th — what should I pack for the weather?', freeformDiagnostics: {} }
+  assert.equal('user_weather' in withoutEchoedUserWeather(echoed, mentioned), false)
+  assert.equal(mentioned.freeformDiagnostics.userWeatherEchoedEstimateDropped, 1)
+  assert.ok(withoutEchoedUserWeather({ ...echoed, user_weather: { high_f: 70, low_f: 50 } }, mentioned).user_weather, 'a non-echo there is taken as before')
 
   const forecast = (location, high_f, low_f) => ({ status: 'resolved', location, date_range: { start: '2026-10-12', end: '2026-10-18' }, temperature: { high_f, low_f, needs_removable_cool_layer: true, source: 'live' } })
   const plan = [

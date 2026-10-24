@@ -1012,6 +1012,13 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   }, sessionId)
 }
 
+// Shared by both compact profiles that judge real garments (2026-10-20, thread_1792563578975).
+// It was written for garment_fact only, so a card-explanation question about layering ("tell me how
+// the fitted 3/4 sleeves work with these two outfits") was answered with "the sleeves peek out
+// cleanly without bunching" over a turtleneck whose supplied facts said ruched, extra-long sleeves.
+// The sentence itself is the canonical one the composers state (outfitValidation.js).
+const COMPACT_LAYERING_EVIDENCE = `When the question involves layering one garment over or under another: ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`
+
 export function compactFreeformAnswerSystem(profile = 'general_advice') {
   const profileContract = profile === 'existing_card_explanation'
     // thread_1789536455443 (2026-09-16): this profile is asked, among other things, whether an
@@ -1031,9 +1038,9 @@ export function compactFreeformAnswerSystem(profile = 'general_advice') {
     // `untrusted_display_label` is composer-written display text kept only so the model can tell
     // multiple cards apart; the key itself says what it is, not evidence, so a conclusion-bearing
     // label (e.g. one composer titled a card "50° to 40°F") is not read as a verified fact.
-    ? 'Explain or compare the supplied outfit cards. Do not change pieces or invent alternatives. A card\'s `untrusted_display_label` is the composer\'s own untrusted display text, used only to tell multiple cards apart, not evidence — identify the card you mean by its index, piece IDs, or piece names, and never repeat that label\'s wording as if it were a settled fact. Conversation history is provided to preserve continuity and resolve references. Previous assistant statements are fallible prior claims, not authoritative garment evidence. Reassess them against the structured garment facts and photographs, and correct them plainly when they conflict. When asked whether a card suits stated conditions, weather, or comfort, judge it fresh from the supplied garment construction facts and photographs — insulation, lining, coverage, weather protection, fit — and say plainly when the garment evidence is incomplete or the outcome is uncertain.'
+    ? 'Explain or compare the supplied outfit cards. Do not change pieces or invent alternatives. A card\'s `untrusted_display_label` is the composer\'s own untrusted display text, used only to tell multiple cards apart, not evidence — identify the card you mean by its index, piece IDs, or piece names, and never repeat that label\'s wording as if it were a settled fact. Conversation history is provided to preserve continuity and resolve references. Previous assistant statements are fallible prior claims, not authoritative garment evidence. Reassess them against the structured garment facts and photographs, and correct them plainly when they conflict. When asked whether a card suits stated conditions, weather, or comfort, or how its garments will sit, layer or look together, judge it fresh from the supplied garment construction facts and photographs — insulation, lining, coverage, weather protection, fit, structure — and say plainly when the garment evidence is incomplete or the outcome is uncertain. Do not describe how a garment will behave as settled when neither the facts nor the photographs show it. ' + COMPACT_LAYERING_EVIDENCE
     : profile === 'garment_fact'
-      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. When the question involves layering one garment over or under another: Sleeve shape and relative sleeve length alone do not establish whether two garments layer. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient. Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
+      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. ' + COMPACT_LAYERING_EVIDENCE + ' Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
       : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
   // Voice (2026-10-07, live thread_1791357375231): "Why that cardigan?" came back as "three
   // practical and proportional reasons: 1. **Proportion:** … 2. **Temperature:** …" — a report, in a
@@ -1221,6 +1228,25 @@ export function compactFreeformContext({ body = {}, state = {}, namedPieceIds = 
       ...(outfit.visualPrompt ? { full_look: outfit.visualPrompt } : {}),
     }))
   return { outfits: outfits.slice(0, 8), pieceIds, suggestedCards }
+}
+
+// Which garments' photos a card-explanation answer gets, in order. A card counts as named when its
+// label appears in the question as whole words ("…with Plum Cardigan Over Black Sheath or Tonal
+// Plum & Grey Layer"); with none named, every card's pieces are used in card order. The label is
+// composer display text, used here only to choose photos, never as evidence.
+export function cardExplanationVisualPieceIds({ question = '', outfits = [], leadPieceIds = [] } = {}) {
+  const normalize = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const normalizedQuestion = ` ${normalize(question)} `
+  const cardPieceIds = outfit => (Array.isArray(outfit?.pieceIds)
+    ? outfit.pieceIds
+    : (Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []))
+  const list = Array.isArray(outfits) ? outfits : []
+  const named = list.filter(outfit => {
+    const label = normalize(outfit?.label || outfit?.title)
+    return label && normalizedQuestion.includes(` ${label} `)
+  })
+  return [...new Set([...(leadPieceIds || []), ...(named.length ? named : list).flatMap(cardPieceIds)]
+    .map(Number).filter(id => Number.isFinite(id) && id > 0))]
 }
 
 export function compactProfileHasContext(profile, context = {}) {
@@ -1414,6 +1440,9 @@ export async function compactAnswerWithTruncationGuard({
 // layer. Accessories are styled separately and never shown here. A lower image ceiling can still
 // starve a valid five-piece card of its outerwear or shoes in pass one, below.
 const MAX_STRUCTURAL_OUTFIT_PIECES = 5
+// One photo per garment across two compared cards that share their anchor, with a ceiling so a
+// question about every card on a long set does not attach a dozen images.
+const MAX_CARD_EXPLANATION_IMAGES = 8
 
 export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = userUploadsDir(), maxImages = MAX_STRUCTURAL_OUTFIT_PIECES } = {}) {
   const list = Array.isArray(pieces) ? pieces : []
@@ -1424,7 +1453,8 @@ export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = u
   // structural maximum and lose a valid fifth garment (typically the outer layer) entirely. The
   // ceiling is now the actual structural maximum, so pass one always has room for one image per
   // unique garment on any valid card before pass two spends anything on a second photo.
-  const boundedLimit = Math.max(0, Math.min(MAX_STRUCTURAL_OUTFIT_PIECES, Number(maxImages) || 0))
+  // A card explanation comparing several cards may ask for more, up to MAX_CARD_EXPLANATION_IMAGES.
+  const boundedLimit = Math.max(0, Math.min(MAX_CARD_EXPLANATION_IMAGES, Number(maxImages) || 0))
   const imageCount = () => blocks.filter(block => block.type === 'image').length
 
   const tryAdd = async (piece, label, photoFile) => {
@@ -6962,7 +6992,9 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].filter(Boolean).join('\n')
-    const extractedWeather = req.body.weather || extractWeatherContext(requestAndContextText)
+    // Weather is read from the user's own words only, never the thread or card context the client
+    // sends (assistant text: "warm tones" read as hot weather, thread_1792821629010).
+    const extractedWeather = req.body.weather || extractWeatherContext([currentQuestion, ...priorUserTexts].join('\n'))
     // Same owner/scope as extractedWeather immediately above (this turn's question, plus recent
     // thread context and prior user turns so a date stated in an earlier turn still survives into a later plan_outfit_set
     // call) — a stated trip date is factual request state, not something re-derived per tool call.
@@ -6986,6 +7018,12 @@ router.post('/ask', async (req, res) => {
       mission: req.body.mission || 'mix',
       activity: req.body.activity || '',
       question: currentQuestion,
+      // Everything the user has typed in this thread, oldest first. Tool arguments that claim to carry
+      // the user's own weather or activity are checked against these words (tools.js), never against
+      // the assistant's replies (thread_1792781414837).
+      userWords: [...(Array.isArray(req.body.history) ? req.body.history : [])
+        .filter(entry => entry?.role === 'user')
+        .map(entry => String(entry?.content || '')), currentQuestion].filter(Boolean).join('\n'),
       planQuestion,
       // 2026-07-10: home location is a pure fallback — an explicitly named place from this turn's
       // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
@@ -7179,6 +7217,10 @@ router.post('/ask', async (req, res) => {
         // A season the user names on a follow-up ("what about in winter?") is the router's to read;
         // followUpSeasonLock below uses it in place of the thread's established season.
         if (!freshExecutionRequest) toolContext.followUpRouterSeason = routerSeasonForTurn(routed.value?.season, routed.value?.date) || ''
+        // The router's reading of the user's activity on a follow-up. Not a lock (a follow-up may keep
+        // the thread's activity), but an activity a tool call names has to match this, the thread's
+        // own, or the user's words (resolveToolStylingContext).
+        if (!freshExecutionRequest) toolContext.followUpRouterActivity = normalizeActivity(routed.value?.activity)
         if (freshExecutionRequest) {
           toolContext.occasion = normalizeOccasion(routed.value?.occasion)
           toolContext.activity = normalizeActivity(routed.value?.activity)
@@ -7215,6 +7257,9 @@ router.post('/ask', async (req, res) => {
           // follow-up it reads as not_stated has none to carry: the same styling-question case.
           toolContext.executionRouterNoSituation = true
         }
+        // The router's read of HOW to answer (2026-10-23, thread_1792793923755): an invitation to think
+        // ("what other directions can we explore?") is answered in words, not cards. Absent field: cards.
+        toolContext.answerInWords = routed.value?.profile === 'full_stylist' && routed.value?.answer_form === 'words'
         const routedLimit = Number(routed.value?.limit) || 0
         const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
           exactSubjectCount: exactNamedPieceIds.length,
@@ -7329,16 +7374,27 @@ router.post('/ask', async (req, res) => {
                     : (Number.isFinite(activeVisualPieceId) && activeVisualPieceId > 0
                         ? new Set([activeVisualPieceId])
                         : null))
-              const visualPieces = preferredVisualIds
-                ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
-                : compactPieces
+              // A card explanation is about the cards, so its photos come from them: the cards the
+              // question names (or every card), after any garment it names exactly. The active
+              // piece alone was right for garment_fact but left thread_1792563578975 comparing two
+              // outfits with only the cardigan's photo, so it judged the sleeves underneath blind.
+              const cardVisualIds = compactProfile === 'existing_card_explanation'
+                ? cardExplanationVisualPieceIds({ question: currentQuestion, outfits: compactContext.outfits, leadPieceIds: exactNamedPieceIds })
+                : null
+              const visualPieces = cardVisualIds
+                ? cardVisualIds.map(id => compactPieces.find(piece => Number(piece.id) === id)).filter(Boolean)
+                : preferredVisualIds
+                  ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
+                  : compactPieces
               // thread_1789536455443: existing_card_explanation used to get zero photos (and its
               // system prompt forbade even claiming to see any) — a suitability/warmth question
               // about an already-composed card had no visual evidence of construction at all,
               // only the sparse structured facts. Both compact profiles now get the same visual
               // evidence a garment_fact question already received.
               const visualEvidence = (compactProfile === 'garment_fact' || compactProfile === 'existing_card_explanation')
-                ? await compactGarmentVisualEvidence(visualPieces)
+                ? await compactGarmentVisualEvidence(visualPieces, cardVisualIds
+                    ? { maxImages: Math.max(MAX_STRUCTURAL_OUTFIT_PIECES, visualPieces.length) }
+                    : {})
                 : []
               // 2026-09-16 (owner review): thread_1789543565383 (capture session
               // 20260916T072500260Z-p33193-328b5958) shows a real existing_card_explanation call
@@ -7508,7 +7564,8 @@ router.post('/ask', async (req, res) => {
           activity: req.body.activity,
           ...(tripPlanRoute ? { tripPlanTurn: true, routedLocation: String(tripPlanRoute.location || '') } : {}),
           // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
-          tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64
+          tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64,
+          answerInWords: toolContext.answerInWords === true,
         })
     // The lean trip turn (owner, 2026-10-07; measurements in docs/freeform-prompt-cache-levers.md).
     // A fresh trip request used the full stylist request — the 273-piece wardrobe list and all 14
@@ -7597,7 +7654,9 @@ router.post('/ask', async (req, res) => {
     // plan_outfit_set again and produced a second, different capsule. buildStylistConversationPayload
     // already told the model the answer sits in current_outfit_set — this removes the tool that let
     // it ignore that and regenerate instead, mirroring the outfit-critique-followup restriction below.
-    if (payload.restrictToInformationalTools) {
+    // An invitation to think gets the same informational tools: she can look at the wardrobe and
+    // name garments, but builds no card until the user asks to see one.
+    if (payload.restrictToInformationalTools || payload.answerInWords) {
       toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details']
     }
     const { answer, savedCorrections } = await askStylistWithTools({
